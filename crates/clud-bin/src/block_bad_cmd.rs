@@ -5333,6 +5333,28 @@ mod tests {
     }
 
     #[test]
+    fn run_id_waits_are_refused_toward_run_watch_and_its_invocations_are_allowed() {
+        // A workflow_dispatch release dry run has no PR: every raw way to
+        // wait on its run id must name run_watch, and run_watch itself must
+        // pass in the shapes agents actually write.
+        let reason = evaluate_command(
+            "timeout 3000 gh run watch 40235357724 --repo FastLED/fbuild --exit-status --interval 60",
+            None,
+            false,
+            &[],
+        )
+        .reason
+        .expect("raw run-id watch should be denied");
+        assert!(reason.contains("github/run_watch.py"), "{reason}");
+        for command in [
+            "clud tool run github/run_watch.py -- 40235357724 --repo FastLED/fbuild --timeout 3000",
+            "\"$CLUD_EXE\" tool run github/run_watch.py -- 40235357724 --repo FastLED/fbuild",
+        ] {
+            assert!(allows(command), "{command} should be allowed");
+        }
+    }
+
+    #[test]
     fn env_prefixed_rust_tools_are_denied() {
         assert!(denies(&format!("FOO=bar {TOOL_RS_BUILD} build")));
         assert!(denies(&format!("env FOO=bar {TOOL_RS_BUILD} build")));
