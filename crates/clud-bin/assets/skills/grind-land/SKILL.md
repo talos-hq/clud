@@ -1,6 +1,6 @@
 ---
 name: grind-land
-description: "Land one /grind PR: watch its checks with pr_merge_watch, admin-merge when green, or diagnose the failure and hand it back to the integrator. Never edits or builds."
+description: "Land one /grind PR: watch its checks with pr_merge_watch, enqueue it when green (the goal is done at enqueue; a chaperone follows the queue), or diagnose the failure and hand it back to the integrator. Never edits or builds."
 triggers:
   - When the grind workflow lands a pushed PR
   - When the user asks to watch a PR and merge it once green
@@ -15,7 +15,10 @@ Use the prompt's **GitHub repository** (`OWNER/REPO`) as `<github-repo>`. Keep t
 Keep tool output bounded (narrow searches, capped lists, ranged reads, bulk on disk, no identical repeats): https://github.com/zackees/clud/blob/main/docs/architecture/bounded-output.md
 
 The integrator already proved RED -> GREEN locally; you confirm it on the
-server and merge.
+server and enqueue. **You end at enqueue** ([DD-192](https://github.com/talos-hq/clud/blob/main/docs/DESIGN_DECISIONS.md#dd-192-workers-end-at-enqueue-and-a-chaperone-owns-the-merge), #2467):
+never wait for the merge and never rebase before landing; the queue's
+`merge_group` run tests the merged tree and a real conflict shows up as an
+ejection, which the workflow's `grind-chaperone` reports back.
 
 1. **Choose the wait budget and scope.** Check the declared execution tools
    and the slowest selected CI lane, including queue/setup time. With a
@@ -39,9 +42,10 @@ server and merge.
    - `0` (checks green, mergeable): satisfy required review, resolve the full
      head SHA, then submit with `clud tool run github/pr_merge.py -- <n>
      --repo <github-repo> --match-head-commit <head-sha>`. This honors a
-     required merge queue. Follow with `github/pr_merge_watch.py -- <n>
-     --repo <github-repo> --until merged` and return `status=merged` only
-     after the PR is actually merged. The watch never waits for
+     required merge queue. Return `status=enqueued` with `head_sha` at once;
+     do not run `--until merged` (the workflow's chaperone does). Return
+     `status=merged` only when pr_merge.py itself reports the PR merged (a
+     base with no queue). The watch never waits for
      CodeRabbit unless you pass `--coderabbit-wait N`; never pass it for a
      repo that suppresses CodeRabbit or a head validated by the local
      bosn -> act gate. Every `coderabbit=` note (`suppressed`, `absent`,
@@ -50,7 +54,13 @@ server and merge.
    - `1` (a required check failed): `gh pr checks --repo <github-repo> <n> --json name,state --jq '[.[]|select(.state!="SUCCESS" and .state!="SKIPPED")]'`
      (unresolved checks only; see [Reading CI status](https://github.com/zackees/clud/blob/main/docs/architecture/ci.md#reading-ci-status-without-flooding-context-2312)) and
      `clud tool run github/ci_failure_report.py -- --repo <github-repo> --run <run> --job <job>`
-     for the failing job. Use the returned artifact and line-range continuation to inspect more. Return
+     for the failing job. Use the returned artifact and line-range continuation to inspect more.
+     **Red-base breaker (#2467):** compare each failing required job with
+     `<main>`'s latest `push` and `merge_group` runs (`gh run list --repo
+     <github-repo> --branch <main> --limit 5 --json databaseId,event,conclusion`,
+     then `gh run view --repo <github-repo> <id> --json jobs`). If the same job
+     fails there too, no diff can fix it: return `status=base_red` naming the
+     job and main's run, with no rerun. Otherwise return
      `status=needs_fix` with the failing job and the relevant log lines in
      `failure_log`.
    - `2` (new review activity): read the unresolved comments with

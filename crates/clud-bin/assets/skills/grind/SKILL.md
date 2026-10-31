@@ -579,8 +579,11 @@ the feature PR, or run Finish cleanup while this manifest remains.
 After the last workflow call returns (both stage calls, when there are
 two), whether or not every goal merged:
 
-1. **Report** each goal's PR and whether it merged, and list anything left
-   open with its reason, including each feature child blocked by a stuck
+1. **Report** each goal's PR and its landing state: `merged`, `queued`
+   (still in the merge queue after the final bounded wait; not a failure),
+   `stuck` (dropped by the queue past its automatic fixups), `base-red` (the
+   same required job fails on `<main>`), or `covered by #PR` (dedup
+   preflight), and list anything left open with its reason, including each feature child blocked by a stuck
    bug (`blocked: bug #N did not land`) next to that bug. For a feature
    stage, by `feature_merge`:
    - `later`: when every feature goal landed, mark the feature PR ready
@@ -668,7 +671,8 @@ two), whether or not every goal merged:
 | `/grind-work` | `grind-worker` | read/write assigned files; read-only `gh`; web search |
 | `/grind-review` | `grind-reviewer` | same as worker |
 | `/grind-integrate` | `grind-integrator` | full shell, one at a time; no `bosn`, containers only via `act`, no new worktrees |
-| `/grind-land` | `grind-lander` | `gh pr`, `pr_merge_watch`, `git push`; no edits |
+| `/grind-land` | `grind-lander` | `gh pr`, `pr_merge_watch`, `pr_merge.py` (enqueue), `git push`; no edits |
+| (workflow) | `grind-chaperone` | haiku; bounded `pr_merge_watch --until merged`, `gh run rerun --failed`, `pr_merge.py` re-enqueue; no checkout |
 | `/grind-cron` | router | main session |
 | Finish: file problems | router | main session; the only node that runs `gh issue create --repo <github-repo>` (`grind:followup` issues) |
 

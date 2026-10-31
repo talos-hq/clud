@@ -41,6 +41,7 @@ pub(super) const LANDER: &str = "grind-lander";
 pub(super) const PREWORK: &str = "grind-prework";
 pub(super) const ORCHESTRATOR: &str = "grind-orchestrator";
 pub(super) const GATE: &str = "grind-gate";
+pub(super) const CHAPERONE: &str = "grind-chaperone";
 
 /// Read-only inspection commands every shell-holding role may run, subject
 /// to [`inspect_ok`].
@@ -320,7 +321,15 @@ pub(super) fn agent_spawn_reason(
 pub(super) fn is_grind_role(agent_type: &str) -> bool {
     matches!(
         agent_type,
-        PLANNER | WORKER | REVIEWER | INTEGRATOR | LANDER | PREWORK | ORCHESTRATOR | GATE
+        PLANNER
+            | WORKER
+            | REVIEWER
+            | INTEGRATOR
+            | LANDER
+            | PREWORK
+            | ORCHESTRATOR
+            | GATE
+            | CHAPERONE
     )
 }
 
@@ -338,6 +347,12 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
         Ok(statements) => statements,
         Err(construct) => return Some(format!("{role} may not use {construct}")),
     };
+    if role == CHAPERONE {
+        return statements
+            .iter()
+            .map(|words| strip_gh_repo_flag(words))
+            .find_map(|words| chaperone_reason(&words));
+    }
     if role == INTEGRATOR && is_script_retry_loop(&statements) {
         return Some(format!(
             "{role} may not rerun lint or test in a shell loop: read the failing tests first, and \
@@ -348,6 +363,45 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
         .iter()
         .map(|words| strip_gh_repo_flag(words))
         .find_map(|words| statement_reason(role, &words, run))
+}
+
+/// The queue chaperone (#2467, DD-192) holds no checkout and never builds:
+/// it waits on one queued PR with `pr_merge_watch`, reads CI, reruns a failed
+/// run once (`gh run rerun <id> --failed`) and re-enqueues with `pr_merge.py`
+/// after a batch-mate's ejection. Everything else is refused.
+fn chaperone_reason(words: &[String]) -> Option<String> {
+    if creates_issue(words) || closes_issue(words) {
+        return Some(format!(
+            "{CHAPERONE} never files or closes issues; report in your structured output"
+        ));
+    }
+    if let Some(reason) = remote_ci_reason(CHAPERONE, words) {
+        return Some(reason);
+    }
+    if is_gh_read(words) {
+        return None;
+    }
+    let rerun_failed = program_name(&words[0]) == "gh"
+        && words.get(1).is_some_and(|w| w == "run")
+        && words.get(2).is_some_and(|w| w == "rerun")
+        && words.iter().any(|w| w == "--failed");
+    if rerun_failed {
+        return None;
+    }
+    let tool = bundled_tool(words);
+    if tool.is_some_and(|t| {
+        t.starts_with("github/pr_merge_watch")
+            || t == "github/pr_merge.py"
+            || t == "github/ci_failure_report.py"
+    }) {
+        return None;
+    }
+    Some(format!(
+        "{CHAPERONE} may only watch (`github/pr_merge_watch.py --until merged`), read CI \
+         (`gh pr|run view|list|checks`, `github/ci_failure_report.py`), rerun failed jobs \
+         (`gh run rerun <id> --failed`) and re-enqueue (`github/pr_merge.py`); it has no \
+         checkout and never builds, pushes or merges directly"
+    ))
 }
 
 /// Unlike a planner, the run orchestrator never fetches or creates a worktree.
@@ -1887,6 +1941,63 @@ mod tests {
         }
         let input = serde_json::json!({"subagent_type": role});
         assert!(agent_spawn_reason("Agent", Some(&input), None).is_some());
+    }
+
+    /// #2467: the chaperone has no checkout and no build. It watches a queued
+    /// PR, reads CI, reruns failed jobs once and re-enqueues; nothing else.
+    #[test]
+    fn chaperone_watches_reruns_and_reenqueues_only() {
+        let facts = run(false, false);
+        assert!(is_grind_role(CHAPERONE));
+        for command in [
+            "clud tool run github/pr_merge_watch.py -- 5 --repo o/r --until merged --timeout 540",
+            "\"$CLUD_EXE\" tool run github/pr_merge.py -- 5 --repo o/r --match-head-commit abc",
+            "clud tool run github/ci_failure_report.py -- --repo o/r --run 9 --job 3",
+            "gh pr view 5 --repo o/r --json state,mergeStateStatus",
+            "gh run list --repo o/r --branch main --event merge_group --limit 1",
+            "gh run rerun 99 --failed --repo o/r",
+        ] {
+            assert!(allowed(CHAPERONE, command, &facts), "{command}");
+        }
+        for command in [
+            "gh run rerun 99",
+            "gh pr merge 5 --admin --squash",
+            "git push origin grind/5",
+            "git status",
+            "cargo test",
+            "bash lint",
+            "gh run watch 99",
+            "gh issue close 5",
+            "safe-rm x",
+        ] {
+            assert!(!allowed(CHAPERONE, command, &facts), "{command}");
+        }
+    }
+
+    /// #2467: the lander enqueues with pr_merge.py and reads main's runs for
+    /// the red-base comparison.
+    #[test]
+    fn lander_enqueues_and_compares_with_main() {
+        let facts = run(false, false);
+        for command in [
+            "clud tool run github/pr_merge.py -- 5 --repo o/r --match-head-commit abc",
+            "gh run list --repo o/r --branch main --event push --limit 1 --json databaseId,conclusion",
+            "gh run view 77 --repo o/r --json jobs",
+        ] {
+            assert!(allowed(LANDER, command, &facts), "{command}");
+        }
+    }
+
+    /// #2467 dedup preflight: the planner searches PRs that close a child.
+    #[test]
+    fn planner_may_search_prs_for_dedup() {
+        let facts = run(false, false);
+        for command in [
+            "gh pr list --repo o/r --state all --search 'Closes #12' --json number,state,title",
+            "gh search prs --repo o/r 'Closes #12'",
+        ] {
+            assert!(allowed(PLANNER, command, &facts), "{command}");
+        }
     }
 
     #[test]

@@ -123,6 +123,12 @@ You hold the run's build lock, so nothing else builds while you do.
    job's log from its report. Never `sleep N; gh run view` (#1894). For a one-off read ask only for unresolved
    jobs: [Reading CI status](https://github.com/zackees/clud/blob/main/docs/architecture/ci.md#reading-ci-status-without-flooding-context-2312).
 
+**Queue fixup (#2467).** When the prompt says `QUEUE FIXUP`, the merge queue
+ejected an already-enqueued PR (or it now conflicts). Switch to its branch,
+fetch, rebase onto `origin/<base>`, fix what the chaperone reported, rerun the
+verify commands, push with `--force-with-lease`, return the checkout to
+`origin/<base>`, and return `pushed=true`. The lander then re-enqueues it.
+
 **Fix round.** When the prompt carries a failure from the lander: read it,
 reproduce locally when possible, fix, rerun the verify commands (and the run
 scripts, lint then test), commit and
