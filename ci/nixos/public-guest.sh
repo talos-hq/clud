@@ -23,7 +23,7 @@ if [ "$mode" = candidate ]; then
   catalog_url="https://github.com/zackees/clud/releases/download/$tag/installer-candidate-manifest.json"
   channel=candidate
 elif [ "$mode" = released ]; then
-  catalog_url=https://talos-hq.github.io/clud/install/manifest.json
+  catalog_url=https://talosbot.ai/clud/install/manifest.json
   channel=latest-stable
 else
   exit 2

@@ -12,6 +12,8 @@ const ONLINE_URL: &str = "https://talos-hq.github.io/clud/install/manifest.json"
 // Catalogs published before the move to talos-hq (#2126) still name the old
 // Pages host; accept it until the next publish rewrites the field.
 const LEGACY_ONLINE_URL: &str = "https://zackees.github.io/clud/install/manifest.json";
+// The canonical custom domain the catalog is fetched from (#2449).
+const DOMAIN_ONLINE_URL: &str = "https://talosbot.ai/clud/install/manifest.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
@@ -231,7 +233,7 @@ impl Catalog {
         }
         require_string(root, "tool", "clud")?;
         let online_url = string(field(root, "online_url")?, "online_url")?;
-        if online_url != ONLINE_URL && online_url != LEGACY_ONLINE_URL {
+        if ![ONLINE_URL, LEGACY_ONLINE_URL, DOMAIN_ONLINE_URL].contains(&online_url) {
             return Err("unexpected online_url".into());
         }
         let channels = object(field(root, "channels")?, "channels")?;

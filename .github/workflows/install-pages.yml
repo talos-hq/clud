@@ -84,9 +84,9 @@ jobs:
           expected='${{ needs.build-site.outputs.public_digest }}'
           for attempt in $(seq 1 12); do
             actual=fetch-failed
-            if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/index.html -o public-site/index.html &&
-               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/install/index.html -o public-site/install/index.html &&
-               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/install/manifest.json -o public-site/install/manifest.json; then
+            if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/index.html -o public-site/index.html &&
+               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/install/index.html -o public-site/install/index.html &&
+               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/install/manifest.json -o public-site/install/manifest.json; then
               actual=$(sha256sum public-site/index.html public-site/install/index.html public-site/install/manifest.json | cut -d ' ' -f 1 | sha256sum | cut -d ' ' -f 1)
               if [ "$actual" = "$expected" ]; then
                 python -m installer.verify_site public-site

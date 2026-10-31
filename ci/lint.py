@@ -141,6 +141,7 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     from ci.banned_python3 import main as check_banned_python3
     from ci.banned_skill_sources import main as check_banned_skill_sources
     from ci.banned_wheel_writes import main as check_banned_wheel_writes
+    from ci.fetch_fallbacks import main as check_fetch_fallbacks
     from ci.harness_budget import main as check_harness_budget
 
     # Ordered cheapest-first so the common failure reds out soonest: ruff is a
@@ -182,6 +183,10 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     # #1545: ci/wheel_rewrite.py is the only wheel writer, so no rewriter can
     # drop the scripts' exec bits again.
     if check_banned_wheel_writes() != 0:
+        return 1
+    # #2449: every published-metadata fetch ends with a GitHub fallback, so a
+    # lost Pages domain degrades instead of breaking every installed clud.
+    if check_fetch_fallbacks() != 0:
         return 1
     # #1714: a cargo target with no tests must not build a test harness; each
     # one is a full, uncached compile and link on every CI run.

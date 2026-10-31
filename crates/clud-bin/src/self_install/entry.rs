@@ -11,7 +11,6 @@ use super::picker::{self, ConfirmChoice, MenuChoice, ReleaseChoice};
 use super::result::Outcome;
 use super::transaction;
 
-const CATALOG_URL: &str = "https://talos-hq.github.io/clud/install/manifest.json";
 const CANDIDATE_CATALOG_NAME: &str = "installer-candidate-manifest.json";
 pub const INSTALL_PAGE: &str = "https://talos-hq.github.io/clud/install/index.html";
 const MAX_CATALOG_BYTES: u64 = 8 * 1024 * 1024;
@@ -447,23 +446,66 @@ fn fetch_catalog() -> Result<Catalog, String> {
             .map_err(|error| format!("candidate catalog read failed: {error}"))?;
         return Catalog::parse_candidate(&bytes, version);
     }
+    fetch_published_catalog(crate::published_urls::INSTALL_CATALOG)
+}
+
+/// The first catalog in `urls` that fetches and parses (#2449). The canonical
+/// domain must answer from its own origin; a GitHub release fallback may
+/// redirect to GitHub's asset host, and names its own release as `candidate`.
+fn fetch_published_catalog(urls: &[&str]) -> Result<Catalog, String> {
+    let mut errors = Vec::new();
+    for (index, url) in urls.iter().enumerate() {
+        match fetch_catalog_from(url) {
+            Ok(catalog) => {
+                if index > 0 {
+                    eprintln!("clud installer: using fallback catalog {url}");
+                }
+                return Ok(catalog);
+            }
+            Err(error) => errors.push(format!("{url}: {error}")),
+        }
+    }
+    Err(format!("catalog fetch failed: {}", errors.join("; ")))
+}
+
+fn fetch_catalog_from(url: &str) -> Result<Catalog, String> {
+    let github = crate::published_urls::is_github_owned(url);
     let response = ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(12))
-        .redirects(0)
+        .redirects(if github { 3 } else { 0 })
         .build()
-        .get(CATALOG_URL)
+        .get(url)
         .call()
-        .map_err(|error| format!("catalog fetch failed: {error}"))?;
-    if response.get_url() != CATALOG_URL {
-        return Err("catalog response changed origin".into());
+        .map_err(|error| error.to_string())?;
+    let final_url = response.get_url().to_string();
+    if github && !final_url.starts_with("https://") {
+        return Err("response is not HTTPS".into());
+    }
+    if !github && final_url != url {
+        return Err("response changed origin".into());
     }
     let mut bytes = Vec::new();
     response
         .into_reader()
         .take(MAX_CATALOG_BYTES + 1)
         .read_to_end(&mut bytes)
-        .map_err(|error| format!("catalog read failed: {error}"))?;
-    Catalog::parse(&bytes)
+        .map_err(|error| format!("read failed: {error}"))?;
+    if !github {
+        return Catalog::parse(&bytes);
+    }
+    match release_candidate(&bytes) {
+        // `releases/latest` only resolves to a published release, so its
+        // candidate is a real release, not a pending one.
+        Some(candidate) => Catalog::parse_candidate(&bytes, &candidate),
+        None => Catalog::parse(&bytes),
+    }
+}
+
+fn release_candidate(bytes: &[u8]) -> Option<String> {
+    let document: serde_json::Value = serde_json::from_slice(bytes).ok()?;
+    document["channels"]["candidate"]
+        .as_str()
+        .map(str::to_owned)
 }
 
 fn candidate_catalog_url(tag: &str) -> Result<(String, &str), String> {
