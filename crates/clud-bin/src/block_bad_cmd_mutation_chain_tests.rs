@@ -12,6 +12,19 @@ fn reason(command: &str) -> Option<String> {
 }
 
 #[test]
+fn refusal_text_names_every_allowed_shape() {
+    let reason = reason("gh issue comment 9 --body x; gh pr merge 3").expect("should be refused");
+    for needle in [
+        "git push ... && gh pr create ...",
+        "`gh api` write calls",
+        "`gh issue` metadata writes",
+        "loop repeating one such write",
+    ] {
+        assert!(reason.contains(needle), "missing {needle:?}: {reason}");
+    }
+}
+
+#[test]
 fn a_mutation_chained_with_a_watch_or_another_mutation_is_refused() {
     for command in [
         "git push -q -u origin fix/x 2>&1 | grep -v '^remote'; gh pr create --repo o/r --title t --body b; clud tool run github/pr_merge_watch.py 12",
