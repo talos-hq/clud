@@ -562,8 +562,8 @@ def test_serve_answers_gemini_generate_content(
     brings its own fake upstream so it can answer with a well-formed text SSE
     stream (the shared fixture streams a tool call that never stops).
     """
-    import http.server
     import http.client
+    import http.server
     import json
     import signal
     import threading
