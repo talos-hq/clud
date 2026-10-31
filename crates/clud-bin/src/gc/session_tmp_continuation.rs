@@ -3,7 +3,7 @@
 //! The cursor records completed entries, never an inference of idleness from
 //! budget exhaustion. A caller must complete the scan before any deletion.
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -49,6 +49,9 @@ pub(super) struct TickReport {
     /// Items given up on after [`MAX_ITEM_RETRIES`] failures (#1672).
     pub(super) abandoned: usize,
     pub(super) oversized: Vec<(PathBuf, u64)>,
+    /// Subtrees this pass could not remove because another user owns them or
+    /// the OS refused access (#2486). Skipped on the first hit, never retried.
+    pub(super) foreign_owned: Vec<PathBuf>,
 }
 
 /// Bounded daemon tick. The queue is persisted after every tick and only
@@ -104,7 +107,7 @@ pub(super) fn sweep_tick_with_quantum(
         let item = state.queue.pop_front().expect("nonempty queue");
         let before = state.queue.len();
         let grant = remaining.min(candidate_quantum.max(1));
-        let spent = advance_item(item, &mut state, &mut report, now, dry_run, grant);
+        let spent = advance_or_retire(item, &mut state, &mut report, now, dry_run, grant);
         report.advanced_steps = report.advanced_steps.saturating_add(spent);
         remaining = remaining.saturating_sub(spent);
         if spent == 0 {
@@ -175,6 +178,7 @@ pub(super) fn sweep_tick_with_quantum(
     report.persistent_failure = report.pending > 0
         && report.retry_count >= 2
         && report.no_progress_secs >= PERSISTENT_FAILURE_HORIZON_SECS;
+    report.foreign_owned = state.foreign_owned.iter().map(|p| p.0.clone()).collect();
     if state.queue.is_empty() {
         match fs::remove_file(work_path) {
             Ok(()) => {}
@@ -185,6 +189,22 @@ pub(super) fn sweep_tick_with_quantum(
         state.save(work_path)?;
     }
     Ok(report)
+}
+
+/// #2486: retire an item under an unremovable subtree before doing any work
+/// on it; otherwise advance it normally.
+fn advance_or_retire(
+    item: WorkItem,
+    state: &mut WorkState,
+    report: &mut TickReport,
+    now: SystemTime,
+    dry_run: bool,
+    grant: usize,
+) -> usize {
+    if state.retire_if_foreign(item.target().0) {
+        return 1;
+    }
+    advance_item(item, state, report, now, dry_run, grant)
 }
 
 #[expect(
@@ -209,13 +229,7 @@ fn advance_item(
         state.queue.push_back(item);
         return 0;
     }
-    let (target, directory) = match &item {
-        WorkItem::Explore { path, .. } | WorkItem::Delete { path, .. } => (path.as_path(), true),
-        WorkItem::Scan { cursor, .. } | WorkItem::Recheck { cursor, .. } => {
-            (cursor.root.as_path(), true)
-        }
-        WorkItem::Probe { path, .. } | WorkItem::FlatFile { path, .. } => (path.as_path(), false),
-    };
+    let (target, directory) = item.target();
     match safe_path_now(&state.root, target, directory) {
         Ok(true) => {}
         Ok(false) => {
@@ -745,6 +759,13 @@ fn note_error(
     now: SystemTime,
 ) {
     report.failures += 1;
+    if is_terminal_denial(err) && path != state.root {
+        // #2486: terminal on the first hit; the re-queued item is retired by
+        // `retire_if_foreign` instead of retrying with backoff. The sweep
+        // root itself is never recorded: its removal hint would wipe every
+        // live scratchpad.
+        state.foreign_owned.insert(EncodedPath(path.to_path_buf()));
+    }
     state.last_failure = Some(FailureRecord {
         path: EncodedPath(path.to_path_buf()),
         class: format!("{:?}", err.kind()),
@@ -933,6 +954,9 @@ pub(super) struct WorkState {
     removed_dirs: u64,
     reclaimed_bytes: u64,
     last_failure: Option<FailureRecord>,
+    /// #2486: subtrees skipped as unremovable (foreign owner or denied).
+    #[serde(default)]
+    foreign_owned: BTreeSet<EncodedPath>,
     queue: VecDeque<WorkItem>,
 }
 
@@ -1024,6 +1048,7 @@ impl WorkState {
             removed_dirs: 0,
             reclaimed_bytes: 0,
             last_failure: None,
+            foreign_owned: BTreeSet::new(),
             queue: VecDeque::from([WorkItem::Explore {
                 path: root.to_path_buf(),
                 depth: 0,
@@ -1055,6 +1080,45 @@ impl WorkState {
 
     fn save(&self, path: &Path) -> io::Result<()> {
         save_json(path, self)
+    }
+
+    /// #2486: drop work under a subtree already found unremovable, and mark a
+    /// directory owned by another user unremovable before touching it.
+    fn retire_if_foreign(&mut self, target: &Path) -> bool {
+        if target
+            .ancestors()
+            .any(|a| self.foreign_owned.contains(&EncodedPath(a.to_path_buf())))
+        {
+            return true;
+        }
+        if target == self.root {
+            return false;
+        }
+        let foreign = fs::symlink_metadata(target)
+            .is_ok_and(|meta| meta.is_dir() && owned_by_other_user(&meta));
+        if foreign {
+            self.foreign_owned.insert(EncodedPath(target.to_path_buf()));
+        }
+        foreign
+    }
+}
+
+/// #2486: `PermissionDenied` is terminal only on Unix, where it means a mode
+/// or owner the running user cannot change. On Windows it is also what a
+/// briefly locked file reports, so there it keeps the backoff retry.
+fn is_terminal_denial(err: &io::Error) -> bool {
+    crate::platform::host::UNIX && err.kind() == io::ErrorKind::PermissionDenied
+}
+
+/// True when `meta` names a file whose owner is not the running user. Hosts
+/// without uids (Windows) report `false`: the denied-access path covers them.
+fn owned_by_other_user(meta: &fs::Metadata) -> bool {
+    match (
+        crate::platform::rm_tool::file_owner(meta),
+        crate::platform::rm_tool::effective_uid(),
+    ) {
+        (Some(owner), Some(me)) => owner != me,
+        _ => false,
     }
 }
 
@@ -1113,6 +1177,17 @@ fn safe_path_now(root: &Path, path: &Path, directory: bool) -> io::Result<bool> 
 }
 
 impl WorkItem {
+    /// The path this item acts on, and whether it must be a directory.
+    fn target(&self) -> (&Path, bool) {
+        match self {
+            Self::Explore { path, .. } | Self::Delete { path, .. } => (path.as_path(), true),
+            Self::Scan { cursor, .. } | Self::Recheck { cursor, .. } => {
+                (cursor.root.as_path(), true)
+            }
+            Self::Probe { path, .. } | Self::FlatFile { path, .. } => (path.as_path(), false),
+        }
+    }
+
     fn retry_count(&self) -> u32 {
         match self {
             Self::Explore { retry, .. }
@@ -1233,6 +1308,9 @@ pub(super) struct ScanCursor {
     recent: bool,
     inconclusive: bool,
     last_failure: Option<FailureRecord>,
+    /// #2486: unremovable subtrees found by this walk and skipped.
+    #[serde(default)]
+    foreign: BTreeSet<EncodedPath>,
     /// A sorted walk can shift when a previously visited directory changes.
     /// Its old entry count then ceases to be a safe resume position.
     dir_mtimes: BTreeMap<EncodedPath, u128>,
@@ -1295,7 +1373,38 @@ impl ScanCursor {
             recent: false,
             inconclusive: false,
             last_failure: None,
+            foreign: BTreeSet::new(),
             dir_mtimes: BTreeMap::new(),
+        }
+    }
+
+    /// #2486: classify a walk entry or error as an unremovable subtree. A
+    /// directory owned by another user is skipped without descending; a
+    /// `PermissionDenied` is recorded once instead of failing the scan. Both
+    /// walks (prefix revalidation and new entries) call this, so they stay in
+    /// step.
+    fn absorb_foreign(
+        &mut self,
+        walk: &mut walkdir::IntoIter,
+        entry: &walkdir::Result<walkdir::DirEntry>,
+    ) -> bool {
+        match entry {
+            Ok(entry) => {
+                let foreign = entry.file_type().is_dir()
+                    && fs::symlink_metadata(entry.path())
+                        .is_ok_and(|meta| owned_by_other_user(&meta));
+                if foreign {
+                    self.foreign.insert(EncodedPath(entry.path().to_path_buf()));
+                    walk.skip_current_dir();
+                }
+                foreign
+            }
+            Err(err) if err.io_error().is_some_and(is_terminal_denial) => {
+                let path = err.path().unwrap_or(&self.root).to_path_buf();
+                self.foreign.insert(EncodedPath(path));
+                true
+            }
+            Err(_) => false,
         }
     }
 
@@ -1314,10 +1423,93 @@ impl ScanCursor {
         self.advance_with_touched(now, allowance, &BTreeMap::new())
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
-    )]
+    /// Every directory seen so far must be unchanged; on the first call this
+    /// records the root's own mtime. `None` means carry on walking.
+    fn check_known_dirs(&mut self, now: SystemTime) -> Option<ScanVerdict> {
+        let mut directory_error = None;
+        for (dir, expected_mtime) in &self.dir_mtimes {
+            let meta = match fs::symlink_metadata(&dir.0) {
+                Ok(meta) => meta,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    return Some(ScanVerdict::Busy)
+                }
+                Err(err) => {
+                    directory_error = Some((dir.0.clone(), err));
+                    break;
+                }
+            };
+            if !meta.is_dir() || modified_nanos(&meta) != *expected_mtime {
+                return Some(ScanVerdict::Busy);
+            }
+        }
+        if let Some((path, err)) = directory_error {
+            self.capture_error(&path, &err, now);
+            return Some(ScanVerdict::Inconclusive);
+        }
+        if self.dir_mtimes.is_empty() {
+            let meta = match fs::symlink_metadata(&self.root) {
+                Ok(meta) => meta,
+                // Gone before we started: nothing to prove idle or delete.
+                // Busy never deletes (#1672: this was retried for 8 days).
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    return Some(ScanVerdict::Busy)
+                }
+                Err(err) => {
+                    let path = self.root.clone();
+                    self.capture_error(&path, &err, now);
+                    return Some(ScanVerdict::Inconclusive);
+                }
+            };
+            if !meta.is_dir() {
+                return Some(ScanVerdict::Busy);
+            }
+            self.dir_mtimes
+                .insert(EncodedPath(self.root.clone()), modified_nanos(&meta));
+        }
+        None
+    }
+
+    /// Reopened walks must validate the prefix, not merely skip its entry
+    /// count: a file can become active without changing its parent's mtime.
+    fn revalidate_prefix(
+        &mut self,
+        walk: &mut walkdir::IntoIter,
+        now: SystemTime,
+        touched_dirs: &BTreeMap<EncodedPath, u128>,
+    ) -> Option<ScanVerdict> {
+        for _ in 0..self.examined {
+            let Some(entry) = walk.next() else {
+                return Some(ScanVerdict::Busy);
+            };
+            if self.absorb_foreign(walk, &entry) {
+                continue;
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(err) => {
+                    let path = err.path().unwrap_or(&self.root).to_path_buf();
+                    let kind = err.io_error().map_or(io::ErrorKind::Other, io::Error::kind);
+                    self.capture_error(&path, &io::Error::new(kind, err.to_string()), now);
+                    return Some(ScanVerdict::Inconclusive);
+                }
+            };
+            let meta = match fs::symlink_metadata(entry.path()) {
+                Ok(meta) => meta,
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    return Some(ScanVerdict::Busy)
+                }
+                Err(err) => {
+                    self.capture_error(entry.path(), &err, now);
+                    return Some(ScanVerdict::Inconclusive);
+                }
+            };
+            if recently_changed_unexpectedly(entry.path(), &meta, touched_dirs, now) {
+                return Some(ScanVerdict::Busy);
+            }
+        }
+        None
+    }
+
     fn advance_with_touched(
         &mut self,
         now: SystemTime,
@@ -1327,72 +1519,15 @@ impl ScanCursor {
         if allowance == 0 {
             return ScanVerdict::Pending;
         }
-        let mut directory_error = None;
-        for (dir, expected_mtime) in &self.dir_mtimes {
-            let meta = match fs::symlink_metadata(&dir.0) {
-                Ok(meta) => meta,
-                Err(err) if err.kind() == io::ErrorKind::NotFound => return ScanVerdict::Busy,
-                Err(err) => {
-                    directory_error = Some((dir.0.clone(), err));
-                    break;
-                }
-            };
-            if !meta.is_dir() || modified_nanos(&meta) != *expected_mtime {
-                return ScanVerdict::Busy;
-            }
-        }
-        if let Some((path, err)) = directory_error {
-            self.capture_error(&path, &err, now);
-            return ScanVerdict::Inconclusive;
-        }
-        if self.dir_mtimes.is_empty() {
-            let meta = match fs::symlink_metadata(&self.root) {
-                Ok(meta) => meta,
-                // Gone before we started: nothing to prove idle or delete.
-                // Busy never deletes (#1672: this was retried for 8 days).
-                Err(err) if err.kind() == io::ErrorKind::NotFound => return ScanVerdict::Busy,
-                Err(err) => {
-                    let path = self.root.clone();
-                    self.capture_error(&path, &err, now);
-                    return ScanVerdict::Inconclusive;
-                }
-            };
-            if !meta.is_dir() {
-                return ScanVerdict::Busy;
-            }
-            self.dir_mtimes
-                .insert(EncodedPath(self.root.clone()), modified_nanos(&meta));
+        if let Some(verdict) = self.check_known_dirs(now) {
+            return verdict;
         }
         let mut walk = WalkDir::new(&self.root)
             .follow_links(false)
             .min_depth(1)
             .into_iter();
-        // Reopened walks must validate the prefix, not merely skip its entry
-        // count: a file can become active without changing its parent's mtime.
-        for _ in 0..self.examined {
-            let Some(entry) = walk.next() else {
-                return ScanVerdict::Busy;
-            };
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(err) => {
-                    let path = err.path().unwrap_or(&self.root).to_path_buf();
-                    let kind = err.io_error().map_or(io::ErrorKind::Other, io::Error::kind);
-                    self.capture_error(&path, &io::Error::new(kind, err.to_string()), now);
-                    return ScanVerdict::Inconclusive;
-                }
-            };
-            let meta = match fs::symlink_metadata(entry.path()) {
-                Ok(meta) => meta,
-                Err(err) if err.kind() == io::ErrorKind::NotFound => return ScanVerdict::Busy,
-                Err(err) => {
-                    self.capture_error(entry.path(), &err, now);
-                    return ScanVerdict::Inconclusive;
-                }
-            };
-            if recently_changed_unexpectedly(entry.path(), &meta, touched_dirs, now) {
-                return ScanVerdict::Busy;
-            }
+        if let Some(verdict) = self.revalidate_prefix(&mut walk, now, touched_dirs) {
+            return verdict;
         }
         let mut unseen = walk;
         let mut processed = 0usize;
@@ -1402,6 +1537,9 @@ impl ScanCursor {
             };
             self.examined = self.examined.saturating_add(1);
             processed += 1;
+            if self.absorb_foreign(&mut unseen, &entry) {
+                continue;
+            }
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(err) => {
@@ -1444,7 +1582,9 @@ impl ScanCursor {
     fn verdict(&self) -> ScanVerdict {
         if self.inconclusive {
             ScanVerdict::Inconclusive
-        } else if self.recent {
+        } else if self.recent || !self.foreign.is_empty() {
+            // A subtree holding an unremovable part cannot be deleted whole;
+            // Busy keeps it and lets Explore reach its removable siblings.
             ScanVerdict::Busy
         } else {
             ScanVerdict::Idle
@@ -2128,7 +2268,7 @@ mod tests {
     }
 
     #[test]
-    fn unreadable_entry_metadata_is_retried_after_permission_recovers() {
+    fn unreadable_entry_metadata_is_skipped_then_reclaimed_by_a_later_pass() {
         if !crate::platform::host::UNIX {
             return;
         }
@@ -2152,21 +2292,18 @@ mod tests {
         let first = sweep_tick_at(&root, &work_path, now, false, 10).unwrap();
         crate::platform::gc_test_fs::set_mode(&root, 0o700).unwrap();
         assert!(first.failures > 0);
-        assert!(first.pending > 0, "failed entry must stay queued");
+        // #2486: denied is terminal for this pass, not retried with backoff.
+        assert_eq!(first.foreign_owned, vec![file.clone()]);
+        assert!(file.exists());
+        // The next pass starts fresh and sees the recovered permission.
         for _ in 0..10 {
-            if sweep_tick_at(&root, &work_path, now + Duration::from_secs(61), false, 10)
-                .unwrap()
-                .pending
-                == 0
-            {
-                break;
-            }
+            sweep_tick_at(&root, &work_path, now + Duration::from_secs(61), false, 10).unwrap();
         }
         assert!(!file.exists(), "permission recovery must unblock deletion");
     }
 
     #[test]
-    fn failed_scan_backs_off_without_losing_candidate() {
+    fn denied_scan_candidate_is_kept_and_reclaimed_after_recovery() {
         if !crate::platform::host::UNIX {
             return;
         }
@@ -2197,22 +2334,16 @@ mod tests {
             return;
         }
         let first = sweep_tick_at(&root, &work_path, now, false, 10).unwrap();
-        let immediate = sweep_tick_at(&root, &work_path, now, false, 10).unwrap();
         crate::platform::gc_test_fs::set_mode(&candidate, 0o700).unwrap();
-        assert!(first.failures > 0);
-        assert_eq!(
-            immediate.failures, 0,
-            "retry must back off within the same tick time"
+        // #2486: one tick marks it unremovable and retires the pass.
+        assert_eq!(first.pending, 0, "{first:?}");
+        assert_eq!(first.foreign_owned, vec![candidate.clone()]);
+        assert!(
+            candidate.exists(),
+            "a denied candidate is never deleted blind"
         );
-        assert!(immediate.retry_count >= 1);
         for _ in 0..10 {
-            if sweep_tick_at(&root, &work_path, now + Duration::from_secs(61), false, 10)
-                .unwrap()
-                .pending
-                == 0
-            {
-                break;
-            }
+            sweep_tick_at(&root, &work_path, now + Duration::from_secs(61), false, 10).unwrap();
         }
         assert!(!candidate.exists());
     }
@@ -2323,17 +2454,20 @@ mod tests {
             crate::platform::gc_test_fs::set_mode(&sealed, 0o700).unwrap();
             return; // root bypasses the permission bit
         }
-        let mut abandoned = 0;
+        let mut reported = false;
         for step in 0..60u64 {
             let at = now + Duration::from_secs(step * 61 * 60);
             let report = sweep_tick_at(&root, &work_path, at, false, 64).unwrap();
-            abandoned += report.abandoned;
+            reported |= report.foreign_owned.contains(&sealed);
             if !later.exists() {
                 break;
             }
         }
         crate::platform::gc_test_fs::set_mode(&sealed, 0o700).unwrap();
-        assert!(abandoned >= 1, "the failing item must be given up on");
+        assert!(
+            reported,
+            "the denied subtree is reported as unremovable (#2486)"
+        );
         assert!(kept.exists(), "giving up on an item spares it");
         assert!(
             !later.exists(),
@@ -2379,5 +2513,67 @@ mod tests {
             !candidate.exists(),
             "a read-only tree must not be retried forever"
         );
+    }
+
+    /// #2486: a denied subtree (root-owned Docker output) is marked
+    /// unremovable on the first hit; the same pass finishes the rest of the
+    /// tree instead of retrying it with backoff.
+    #[test]
+    fn denied_subtree_is_skipped_on_first_hit_and_the_pass_finishes() {
+        if !crate::platform::host::UNIX || crate::platform::rm_tool::effective_uid() == Some(0) {
+            return; // root ignores mode bits, so nothing can be denied
+        }
+        let temp = tempdir().unwrap();
+        let root = temp.path().join("tmp");
+        let removable = root.join("a-removable");
+        let mixed = root.join("b-mixed");
+        let denied = mixed.join("zc-cache");
+        let sibling = mixed.join("scratch");
+        for dir in [&removable, &denied, &sibling] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::write(removable.join("log"), b"old").unwrap();
+        fs::write(denied.join("blob"), b"old").unwrap();
+        fs::write(sibling.join("out"), b"old").unwrap();
+        let now = SystemTime::now();
+        for path in [
+            removable.join("log"),
+            denied.join("blob"),
+            sibling.join("out"),
+            removable.clone(),
+            denied.clone(),
+            sibling.clone(),
+            mixed.clone(),
+        ] {
+            backdate(&path, now);
+        }
+        crate::platform::gc_test_fs::set_mode(&denied, 0o000).unwrap();
+        let work_path = temp.path().join("state/work.json");
+        let mut last = None;
+        // Same instant every tick: a backoff retry could never fire, so the
+        // pass only completes if the denied subtree is terminal.
+        for _ in 0..10 {
+            let report =
+                sweep_tick_with_quantum(&root, &work_path, now, false, 10_000, 10_000).unwrap();
+            let done = report.pending == 0;
+            last = Some(report);
+            if done {
+                break;
+            }
+        }
+        crate::platform::gc_test_fs::set_mode(&denied, 0o700).unwrap();
+        let report = last.unwrap();
+        assert_eq!(report.pending, 0, "the pass must retire");
+        assert!(
+            !removable.exists(),
+            "unrelated stale tree is still reclaimed"
+        );
+        assert!(
+            !sibling.exists(),
+            "a removable sibling of the denied dir goes"
+        );
+        assert!(denied.exists(), "the denied subtree is kept");
+        assert_eq!(report.foreign_owned, vec![denied]);
+        assert_eq!(report.abandoned, 0, "skipped, not retried until abandoned");
     }
 }
