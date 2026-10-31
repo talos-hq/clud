@@ -42,6 +42,16 @@ inputs:
       the immutable key.
     required: false
     default: auto
+  s3-access-key:
+    description: >
+      secrets.SOLDR_S3_CACHE_ACCESS_KEY. A composite action cannot read
+      secrets, so callers forward it; empty disables the remote S3 build cache.
+    required: false
+    default: ""
+  s3-secret-key:
+    description: secrets.SOLDR_S3_CACHE_SECRET_KEY (see s3-access-key).
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -87,9 +97,15 @@ runs:
         # runner IP, shared by every concurrent job, which returns 403 and fails
         # the build even when a usable maturin is already cached.
         SOLDR_GITHUB_TOKEN: ${{ inputs.soldr-token }}
+        # Remote S3 build cache credentials; absent secrets disable it.
+        SOLDR_S3_CACHE_ACCESS_KEY: ${{ inputs.s3-access-key }}
+        SOLDR_S3_CACHE_SECRET_KEY: ${{ inputs.s3-secret-key }}
       with:
         toolchain: ${{ inputs.toolchain }}
         cache: true
+        # Remote S3 build cache: bucket forge-ci-cache in DigitalOcean Spaces sfo3.
+        s3-bucket: forge-ci-cache
+        s3-endpoint: sfo3.digitaloceanspaces.com
         # `auto` saves only on the default branch: a PR, branch dispatch or
         # tag entry is ref-scoped, so nothing else could restore it
         # (zackees/setup-soldr#587). Locally (act) it saves fully.
