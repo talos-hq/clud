@@ -34,7 +34,7 @@ fn fake(
                 Ok(match r.prompt.as_str() {
                     "review bugs" => json!({"findings": ["a", "b"]}),
                     "review perf" => json!({"findings": ["c"]}),
-                    p if p == "verify b" => json!("noise"),
+                    "verify b" => json!("noise"),
                     _ => json!("real"),
                 })
             })

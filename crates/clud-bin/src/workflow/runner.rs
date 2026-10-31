@@ -41,8 +41,7 @@ pub fn parse_agent_result(raw: &str, want_schema: bool, exit_code: i32) -> Resul
     let result = raw
         .lines()
         .filter_map(|line| serde_json::from_str::<Value>(line.trim()).ok())
-        .filter(|v| v.get("type").and_then(Value::as_str) == Some("result"))
-        .last();
+        .rfind(|v| v.get("type").and_then(Value::as_str) == Some("result"));
     let Some(result) = result else {
         return Err(format!("agent exited {exit_code} without a result event"));
     };

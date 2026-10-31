@@ -1221,7 +1221,11 @@ fn emit_workflow_response(table_path: &str, args: &[String]) {
             .position(|a| a == "--json-schema")
             .and_then(|i| args.get(i + 1))
             .cloned();
-        let _ = writeln!(calls, "{}", serde_json::json!({"prompt": prompt, "schema": schema}));
+        let _ = writeln!(
+            calls,
+            "{}",
+            serde_json::json!({"prompt": prompt, "schema": schema})
+        );
     }
     let mut result = serde_json::json!({
         "type": "result",
@@ -1237,7 +1241,11 @@ fn emit_workflow_response(table_path: &str, args: &[String]) {
     }
     let out = io::stdout();
     let mut out = out.lock();
-    let _ = writeln!(out, "{}", serde_json::json!({"type": "system", "subtype": "init", "model": "mock"}));
+    let _ = writeln!(
+        out,
+        "{}",
+        serde_json::json!({"type": "system", "subtype": "init", "model": "mock"})
+    );
     let _ = writeln!(out, "{result}");
     let _ = out.flush();
     std::process::exit(0);
