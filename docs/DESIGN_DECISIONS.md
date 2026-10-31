@@ -7440,3 +7440,22 @@ shell, and a monitored agent call gives the same guarantee plus the DD-192
 self-serve retries. Feature-stage goal PRs still merge synchronously into the
 feature branch, which has no queue.
 
+
+## DD-196: an unremovable session-tmp subtree is skipped on the first hit
+
+**Context:** #2486: `~/.clud/tmp` held 69 GB and the sweep had reclaimed
+149 MB in 15 hours. A `root`-owned `drwx------` zccache directory, left by a
+Docker bind mount inside a scratchpad, made each `Scan` of its ancestors
+inconclusive. DD-142's retry bound still let it hold the queue for about
+36 minutes per item and kept every ancestor out of reach of the scan.
+
+**Decision:** a directory owned by another uid, or any path that returns
+`PermissionDenied`, is terminal on the first hit. The scan skips the subtree
+and keeps the enclosing tree (`Busy`), so its removable siblings are still
+explored and swept. The path is recorded in the pass's `foreign_owned` set
+and shown by `clud gc list` with the `sudo rm -rf` / `docker run --rm alpine
+rm` command that removes it.
+
+**Why not retry:** the running user cannot gain permission on a `root` tree,
+so a retry only spends the pass's time. A later pass re-derives the list from
+disk, so a fixed permission is picked up within one cadence.

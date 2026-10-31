@@ -611,10 +611,17 @@ period of repeated failure without progress emits a nonfatal persistent-failure 
 that fails `MAX_ITEM_RETRIES` (8, about 36 minutes of backoff) times in a row is dropped from
 the queue and so spared; the next pass re-derives it from disk. A candidate that no longer exists
 completes instead of failing. Owner-writable read-only directories inside an idle candidate are
-made writable (`chmod u+wx`) and the unlink retried once; foreign-owned files still fail and are
+made writable (`chmod u+wx`) and the unlink retried once; foreign-owned paths are skipped, see below, not
 abandoned. Without the bound, one root-owned file kept the queue non-empty, a new pass never
 started, and nothing that went stale later was ever looked at (#1672,
-[DD-142](../DESIGN_DECISIONS.md#dd-142-a-session-tmp-sweep-pass-always-retires)). `daemon-events.jsonl` records per-tick examined entries, files and
+[DD-142](../DESIGN_DECISIONS.md#dd-142-a-session-tmp-sweep-pass-always-retires)).
+**Unremovable subtrees (#2486).** A directory owned by another uid (typically `root` output of a
+Docker bind mount into a scratchpad) or any path that returns `PermissionDenied` is terminal on the
+first hit: the scan skips it without descending, its ancestor is kept (`Busy`) so Explore still
+reaches removable siblings, and the path goes into the pass's `foreign_owned` set instead of the
+backoff queue. A finished pass writes the list to `~/.clud/state/session-tmp-foreign-owned.json`;
+`clud gc list` prints each path with a `sudo rm -rf` and a `docker run --rm -v <parent>:/x alpine
+rm -rf /x/<name>` command. The next pass re-derives the list from disk. `daemon-events.jsonl` records per-tick examined entries, files and
 directories removed, reclaimed apparent bytes, pending phases, retry count, work age, and the
 last error path/class, current phase/path, and cursor position. An exclusive lock prevents
 concurrent daemons from overwriting the continuation queue.
