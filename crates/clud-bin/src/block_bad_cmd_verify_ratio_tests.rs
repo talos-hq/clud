@@ -532,3 +532,18 @@ fn pruning_ledgers_never_removes_a_sessions_lock() {
     assert!(!ledger.exists(), "old ledger is pruned");
     assert!(lock.exists(), "lock survives the prune");
 }
+
+#[test]
+fn posting_text_that_mentions_lint_is_not_a_lint_run_2470() {
+    let cmd = "printf 'ran bash lint && cargo clippy --workspace; all green\\n' | gh issue comment 2033 --body-file -";
+    assert_eq!(classify("Bash", cmd), None);
+    assert!(!is_workspace_lint(Kind::Other, cmd));
+    assert_eq!(
+        classify("Bash", "echo \"bash lint\" && bash lint"),
+        Some(Class::Verify)
+    );
+    assert_eq!(
+        classify("Bash", "bash -c \"cargo clippy --workspace\""),
+        Some(Class::Verify)
+    );
+}
