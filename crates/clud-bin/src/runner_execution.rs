@@ -48,6 +48,7 @@ pub(super) fn run_with_stream_json_renderer(
     interrupted: &AtomicBool,
     captured_output: &mut String,
     batch_wrapped: bool,
+    iteration: u32,
 ) -> ProcessOutcome {
     use running_process::ReadStatus;
     use std::time::Duration;
@@ -74,6 +75,10 @@ pub(super) fn run_with_stream_json_renderer(
                 break;
             }
         }
+    }
+    let summary = stream_json::IterationSummary::from_output(captured_output);
+    if summary != stream_json::IterationSummary::default() {
+        eprintln!("{}", summary.render_panel(iteration));
     }
 
     match process.wait(Some(Duration::from_secs(2))) {

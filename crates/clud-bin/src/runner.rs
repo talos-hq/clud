@@ -888,6 +888,7 @@ pub fn run_plan_subprocess(
                 interrupted,
                 &mut captured_output,
                 batch_wrapped,
+                iter_num,
             )
         } else {
             run_with_inherited_stdio(&process, interrupted, batch_wrapped)
