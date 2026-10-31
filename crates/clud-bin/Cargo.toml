@@ -108,6 +108,9 @@ zip = { version = "9.0.3", default-features = false, features = ["deflate"] }
 vt100 = "0.16"
 vte = "0.15"
 wasmi = "0.40.0"
+# Embedded QuickJS engine for `clud workflow` scripts (Anthropic workflow
+# format: export const meta + agent/parallel/pipeline/phase), #2471.
+rquickjs = { version = "0.9", features = ["futures", "macro", "loader"] }
 walkdir = "2"
 which = "7"
 # Issue #183: in-process HTTP listener for the `clud ui` dashboard.
