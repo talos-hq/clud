@@ -1190,8 +1190,7 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
         task,
         message: Some(message),
         ..
-    }) = &args.command
-        && !args.dry_run
+    }) = args.command.as_ref().filter(|_| !args.dry_run)
     {
         let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let git_root = clud::loop_spec::git_root_from(&cwd);
