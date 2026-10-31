@@ -333,6 +333,19 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
         args::Command::InternalOpenAiResponsesTranslate => {
             clud::responses_ingress::run_translate_stdin()
         }
+        args::Command::InternalXaiDeviceLogin {
+            discovery_url,
+            device_endpoint,
+            token_endpoint,
+            interval_ms,
+            max_poll_ms,
+        } => clud::xai_auth::run_seam(&clud::xai_auth::SeamArgs {
+            discovery_url: discovery_url.as_deref(),
+            device_endpoint: device_endpoint.as_deref(),
+            token_endpoint: token_endpoint.as_deref(),
+            interval_ms: *interval_ms,
+            max_poll_ms: *max_poll_ms,
+        }),
         // Hidden test seam for Kimi Code's device-authorization login: no
         // session, backend, or daemon, and it never prints a token.
         args::Command::InternalKimiDeviceLogin {
