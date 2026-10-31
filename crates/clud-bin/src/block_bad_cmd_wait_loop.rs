@@ -17,7 +17,7 @@ use crate::shell_ast::{Invocation, Script};
 pub(super) const WAIT_LOOP_RULE_ID: &str = "hand-written-wait";
 
 /// The replacement every refusal names verbatim.
-pub(super) const WAIT_REPLACEMENT: &str = "Never poll; wait on the real completion: run_in_background plus its completion notification, a persistent exec_command session via write_stdin, or a waiter with its own deadline (`clud ci`, `bosn ci run --wait`, `pr_merge_watch`).";
+pub(super) const WAIT_REPLACEMENT: &str = "Never poll. Choose by declared capabilities, not the tool name: an exec_command session via write_stdin (empty input, same session, until exit); run_in_background plus its completion notification; or a bounded foreground waiter with its own deadline (`clud ci`, `bosn ci run --wait`, `pr_merge_watch`). If unsure, probe a harmless local process.";
 
 /// Longest `sleep` allowed outside a loop and not chained to a status poll.
 const MAX_STANDALONE_SLEEP_SECS: f64 = 60.0;
