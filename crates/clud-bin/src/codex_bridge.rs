@@ -1270,6 +1270,25 @@ fn route_request(
         ("POST", "/v1/chat/completions") => {
             route_chat_completions(stream, connection, &mut parsed, conversation_key);
         }
+        // Gemini names its verb in the path, so this is a prefix route rather
+        // than a literal one. A path under the prefix with an unknown verb is
+        // still a Gemini client talking to us: answer it in Gemini's shape
+        // instead of dropping it into the generic 404.
+        ("POST", path) if path.starts_with(GEMINI_ROUTE_PREFIX) => {
+            match parse_generate_content_route(path) {
+                Some(call) => {
+                    route_generate_content(stream, connection, &mut parsed, &call, conversation_key)
+                }
+                None => {
+                    record_rejection(log, 404, "unrouted_generate_content");
+                    refuse_gemini(
+                        stream,
+                        404,
+                        "the path must be /v1beta/models/<model>:generateContent or :streamGenerateContent",
+                    );
+                }
+            }
+        }
         _ => {
             if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
                 eprintln!(
@@ -1509,8 +1528,109 @@ fn route_chat_completions(
         &parsed.headers,
         log,
         connection.cache_health,
-        Some(ChatTranslation { model: &model }),
+        Some(ChatTranslation {
+            model: &model,
+            dialect: ClientDialect::OpenAi,
+        }),
     );
+}
+
+/// One Gemini `generateContent` call, as named by its URL.
+///
+/// Gemini puts the verb in the path (`/v1beta/models/<model>:generateContent`),
+/// not in the body, so the route has to read it before the body is parsed. The
+/// model is whatever the caller named -- clud resolves it exactly as it would a
+/// Messages `model` (catalog id, `@effort`, `(budget)` suffix), so a client is
+/// expected to name a clud-routable model rather than a Google one: clud has no
+/// Gemini provider, only Gemini-shaped framing over its own ladder.
+#[derive(Debug, PartialEq, Eq)]
+struct GeminiCall<'a> {
+    model: &'a str,
+    stream: bool,
+}
+
+const GEMINI_ROUTE_PREFIX: &str = "/v1beta/models/";
+
+fn parse_generate_content_route(path: &str) -> Option<GeminiCall<'_>> {
+    let rest = path.strip_prefix(GEMINI_ROUTE_PREFIX)?;
+    let (model, verb) = rest.rsplit_once(':')?;
+    let model = model.trim();
+    if model.is_empty() {
+        return None;
+    }
+    let stream = match verb {
+        "generateContent" => false,
+        "streamGenerateContent" => true,
+        _ => return None,
+    };
+    Some(GeminiCall { model, stream })
+}
+
+/// `POST /v1beta/models/<model>:generateContent` — a Gemini-shaped turn.
+///
+/// CLIProxyAPI serves this path from `internal/api/server_routes.go` and
+/// translates it in `internal/translator/claude/gemini/`. clud has no Gemini
+/// provider, so the same door is opened over clud's existing ladder: the body
+/// becomes a Messages request (`gemini_client_ingress`), the unified route
+/// serves it, and the answer is rendered back as a `GenerateContentResponse`.
+/// Additive only: no route in the ladder learns a second protocol and the
+/// launch-scoped gateway contract is untouched.
+fn route_generate_content(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    call: &GeminiCall<'_>,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    config.turn_requests.fetch_add(1, Ordering::Release);
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    if !matches!(config.gateway_mode, GatewayMode::Unified(_)) {
+        record_rejection(log, 501, "generate_content_unsupported");
+        refuse_gemini(
+            stream,
+            501,
+            "POST /v1beta/models/<model>:generateContent needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    }
+    let translated = match crate::gemini_client_ingress::translate_generate_content_request(
+        call.model,
+        call.stream,
+        &body,
+    ) {
+        Ok(translated) => translated,
+        Err(error) => {
+            record_rejection(log, 400, "untranslatable_request");
+            refuse_gemini(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let translated = serde_json::to_vec(&translated).unwrap_or_default();
+    serve_unified_messages(
+        stream,
+        config,
+        connection.shutdown,
+        connection.conversations,
+        &translated,
+        call.stream,
+        conversation_key,
+        &parsed.headers,
+        log,
+        connection.cache_health,
+        Some(ChatTranslation {
+            model: call.model,
+            dialect: ClientDialect::Gemini,
+        }),
+    );
+}
+
+/// Answer a refused `generateContent` turn in the shape its client speaks.
+fn refuse_gemini(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::gemini_client_ingress::render_generate_content_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
 /// Answer a refused `/v1/chat/completions` turn in the shape its client speaks.
@@ -1521,13 +1641,26 @@ fn refuse_chat(stream: &mut TcpStream, status: u16, message: &str) {
     let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
-/// The client shape a translated `/v1/chat/completions` turn is answered in.
+/// The client shape a translated turn is answered in.
 ///
-/// `model` is whatever the client asked for: OpenAI's reply echoes it, and a
-/// provider that renames the wire model must not leak that name back.
+/// clud routes and credentials speak Anthropic Messages. A caller that speaks
+/// another dialect is translated in at the door and back out at the response,
+/// so the same route ladder serves `/v1/chat/completions` (OpenAI) and
+/// `/v1beta/models/<model>:generateContent` (Gemini).
+///
+/// `model` is whatever the client asked for: OpenAI's reply echoes it and
+/// Gemini's `modelVersion` names it, so a provider that renames the wire model
+/// must not leak that name back.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClientDialect {
+    OpenAi,
+    Gemini,
+}
+
 #[derive(Clone, Copy)]
 struct ChatTranslation<'a> {
     model: &'a str,
+    dialect: ClientDialect,
 }
 
 /// `GET /_clud/route/status` -- the configured ladder and each route's health.
@@ -2667,9 +2800,10 @@ fn serve_unified_anthropic_proxy(
             // A served caller's credential problem is reported in the shape its
             // client speaks; an OpenAI chat caller cannot parse the Anthropic
             // envelope.
-            if chat.is_some() {
-                return write_chat_error(
+            if let Some(chat) = chat {
+                return write_client_error(
                     stream,
+                    chat.dialect,
                     503,
                     "the served backend has no usable upstream credential",
                     idle_timeout,
@@ -3078,7 +3212,12 @@ fn serve_anthropic_proxy(
     };
     let status = response.status();
     if target.sanitize_errors && status >= 400 && !probe {
-        return write_sanitized_failure(stream, status, target.chat.is_some(), idle_timeout);
+        return write_sanitized_failure(
+            stream,
+            status,
+            target.chat.map(|c| c.dialect),
+            idle_timeout,
+        );
     }
     let content_type = response
         .header("content-type")
@@ -3220,14 +3359,15 @@ fn relay_translated_chat(
         let message = format!(
             "upstream response exceeded the {TRANSLATED_BODY_LIMIT}-byte translation buffer"
         );
-        return write_chat_error(stream, 502, &message, idle_timeout);
+        return write_client_error(stream, chat.dialect, 502, &message, idle_timeout);
     }
     let restored = match redaction {
         Some(session) => match restore_response(&body, session) {
             Ok(restored) => restored,
             Err(_) => {
-                return write_chat_error(
+                return write_client_error(
                     stream,
+                    chat.dialect,
                     502,
                     "upstream response could not be restored for the client",
                     idle_timeout,
@@ -3240,24 +3380,52 @@ fn relay_translated_chat(
         // The upstream's own failure: keep its status, but in the client's
         // shape, with whatever the upstream said as the message.
         let message = upstream_error_message(&restored);
-        return write_chat_error(stream, status, &message, idle_timeout);
+        return write_client_error(stream, chat.dialect, status, &message, idle_timeout);
     }
-    let (out_status, out_type, payload) = if chat_stream {
-        (
+    let (out_status, out_type, payload) = match (chat.dialect, chat_stream) {
+        (ClientDialect::OpenAi, true) => (
             200,
             "text/event-stream",
             crate::openai_ingress::render_chat_stream(chat.model, &restored),
-        )
-    } else {
-        match crate::openai_ingress::render_chat_body(chat.model, &restored) {
-            Ok(payload) => (200, "application/json", payload),
-            Err(error) => {
-                return write_chat_error(
-                    stream,
-                    502,
-                    &format!("upstream response was not a Messages body: {error}"),
-                    idle_timeout,
-                );
+        ),
+        (ClientDialect::OpenAi, false) => {
+            match crate::openai_ingress::render_chat_body(chat.model, &restored) {
+                Ok(payload) => (200, "application/json", payload),
+                Err(error) => {
+                    return write_client_error(
+                        stream,
+                        chat.dialect,
+                        502,
+                        &format!("upstream response was not a Messages body: {error}"),
+                        idle_timeout,
+                    );
+                }
+            }
+        }
+        // A Gemini client asked for one `GenerateContentResponse` (or an SSE
+        // stream of chunks). Its rendered bytes are the body the route writes,
+        // exactly as the OpenAI half renders a `chat.completion`.
+        (ClientDialect::Gemini, true) => (
+            200,
+            "text/event-stream",
+            crate::gemini_client_ingress::render_generate_content_stream(chat.model, &restored),
+        ),
+        (ClientDialect::Gemini, false) => {
+            match crate::gemini_client_ingress::translate_messages_response(chat.model, &restored) {
+                Ok(translated) => (
+                    200,
+                    "application/json",
+                    serde_json::to_vec(&translated).unwrap_or_default(),
+                ),
+                Err(error) => {
+                    return write_client_error(
+                        stream,
+                        chat.dialect,
+                        502,
+                        &format!("upstream response was not a Messages body: {error}"),
+                        idle_timeout,
+                    );
+                }
             }
         }
     };
@@ -3328,12 +3496,13 @@ fn upstream_error_message(body: &[u8]) -> String {
 fn write_sanitized_failure(
     stream: &mut TcpStream,
     status: u16,
-    chat: bool,
+    dialect: Option<ClientDialect>,
     idle_timeout: Duration,
 ) -> ProxyOutcome {
-    if chat {
-        return write_chat_error(
+    if let Some(dialect) = dialect {
+        return write_client_error(
             stream,
+            dialect,
             status,
             "the upstream route refused this turn",
             idle_timeout,
@@ -3343,14 +3512,23 @@ fn write_sanitized_failure(
     ProxyOutcome::local(status)
 }
 
-/// Write one OpenAI error envelope and close the connection.
-fn write_chat_error(
+/// Write one client-dialect error envelope and close the connection.
+///
+/// The status is preserved (the client's retry logic keys on it); only the
+/// envelope shape follows the dialect the caller asked for.
+fn write_client_error(
     stream: &mut TcpStream,
+    dialect: ClientDialect,
     status: u16,
     message: &str,
     idle_timeout: Duration,
 ) -> ProxyOutcome {
-    let payload = crate::openai_ingress::render_chat_error(status, message);
+    let payload = match dialect {
+        ClientDialect::OpenAi => crate::openai_ingress::render_chat_error(status, message),
+        ClientDialect::Gemini => {
+            crate::gemini_client_ingress::render_generate_content_error(status, message)
+        }
+    };
     let head = ProxyResponseHead {
         status,
         content_type: "application/json",
@@ -12701,4 +12879,78 @@ Connection: close
         let (out_body, _) = super::strip_advisor_capability(raw, &[]);
         assert_eq!(out_body, raw.to_vec());
     }
+}
+
+/// Gemini names its verb in the path, so the path is the route: these pin the
+/// grammar a Gemini-native client actually sends, and the ways a near-miss must
+/// NOT be mistaken for a call.
+#[test]
+fn generate_content_route_reads_the_verb_out_of_the_path() {
+    assert_eq!(
+        parse_generate_content_route("/v1beta/models/claude-test:generateContent"),
+        Some(GeminiCall {
+            model: "claude-test",
+            stream: false
+        })
+    );
+    assert_eq!(
+        parse_generate_content_route("/v1beta/models/claude-test:streamGenerateContent"),
+        Some(GeminiCall {
+            model: "claude-test",
+            stream: true
+        })
+    );
+    // A clud model carries its own suffix grammar, and `rsplit_once` keeps the
+    // model intact even when the caller names one with a colon-free suffix.
+    assert_eq!(
+        parse_generate_content_route("/v1beta/models/clud-claude-sonnet@high:generateContent"),
+        Some(GeminiCall {
+            model: "clud-claude-sonnet@high",
+            stream: false
+        })
+    );
+}
+
+#[test]
+fn generate_content_route_refuses_everything_that_is_not_a_generate_call() {
+    for path in [
+        "/v1beta/models/",
+        "/v1beta/models/:generateContent",
+        "/v1beta/models/claude-test",
+        "/v1beta/models/claude-test:countTokens",
+        "/v1beta/models/claude-test:generateContent/extra",
+        "/v1/messages",
+    ] {
+        assert_eq!(
+            parse_generate_content_route(path),
+            None,
+            "{path} must not parse as a generateContent call"
+        );
+    }
+}
+
+/// A refusal on this route has to be readable by a Gemini client: the HTTP
+/// status is preserved (retry logic keys on it) and the envelope names it.
+#[test]
+fn a_gemini_refusal_keeps_the_status_and_speaks_the_gemini_envelope() {
+    let envelope = crate::gemini_client_ingress::render_generate_content_error(
+        400,
+        "candidateCount above 1 is not supported",
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&envelope).unwrap();
+    assert_eq!(parsed["error"]["code"], 400);
+    assert_eq!(parsed["error"]["status"], "INVALID_ARGUMENT");
+    assert!(
+        parsed["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("candidateCount"),
+        "{parsed}"
+    );
+    let throttled: serde_json::Value = serde_json::from_slice(
+        &crate::gemini_client_ingress::render_generate_content_error(429, "slow down"),
+    )
+    .unwrap();
+    assert_eq!(throttled["error"]["status"], "RESOURCE_EXHAUSTED");
+    assert_eq!(throttled["error"]["code"], 429);
 }

@@ -548,3 +548,184 @@ def test_serve_codex_missing_credentials_is_actionable(
     assert result.returncode == 2
     assert "clud auth login codex" in result.stderr
     assert "ANTHROPIC_API_KEY" not in result.stderr
+
+
+def test_serve_answers_gemini_generate_content(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The durable serve surface accepts and answers Gemini's generateContent.
+
+    CLIProxyAPI serves `/v1beta/models/<model>:generateContent`; clud has no
+    Gemini provider, so the door opens over its own ladder: the body is
+    translated into Messages, routed, and rendered back as a Gemini response.
+    Both framings are exercised because the verb lives in the path. This test
+    brings its own fake upstream so it can answer with a well-formed text SSE
+    stream (the shared fixture streams a tool call that never stops).
+    """
+    import http.server
+    import http.client
+    import json
+    import signal
+    import threading
+    from urllib.parse import urlsplit
+
+    message = {
+        "id": "msg_test",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-test",
+        "content": [{"type": "text", "text": "claude"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+    stream = (
+        b'event: message_start\ndata: {"type":"message_start","message":'
+        b'{"id":"msg_test","type":"message","role":"assistant","model":"claude-test",'
+        b'"content":[],"usage":{"input_tokens":1,"output_tokens":0}}}\n\n'
+        b'event: content_block_start\ndata: {"type":"content_block_start","index":0,'
+        b'"content_block":{"type":"text","text":""}}\n\n'
+        b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,'
+        b'"delta":{"type":"text_delta","text":"claude"}}\n\n'
+        b'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'
+        b'event: message_delta\ndata: {"type":"message_delta",'
+        b'"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n'
+        b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+    )
+    requests: list[dict] = []
+    owner = type("Fake", (), {})()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+        def do_POST(self) -> None:
+            size = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(size))
+            requests.append(body)
+            payload = stream if body.get("stream") else json.dumps(message).encode()
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "text/event-stream" if body.get("stream") else "application/json",
+            )
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    owner.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    owner.thread = threading.Thread(target=owner.server.serve_forever, daemon=True)
+    owner.thread.start()
+    upstream = f"https://127.0.0.1:{owner.server.server_port}"
+
+    client_token = "local-client-token-0123456789abcdef"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    env = mock_env.copy()
+    env.update(
+        {
+            "CLUD_INTEGRATION_TESTS": "1",
+            "CLUD_TEST_SECRET_STORE_DIR": str(vault),
+            "CLUD_SERVE_CLIENT_TOKEN": client_token,
+            "ANTHROPIC_API_KEY": "claude-upstream-canary",
+            "CLUD_TEST_GATEWAY_PLAINTEXT_TLS": "1",
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
+            # The test-upstream override is all-or-nothing, so every route
+            # points at this fake even though only Claude is exercised.
+            "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": upstream,
+            "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": upstream,
+            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": upstream,
+            "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": upstream,
+        }
+    )
+    child = process.Popen(
+        [str(clud_binary), "serve", "--claude", "--port", "0"],
+        env=env,
+        stdout=process.PIPE,
+        stderr=process.PIPE,
+        text=True,
+        creationflags=process.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        line = child.next_stdout(timeout=60)
+        assert isinstance(line, str), (line, child.poll())
+        assert "listening at " in line, (line, child.poll())
+        assert client_token not in line
+        address = urlsplit(line.strip().split("listening at ", 1)[1])
+        assert address.hostname is not None
+
+        def call(verb: str, body: dict):
+            connection = http.client.HTTPConnection(address.hostname, address.port, timeout=20)
+            connection.request(
+                "POST",
+                f"/v1beta/models/claude-test:{verb}",
+                body=json.dumps(body),
+                headers={"x-api-key": client_token, "content-type": "application/json"},
+            )
+            response = connection.getresponse()
+            data = response.read()
+            connection.close()
+            return response, data
+
+        gemini_body = {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
+        }
+        response, data = call("generateContent", gemini_body)
+        assert response.status == 200, data
+        payload = json.loads(data)
+        assert payload["candidates"][0]["content"]["parts"][0]["text"] == "claude", payload
+        assert payload["candidates"][0]["finishReason"] == "STOP", payload
+        assert payload["modelVersion"] == "claude-test", payload
+        # What reached the backend was a Messages request, not the Gemini shape.
+        upstream_body = requests[-1]
+        assert upstream_body["messages"][0]["role"] == "user", upstream_body
+        assert "contents" not in upstream_body, upstream_body
+        assert upstream_body["temperature"] == 0.2, upstream_body
+        assert upstream_body["max_tokens"] == 512, upstream_body
+
+        response, data = call("streamGenerateContent", gemini_body)
+        assert response.status == 200, data
+        frames = [
+            json.loads(chunk.split("data: ", 1)[1])
+            for chunk in data.decode().split("\n\n")
+            if chunk.strip().startswith("data: ")
+        ]
+        assert frames, data
+        text = "".join(
+            part["text"]
+            for frame in frames
+            for part in frame["candidates"][0]["content"].get("parts", [])
+            if "text" in part
+        )
+        assert text == "claude", frames
+        assert frames[-1]["candidates"][0].get("finishReason") == "STOP", frames
+        assert requests[-1]["stream"] is True, requests[-1]
+
+        # A verb this route does not serve is answered in Gemini's own shape,
+        # not the generic Anthropic 404 envelope.
+        connection = http.client.HTTPConnection(address.hostname, address.port, timeout=15)
+        connection.request(
+            "POST",
+            "/v1beta/models/claude-test:countTokens",
+            body=json.dumps(gemini_body),
+            headers={"x-api-key": client_token, "content-type": "application/json"},
+        )
+        response = connection.getresponse()
+        data = response.read()
+        connection.close()
+        assert response.status == 404, data
+        assert json.loads(data)["error"]["status"] == "NOT_FOUND", data
+
+        child.send_signal(signal.SIGINT)
+        assert child.wait(timeout=15) == 0
+        stderr = child.stderr.read()
+        assert client_token not in stderr
+        assert "claude-upstream-canary" not in stderr
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=15)
+        owner.server.shutdown()
+        owner.server.server_close()
+        owner.thread.join(timeout=5)

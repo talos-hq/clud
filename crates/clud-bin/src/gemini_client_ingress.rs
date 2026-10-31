@@ -1403,6 +1403,33 @@ impl GeminiClientStreamTranslator {
     }
 }
 
+/// The bytes a route writes to refuse a `generateContent` call.
+///
+/// Gemini clients read `error.code` + `error.status`; the HTTP status is
+/// preserved from the caller's contract (a 429 stays a 429) and only the name
+/// follows it, so a client's own retry logic keeps working.
+pub fn render_generate_content_error(status: u16, message: &str) -> Vec<u8> {
+    let name = match status {
+        400 => "INVALID_ARGUMENT",
+        401 => "UNAUTHENTICATED",
+        403 => "PERMISSION_DENIED",
+        404 => "NOT_FOUND",
+        429 => "RESOURCE_EXHAUSTED",
+        501 => "UNIMPLEMENTED",
+        503 => "UNAVAILABLE",
+        504 => "DEADLINE_EXCEEDED",
+        _ => "INTERNAL",
+    };
+    let error = json!({
+        "error": {
+            "code": status,
+            "message": message,
+            "status": name,
+        }
+    });
+    serde_json::to_vec(&error).unwrap_or_default()
+}
+
 /// The Gemini error envelope upstream emits for a failed translation.
 fn gemini_error_response(message: &str) -> Value {
     json!({
