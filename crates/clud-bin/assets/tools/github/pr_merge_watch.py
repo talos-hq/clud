@@ -3983,16 +3983,43 @@ def fetch_queue_state(repo: str, pr: int) -> QueueState | None:
     return parse_queue_state(data)
 
 
-def merge_group_failure(jobs_by_run: list[tuple[dict, list[dict]]], required: set[str] | None) -> str | None:
-    """The first required failed job on the queue's commit, as `workflow / job`."""
+def failed_merge_group_job(
+    jobs_by_run: list[tuple[dict, list[dict]]], required: set[str] | None,
+) -> tuple[dict, dict] | None:
+    """The first required failed job on the queue's commit, with its run."""
     for run, jobs in jobs_by_run:
         for job in jobs:
             conclusion = _lower(job.get("conclusion"))
             name = str(job.get("name") or "")
             if conclusion not in MERGE_GROUP_FAILURES or (required and name not in required):
                 continue
-            return f"{run.get('name') or 'workflow'} / {name}: {conclusion} {job.get('html_url') or ''}".rstrip()
+            return run, job
     return None
+
+
+def merge_group_failure(jobs_by_run: list[tuple[dict, list[dict]]], required: set[str] | None) -> str | None:
+    """The first required failed job on the queue's commit, as `workflow / job`."""
+    found = failed_merge_group_job(jobs_by_run, required)
+    if found is None:
+        return None
+    run, job = found
+    conclusion = _lower(job.get("conclusion"))
+    name = str(job.get("name") or "")
+    return f"{run.get('name') or 'workflow'} / {name}: {conclusion} {job.get('html_url') or ''}".rstrip()
+
+
+def merge_group_cause(repo: str, run: dict, job: dict) -> str:
+    """The ejecting job's first error line, so no follow-up log read is needed."""
+    first_err, _label, unavailable = classify_failure_explained(
+        repo, _id_text(run.get("id")), _id_text(job.get("id")),
+    )
+    if first_err:
+        return f"\n  first error: {first_err}"
+    return f"\n  log unavailable: {unavailable}" if unavailable else ""
+
+
+def _id_text(value: object) -> str | None:
+    return str(value) if value not in (None, "") else None
 
 
 def fetch_merge_group_jobs(
@@ -4068,8 +4095,13 @@ def _merge_group_verdict(repo: str, q: QueueState, seen: MergeFollow) -> tuple[i
     if not seen.required_read:
         seen.required = fetch_required_check_names(repo, q.base_ref) if q.base_ref else None
         seen.required_read = True
-    failed = merge_group_failure(fetch_merge_group_jobs(repo, q.queue_sha, q.enqueued_at), seen.required)
-    return (EXIT_EJECTED, f"required merge-group check failed: {failed}") if failed else None
+    jobs = fetch_merge_group_jobs(repo, q.queue_sha, q.enqueued_at)
+    failed = merge_group_failure(jobs, seen.required)
+    if not failed:
+        return None
+    run, job = failed_merge_group_job(jobs, seen.required) or ({}, {})
+    cause = merge_group_cause(repo, run, job)
+    return EXIT_EJECTED, f"required merge-group check failed: {failed}{cause}"
 
 
 _UNTIL_MERGED_LABELS = {
