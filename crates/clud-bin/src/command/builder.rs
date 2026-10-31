@@ -402,6 +402,22 @@ fn land_instructions(args: &Args) -> &'static str {
 /// agent tries them: a refused call still costs a full round trip (#2354).
 pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refused call is a wasted round trip): never wait with a while/until/sleep loop, `watch` or `tail -f`, in Bash or Monitor; use run_in_background and its completion notification, or a tool with its own deadline (pr_merge_watch, clud ci). Prefer `(cd DIR && CMD)` or absolute paths over a bare `cd`. Run one GitHub mutation (push, PR create, merge, issue or API write) per call.";
 
+/// Bounded diagnostics for the two reads agents repeat most: whole GitHub
+/// threads and whole noisy test logs. Both bundled tools keep the complete
+/// data in a private artifact and print a byte-capped view, so the same
+/// guidance applies to every backend and to both loop and one-shot runs
+/// (#2233). Before this it reached only `--codex loop`, so a Claude agent
+/// looking at a busy issue fell back to `gh issue view --json body,comments`
+/// and paid for every comment body in raw JSON (#2413).
+pub(super) const BOUNDED_DIAGNOSTIC_ROUTING: &str = "For large GitHub issue discussions, use `clud tool run github/issue_context.py -- --repo OWNER/REPO --issue N`; for a pull request with many reviews or review comments, use `clud tool run github/pr_context.py -- --repo OWNER/REPO --pr N` instead of `gh pr view --json reviews,comments` or `gh issue view --json body,comments`; follow each snapshot's continuation and refresh explicitly. If unavailable, use a bounded read and preserve access to the full issue. For noisy local test runs, use `clud tool run diagnostics/test_report.py -- -- <test command>` to keep a bounded report and private full-output artifact; inspect the artifact with its continuation. If unavailable, retain a bounded failure-focused fallback and preserve the command status.";
+
+/// Read-hunting is the probe's largest remaining context cost: agents `cat` or
+/// `sed -n`-slice a file they have not mapped, miss the symbol, and slice again.
+/// `code/outline.py` and `code/ast_grep.py` already ship in BUNDLED_TOOLS but
+/// only the `/grind` agent docs mention them, so plain `clud -p` and `clud loop`
+/// never learn they exist (#2233).
+pub(super) const BOUNDED_READ_ROUTING: &str = "Before reading a source file you have not mapped, outline it with `clud tool run code/outline.py -- <file>` (every definition and heading with its line range; ~2.7 KB for a 2,100-line Python file) and then read only that range in one call; use `clud tool run code/ast_grep.py --` for a structural search. Do not `cat` a large file whole, and do not hunt one symbol through repeated `sed -n` slices or offset reads: each miss is a round trip that every later request re-sends. Read a file whole only when it is small or every line matters.";
+
 fn append_instructions(target: &mut String, text: &str) {
     if !text.is_empty() {
         if !target.is_empty() {
@@ -497,9 +513,18 @@ fn build_launch_plan_for_target_at(
         (String::new(), args.passthrough.clone())
     };
     let land = land_instructions(args);
+    // Routing toward the bounded diagnostics tools is an agent-mode
+    // instruction: a human in an interactive session keeps the shorter
+    // prompt and decides for themselves.
+    let agent_mode = has_noninteractive_prompt(args, backend)
+        || matches!(args.command, Some(Command::Grind { .. }));
     if backend == Backend::Claude {
         append_instructions(&mut deletion_instructions, land);
         append_instructions(&mut deletion_instructions, TOOL_CALL_RULES);
+        if agent_mode {
+            append_instructions(&mut deletion_instructions, BOUNDED_DIAGNOSTIC_ROUTING);
+            append_instructions(&mut deletion_instructions, BOUNDED_READ_ROUTING);
+        }
     }
     let codex_passthrough_instructions = (backend == Backend::Codex)
         .then(|| take_codex_developer_instructions(&mut passthrough))
@@ -636,6 +661,10 @@ fn build_launch_plan_for_target_at(
         }
         append_instructions(&mut instructions, land);
         append_instructions(&mut instructions, TOOL_CALL_RULES);
+        if agent_mode {
+            append_instructions(&mut instructions, BOUNDED_DIAGNOSTIC_ROUTING);
+            append_instructions(&mut instructions, BOUNDED_READ_ROUTING);
+        }
         if !instructions.is_empty() || has_user_instructions {
             cmd.extend([
                 "-c".into(),
@@ -807,11 +836,6 @@ fn build_launch_plan_for_target_at(
                     )
                 } else {
                     prompt_text
-                };
-                let final_prompt = if matches!(backend, Backend::Codex) {
-                    format!("{final_prompt}\n\nFor large GitHub issue discussions, use `clud tool run github/issue_context.py -- --repo OWNER/REPO --issue N`; for a pull request with many reviews or review comments, use `clud tool run github/pr_context.py -- --repo OWNER/REPO --pr N` instead of `gh pr view --json reviews,comments`; follow each snapshot's continuation and refresh explicitly. If unavailable, use a bounded read and preserve access to the full issue. For noisy local test runs, use `clud tool run diagnostics/test_report.py -- -- <test command>` to keep a bounded report and private full-output artifact; inspect the artifact with its continuation. If unavailable, retain a bounded failure-focused fallback and preserve the command status.")
-                } else {
-                    final_prompt
                 };
                 push_prompt(&mut cmd, backend, final_prompt);
             }

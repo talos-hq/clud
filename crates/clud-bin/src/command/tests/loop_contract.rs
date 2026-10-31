@@ -126,11 +126,126 @@ fn test_codex_loop_no_done_omits_contract() {
     let p = plan(&["clud", "--codex", "loop", "--no-done", "task"]);
     let prompt = last_arg(&p);
     assert!(prompt.starts_with("task"));
-    assert!(prompt.contains("github/issue_context.py"));
-    assert!(prompt.contains("github/pr_context.py"));
-    assert!(prompt.contains("diagnostics/test_report.py"));
     assert!(!prompt.contains(".clud/loop/DONE"));
     assert!(p.loop_markers.is_none());
+}
+
+/// The bounded-diagnostics routing used to ride on the loop prompt and only
+/// when the backend was Codex, so a Claude agent reading a busy issue still
+/// reached for `gh issue view --json body,comments`. It is now part of the
+/// instruction surface every agent-mode launch gets (#2413).
+fn codex_instructions(p: &LaunchPlan) -> String {
+    p.command
+        .iter()
+        .filter(|arg| arg.starts_with("developer_instructions="))
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn claude_system_prompt(p: &LaunchPlan) -> String {
+    p.command
+        .iter()
+        .position(|arg| arg == "--append-system-prompt")
+        .map(|at| p.command[at + 1].clone())
+        .unwrap_or_default()
+}
+
+fn assert_routes_bounded_diagnostics(text: &str, what: &str) {
+    assert!(
+        text.contains("github/issue_context.py"),
+        "{what} missing issue_context routing: {text}"
+    );
+    assert!(
+        text.contains("github/pr_context.py"),
+        "{what} missing pr_context routing: {text}"
+    );
+    assert!(
+        text.contains("diagnostics/test_report.py"),
+        "{what} missing test_report routing: {text}"
+    );
+    assert!(
+        text.contains("instead of `gh pr view --json reviews,comments`")
+            && text.contains("gh issue view --json body,comments"),
+        "{what} lost the negative guidance: {text}"
+    );
+}
+
+#[test]
+fn test_codex_loop_routes_bounded_diagnostics() {
+    let p = plan(&["clud", "--codex", "loop", "task"]);
+    assert_routes_bounded_diagnostics(&codex_instructions(&p), "codex loop instructions");
+}
+
+#[test]
+fn test_codex_one_shot_routes_bounded_diagnostics() {
+    let p = plan(&["clud", "--codex", "-p", "task"]);
+    assert_routes_bounded_diagnostics(&codex_instructions(&p), "codex -p instructions");
+}
+
+#[test]
+fn test_claude_loop_routes_bounded_diagnostics() {
+    let p = plan(&["clud", "loop", "task"]);
+    assert_routes_bounded_diagnostics(&claude_system_prompt(&p), "claude loop prompt");
+}
+
+#[test]
+fn test_claude_one_shot_routes_bounded_diagnostics() {
+    let p = plan(&["clud", "-p", "task"]);
+    assert_routes_bounded_diagnostics(&claude_system_prompt(&p), "claude -p prompt");
+}
+
+fn assert_routes_bounded_reads(text: &str, what: &str) {
+    assert!(
+        text.contains("code/outline.py"),
+        "{what} missing outline routing: {text}"
+    );
+    assert!(
+        text.contains("code/ast_grep.py"),
+        "{what} missing ast_grep routing: {text}"
+    );
+    assert!(
+        text.contains("sed -n") && text.contains("`cat` a large file whole"),
+        "{what} lost the negative read guidance: {text}"
+    );
+}
+
+#[test]
+fn test_claude_loop_routes_bounded_reads() {
+    let p = plan(&["clud", "loop", "task"]);
+    assert_routes_bounded_reads(&claude_system_prompt(&p), "claude loop prompt");
+}
+
+#[test]
+fn test_claude_one_shot_routes_bounded_reads() {
+    let p = plan(&["clud", "-p", "task"]);
+    assert_routes_bounded_reads(&claude_system_prompt(&p), "claude -p prompt");
+}
+
+#[test]
+fn test_codex_loop_routes_bounded_reads() {
+    let p = plan(&["clud", "--codex", "loop", "task"]);
+    assert_routes_bounded_reads(&codex_instructions(&p), "codex loop instructions");
+}
+
+#[test]
+fn test_codex_one_shot_routes_bounded_reads() {
+    let p = plan(&["clud", "--codex", "-p", "task"]);
+    assert_routes_bounded_reads(&codex_instructions(&p), "codex -p instructions");
+}
+
+#[test]
+fn test_interactive_session_keeps_the_short_prompt() {
+    // A human in a terminal decides for themselves; only agent launches are
+    // steered toward the bounded readers.
+    let p = plan(&["clud"]);
+    let appended = claude_system_prompt(&p);
+    assert!(!appended.contains("github/issue_context.py"));
+    assert!(!appended.contains("diagnostics/test_report.py"));
+    assert!(!appended.contains("code/outline.py"));
+    let codex = codex_instructions(&plan(&["clud", "--codex"]));
+    assert!(!codex.contains("code/outline.py"));
+    assert!(!codex.contains("diagnostics/test_report.py"));
 }
 
 #[test]
