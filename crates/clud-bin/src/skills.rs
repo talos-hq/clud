@@ -37,6 +37,16 @@ use crate::backend::Backend;
 
 const MANAGED_BY_CLUD_MARKER: &str = "managed-by: clud";
 
+/// A hand patch applied ahead of a release, recognised by its own expiry
+/// note (#2483). It promised to last only "until the updated clud binary is
+/// installed", but it replaced the marker, so no upgrade ever replaced it.
+const PENDING_UPGRADE_NOTE: &str = "preserve until the updated clud binary is installed";
+
+/// Whether clud may refresh this installed copy.
+fn clud_owned(body: &str) -> bool {
+    body.contains(MANAGED_BY_CLUD_MARKER) || body.contains(PENDING_UPGRADE_NOTE)
+}
+
 /// One bundled skill: the directory name and the literal `SKILL.md` body.
 pub struct BundledSkill {
     pub name: &'static str,
@@ -460,7 +470,7 @@ pub fn install_to(base: &Path, skills: &[BundledSkill]) -> Result<InstallReport,
             }
             // A copy the user has taken ownership of (marker stripped, or
             // hand-authored): never touch it.
-            Ok(existing) if !existing.contains(MANAGED_BY_CLUD_MARKER) => {
+            Ok(existing) if !clud_owned(&existing) => {
                 report.skipped_existing.push(skill.name);
             }
             // Ours, and current. Compared modulo whitespace so a checkout or

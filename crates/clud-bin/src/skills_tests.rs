@@ -1157,3 +1157,20 @@ fn worktrees_need_a_named_condition() {
         "grind must recommend sequential mode for Rust"
     );
 }
+
+#[test]
+fn pending_upgrade_patch_is_refreshed() {
+    let dir = tempdir().unwrap();
+    let alpha_dir = dir.path().join("alpha");
+    std::fs::create_dir_all(&alpha_dir).unwrap();
+    let patch = "---\nname: alpha\n---\n<!-- Local explicit-invocation policy; \
+                 preserve until the updated clud binary is installed. -->\nold\n";
+    std::fs::write(alpha_dir.join("SKILL.md"), patch).unwrap();
+
+    let report = install_to(dir.path(), &fake_skills()).unwrap();
+    assert_eq!(report.refreshed, vec!["alpha"]);
+    assert_eq!(
+        std::fs::read_to_string(alpha_dir.join("SKILL.md")).unwrap(),
+        "alpha body\n"
+    );
+}
