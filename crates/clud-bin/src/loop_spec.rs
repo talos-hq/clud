@@ -549,6 +549,20 @@ complete. Otherwise, continue working — you will be re-invoked.\n"
     )
 }
 
+/// Prompt paragraph telling the agent where operator messages for the
+/// current iteration appear (#2471). Appended after the DONE/BLOCKED
+/// contract whenever marker injection is active.
+pub fn next_message_contract(next_message_abs: &Path) -> String {
+    format!(
+        "\nAt the start of every iteration, check whether this file exists:\n\n    {}\n\n\
+If it does, it holds messages the operator queued for this iteration. \
+Read it first and follow its instructions; they take priority over the \
+original task text where they conflict. Do not edit or delete it; clud \
+manages it.\n",
+        next_message_abs.display()
+    )
+}
+
 /// Result of scanning captured output for a `<<<CLUD_LOOP_...>>>` token.
 ///
 /// Mirrors `MarkerState` but is produced by parsing stdout/stderr text
@@ -928,5 +942,16 @@ mod tests {
         assert!(rendered.contains("## Body"));
         assert!(rendered.contains("## Comments"));
         assert!(rendered.contains("@bo"));
+    }
+
+    #[test]
+    fn next_message_contract_names_exact_path() {
+        let p = Path::new("/repo/.clud/loop/NEXT_MESSAGE.md");
+        let text = next_message_contract(p);
+        assert!(
+            text.contains("    /repo/.clud/loop/NEXT_MESSAGE.md\n"),
+            "{text}"
+        );
+        assert!(text.contains("Do not edit or delete it"));
     }
 }

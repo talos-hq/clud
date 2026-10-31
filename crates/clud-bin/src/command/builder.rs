@@ -801,9 +801,12 @@ fn build_launch_plan_for_target_at(
                     // model writes to the exact path clud is polling, not
                     // some invented alternative like `~/.loop/LOOP.md`.
                     format!(
-                        "{}{}",
+                        "{}{}{}",
                         prompt_text,
-                        done_marker_contract(&markers.done, &markers.blocked)
+                        done_marker_contract(&markers.done, &markers.blocked),
+                        crate::loop_spec::next_message_contract(
+                            &crate::loop_artifacts::next_message_path(&git_root)
+                        )
                     )
                 } else {
                     prompt_text
