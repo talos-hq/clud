@@ -697,7 +697,8 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
     }
     match role {
         PLANNER => {
-            if inspect_ok(&program, words) || is_gh_read(words) {
+            // /grind-plan reads the plan comment through `gh api` (#2426, #1816).
+            if inspect_ok(&program, words) || (program == "gh" && orchestrator_gh_read(words)) {
                 return None;
             }
             // Recording a task's files (#1340) writes only the run facts.
@@ -817,7 +818,10 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
                 && words.get(1).is_some_and(|w| w == "tool")
                 && words.get(2).is_some_and(|w| w == "run")
                 && words.get(3).is_some_and(|w| {
-                    w.starts_with("github/pr_merge_watch") || w == "github/ci_failure_report.py"
+                    // pr_merge.py is how /grind-land enqueues a green PR (#2425).
+                    w.starts_with("github/pr_merge_watch")
+                        || w == "github/pr_merge.py"
+                        || w == "github/ci_failure_report.py"
                 })
             {
                 return None;
@@ -2939,6 +2943,41 @@ mod tests {
                 "gh issue close 12 --repo fork/project",
                 &facts
             ));
+        }
+    }
+
+    /// #2425 / #2426: the lander lands through `pr_merge.py`, and the planner
+    /// reads issues, PRs and API GETs, in the shapes the grind skills type.
+    #[test]
+    fn lander_merges_and_planner_reads_github() {
+        let facts = run(true, true);
+        for command in [
+            "clud tool run github/pr_merge.py -- 12 --repo o/r --match-head-commit abc",
+            "\"$CLUD_EXE\" tool run github/pr_merge.py -- 12 --repo o/r --match-head-commit abc",
+            "\"$CLUD_EXE\" tool run github/pr_merge_watch.py 12",
+        ] {
+            assert!(allowed(LANDER, command, &facts), "lander: {command}");
+        }
+        for command in [
+            "gh issue view 2415 --comments",
+            "gh issue view 2415 --repo o/r --comments",
+            "gh -R o/r issue view 2415",
+            "gh --repo o/r issue view 2415 --json body",
+            "gh pr view 12 --json title",
+            "gh api repos/o/r/issues/2415/comments",
+            "gh api repos/o/r/issues/2415 --jq .body",
+            "gh api --paginate repos/o/r/issues/1/comments",
+        ] {
+            assert!(allowed(PLANNER, command, &facts), "planner: {command}");
+        }
+        for command in [
+            "gh api -X POST repos/o/r/issues -f title=x",
+            "gh api repos/o/r/issues -f title=x",
+            "gh api --method PATCH repos/o/r/issues/1",
+            "gh api graphql -f query=x",
+            "gh issue edit 1 --body x",
+        ] {
+            assert!(!allowed(PLANNER, command, &facts), "planner: {command}");
         }
     }
 }

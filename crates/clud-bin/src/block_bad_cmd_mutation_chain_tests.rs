@@ -29,6 +29,12 @@ fn a_mutation_chained_with_a_watch_or_another_mutation_is_refused() {
         let reason = reason(command).unwrap_or_else(|| panic!("{command} should be refused"));
         assert!(reason.contains("[mutation-chain]"), "{command}: {reason}");
         assert!(reason.contains("pr_merge_watch"), "{command}: {reason}");
+        // #2429: name every allowed shape, so agents stop splitting batches
+        // the rule admits.
+        assert!(reason.contains("gh pr create ...` (unpiped"), "{reason}");
+        assert!(reason.contains("`gh api` writes"), "{reason}");
+        assert!(reason.contains("metadata writes"), "{reason}");
+        assert!(!reason.contains("one allowed pair"), "{reason}");
     }
 }
 

@@ -165,7 +165,14 @@ if (suppliedRepository && recordedRepository
   throw new Error('GitHub repository disagrees with the recorded plan')
 }
 const GITHUB_REPO = suppliedRepository || recordedRepository
-if (!GITHUB_REPO) throw new Error('GitHub repository is missing: pass github_repo or plan.repo as OWNER/REPO')
+// A current /grind router always passes one, so a missing repository means a
+// stale router skill copy, not a missing argument (#2437).
+if (!GITHUB_REPO) {
+  throw new Error('GitHub repository is missing: pass github_repo or plan.repo as OWNER/REPO. '
+    + 'The current /grind router always passes it, so ~/.claude/skills/grind/SKILL.md is probably '
+    + 'a stale copy that no longer matches the installed grind-run workflow: check that it still '
+    + 'carries the `managed-by: clud` marker, and relaunch clud to refresh it before retrying.')
+}
 const REPO_HEADER = `Repo: ${REPO} (default branch ${MAIN}).\nGitHub repository: ${GITHUB_REPO}. Pass --repo ${GITHUB_REPO} to gh issue/pr/run/label/search/workflow commands and the PR waiter. Put this repository directly in gh api endpoints.`
 const PARALLEL = args.mode === 'parallel'
 const CI = !!args.ci
