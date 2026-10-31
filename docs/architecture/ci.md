@@ -514,6 +514,13 @@ admins can bypass the queue. So:
 - The label picks the PR's lanes. Every mode, `ci-windows` included, requires
   the routine Linux x64 lanes on the head SHA before `CI OK` is green
   (#1652); macOS runs only under `ci-full`.
+- A PR's superseded run (opened and labeled events firing together,
+  #2273) is cancelled by the ref's concurrency group. `CI OK` keeps
+  `always()`, because a skipped required check counts as success. When a
+  need was cancelled and a newer run of the workflow exists on the same head
+  SHA, `CI OK` passes without verifying, so no stale failure blocks the
+  replacement run's verdict at `enqueuePullRequest`. A hand-cancelled run
+  with no replacement, or a failed, skipped or missing lane, fails the gate.
 - A `merge_group` run selects the `minimal` tier, the same lanes as a `main`
   push (#2125). Full native coverage stays on the nightly run, `ci-full`
   labels and release validation; a full queue tier would make every merge
