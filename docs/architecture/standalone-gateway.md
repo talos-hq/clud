@@ -64,7 +64,23 @@ clud serve --codex --claude
 Use `/v1/models` to discover the advertised Codex IDs (for example,
 `clud-claude-codex-sol`) and pass one as `model` to `/v1/messages`.
 Codex-only discovery does not contact Anthropic. This is an Anthropic-compatible
-frontend; `/v1/responses` and `/v1/chat/completions` are not exposed.
+frontend, `/v1/responses` is not exposed.
+
+Two other client dialects are translated at the door and answered in the shape
+they were asked in. Both run over the same ladder, credentials and allowlist as
+`/v1/messages`; nothing is duplicated and no route learns a second protocol:
+
+| Route | Client dialect |
+|---|---|
+| `POST /v1/chat/completions` | OpenAI Chat Completions (`openai_ingress`) |
+| `POST /v1beta/models/<model>:generateContent` | Gemini `GenerateContentResponse` (`gemini_client_ingress`) |
+| `POST /v1beta/models/<model>:streamGenerateContent` | Gemini SSE chunks |
+
+The Gemini verb lives in the path, not the body, so `<model>` is the clud model
+to route to (`clud-claude-*`, `@effort` and `(budget)` suffixes included) — clud
+has no Gemini provider, so a Google model id is only routable when a catalog row
+maps it. Refusals on these doors keep the HTTP status and use that client's own
+error envelope.
 
 ## MCP bridge inside `clud --claude`
 
