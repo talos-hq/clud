@@ -19,6 +19,13 @@ later, one goal at a time.
 
 1. **Read the goal.** If the brief is an issue, `gh issue view --repo <github-repo> <n>
    --comments`. Read the code it names and the repo's per-directory READMEs.
+   **Dedup preflight (#2467).** Before planning, look for a PR that already
+   covers the issue: `gh pr list --repo <github-repo> --state all --search
+   'Closes #<n>' --json number,state,title,headRefName --limit 10` (also
+   `#<n>` in a title and `*/<n>-*` branch names). If an open or merged PR
+   already closes it, return `covered_by: "#<pr>"` with empty `tasks`; the
+   workflow skips the goal and reports `covered by #<pr>`. A closed, unmerged
+   PR does not count.
 2. **Checkout and branch.** Branch `grind/<id>-<slug>`. `<base>` is the
    prompt's "Base branch": `<main>` for a bug-stage goal, the feature branch
    for a feature-stage goal.

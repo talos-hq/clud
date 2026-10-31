@@ -24,6 +24,7 @@ MARK = {
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 
 
@@ -351,3 +352,36 @@ def test_router_skill_carries_the_docker_and_ci_preconditions(harness: Harness) 
     assert ".github/workflows/ci.yml" in context
     assert "Finish (always, as the very last step)" in context
     assert "git pull --ff-only origin <main>" in context
+
+
+def test_goal_ends_at_enqueue_and_the_chaperone_reports_the_merge(harness: Harness) -> None:
+    """#2467: the lander enqueues and the next goal starts; a haiku chaperone follows."""
+    roles = _goal_roles(harness, "q1") + _goal_roles(harness, "q2")
+    for role in roles:
+        if role["name"].startswith("lander:"):
+            goal = role["name"].split(":")[1]
+            role["steps"] = [
+                _bash(f"gh pr merge grind/{goal} --admin --squash"),
+                _after(
+                    {"is_error": False},
+                    _structured({"status": "enqueued", "summary": "green", "head_sha": "a" * 40}),
+                ),
+            ]
+    for goal in ("q1", "q2"):
+        roles.append(
+            _role(
+                f"chaperone:{goal}",
+                "chaperone",
+                f"Goal {goal}:",
+                [_structured({"verdict": "merged", "exit_code": 0, "summary": "merged"})],
+            )
+        )
+    result = harness.run(
+        "start grind", _script(harness, "sequential", _goals("q1", "q2"), roles), timeout=300
+    )
+    assert result.returncode == 0, result.stdout[-3000:]
+    ran = _by_role(result)
+    assert "chaperone:q1" in ran
+    assert "chaperone:q2" in ran
+    assert "--until merged" in result.prompt_text("chaperone:q1")
+    assert _merged(harness) == ["grind/q1", "grind/q2"]

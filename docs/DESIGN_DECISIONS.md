@@ -7409,3 +7409,34 @@ is reported, not forced. Contract:
 [gc-and-registry.md](architecture/gc-and-registry.md#filesystem-sweeps-non-registry).
 
 Amendment: claude sessions are matched by project dir, not TMPDIR (which is the tmp root): a unit is live when a process cwd, or an ancestor of it, encodes (`project_slug`) to a path component of the unit. The process scan fails safe (everything live) when any same-user non-zombie process yields neither cwd nor environ, or this process cannot read its own. Worktree registrations count as dead only when the worktree's parent exists and is non-empty.
+
+## DD-195: grind goals end at enqueue; a haiku chaperone follows the queue
+
+**Decision (2026-10-31, #2467):** Supersedes grind's synchronous lander
+(grind.md's former "the lander runs `pr_merge_watch` and admin-merges each PR
+while the next goal waits", and rebase-before-land) and applies
+[DD-192](#dd-192-workers-end-at-enqueue-and-a-chaperone-owns-the-merge) to
+`/grind`. The lander enqueues a green PR with `pr_merge.py
+--match-head-commit` and the goal reports `enqueued`; the next goal starts
+immediately. Per enqueued PR the workflow starts one deadline-bounded
+`pr_merge_watch --until merged` call through a checkout-free `grind-chaperone`
+on haiku and collects its verdict (MERGED / NEEDS-FIXUP / STUCK, plus
+`queued` and `base_red`). The follow-through is both a guaranteed, monitored
+tool call and a chaperone agent, so it cannot be forgotten. NEEDS-FIXUP goes
+back to the integrator ahead of new work, at most two times, then STUCK.
+Finish gives still-queued PRs one bounded wait and reports them `queued`. A
+failing required job that also fails on main is `base-red` and costs no fix
+round. The planner skips a child already closed by an open or merged PR
+(`covered by #PR`).
+
+**Why:** Run 7c2e (#2439) spent ~27 minutes per goal waiting on CI and the
+merge in sequential mode, fix rounds and reruns on a red base no diff could
+fix, and built three duplicates of a PR another session had merged. The merge
+queue already tests the merged tree, so waiting and rebasing before landing
+bought nothing.
+
+**Not chosen:** a clud-managed background shell per PR. The workflow has no
+shell, and a monitored agent call gives the same guarantee plus the DD-192
+self-serve retries. Feature-stage goal PRs still merge synchronously into the
+feature branch, which has no queue.
+
