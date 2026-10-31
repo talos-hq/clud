@@ -38,6 +38,9 @@ const EVENT_LINE_MAX_BYTES: usize = 8 * 1024;
 /// an API session is created over HTTP and its durable record carries no
 /// environment, so there is nothing to forward yet. #933 owns adding the
 /// field; until then this is byte-for-byte the previous behaviour.
+/// Read by the MCP bridge's `board_*` tools (docs/architecture/agent-board.md).
+const BOARD_ID_ENV: &str = "CLUD_BOARD_ID";
+
 fn api_turn_env(client_env: &[(String, String)]) -> Vec<(String, String)> {
     super::io_helpers::child_env_from(client_env)
         .into_iter()
@@ -51,15 +54,22 @@ fn api_turn_env(client_env: &[(String, String)]) -> Vec<(String, String)> {
 /// The exact `ProcessConfig` a captured turn spawns with. Extracted so
 /// the client-env routing is testable: this is the value handed to
 /// `NativeProcess::new`, not a reconstruction of it.
+///
+/// The API session id becomes the agent's bulletin-board address, so the
+/// client that created the session can message the agent it is running.
 fn turn_process_config(
     command: Vec<String>,
     cwd: std::path::PathBuf,
     client_env: &[(String, String)],
+    session_id: &str,
 ) -> ProcessConfig {
+    let mut env = api_turn_env(client_env);
+    env.retain(|(key, _)| key != BOARD_ID_ENV);
+    env.push((BOARD_ID_ENV.to_string(), session_id.to_string()));
     ProcessConfig {
         command: crate::subprocess::command_spec_for_subprocess(command),
         cwd: Some(cwd),
-        env: Some(api_turn_env(client_env)),
+        env: Some(env),
         capture: true,
         stderr_mode: StderrMode::Stdout,
         creationflags: invisible_helper_creationflags(),
@@ -198,6 +208,7 @@ pub fn launch_claimed_turn_with_client_env(
         plan.command,
         session.cwd.clone(),
         client_env,
+        session_id,
     )));
     if let Err(error) = process.start() {
         let _ = store.finish_turn(
@@ -511,7 +522,7 @@ mod tests {
             ("CLUD_TEST_CLIENT_ONLY", "1"),
         ]);
         let cwd = home.path().to_path_buf();
-        let config = turn_process_config(vec!["claude".to_string()], cwd, &client);
+        let config = turn_process_config(vec!["claude".to_string()], cwd, &client, "s1");
         // Borrowed, not moved out: a partial move of `config.env` would stop
         // compiling the day `ProcessConfig` grows a `Drop` impl upstream.
         let env = config
@@ -541,7 +552,7 @@ mod tests {
     fn no_client_env_falls_back_to_the_daemon_environment() {
         let temp = TempDir::new().unwrap();
         let cwd = temp.path().to_path_buf();
-        let config = turn_process_config(vec!["claude".to_string()], cwd, &[]);
+        let config = turn_process_config(vec!["claude".to_string()], cwd, &[], "s1");
         let env = config
             .env
             .as_deref()
@@ -551,5 +562,20 @@ mod tests {
             !env.iter().any(|(_, v)| v.contains("/client/only/bin")),
             "the empty slice must not pick up the sibling test's synthetic client PATH"
         );
+    }
+
+    #[test]
+    fn the_session_id_is_the_turns_board_address() {
+        let temp = TempDir::new().unwrap();
+        let client = vec![(BOARD_ID_ENV.to_string(), "stale".to_string())];
+        let config = turn_process_config(
+            vec!["claude".to_string()],
+            temp.path().to_path_buf(),
+            &client,
+            "sess-42",
+        );
+        let env = config.env.as_deref().unwrap();
+        assert_eq!(value_of(env, BOARD_ID_ENV), Some("sess-42"));
+        assert_eq!(env.iter().filter(|(k, _)| k == BOARD_ID_ENV).count(), 1);
     }
 }
