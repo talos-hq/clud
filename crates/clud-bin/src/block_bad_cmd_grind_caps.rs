@@ -105,6 +105,10 @@ pub(super) struct RunFacts {
     /// The meta issue number (`meta`, a JSON number or string, `#` stripped):
     /// the one issue `grind-prework` may comment on.
     pub meta: Option<String>,
+    /// In a multi-repository run (#1422), the `meta` of every `repos` entry:
+    /// each sister lane's tracker, which its `grind-prework` comments on even
+    /// when the hook's `cwd` resolves to another entry or none (#2468).
+    pub lane_metas: Vec<String>,
     /// Feature-branch mode (`feature: {branch, pr, worktree}`); `None` when
     /// absent, which keeps every cap exactly as in a plain run.
     pub feature: Option<FeatureFacts>,
@@ -146,6 +150,30 @@ pub(super) enum FeatureMerge {
     DecideLater,
     /// Comment on the PR only; the user merges it.
     CommentOnly,
+}
+
+/// The `meta` issue number of one facts object (a JSON number or string,
+/// `#` stripped).
+fn meta_number(value: &Value) -> Option<String> {
+    value.get("meta").and_then(|m| match m {
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => {
+            let s = s.trim();
+            let s = s.strip_prefix('#').unwrap_or(s).trim();
+            (!s.is_empty()).then(|| s.to_string())
+        }
+        _ => None,
+    })
+}
+
+/// Every `repos` entry's meta in a multi-repository facts file (#2468);
+/// empty for a single-repository file.
+pub(super) fn lane_metas(facts: &Value) -> Vec<String> {
+    facts
+        .get("repos")
+        .and_then(Value::as_array)
+        .map(|repos| repos.iter().filter_map(meta_number).collect())
+        .unwrap_or_default()
 }
 
 /// A PR number from a JSON number, `#n`, `n`, or a URL ending in the number.
@@ -193,15 +221,8 @@ impl RunFacts {
                 lint: script("lint"),
                 test: script("test"),
             },
-            meta: value.get("meta").and_then(|m| match m {
-                Value::Number(n) => Some(n.to_string()),
-                Value::String(s) => {
-                    let s = s.trim();
-                    let s = s.strip_prefix('#').unwrap_or(s).trim();
-                    (!s.is_empty()).then(|| s.to_string())
-                }
-                _ => None,
-            }),
+            meta: meta_number(value),
+            lane_metas: Vec::new(),
             feature: value.get("feature").and_then(|f| {
                 let branch = f.get("branch")?.as_str()?.trim();
                 (!branch.is_empty()).then(|| FeatureFacts {
@@ -275,7 +296,17 @@ impl RunFacts {
     /// one, or no single matching repository) the defaults apply, which are
     /// the strictest caps, and the second value says why for the hook log.
     pub(super) fn for_session(session_id: Option<&str>, cwd: &Path) -> (Self, Option<String>) {
-        Self::from_lookup(&crate::grind_facts::lookup_for(session_id, cwd))
+        let whole = crate::grind_facts::lookup(session_id);
+        let lane_metas = whole.facts().map(lane_metas).unwrap_or_default();
+        let (mut run, warning) = Self::from_lookup(&crate::grind_facts::narrow(whole, cwd));
+        run.lane_metas = lane_metas;
+        (run, warning)
+    }
+
+    /// Whether `target` is an issue `grind-prework` may comment on: the
+    /// run's meta, or in a multi-repository run any lane's meta (#2468).
+    fn is_comment_host(&self, target: &str) -> bool {
+        self.meta.as_deref() == Some(target) || self.lane_metas.iter().any(|m| m == target)
     }
 
     pub(super) fn from_lookup(lookup: &crate::grind_facts::Lookup) -> (Self, Option<String>) {
@@ -803,7 +834,7 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             {
                 return match comment_target(&words[3..]) {
                     Err(flag) => Some(format!("{role} may not pass `{flag}` to gh issue comment")),
-                    Ok(target) if target.is_some() && target == run.meta => None,
+                    Ok(Some(target)) if run.is_comment_host(&target) => None,
                     Ok(_) => Some(format!(
                         "{role} may comment only on the meta issue{}",
                         run.meta
@@ -2683,6 +2714,37 @@ mod tests {
         }
         // Only prework may run printf at all.
         assert!(!allowed(WORKER, "printf '%s' x", &facts));
+    }
+
+    /// #2468: in a multi-repository run each sister lane's prework posts on
+    /// its own repository's meta, even when the hook's `cwd` resolves to the
+    /// session repository's entry (or to none).
+    #[test]
+    fn multi_repo_prework_comments_on_any_lane_meta() {
+        let file = serde_json::json!({"repos": [
+            {"repo": "/w/clud", "meta": 2233},
+            {"repo": "/w/running-process", "meta": "#1361"},
+            {"repo": "/w/zccache", "meta": 2033}
+        ]});
+        let facts = RunFacts {
+            meta: Some("2233".to_string()),
+            lane_metas: lane_metas(&file),
+            ..run(false, false)
+        };
+        for command in [
+            "gh issue comment 2233 --body x",
+            "gh issue comment 1361 --repo o/running-process --body-file - < p.md",
+            "gh issue comment 2033 -R o/zccache --body x",
+        ] {
+            assert!(allowed(PREWORK, command, &facts), "{command}");
+        }
+        assert!(!allowed(PREWORK, "gh issue comment 999 --body x", &facts));
+        let unmatched = RunFacts {
+            lane_metas: lane_metas(&file),
+            ..run(false, false)
+        };
+        assert!(allowed(PREWORK, "gh issue comment 1361 --body x", &unmatched));
+        assert!(lane_metas(&serde_json::json!({"meta": 5})).is_empty());
     }
 
     #[test]
