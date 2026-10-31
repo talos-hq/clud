@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
+use super::cache::ResultCache;
 use super::engine::{run_script, AgentRequest, WorkflowOutcome};
 use super::runner::{agent_argv, run_batch};
 use crate::stream_json::IterationSummary;
@@ -113,7 +114,7 @@ pub fn render_done(
 }
 
 /// Entry point for `clud workflow`. Returns the process exit code.
-pub fn run(script: &Path, args_json: Option<&str>, dry_run: bool) -> i32 {
+pub fn run(script: &Path, args_json: Option<&str>, dry_run: bool, resume: bool) -> i32 {
     let source = match std::fs::read_to_string(script) {
         Ok(s) => s,
         Err(e) => {
@@ -132,6 +133,16 @@ pub fn run(script: &Path, args_json: Option<&str>, dry_run: bool) -> i32 {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     let git_root = crate::loop_spec::git_root_from(&cwd);
 
+    let mut cache = (!dry_run).then(|| {
+        let cache = ResultCache::open(ResultCache::path_for(&git_root, script), resume);
+        if resume {
+            eprintln!(
+                "[clud] resuming with {} cached agent result(s)",
+                cache.len()
+            );
+        }
+        cache
+    });
     let mut rows: Vec<Row> = Vec::new();
     let outcome = {
         let mut runner = |batch: &[AgentRequest]| -> Vec<Result<Value, String>> {
@@ -151,24 +162,36 @@ pub fn run(script: &Path, args_json: Option<&str>, dry_run: bool) -> i32 {
                 return batch.iter().map(|r| Ok(dry_run_value(r))).collect();
             }
             eprintln!("{}", render_board("running", &rows));
-            let mut summaries = vec![IterationSummary::default(); batch.len()];
-            let first_id = batch.first().map_or(0, |r| r.id);
-            let results = run_batch(&clud_exe, Some(cwd.clone()), batch, &mut |id, line| {
-                if let Some(s) = summaries.get_mut((id - first_id) as usize) {
-                    s.observe(line);
+            let cache = cache.as_mut().expect("cache exists outside dry-run");
+            let misses: Vec<AgentRequest> = batch
+                .iter()
+                .filter(|r| cache.get(r).is_none())
+                .cloned()
+                .collect();
+            let mut live = run_live(&clud_exe, &cwd, &misses).into_iter();
+            let mut results = Vec::with_capacity(batch.len());
+            for (req, row) in batch.iter().zip(rows[start..].iter_mut()) {
+                if let Some(hit) = cache.get(req) {
+                    results.push(Ok(hit.clone()));
+                    row.status = RowStatus::Done;
+                    row.detail = "cached".into();
+                    continue;
                 }
-            });
-            for ((row, res), summary) in rows[start..].iter_mut().zip(&results).zip(&summaries) {
+                let (res, summary) = live.next().expect("one live result per miss");
                 row.status = if res.is_ok() {
                     RowStatus::Done
                 } else {
                     RowStatus::Failed
                 };
-                row.detail = match (res, summary.cost_usd, summary.turns) {
+                row.detail = match (&res, summary.cost_usd, summary.turns) {
                     (Err(e), _, _) => e.clone(),
                     (Ok(_), Some(c), Some(t)) => format!("{t} turns ${c:.2}"),
                     (Ok(_), _, _) => "ok".into(),
                 };
+                if let Ok(v) = &res {
+                    cache.record(req, v);
+                }
+                results.push(res);
             }
             eprintln!("{}", render_board("batch finished", &rows));
             results
@@ -192,6 +215,26 @@ pub fn run(script: &Path, args_json: Option<&str>, dry_run: bool) -> i32 {
             1
         }
     }
+}
+
+/// Run cache misses concurrently, pairing each result with its stream stats.
+fn run_live(
+    clud_exe: &Path,
+    cwd: &Path,
+    reqs: &[AgentRequest],
+) -> Vec<(Result<Value, String>, IterationSummary)> {
+    if reqs.is_empty() {
+        return Vec::new();
+    }
+    let index: std::collections::HashMap<u32, usize> =
+        reqs.iter().enumerate().map(|(i, r)| (r.id, i)).collect();
+    let mut summaries = vec![IterationSummary::default(); reqs.len()];
+    let results = run_batch(clud_exe, Some(cwd.to_path_buf()), reqs, &mut |id, line| {
+        if let Some(&i) = index.get(&id) {
+            summaries[i].observe(line);
+        }
+    });
+    results.into_iter().zip(summaries).collect()
 }
 
 /// Dry runs resolve schema calls with `{}` and text calls with `""`.

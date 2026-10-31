@@ -86,7 +86,7 @@ def test_workflow_pipeline_parallel_schema_end_to_end(
     done = (tmp_path / "WORKFLOW_DONE.md").read_text()
     assert "Workflow: review-changes" in done
     assert "Outcome: ok" in done
-    runs = list((tmp_path / ".clud" / "workflow").iterdir())
+    runs = [p for p in (tmp_path / ".clud" / "workflow").iterdir() if p.name != "cache"]
     assert len(runs) == 1
     saved = json.loads((runs[0] / "result.json").read_text())
     assert saved["ok"] is True
@@ -119,3 +119,37 @@ def test_workflow_rejects_script_without_meta(
     result = _run(clud_binary, "workflow", str(script), env=mock_env, cwd=tmp_path)
     assert result.returncode == 1
     assert "export const meta" in result.stderr
+
+
+def test_workflow_reuse_skips_unchanged_calls(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`--reuse` returns cached results; an edited prompt re-runs only that call."""
+    env, responses = _setup(tmp_path, mock_env, {})
+    calls = Path(f"{responses}.calls")
+    script = tmp_path / "two.js"
+
+    def write(second: str) -> None:
+        script.write_text(
+            "export const meta = { name: 'two', description: 'reuse' }\n"
+            f"return await parallel([() => agent('first'), () => agent('{second}')])\n"
+        )
+
+    write("second")
+    first = _run(clud_binary, "workflow", str(script), env=env, cwd=tmp_path)
+    assert first.returncode == 0, first.stderr
+    assert len(calls.read_text().splitlines()) == 2
+
+    again = _run(clud_binary, "workflow", str(script), "--reuse", env=env, cwd=tmp_path)
+    assert again.returncode == 0, again.stderr
+    assert json.loads(again.stdout) == json.loads(first.stdout)
+    assert "resuming with 2 cached" in again.stderr
+    assert "cached" in again.stderr
+    assert len(calls.read_text().splitlines()) == 2
+
+    write("edited")
+    edited = _run(clud_binary, "workflow", str(script), "--reuse", env=env, cwd=tmp_path)
+    assert edited.returncode == 0, edited.stderr
+    lines = calls.read_text().splitlines()
+    assert len(lines) == 3
+    assert json.loads(lines[-1])["prompt"].endswith("edited")

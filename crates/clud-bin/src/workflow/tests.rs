@@ -239,3 +239,42 @@ mod board_tests {
         assert!(text.contains("Agents: 3"));
     }
 }
+
+mod cache_tests {
+    use super::super::cache::{key, ResultCache};
+    use super::*;
+
+    fn req(id: u32, prompt: &str) -> AgentRequest {
+        AgentRequest {
+            id,
+            prompt: prompt.into(),
+            label: None,
+            phase: None,
+            model: None,
+            schema: None,
+        }
+    }
+
+    #[test]
+    fn key_ignores_id_but_tracks_inputs() {
+        assert_eq!(key(&req(1, "a")), key(&req(9, "a")));
+        assert_ne!(key(&req(1, "a")), key(&req(1, "b")));
+        let mut with_schema = req(1, "a");
+        with_schema.schema = Some(json!({"type": "object"}));
+        assert_ne!(key(&req(1, "a")), key(&with_schema));
+    }
+
+    #[test]
+    fn resume_reloads_and_fresh_run_truncates() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = ResultCache::path_for(tmp.path(), std::path::Path::new("review.js"));
+        assert!(path.ends_with(".clud/workflow/cache/review.jsonl"));
+        let mut cache = ResultCache::open(path.clone(), false);
+        cache.record(&req(1, "a"), &json!({"x": 1}));
+        let resumed = ResultCache::open(path.clone(), true);
+        assert_eq!(resumed.get(&req(5, "a")), Some(&json!({"x": 1})));
+        assert!(resumed.get(&req(5, "b")).is_none());
+        let fresh = ResultCache::open(path, false);
+        assert!(fresh.is_empty());
+    }
+}

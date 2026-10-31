@@ -1900,10 +1900,20 @@ fn test_workflow_subcommand_with_args() {
         Some(Command::Workflow {
             ref script,
             ref args_json,
+            ..
         }) => {
             assert_eq!(script, "review.js");
             assert_eq!(args_json.as_deref(), Some(r#"{"mode":"fast"}"#));
         }
         other => panic!("expected Workflow subcommand, got {other:?}"),
     }
+}
+
+#[test]
+fn test_workflow_reuse_flag() {
+    let args = parse(&["clud", "workflow", "w.js", "--reuse"]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Workflow { resume: true, .. })
+    ));
 }
