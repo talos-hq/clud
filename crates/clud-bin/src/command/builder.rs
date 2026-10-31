@@ -411,6 +411,13 @@ pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refus
 /// and paid for every comment body in raw JSON (#2413).
 pub(super) const BOUNDED_DIAGNOSTIC_ROUTING: &str = "For large GitHub issue discussions, use `clud tool run github/issue_context.py -- --repo OWNER/REPO --issue N`; for a pull request with many reviews or review comments, use `clud tool run github/pr_context.py -- --repo OWNER/REPO --pr N` instead of `gh pr view --json reviews,comments` or `gh issue view --json body,comments`; follow each snapshot's continuation and refresh explicitly. If unavailable, use a bounded read and preserve access to the full issue. For noisy local test runs, use `clud tool run diagnostics/test_report.py -- -- <test command>` to keep a bounded report and private full-output artifact; inspect the artifact with its continuation. If unavailable, retain a bounded failure-focused fallback and preserve the command status.";
 
+/// Read-hunting is the probe's largest remaining context cost: agents `cat` or
+/// `sed -n`-slice a file they have not mapped, miss the symbol, and slice again.
+/// `code/outline.py` and `code/ast_grep.py` already ship in BUNDLED_TOOLS but
+/// only the `/grind` agent docs mention them, so plain `clud -p` and `clud loop`
+/// never learn they exist (#2233).
+pub(super) const BOUNDED_READ_ROUTING: &str = "Before reading a source file you have not mapped, outline it with `clud tool run code/outline.py -- <file>` (every definition and heading with its line range; ~2.7 KB for a 2,100-line Python file) and then read only that range in one call; use `clud tool run code/ast_grep.py --` for a structural search. Do not `cat` a large file whole, and do not hunt one symbol through repeated `sed -n` slices or offset reads: each miss is a round trip that every later request re-sends. Read a file whole only when it is small or every line matters.";
+
 fn append_instructions(target: &mut String, text: &str) {
     if !text.is_empty() {
         if !target.is_empty() {
@@ -516,6 +523,7 @@ fn build_launch_plan_for_target_at(
         append_instructions(&mut deletion_instructions, TOOL_CALL_RULES);
         if agent_mode {
             append_instructions(&mut deletion_instructions, BOUNDED_DIAGNOSTIC_ROUTING);
+            append_instructions(&mut deletion_instructions, BOUNDED_READ_ROUTING);
         }
     }
     let codex_passthrough_instructions = (backend == Backend::Codex)
@@ -655,6 +663,7 @@ fn build_launch_plan_for_target_at(
         append_instructions(&mut instructions, TOOL_CALL_RULES);
         if agent_mode {
             append_instructions(&mut instructions, BOUNDED_DIAGNOSTIC_ROUTING);
+            append_instructions(&mut instructions, BOUNDED_READ_ROUTING);
         }
         if !instructions.is_empty() || has_user_instructions {
             cmd.extend([

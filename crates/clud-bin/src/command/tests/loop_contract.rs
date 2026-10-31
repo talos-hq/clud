@@ -195,6 +195,45 @@ fn test_claude_one_shot_routes_bounded_diagnostics() {
     assert_routes_bounded_diagnostics(&claude_system_prompt(&p), "claude -p prompt");
 }
 
+fn assert_routes_bounded_reads(text: &str, what: &str) {
+    assert!(
+        text.contains("code/outline.py"),
+        "{what} missing outline routing: {text}"
+    );
+    assert!(
+        text.contains("code/ast_grep.py"),
+        "{what} missing ast_grep routing: {text}"
+    );
+    assert!(
+        text.contains("sed -n") && text.contains("`cat` a large file whole"),
+        "{what} lost the negative read guidance: {text}"
+    );
+}
+
+#[test]
+fn test_claude_loop_routes_bounded_reads() {
+    let p = plan(&["clud", "loop", "task"]);
+    assert_routes_bounded_reads(&claude_system_prompt(&p), "claude loop prompt");
+}
+
+#[test]
+fn test_claude_one_shot_routes_bounded_reads() {
+    let p = plan(&["clud", "-p", "task"]);
+    assert_routes_bounded_reads(&claude_system_prompt(&p), "claude -p prompt");
+}
+
+#[test]
+fn test_codex_loop_routes_bounded_reads() {
+    let p = plan(&["clud", "--codex", "loop", "task"]);
+    assert_routes_bounded_reads(&codex_instructions(&p), "codex loop instructions");
+}
+
+#[test]
+fn test_codex_one_shot_routes_bounded_reads() {
+    let p = plan(&["clud", "--codex", "-p", "task"]);
+    assert_routes_bounded_reads(&codex_instructions(&p), "codex -p instructions");
+}
+
 #[test]
 fn test_interactive_session_keeps_the_short_prompt() {
     // A human in a terminal decides for themselves; only agent launches are
@@ -203,6 +242,10 @@ fn test_interactive_session_keeps_the_short_prompt() {
     let appended = claude_system_prompt(&p);
     assert!(!appended.contains("github/issue_context.py"));
     assert!(!appended.contains("diagnostics/test_report.py"));
+    assert!(!appended.contains("code/outline.py"));
+    let codex = codex_instructions(&plan(&["clud", "--codex"]));
+    assert!(!codex.contains("code/outline.py"));
+    assert!(!codex.contains("diagnostics/test_report.py"));
 }
 
 #[test]
