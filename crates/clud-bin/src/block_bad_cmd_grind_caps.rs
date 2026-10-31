@@ -433,11 +433,14 @@ fn orchestrator_read(words: &[String]) -> bool {
     }
 }
 
+/// The read-only `gh` set for the planner, prework and orchestrator roles
+/// (#2426): `gh api` GETs, `gh release view|list`, `gh repo view` and
+/// everything `is_gh_read` accepts; never `--watch`/`--web`.
 fn orchestrator_gh_read(words: &[String]) -> bool {
     if words.iter().any(|w| w == "--watch" || w == "--web") {
         return false;
     }
-    if words.get(1).is_some_and(|w| w == "api") {
+    if program_name(&words[0]) == "gh" && words.get(1).is_some_and(|w| w == "api") {
         return words[2..].iter().all(|w| {
             !w.starts_with("-f")
                 && !w.starts_with("-F")
@@ -450,8 +453,14 @@ fn orchestrator_gh_read(words: &[String]) -> bool {
         });
     }
     is_gh_read(words)
-        || (words.get(1).is_some_and(|w| w == "release")
-            && words.get(2).is_some_and(|w| w == "view" || w == "list"))
+        || (program_name(&words[0]) == "gh"
+            && matches!(
+                (
+                    words.get(1).map(String::as_str),
+                    words.get(2).map(String::as_str)
+                ),
+                (Some("release"), Some("view" | "list")) | (Some("repo"), Some("view"))
+            ))
 }
 
 /// Markers in a commit message, PR title or body that make GitHub skip every
@@ -697,7 +706,7 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
     }
     match role {
         PLANNER => {
-            if inspect_ok(&program, words) || is_gh_read(words) {
+            if inspect_ok(&program, words) || orchestrator_gh_read(words) {
                 return None;
             }
             // Recording a task's files (#1340) writes only the run facts.
@@ -729,7 +738,7 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             deny(&program)
         }
         PREWORK => {
-            if inspect_ok(&program, words) || is_gh_read(words) {
+            if inspect_ok(&program, words) || orchestrator_gh_read(words) {
                 return None;
             }
             // `printf '%s' '<body>' | gh issue comment <meta> --body-file -`:
@@ -2002,6 +2011,36 @@ mod tests {
             &facts
         ));
         assert!(!allowed(PLANNER, "gh -R o/r pr merge 5", &facts));
+    }
+
+    #[test]
+    fn planner_reads_gh_api_and_pr_view_2426() {
+        let facts = run(false, false);
+        let plan = RunFacts {
+            plan_only: true,
+            ..run(true, false)
+        };
+        for read in [
+            "gh api repos/talos-hq/clud/issues/comments/6546590435 --jq .body",
+            "gh api repos/o/r/pulls/5",
+            "gh pr view 5 --repo o/r --json body",
+            "gh issue view 2426 --repo talos-hq/clud --comments",
+            "gh repo view o/r",
+        ] {
+            assert!(allowed(PLANNER, read, &facts), "{read}");
+            assert!(allowed(PLANNER, read, &plan), "{read}");
+        }
+        for write in [
+            "gh api -X POST repos/o/r/issues -f title=x",
+            "gh api --method DELETE repos/o/r/git/refs/heads/x",
+            "gh api graphql -f query=x",
+            "gh api repos/o/r/issues --input body.json",
+            "gh pr merge 5",
+            "gh issue create -t x",
+        ] {
+            assert!(!allowed(PLANNER, write, &facts), "{write}");
+            assert!(!allowed(PLANNER, write, &plan), "{write}");
+        }
     }
 
     #[test]
