@@ -378,5 +378,6 @@ def test_invalid_loop_json_fails_fast(
     (tmp_path / "loop.json").write_text('{"schema_version": 1, "loopcount": 2}')
     result = _run(clud_binary, "loop", "task", env=mock_env, cwd=tmp_path)
     _assert_rc(result, 2)
-    assert "invalid" in result.stderr and "loop.json" in result.stderr
+    assert "invalid" in result.stderr
+    assert "loop.json" in result.stderr
     assert "iteration" not in result.stderr
