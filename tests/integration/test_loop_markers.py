@@ -297,3 +297,56 @@ def test_codex_loop_stops_on_done_marker(
     assert "DONE" in result.stderr
     assert done.is_file()
     assert done.read_text().strip() == "codex task resolved"
+
+
+def test_loop_message_without_task_queues_and_exits(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`clud loop --message X` with no task queues X in the inbox and exits 0 (#2471)."""
+    result = _run(
+        clud_binary,
+        "loop",
+        "--message",
+        "focus on the failing test",
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, 0)
+    inbox = tmp_path / ".clud" / "loop" / "inbox"
+    queued = sorted(inbox.glob("*.md"))
+    assert len(queued) == 1, list(inbox.iterdir())
+    assert queued[0].read_text() == "focus on the failing test"
+    assert "queued message" in result.stderr
+
+
+def test_loop_message_is_delivered_and_root_summary_written(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    """A queued message reaches NEXT_MESSAGE.md and LOOP_DONE.md lands at the root (#2471)."""
+    loop_dir = _marker_dir(tmp_path)
+    done = loop_dir / "DONE"
+    result = _run(
+        clud_binary,
+        "loop",
+        "--loop-count",
+        "2",
+        "--message",
+        "use the new API",
+        "resolve the task",
+        "--",
+        "--mock-write-done",
+        str(done),
+        "--mock-write-done-body",
+        "ok",
+        "--mock-write-marker-on-iter",
+        "1",
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, 0)
+    next_message = loop_dir / "NEXT_MESSAGE.md"
+    assert "use the new API" in next_message.read_text()
+    assert len(list((loop_dir / "inbox" / "delivered").glob("*.md"))) == 1
+    summary = (tmp_path / "LOOP_DONE.md").read_text()
+    assert "# LOOP_DONE" in summary
+    assert ".clud/loop/info.json" in summary

@@ -774,6 +774,7 @@ fn build_launch_plan_for_target_at(
             no_done,
             done,
             repeat,
+            ..
         }) => {
             iterations = *loop_count;
             let git_root = git_root_from(cwd);

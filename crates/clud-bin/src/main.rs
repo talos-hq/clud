@@ -1187,6 +1187,30 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
     }
 
     if let Some(args::Command::Loop {
+        task,
+        message: Some(message),
+        ..
+    }) = &args.command
+        && !args.dry_run
+    {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let git_root = clud::loop_spec::git_root_from(&cwd);
+        match clud::loop_artifacts::queue_message(&git_root, message) {
+            Ok(path) => eprintln!(
+                "[clud] queued message for next iteration: {}",
+                path.display()
+            ),
+            Err(e) => {
+                eprintln!("[clud] failed to queue loop message: {e}");
+                std::process::exit(1);
+            }
+        }
+        if task.is_none() {
+            std::process::exit(0);
+        }
+    }
+
+    if let Some(args::Command::Loop {
         repeat,
         done,
         no_done,
