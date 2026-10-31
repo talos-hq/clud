@@ -327,7 +327,10 @@ and the hook selects the entry whose `repo` contains the calling agent's
 working directory (the deepest when roots nest); `clud grind-facts task`
 files a task under the entry containing its checkout. A directory in no
 entry, or in two of equal depth, gets the strictest caps, never another
-repository's `scripts`, CI or feature. One workflow per repository, rather
+repository's `scripts`, CI or feature. Each entry's `meta` is that
+repository's own tracker issue, and `grind-prework` may comment on any
+entry's `meta`, since the hook's `cwd` need not lie in the lane's checkout
+(#2468). One workflow per repository, rather
 than one workflow over several, because `grind-run` holds one `repo`, one
 `main`, one integrator semaphore and one repository's caps.
 

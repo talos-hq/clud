@@ -427,6 +427,10 @@ For goals in several repositories, write
 `{"repos": [{"repo": "<abs checkout>", ...the object above for that repo}, ...]}`
 instead. The hook picks the entry whose `repo` contains the calling agent's
 working directory, and applies the strictest caps when none or two match.
+Each entry's `meta` must be an issue in that entry's own repository (its
+tracker), never the top meta of another repository: that lane's prework
+posts its plan there, and the hook lets prework comment on any entry's
+`meta` (#2468).
 
 `undo` is the section 2b change record (empty without a regroup).
 Also include `orchestration` with the complete graph the user approved in
