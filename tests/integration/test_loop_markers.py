@@ -350,3 +350,34 @@ def test_loop_message_is_delivered_and_root_summary_written(
     summary = (tmp_path / "LOOP_DONE.md").read_text()
     assert "# LOOP_DONE" in summary
     assert ".clud/loop/info.json" in summary
+
+
+def test_loop_json_drives_task_and_count_and_is_recorded(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    """With no CLI task, `<root>/loop.json` supplies task + loop_count (#2471)."""
+    import json
+
+    (tmp_path / "loop.json").write_text(
+        json.dumps({"schema_version": 1, "task": "from the file", "loop_count": 2})
+    )
+    result = _run(clud_binary, "loop", env=mock_env, cwd=tmp_path)
+    _assert_rc(result, 2)  # no marker written -> exhausts the 2 iterations
+    assert "using loop config" in result.stderr
+    assert "iteration 2/2" in result.stderr
+    assert "iteration 3" not in result.stderr
+    resolved = json.loads((tmp_path / ".clud" / "loop" / "loop.json").read_text())
+    assert resolved == {"schema_version": 1, "task": "from the file", "loop_count": 2}
+    assert ".clud/loop/loop.json" in (tmp_path / "LOOP_DONE.md").read_text()
+
+
+def test_invalid_loop_json_fails_fast(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    """Unknown fields are rejected before any agent launch (#2471)."""
+    (tmp_path / "loop.json").write_text('{"schema_version": 1, "loopcount": 2}')
+    result = _run(clud_binary, "loop", "task", env=mock_env, cwd=tmp_path)
+    _assert_rc(result, 2)
+    assert "invalid" in result.stderr
+    assert "loop.json" in result.stderr
+    assert "iteration" not in result.stderr

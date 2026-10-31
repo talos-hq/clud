@@ -102,6 +102,7 @@ pub mod launch_setup;
 pub mod log_event;
 pub mod loop_artifacts;
 pub mod loop_check;
+pub mod loop_config;
 pub mod loop_plan_mode;
 pub mod loop_spec;
 pub mod multicall;

@@ -697,6 +697,10 @@ pub enum Command {
         /// `.clud/loop/NEXT_MESSAGE.md`). Without a task, queue and exit.
         #[arg(long = "message")]
         message: Option<String>,
+        /// Read loop settings from this `loop.json` instead of the implicit
+        /// `<git-root>/loop.json`. CLI flags override file values.
+        #[arg(long = "config")]
+        config: Option<String>,
     },
     Up {
         #[arg(short = 'm', long = "message")]
@@ -1874,6 +1878,7 @@ const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--done",
     "--repeat",
     "--message",
+    "--config",
     "--daemon-state-dir",
     "--stale-after",
     // Issue: `clud gc prune/purge --older-than <dur>` value arg.
