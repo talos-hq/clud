@@ -821,6 +821,7 @@ Diagnostics and misc:
   bare `clud symbols` form prints a five-line summary. Self-contained
   maintenance command; dispatched from `main.rs` before any backend
   resolution. See `docs/architecture/crash-reports.md`.
+- `workflow/` - `clud workflow` script engine (QuickJS), `clud -p` agent runner and ASCII board; see [workflow.md](../../../docs/architecture/workflow.md).
 - `wasm.rs` - `wasmi`-based runner that loads a WASM module, registers a
   minimal `host.log` import, invokes a named export, and propagates the integer
   exit code.
