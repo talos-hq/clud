@@ -553,6 +553,22 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: a Read of a file whose bytes are unchanged since the same read in
+    // this session returns nothing new, and every later request pays for it
+    // again. Refused with the bounded alternatives named; fails open.
+    if event == PRE_TOOL_USE_EVENT {
+        if let Some(reason) = block_bad_cmd_reread::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            append_log(&format!("REREAD-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
+
     // #1988/#2122: classify the call; an advisory note rides on the final
     // allow, and the one escalation deny is returned here.
     let verify_note = if event == PRE_TOOL_USE_EVENT {
@@ -3898,6 +3914,9 @@ mod block_bad_cmd_stale_upstream;
 #[path = "block_bad_cmd_repeat.rs"]
 mod block_bad_cmd_repeat;
 
+#[path = "block_bad_cmd_reread.rs"]
+mod block_bad_cmd_reread;
+
 #[path = "block_bad_cmd_verify_ratio.rs"]
 mod block_bad_cmd_verify_ratio;
 
@@ -4101,6 +4120,7 @@ mod tests {
         ];
         for tool in candidates {
             let ruled = block_bad_cmd_gate::gates_tool(tool)
+                || block_bad_cmd_reread::applies_to(tool)
                 || tool == "EnterPlanMode"
                 || creates_agents(tool)
                 || tool == block_bad_cmd_loop_stop::SCHEDULE_WAKEUP
