@@ -286,11 +286,14 @@ everything first:
   `ANTHROPIC_DEFAULT_*` slot carries the pinned id, so a tier alias stays
   inside the pin; a full wire id passes straight to the gateway, outside
   it, because the direct route has no bridge to refuse it (#1810).
-- **Local CI**: offered only when `docker info` succeeds and
+- **Local CI**: offered only when `bosn --version` succeeds and
   `.github/workflows/ci.yml` exists. Otherwise the router prints why
-  ("Docker/github actions disabled due to no docker running", or that
-  `ci.yml` is missing) and CI is off. The choice is local-only (`act` on
-  this machine): remote CI always runs, and grind only adds testing (#1429).
+  ("bosn not installed; local CI replay skipped", or that `ci.yml` is
+  missing) and CI is off. Local CI is bosn, never `act` or Docker directly:
+  the question is not gated on `docker info`, and bosn is always latest,
+  never pinned (see [ci.md](ci.md#local-validation-before-remote-ci) and its
+  local CI budget: one full plan per change). The choice is local-only
+  (bosn on this machine): remote CI always runs, and grind only adds testing (#1429).
   `block_bad_cmd_grind_caps.rs` refuses, for every grind role, a skip marker
   (`[skip ci]`, `[ci skip]`, `[no ci]`, `[skip actions]`, `[actions skip]`,
   `skip-checks: true`) in a commit, PR or merge message, `gh pr edit
@@ -789,15 +792,17 @@ The rationale is in
   Dylint checks with an ad hoc loop. Label selection follows the changed
   platform implementation; release validation still covers every target.
 - Exactly **one** integrator runs at a time. It is the only role that
-  builds, so builds never overlap and caches stay warm. No `bosn` wrapper is
-  needed or allowed.
-  **bosn substitute** (#1818). CLAUDE.md's "run through `bosn ci`" rule
-  applies to interactive sessions, not grind roles: the grind-integrator's
-  caps hook denies `bosn`, so the integrator never runs it. Inside a run it
-  runs the run's chosen scripts (`./lint`, `./test`, or the planner's verify
-  commands) directly, in the background when they may exceed 600s and never
-  piped through `tail`. The pre-push full-PR bosn / local-gate pass is not
-  run by the integrator; GitHub CI on the PR is the CI of record.
+  builds, so builds never overlap and caches stay warm. Builds are not wrapped
+  in `bosn`; the integrator runs the run's chosen scripts (`./lint`,
+  `./test`, or the planner's verify commands) directly, in the background
+  when they may exceed 600s and never piped through `tail`.
+  **Local CI is bosn** (#2432, superseding the #1818 "denied" stance and the
+  `act` route). When the run's Local CI answer is on, the integrator may run
+  `bosn ci run|show|report|logs|cancel|runners` and `clud ci`, its own run
+  only; the caps hook still refuses other `bosn` verbs (`init`, daemon
+  control), `pkill`/`pgrep`/`killall` aimed at bosn, direct `act`, and
+  `docker`/`podman`. At most one full plan per change. GitHub CI on the PR
+  remains the CI of record.
   Native-platform coverage gaps are reported, never claimed as covered.
 - The planner declares `depends_on`. An isolated goal rebases onto
   `origin/<base>` (`<main>` in the bug stage, the feature branch in the
@@ -857,7 +862,7 @@ The rationale is in
   600 s tool cap, so the watch always exits on its own; a watch never cancels
   runs on a head SHA it did not start on (#1418). Green never waits for
   CodeRabbit by default: nothing can reproduce it under the local
-  bosn -> act gate, and the fleet suppresses it with `.coderabbit.yaml`
+  bosn gate, and the fleet suppresses it with `.coderabbit.yaml`
   (`reviews.auto_review.enabled: false`). A suppressed repo or a head with no
   `CodeRabbit` status goes green at once with `coderabbit=suppressed` or
   `coderabbit=absent`; there is no grace period. Waiting for a `pending`
@@ -877,7 +882,7 @@ The rationale is in
 | `grind-prework` | Bash, Read, Grep, Glob | read-only git and `gh`; `gh issue comment` on the run facts' meta issue only, fed by `printf '%s' '<body>'`; no edits, worktrees or builds |
 | `grind-worker` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | read-only `gh`; `safe-rm` on literal paths inside its task's directories ([rm-tools.md](rm-tools.md#location-policy)) |
 | `grind-reviewer` | same as worker | same as worker |
-| `grind-integrator` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | anything except `bosn`, direct `docker`/`podman`, `git worktree add`, `act` when CI is off, and a shell loop around lint/test; `safe-rm` only inside its checkout |
+| `grind-integrator` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | anything except non-`ci` bosn verbs, `bosn ci run` / `clud ci` when CI is off, `pkill`/`pgrep` on bosn, direct `act`/`docker`/`podman`, `git worktree add`, and a shell loop around lint/test; `safe-rm` only inside its checkout |
 | `grind-lander` | Read, Grep, Glob, Bash, Skill | `gh pr view\|checks\|diff\|list\|merge`, `gh pr ready` on the feature PR under `feature_merge: auto` only, `gh run view\|list\|rerun`, read-only git, plain `git push`, `pr_merge_watch`, `pr_merge.py` (enqueue) |
 | `grind-chaperone` | Bash (haiku) | read-only `gh` (`pr\|run view\|list\|checks`), `gh run rerun <id> --failed`, `pr_merge_watch`, `pr_merge.py` (re-enqueue), `ci_failure_report.py`; no git, checkout, build, push or direct merge |
 

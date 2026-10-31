@@ -48,7 +48,7 @@ ejection, which the workflow's `grind-chaperone` reports back.
      base with no queue). The watch never waits for
      CodeRabbit unless you pass `--coderabbit-wait N`; never pass it for a
      repo that suppresses CodeRabbit or a head validated by the local
-     bosn -> act gate. Every `coderabbit=` note (`suppressed`, `absent`,
+     bosn gate. Every `coderabbit=` note (`suppressed`, `absent`,
      `completed`, `rate_limited`, `skipped`, `pending`, `timeout`) is still
      `0`: merge.
    - `1` (a required check failed): `gh pr checks --repo <github-repo> <n> --json name,state --jq '[.[]|select(.state!="SUCCESS" and .state!="SKIPPED")]'`
@@ -115,8 +115,8 @@ ejection, which the workflow's `grind-chaperone` reports back.
      - Not empty and the rollup stayed empty: never merge. Return
        `status=needs_fix` (push again to trigger CI) on the first `8`, and
        `status=gave_up` on a second.
-     Remote CI is never skipped: the run's Local CI choice controls `act`
-     on this machine only (#1429).
+     Remote CI is never skipped: the run's Local CI choice controls local
+     `bosn` replay on this machine only (#1429).
    - `9` (conflict): when the final reason is `conflict`
      (`mergeable=CONFLICTING` / `mergeStateStatus=DIRTY`), return
      `status=needs_fix` asking the integrator to rebase onto the base branch.
