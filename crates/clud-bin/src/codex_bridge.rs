@@ -1025,7 +1025,7 @@ fn serve(
 
 fn reserve_worker(active: &AtomicUsize, limit: usize) -> bool {
     active
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             (current < limit).then_some(current + 1)
         })
         .is_ok()

@@ -54,6 +54,12 @@ jobs:
         id: digest
         if: steps.stage.outputs.result == 'publish'
         run: echo "value=$(sha256sum site/index.html site/install/index.html site/install/manifest.json site/models/manifest.json | cut -d ' ' -f 1 | sha256sum | cut -d ' ' -f 1)" >> "$GITHUB_OUTPUT"
+      - name: Keep the model document for the release fallback
+        if: steps.stage.outputs.result == 'publish'
+        uses: actions/upload-artifact@v4
+        with:
+          name: models-manifest
+          path: site/models/manifest.json
       - uses: actions/configure-pages@v5
         if: steps.stage.outputs.result == 'publish'
       - uses: actions/upload-pages-artifact@v3
@@ -82,10 +88,10 @@ jobs:
           expected='${{ needs.build-site.outputs.public_digest }}'
           for attempt in $(seq 1 12); do
             actual=fetch-failed
-            if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/models/manifest.json -o models.json &&
-               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/index.html -o public-site/index.html &&
-               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/install/index.html -o public-site/install/index.html &&
-               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/install/manifest.json -o public-site/install/manifest.json; then
+            if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/models/manifest.json -o models.json &&
+               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/index.html -o public-site/index.html &&
+               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/install/index.html -o public-site/install/index.html &&
+               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/install/manifest.json -o public-site/install/manifest.json; then
               actual=$(sha256sum public-site/index.html public-site/install/index.html public-site/install/manifest.json models.json | cut -d ' ' -f 1 | sha256sum | cut -d ' ' -f 1)
               if [ "$actual" = "$expected" ]; then
                 break
@@ -107,3 +113,25 @@ jobs:
           assert models['defaults']['codex']['effort'] == 'low'
           PY
           python -m installer.verify_site public-site
+
+  # #2449: a GitHub-owned copy, so clud still finds the model document when the
+  # custom domain is lost (releases/latest/download/models-manifest.json).
+  publish-release-fallback:
+    name: Publish model manifest release fallback
+    needs: [build-site, deploy-site]
+    if: needs.build-site.outputs.result == 'publish'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: models-manifest
+      - name: Upload to the latest release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          tag=$(gh release view --json tagName --jq .tagName)
+          cp manifest.json models-manifest.json
+          gh release upload "$tag" models-manifest.json --clobber

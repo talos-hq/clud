@@ -26,7 +26,7 @@ env:
   SOLDR_FORCE_MANAGED_CARGO_SUBCOMMANDS: "1"
   # This crate uses Dylint's legacy bare rust-toolchain file. Soldr's
   # preparer reads rust-toolchain.toml, so select the same nightly explicitly.
-  SOLDR_DYLINT_TOOLCHAIN: nightly-2026-05-28
+  SOLDR_DYLINT_TOOLCHAIN: nightly-2026-08-15
   # See zackees/soldr#1879 -- authenticates soldr's cross-repo managed-tool
   # lookups so they are not rate-limited to 60 req/hr per runner IP.
   SOLDR_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -105,10 +105,10 @@ jobs:
           # (its store may be partial; an exact-hit key is never re-saved).
           job-status: ${{ job.status }}
           toolchain: 1.95.0
-          dylint-toolchain: nightly-2026-05-28
+          dylint-toolchain: nightly-2026-08-15
           dylint: true
-          cargo-dylint-version: 6.0.3
-          dylint-link-version: 6.0.3
+          cargo-dylint-version: 6.2.0
+          dylint-link-version: 6.2.0
           # zccache keeps each target's nightly check-mode dependency units
           # (saved from main only). Warm passes check just workspace crates.
           # One key per leg: the legs check different targets, and a shared
@@ -141,7 +141,7 @@ jobs:
         if: steps.pass.outputs.cache-hit != 'true'
         run: |
           [ "$DYLINT_PASS" = "host" ] || { echo "not the host leg"; exit 0; }
-          soldr rustup component add --toolchain nightly-2026-05-28 rustfmt
+          soldr rustup component add --toolchain nightly-2026-08-15 rustfmt
           (cd dylints/ban_manual_slash_normalize && soldr --no-cache cargo fmt --all -- --check)
           (cd dylints/enforce_platform_boundary && soldr --no-cache cargo fmt --all -- --check)
       - name: Test dylint crate
@@ -149,23 +149,23 @@ jobs:
         run: |
           [ "$DYLINT_PASS" = "host" ] || { echo "not the host leg"; exit 0; }
           # Run from the crate so its .cargo/config.toml applies (RUST-016).
-          (cd dylints/ban_manual_slash_normalize && RUSTUP_TOOLCHAIN=nightly-2026-05-28 soldr --no-cache cargo test)
+          (cd dylints/ban_manual_slash_normalize && RUSTUP_TOOLCHAIN=nightly-2026-08-15 soldr --no-cache cargo test)
           # enforce_platform_boundary's UI test (`ui/boundary.rs`) launches
           # nested Cargo through dylint_testing, outside soldr's Dylint front
           # door: keep the rustup proxy visible and point the runner at the
           # verified driver setup-soldr exported. The runner asks for the
-          # short nightly directory, while soldr's asset and toolchain live
-          # under the host-qualified one, so alias the short names.
+          # short nightly directory; soldr 0.9.47+ stages the driver under
+          # both names, and the toolchain still needs the short alias.
           export PATH="${CARGO_HOME:-$HOME/.cargo}/bin:${PATH}"
           : "${DYLINT_DRIVER_PATH:?}"
-          host="$(RUSTUP_TOOLCHAIN=nightly-2026-05-28 soldr rustc -vV | sed -n 's/^host: //p')"
-          qualified="nightly-2026-05-28-${host}"
+          host="$(RUSTUP_TOOLCHAIN=nightly-2026-08-15 soldr rustc -vV | sed -n 's/^host: //p')"
+          qualified="nightly-2026-08-15-${host}"
           test -f "$DYLINT_DRIVER_PATH/$qualified/dylint-driver"
           test -d "${RUSTUP_HOME:?}/toolchains/$qualified"
-          ln -sfnT "$qualified" "$DYLINT_DRIVER_PATH/nightly-2026-05-28"
-          ln -sfnT "$qualified" "$RUSTUP_HOME/toolchains/nightly-2026-05-28"
+          test -f "$DYLINT_DRIVER_PATH/nightly-2026-08-15/dylint-driver"
+          ln -sfnT "$qualified" "$RUSTUP_HOME/toolchains/nightly-2026-08-15"
           (cd dylints/enforce_platform_boundary && \
-            RUSTUP_TOOLCHAIN=nightly-2026-05-28 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/dylint-tests" \
+            RUSTUP_TOOLCHAIN=nightly-2026-08-15 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/dylint-tests" \
             soldr cargo test)
       - name: Run dylint over workspace
         if: steps.pass.outputs.cache-hit != 'true'

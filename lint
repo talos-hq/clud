@@ -27,7 +27,7 @@ fi
 # is used by the CI static job, which has its own native Dylint matrix.
 if [[ " $* " != *" --static-only "* ]]; then
     command -v soldr >/dev/null || { echo "lint: install soldr for Dylint" >&2; exit 1; }
-    export SOLDR_DYLINT_TOOLCHAIN=nightly-2026-05-28
+    export SOLDR_DYLINT_TOOLCHAIN=nightly-2026-08-15
     export SOLDR_FORCE_MANAGED_CARGO_SUBCOMMANDS=1
     env -u RUSTUP_TOOLCHAIN soldr dylint prepare
     env -u RUSTUP_TOOLCHAIN soldr dylint --all -- --workspace --all-targets

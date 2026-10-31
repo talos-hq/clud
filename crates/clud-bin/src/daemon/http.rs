@@ -953,7 +953,7 @@ impl WatchSlot {
     fn take() -> Option<Self> {
         use std::sync::atomic::Ordering;
         GH_WATCHES
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
+            .try_update(Ordering::SeqCst, Ordering::SeqCst, |n| {
                 (n < MAX_GH_WATCHES).then_some(n + 1)
             })
             .ok()

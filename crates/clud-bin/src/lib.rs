@@ -121,6 +121,7 @@ pub mod process_tree;
 pub mod provider_auth;
 pub mod provider_catalog;
 pub mod provider_registry;
+pub mod published_urls;
 pub mod reap_log;
 pub mod reaper_facts;
 pub mod repo_clud_config;

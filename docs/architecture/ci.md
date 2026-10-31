@@ -1174,7 +1174,7 @@ checked target, so the host pass never reaches `cfg(windows)` or
 `cfg(target_os = "macos")` modules. The job therefore adds check-only passes
 with `--target x86_64-pc-windows-msvc` and `--target aarch64-apple-darwin`.
 `soldr dylint prepare --target` installs the pinned nightly's `rust-std` for
-each target; Soldr's verified 6.0.3 tools and nightly driver stay prebuilt, so
+each target; Soldr's verified 6.2.0 tools and nightly driver stay prebuilt, so
 no pass builds a toolchain. Dylint lints only workspace crates, but each pass
 must first type-check every dependency with that nightly, which the stable
 build caches cannot supply. zccache caches those check units per target in the
