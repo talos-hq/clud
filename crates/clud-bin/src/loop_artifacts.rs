@@ -231,6 +231,7 @@ impl LoopSession {
         self.info.mark_completed(error);
         let _ = self.info.save(&self.info_path);
         log_loop_end(&self.git_root, summary);
+        let _ = write_root_summary(&self.git_root, &self.info, summary);
     }
 
     /// Borrow the current task info — exposed for tests that want to
@@ -239,6 +240,53 @@ impl LoopSession {
     pub fn info(&self) -> &TaskInfo {
         &self.info
     }
+}
+
+/// Path to the visible `LOOP_DONE.md` summary at the project root.
+pub fn root_summary_path(git_root: &Path) -> PathBuf {
+    git_root.join("LOOP_DONE.md")
+}
+
+/// Render the root `LOOP_DONE.md` body: outcome, an ASCII iteration
+/// table, and pointers into the hidden `.clud/loop/` artifact dir.
+pub fn render_root_summary(info: &TaskInfo, summary: &str) -> String {
+    let mut out = String::new();
+    out.push_str("# LOOP_DONE\n\n");
+    out.push_str(&format!("- Outcome: {summary}\n"));
+    out.push_str(&format!("- Started: {}\n", info.start_time));
+    if let Some(end) = &info.end_time {
+        out.push_str(&format!("- Ended: {end}\n"));
+    }
+    out.push_str(&format!(
+        "- Iterations: {}/{}\n",
+        info.iterations.len(),
+        info.total_iterations
+    ));
+    if let Some(err) = &info.error {
+        out.push_str(&format!("- Error: {err}\n"));
+    }
+    out.push_str("\n```\n+------+------+\n| iter |  rc  |\n+------+------+\n");
+    for it in &info.iterations {
+        let rc = it
+            .exit_code
+            .map_or_else(|| "-".to_string(), |c| c.to_string());
+        out.push_str(&format!("| {:>4} | {:>4} |\n", it.iteration, rc));
+    }
+    out.push_str("+------+------+\n```\n\n");
+    out.push_str("Artifacts (hidden directory):\n\n");
+    for name in ["info.json", "log.txt", "LOOP.md", "DONE", "BLOCKED"] {
+        out.push_str(&format!("- `.clud/loop/{name}`\n"));
+    }
+    out
+}
+
+/// Write `<git-root>/LOOP_DONE.md` so the loop result is visible without
+/// opening the hidden `.clud/loop/` directory.
+pub fn write_root_summary(git_root: &Path, info: &TaskInfo, summary: &str) -> std::io::Result<()> {
+    std::fs::write(
+        root_summary_path(git_root),
+        render_root_summary(info, summary),
+    )
 }
 
 /// Path to `motivation.md` under the loop dir.
@@ -705,6 +753,9 @@ mod tests {
         s.on_iteration_start(2);
         s.on_iteration_end(2, 1, Some("nonzero".into()));
         s.on_loop_end("BLOCKED", Some("Interrupted by user".into()));
+        let root = std::fs::read_to_string(root_summary_path(tmp.path())).unwrap();
+        assert!(root.contains("Outcome: BLOCKED"), "{root}");
+        assert!(root.contains(".clud/loop/info.json"), "{root}");
 
         let info: TaskInfo =
             serde_json::from_str(&fs::read_to_string(TaskInfo::info_path(tmp.path())).unwrap())
