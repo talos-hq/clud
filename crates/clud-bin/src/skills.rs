@@ -313,6 +313,10 @@ pub struct InstallReport {
     pub skipped_existing: Vec<&'static str>,
     /// Clud-managed copies rewritten because the bundled body changed.
     pub refreshed: Vec<&'static str>,
+    /// User-owned copies (also in `skipped_existing`) whose body differs from
+    /// the bundle. Their companion workflow and agents still refresh, so the
+    /// launch warns about the skew (#2436).
+    pub user_owned_diverged: Vec<&'static str>,
 }
 
 /// Result of the legacy Codex skill cleanup pass.
@@ -471,6 +475,9 @@ pub fn install_to(base: &Path, skills: &[BundledSkill]) -> Result<InstallReport,
             // A copy the user has taken ownership of (marker stripped, or
             // hand-authored): never touch it.
             Ok(existing) if !clud_owned(&existing) => {
+                if normalize(&existing) != normalize(skill.skill_md) {
+                    report.user_owned_diverged.push(skill.name);
+                }
                 report.skipped_existing.push(skill.name);
             }
             // Ours, and current. Compared modulo whitespace so a checkout or
