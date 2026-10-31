@@ -693,6 +693,10 @@ pub enum Command {
         /// between runs (for example `30s`, `5m`, `1h`).
         #[arg(long = "repeat")]
         repeat: Option<String>,
+        /// Queue a message for the next loop iteration (delivered via
+        /// `.clud/loop/NEXT_MESSAGE.md`). Without a task, queue and exit.
+        #[arg(long = "message")]
+        message: Option<String>,
     },
     Up {
         #[arg(short = 'm', long = "message")]
@@ -1869,6 +1873,7 @@ const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--loop-count",
     "--done",
     "--repeat",
+    "--message",
     "--daemon-state-dir",
     "--stale-after",
     // Issue: `clud gc prune/purge --older-than <dur>` value arg.

@@ -693,13 +693,18 @@ fn run_dashboard_loop(
                     200,
                     &serde_json::to_vec(&openapi_document()).unwrap_or_else(|_| b"{}".to_vec()),
                 ),
-                _ => super::api_session_http::handle(
-                    request,
-                    method,
-                    &path,
-                    state_dir.clone(),
-                    &api_lifecycle,
-                ),
+                _ => {
+                    let Some(request) = super::board::handle(request, &method, &path, &url) else {
+                        continue;
+                    };
+                    super::api_session_http::handle(
+                        request,
+                        method,
+                        &path,
+                        state_dir.clone(),
+                        &api_lifecycle,
+                    )
+                }
             }
             continue;
         }

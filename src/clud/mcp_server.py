@@ -34,6 +34,7 @@ import shlex
 import shutil
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
@@ -72,7 +73,8 @@ server = MCPServer(
         "To delegate work to a Codex (OpenAI) sub-agent, call session_start with "
         'backend="codex" and a self-contained prompt and cwd, then session_wait or '
         "session_result for its result. Use run for short blocking jobs. Pass model "
-        "to pick a specific Codex model."
+        "to pick a specific Codex model. Check board_read periodically for messages "
+        "from clud, Hermes or other agents, and answer with board_post."
     ),
     description=(
         "Run the clud agent harness (Claude Code / Codex in YOLO mode) on a "
@@ -836,6 +838,64 @@ async def session_kill(session_id: str, ctx: Context) -> str:
     if status != 200:
         return _dump({"error": f"kill failed ({status}): {payload}", "session_id": session_id})
     return _dump({"session_id": session_id, "status": "terminated"})
+
+
+#: Where this agent's next ``board_read`` resumes; per bridge process.
+_board_cursor = 0
+
+
+def _board_identity() -> str:
+    """This agent's bulletin-board address: ``CLUD_BOARD_ID`` or the session id."""
+    return os.environ.get("CLUD_BOARD_ID") or os.environ.get("CLUD_SESSION_ID", "")
+
+
+@server.tool()
+async def board_whoami() -> str:
+    """Return this agent's bulletin-board address, which others post to."""
+    return _dump({"id": _board_identity()})
+
+
+@server.tool()
+async def board_post(to: str, body: str) -> str:
+    """Post a message on clud's agent bulletin board.
+
+    Args:
+        to: The recipient's board id (see `board_whoami`), or "all".
+        body: The message text.
+    """
+    try:
+        base, token = await _discover_api()
+    except Exception as exc:
+        return _dump({"error": f"could not discover clud daemon API: {exc}"})
+    message = {"to": to, "from": _board_identity(), "body": body}
+    status, payload = await _api(base, token, "POST", "/v1/board/messages", message)
+    if status != 201:
+        return _dump({"error": f"post failed ({status}): {payload}"})
+    return _dump(payload)
+
+
+@server.tool()
+async def board_read(after: int = -1) -> str:
+    """Read new bulletin-board messages addressed to this agent or to "all".
+
+    Each call returns only what arrived since the previous call. Act on any
+    instructions from clud, Hermes or the user, and reply with `board_post`.
+
+    Args:
+        after: Cursor to read from; -1 (default) continues from the last read.
+    """
+    global _board_cursor
+    try:
+        base, token = await _discover_api()
+    except Exception as exc:
+        return _dump({"error": f"could not discover clud daemon API: {exc}"})
+    cursor = _board_cursor if after < 0 else after
+    query = urllib.parse.urlencode({"to": _board_identity(), "after": cursor})
+    status, payload = await _api(base, token, "GET", f"/v1/board/messages?{query}")
+    if status != 200 or not isinstance(payload, dict):
+        return _dump({"error": f"read failed ({status}): {payload}"})
+    _board_cursor = int(payload.get("next_cursor", cursor))
+    return _dump(payload)
 
 
 @server.tool()
