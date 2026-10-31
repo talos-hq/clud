@@ -822,6 +822,13 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             {
                 return None;
             }
+            if is_clud(&words[0])
+                && words.get(1).is_some_and(|w| w == "tool")
+                && words.get(2).is_some_and(|w| w == "run")
+                && words.get(3).is_some_and(|w| w == "github/pr_merge.py")
+            {
+                return pr_merge_tool_reason(role, &words[4..], run);
+            }
             if program == "git" {
                 let Some(sub) = git_subcommand(words) else {
                     return Some(format!(
@@ -1050,6 +1057,22 @@ fn policy_name(policy: FeatureMerge) -> &'static str {
 /// argument, as a number. Value-taking flags skip their value.
 fn pr_target(args: &[String]) -> Option<String> {
     pr_positional(args).and_then(|word| number_word(word))
+}
+
+/// `pr_merge.py` has no merge-method flag, so it cannot honour the feature
+/// PR's merge-commit rule: the lander merges the feature PR with
+/// `gh pr merge <PR> --merge` instead. `None` allows.
+fn pr_merge_tool_reason(role: &str, args: &[String], run: &RunFacts) -> Option<String> {
+    let feature_pr = run.feature_pr()?;
+    // `pr_target` skips `--`, `--repo` and `--match-head-commit` with their values.
+    let target = pr_target(args);
+    if target.as_deref().is_none_or(|t| t == feature_pr) {
+        return Some(format!(
+            "{role} may not submit the feature PR through github/pr_merge.py, which cannot \
+             pass --merge; merge it with `gh pr merge {feature_pr} --merge`"
+        ));
+    }
+    None
 }
 
 /// Whether a `gh pr merge` target names the feature PR: by number, or by its
@@ -2279,6 +2302,38 @@ mod tests {
         assert!(!allowed(LANDER, "gh run cancel 99", &facts));
         assert!(!allowed(LANDER, "cargo test", &facts));
         assert!(!allowed(LANDER, "git commit -am fix", &facts));
+    }
+
+    #[test]
+    fn lander_submits_through_pr_merge_tool() {
+        let facts = run(true, false);
+        for command in [
+            "\"$CLUD_EXE\" tool run github/pr_merge.py -- 5 --repo o/r --match-head-commit abc123",
+            "clud tool run github/pr_merge.py -- 5 --repo o/r --match-head-commit abc123",
+        ] {
+            assert!(allowed(LANDER, command, &facts), "{command}");
+            assert!(!allowed(WORKER, command, &facts), "{command}");
+            assert!(!allowed(REVIEWER, command, &facts), "{command}");
+        }
+        assert!(!allowed(
+            LANDER,
+            "clud tool run github/pr_merge.py.untrusted -- 5 --repo o/r --match-head-commit abc123",
+            &facts
+        ));
+        let feature = RunFacts::from_json(&serde_json::json!({
+            "mode": "parallel", "meta": 100, "feature_merge": "auto",
+            "feature": {"branch": "grind/meta-100-1f3a", "pr": 7}
+        }));
+        assert!(allowed(
+            LANDER,
+            "clud tool run github/pr_merge.py -- 102 --repo o/r --match-head-commit abc123",
+            &feature
+        ));
+        assert!(!allowed(
+            LANDER,
+            "clud tool run github/pr_merge.py -- 7 --repo o/r --match-head-commit abc123",
+            &feature
+        ));
     }
 
     /// #1409: during the bug stage the run facts have no `feature` yet (the router
