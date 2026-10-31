@@ -3868,7 +3868,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       state
       baseRefName
       autoMergeRequest { enabledAt }
-      mergeQueueEntry { state position headCommit { oid } }
+      mergeQueueEntry { state position enqueuedAt headCommit { oid } }
       timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
         nodes { ... on RemovedFromMergeQueueEvent { reason createdAt } }
       }
@@ -3888,6 +3888,9 @@ class QueueState:
     queue_sha: str | None
     removal_reason: str | None
     removed_at: datetime | None
+    # When this entry joined the queue: older merge-group runs belong to an
+    # earlier attempt and must not eject it again (#2481).
+    enqueued_at: datetime | None = None
 
 
 def _removal(pr: dict) -> tuple[str | None, datetime | None]:
@@ -3928,7 +3931,17 @@ def parse_queue_state(data: object) -> QueueState | None:
         queue_sha=(entry.get("headCommit") or {}).get("oid") if entry else None,
         removal_reason=reason,
         removed_at=removed_at,
+        enqueued_at=_stamp(entry.get("enqueuedAt")) if entry else None,
     )
+
+
+def _stamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _complete_queue_response(pr: dict) -> bool:
@@ -3982,15 +3995,30 @@ def merge_group_failure(jobs_by_run: list[tuple[dict, list[dict]]], required: se
     return None
 
 
-def fetch_merge_group_jobs(repo: str, sha: str) -> list[tuple[dict, list[dict]]]:
+def fetch_merge_group_jobs(
+    repo: str, sha: str, since: datetime | None = None,
+) -> list[tuple[dict, list[dict]]]:
     data = gh_json("api", f"repos/{repo}/actions/runs?head_sha={sha}&event=merge_group&per_page=100")
     runs = data.get("workflow_runs") if isinstance(data, dict) else None
     result = []
-    for run in runs if isinstance(runs, list) else []:
+    for run in current_attempt_runs(runs if isinstance(runs, list) else [], since):
         jobs = gh_json("api", f"repos/{repo}/actions/runs/{run.get('id')}/jobs?per_page=100")
         listed = jobs.get("jobs") if isinstance(jobs, dict) else None
         result.append((run, listed if isinstance(listed, list) else []))
     return result
+
+
+def current_attempt_runs(runs: list, since: datetime | None) -> list[dict]:
+    """Runs from this queue attempt; one created before `since` is stale (#2481)."""
+    kept = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        created = _stamp(run.get("created_at"))
+        if since is not None and created is not None and created < since:
+            continue
+        kept.append(run)
+    return kept
 
 
 @dataclass
@@ -4040,7 +4068,7 @@ def _merge_group_verdict(repo: str, q: QueueState, seen: MergeFollow) -> tuple[i
     if not seen.required_read:
         seen.required = fetch_required_check_names(repo, q.base_ref) if q.base_ref else None
         seen.required_read = True
-    failed = merge_group_failure(fetch_merge_group_jobs(repo, q.queue_sha), seen.required)
+    failed = merge_group_failure(fetch_merge_group_jobs(repo, q.queue_sha, q.enqueued_at), seen.required)
     return (EXIT_EJECTED, f"required merge-group check failed: {failed}") if failed else None
 
 

@@ -50,7 +50,7 @@ def _queue(watcher, state="OPEN", entry="QUEUED", *, auto=False, reason=None, re
 def _follow(watcher, monkeypatch, states, jobs=None, required=None) -> int:
     seq = iter(states)
     monkeypatch.setattr(watcher, "fetch_queue_state", lambda _r, _p: next(seq))
-    monkeypatch.setattr(watcher, "fetch_merge_group_jobs", lambda _r, _s: jobs or [])
+    monkeypatch.setattr(watcher, "fetch_merge_group_jobs", lambda _r, _s, _since=None: jobs or [])
     monkeypatch.setattr(watcher, "fetch_required_check_names", lambda _r, _b: required)
     with pytest.raises(SystemExit) as exit_info:
         watcher.follow_merge(1847, "obs-rust/obs-studio", None)
