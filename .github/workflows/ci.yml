@@ -681,6 +681,10 @@ jobs:
   # ---------------------------------------------------------------- gate ----
   # Single required status check. Branch protection points here, so adding or
   # removing a triple never requires touching branch-protection settings.
+  # `always()` stays (#2273): a skipped required check counts as success, so
+  # a hand-cancelled run must still publish a failing CI OK. Only a run that a
+  # newer run of this workflow on the same head SHA superseded passes without
+  # verification; the newer run's CI OK, posted later, is the verdict.
   ci-ok:
     name: CI OK
     if: always()
@@ -714,7 +718,27 @@ jobs:
       # a lockfile changed. Listing it would put a `skipped` result into the
       # `RESULTS` blob the Check results step inspects, which is exactly the
       # malformed-condition class the explicit lists below exist to prevent.
+      # #2273: a run that concurrency cancelled because a newer run of this
+      # workflow started on the same head SHA is superseded; it passes so its
+      # stale failure cannot block the replacement's verdict. Any other
+      # cancelled need (a hand-cancelled run) still fails the verifier.
+      - name: Detect superseded run
+        id: superseded
+        if: contains(toJSON(needs.*.result), 'cancelled')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          workflow_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          newer=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs?head_sha=$HEAD_SHA&per_page=100" \
+            --jq "[.workflow_runs[] | select(.id > $GITHUB_RUN_ID)] | length")
+          if [ "$newer" -gt 0 ]; then
+            echo "Superseded by $newer newer run(s) on $HEAD_SHA; their CI OK is the verdict." >>"$GITHUB_STEP_SUMMARY"
+            echo "superseded=true" >>"$GITHUB_OUTPUT"
+          fi
       - name: Checkout verified source
+        if: steps.superseded.outputs.superseded != 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
@@ -722,6 +746,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up uv
+        if: steps.superseded.outputs.superseded != 'true'
         uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           enable-cache: false
@@ -747,6 +772,7 @@ jobs:
       # The shared verifier derives required jobs from this workflow and
       # independently verifies hosted results and default-branch reuse.
       - name: Check results
+        if: steps.superseded.outputs.superseded != 'true'
         env:
           RESULTS: ${{ toJSON(needs) }}
           REUSE_EVIDENCE: ${{ needs.static.outputs.reuse_evidence }}
