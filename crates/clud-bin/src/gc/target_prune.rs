@@ -1,4 +1,5 @@
 //! Issue #2302: reclaim cargo build output before trashing a whole worktree.
+//! #2487: the same prune runs first for worktrees scheduled by age.
 //!
 //! About 77% of `~/.clud/worktrees` is `target/`. When the root is over
 //! `worktrees.warn_bytes`, each idle, not-in-use large worktree has its

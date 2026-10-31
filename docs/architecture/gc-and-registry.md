@@ -537,6 +537,18 @@ the default branch, so ancestry-based checks call them live work forever
   the root dropping under the limit removes it from the schedule. Observe
   mode only logs; no process snapshot means no scheduling
   (`gc::worktree_schedule` decides, `gc_service::worktree_schedule_exec` acts).
+- **Age retention (#2487).** Size alone missed a root full of small, long-idle
+  worktrees. Any worktree directly under `~/.clud/worktrees` that has been idle
+  for `MAX_AGE_SECS` (14 days) is also a candidate, even when the root is under
+  budget and the worktree is not among the largest. It gets the same exemptions,
+  the same dirty/unpushed probe (fail closed, never trashes uncommitted work,
+  #2418), the same `target/` prune first and the same 7-day warn-then-trash
+  grace (`worktree_schedule::aged`, `due`).
+- **Stray root logs (#2487).** Agents redirect `lint*.log`/`red*.log` into the
+  worktrees root. Each Delete-mode probe moves every top-level `*.log` file
+  idle for 1 h into `~/.clud/logs/worktrees`. That directory is capped at
+  7 days and 256 MiB, and the oldest files go first. Directories and
+  non-`.log` files are never touched (`gc::worktree_root_logs`).
 - **Dirty worktrees are never trashed (#2302 follow-up).** When the root is
   over budget, a schedulable candidate (non-exempt, idle >= 24 h) is probed
   once per tick with

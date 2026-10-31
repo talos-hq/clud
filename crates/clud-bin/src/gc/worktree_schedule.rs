@@ -10,6 +10,12 @@
 //! no longer among the largest, and the whole schedule clears once the root
 //! is back under the limit.
 //!
+//! #2487 adds age retention: a worktree idle for [`MAX_AGE_SECS`] is a
+//! candidate even while the root is under budget, with the same exemptions
+//! (kept, in use, dirty or unpushed, reclaimable elsewhere) and the same
+//! warn-then-trash grace. Every row under the root is considered, not only
+//! the largest.
+//!
 //! [`plan`] is the pure decision; the daemon's probe thread gathers the facts
 //! and performs the moves.
 
@@ -27,6 +33,10 @@ pub const GRACE_SECS: i64 = 7 * 24 * 60 * 60;
 
 /// A worktree has to be idle this long before it is even warned about.
 pub const MIN_IDLE_SECS: i64 = 24 * 60 * 60;
+
+/// #2487: idle this long, a clean, unused worktree is scheduled regardless
+/// of the root's size. With [`GRACE_SECS`] it leaves after three weeks idle.
+pub const MAX_AGE_SECS: i64 = 14 * 24 * 60 * 60;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Schedule {
@@ -69,11 +79,25 @@ fn schedulable(c: &Candidate) -> bool {
     !c.exempt && c.idle_secs >= MIN_IDLE_SECS
 }
 
-/// Fill `dirty` for every [`schedulable`] candidate with `probe`, which
-/// returns the reason a worktree holds unsaved work. The probe must fail
-/// closed (an unreadable repo is reported as dirty).
-pub fn mark_dirty(candidates: &mut [Candidate], probe: &dyn Fn(&str) -> Option<String>) {
-    for c in candidates.iter_mut().filter(|c| schedulable(c)) {
+/// #2487: idle past [`MAX_AGE_SECS`] and otherwise schedulable.
+pub fn aged(c: &Candidate) -> bool {
+    schedulable(c) && c.idle_secs >= MAX_AGE_SECS
+}
+
+/// Schedulable this tick: over budget, or [`aged`].
+pub fn due(c: &Candidate, over: bool) -> bool {
+    schedulable(c) && (over || aged(c))
+}
+
+/// Fill `dirty` for every [`due`] candidate with `probe`, which returns the
+/// reason a worktree holds unsaved work. The probe must fail closed (an
+/// unreadable repo is reported as dirty).
+pub fn mark_dirty(
+    candidates: &mut [Candidate],
+    over: bool,
+    probe: &dyn Fn(&str) -> Option<String>,
+) {
+    for c in candidates.iter_mut().filter(|c| due(c, over)) {
         c.dirty = probe(&c.path);
     }
 }
@@ -135,13 +159,9 @@ pub fn plan(
     candidates: &[Candidate],
     now: i64,
 ) -> Vec<Action> {
-    if !over {
-        schedule.remove_after.clear();
-        return Vec::new();
-    }
     let mut actions = Vec::new();
     let mut eligible: Vec<&Candidate> = Vec::new();
-    for c in candidates.iter().filter(|c| schedulable(c)) {
+    for c in candidates.iter().filter(|c| due(c, over)) {
         match &c.dirty {
             // Dropped from the schedule below, even if already scheduled.
             Some(reason) => actions.push(Action::KeptDirty {
@@ -305,7 +325,7 @@ mod tests {
         fresh.idle_secs = 1;
         let mut cands = [exempt.clone(), fresh, cand("/wt/ok", false)];
         let probed = std::cell::RefCell::new(Vec::new());
-        mark_dirty(&mut cands, &|p| {
+        mark_dirty(&mut cands, true, &|p| {
             probed.borrow_mut().push(p.to_string());
             Some("dirty".into())
         });
@@ -354,6 +374,61 @@ mod tests {
         plan(&mut s, true, &[cand("/wt/c", false)], 0);
         assert!(plan(&mut s, false, &[cand("/wt/c", false)], GRACE_SECS).is_empty());
         assert!(s.remove_after.is_empty());
+    }
+
+    #[test]
+    fn an_aged_clean_worktree_is_scheduled_under_budget() {
+        let mut s = Schedule::default();
+        let mut old = cand("/wt/old", false);
+        old.idle_secs = MAX_AGE_SECS;
+        let mut young = cand("/wt/young", false);
+        young.idle_secs = MAX_AGE_SECS - 1;
+        let acts = plan(&mut s, false, &[old.clone(), young], 0);
+        assert_eq!(
+            acts,
+            [Action::Warn {
+                path: "/wt/old".into(),
+                bytes: 10,
+                remove_after: GRACE_SECS
+            }]
+        );
+        assert_eq!(
+            plan(&mut s, false, &[old], GRACE_SECS),
+            [Action::Trash {
+                path: "/wt/old".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn an_aged_worktree_with_unsaved_work_or_in_use_is_never_scheduled() {
+        let mut s = Schedule::default();
+        let mut dirty = dirty_cand("/wt/d");
+        dirty.idle_secs = MAX_AGE_SECS * 10;
+        let mut used = cand("/wt/u", true);
+        used.idle_secs = MAX_AGE_SECS * 10;
+        let acts = plan(&mut s, false, &[dirty, used], 0);
+        assert_eq!(
+            acts,
+            [Action::KeptDirty {
+                path: "/wt/d".into(),
+                reason: "uncommitted tracked changes".into()
+            }]
+        );
+        assert!(s.remove_after.is_empty());
+    }
+
+    #[test]
+    fn aged_candidates_are_probed_under_budget() {
+        let mut old = cand("/wt/old", false);
+        old.idle_secs = MAX_AGE_SECS;
+        let mut cands = [old, cand("/wt/young", false)];
+        let probed = std::cell::RefCell::new(Vec::new());
+        mark_dirty(&mut cands, false, &|p| {
+            probed.borrow_mut().push(p.to_string());
+            None
+        });
+        assert_eq!(*probed.borrow(), ["/wt/old"]);
     }
 
     #[test]
