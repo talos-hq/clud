@@ -140,6 +140,9 @@ pub fn deletion_safety_fragment() -> Value {
 pub const GUARDED_TOOLS: &[&str] = &[
     "EnterPlanMode",
     "Bash",
+    // #2233: the unchanged-re-read guard reads `tool_input` only, so the
+    // harness must route `Read` here for it to fire at all.
+    "Read",
     "PowerShell",
     "ScheduleWakeup",
     "Monitor",
