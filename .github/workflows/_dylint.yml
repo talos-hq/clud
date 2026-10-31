@@ -90,12 +90,12 @@ jobs:
           SOLDR_S3_CACHE_ACCESS_KEY: ${{ secrets.SOLDR_S3_CACHE_ACCESS_KEY }}
           SOLDR_S3_CACHE_SECRET_KEY: ${{ secrets.SOLDR_S3_CACHE_SECRET_KEY }}
         with:
-          # Remote S3 build cache: bucket forge-ci in DigitalOcean Spaces nyc3.
+          # Remote S3 build cache: bucket forge-ci-cache in DigitalOcean Spaces sfo3.
           # The 50G high watermark is enforced only on the merge-queue
           # (merge_group) singleton; unset bucket/creds disables it entirely.
-          s3-bucket: forge-ci
-          s3-endpoint: nyc3.digitaloceanspaces.com
-          s3-region: nyc3
+          s3-bucket: forge-ci-cache
+          s3-endpoint: sfo3.digitaloceanspaces.com
+          s3-region: sfo3
           s3-cache-limit: 50G
           cache: true
           # #2300 / setup-soldr#473: the solo-toolchain cache cold path fails
