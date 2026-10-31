@@ -70,3 +70,13 @@ def test_informative_failure_needs_no_root_causes(watcher) -> None:
         watcher.CheckRow(name="Test", bucket="fail", state="FAILURE"), "1", "FAILED t::x", None
     )
     assert watcher.root_cause_reports(primary, ["other"], lambda name: name) == []
+
+
+def test_a_fatal_preflight_line_is_a_first_error(watcher) -> None:
+    log = (
+        "cargo-nextest version=0.9.140\n"
+        "FATAL [pre-extract]: insufficient free disk for the nextest archive extraction\n"
+        "  free            : 11.73 GiB\n"
+        "##[error]Process completed with exit code 1.\n"
+    )
+    assert watcher.first_error_line(log).startswith("FATAL [pre-extract]: insufficient free disk")

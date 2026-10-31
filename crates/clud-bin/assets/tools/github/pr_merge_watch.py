@@ -1338,6 +1338,9 @@ def strip_ansi(text: str) -> str:
 # what a build or test harness prints on its way there.
 FIRST_ERROR_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^##\[error\]"),
+    # A harness's own preflight refusal (`FATAL [pre-extract]: insufficient
+    # free disk ...`) names the cause in plain text (#2457).
+    re.compile(r"^FATAL\b"),
     re.compile(r"^FAILED \S"),
     re.compile(r"^test result: FAILED"),
     re.compile(r"^--- FAILED"),
