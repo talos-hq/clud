@@ -770,3 +770,19 @@ fn a_redirect_after_the_heredoc_marker_is_the_commands() {
         .any(|redirect| redirect.writes_file() && redirect.target.as_literal() == Some("run.sh")));
     assert!(cat.heredoc.is_some());
 }
+
+#[test]
+fn while_read_walks_lines() {
+    let script = parse(
+        "ls | while read f; do echo \"$f\"; done",
+        Dialect::Posix,
+        &BaseEnv::default(),
+    );
+    assert_eq!(only(&script, "echo").loop_kind, Some(LoopKind::ForEach));
+    let script = parse(
+        "while true; do sleep 5; done",
+        Dialect::Posix,
+        &BaseEnv::default(),
+    );
+    assert_eq!(only(&script, "sleep").loop_kind, Some(LoopKind::While));
+}

@@ -120,6 +120,8 @@ fn literal_list_loops_and_one_shot_commands_stay_allowed() {
         // Data, not commands.
         "git commit -m 'never write: while true; do sleep 5; done'",
         "rg 'tail -f' docs/",
+        // #2489: a `while read` loop ends at EOF.
+        "ls ~/.claude/skills/*/SKILL.md | while read f; do grep -L x \"$f\"; done",
         "python - <<'PY'\nprint('until grep -q x f; do sleep 5; done')\nPY",
     ] {
         assert!(allowed(command), "{command} should be allowed");
