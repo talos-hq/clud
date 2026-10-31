@@ -600,6 +600,14 @@ fn build_launch_plan_for_target_at(
         deletion_instructions.push_str(do_procedure(args.do_rendered_prompt.as_deref()));
     }
 
+    let mcp_bridge = claude_mcp_bridge_arg(backend, target);
+    if mcp_bridge.is_some() {
+        append_instructions(
+            &mut deletion_instructions,
+            super::mcp_config::BOARD_DIRECTIVE,
+        );
+    }
+
     if matches!(backend, Backend::Claude) && !deletion_instructions.is_empty() {
         cmd.push("--append-system-prompt".into());
         cmd.push(deletion_instructions);
@@ -692,7 +700,7 @@ fn build_launch_plan_for_target_at(
     if !disallowed.is_empty() {
         cmd.push(format!("--disallowedTools={}", disallowed.join(",")));
     }
-    cmd.extend(claude_mcp_bridge_arg(backend, target));
+    cmd.extend(mcp_bridge);
 
     // A Claude-harness gateway must receive its catalog discovery id, not the
     // provider wire id. Claude Code sees and classifies this value before the

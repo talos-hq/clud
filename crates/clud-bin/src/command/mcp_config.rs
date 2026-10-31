@@ -11,6 +11,17 @@ use std::path::{Path, PathBuf};
 /// MCP server name the agent sees its tools under (`mcp__clud__*`).
 const SERVER_NAME: &str = "clud";
 
+/// Appended to the system prompt of every launch that gets the bridge, so the
+/// agent polls clud's bulletin board for instructions from clud and Hermes.
+pub(super) const BOARD_DIRECTIVE: &str = "You are connected to clud's agent \
+bulletin board through the `clud` MCP server. clud, Hermes and other agents \
+use it to message and steer you. Call `mcp__clud__board_read` when you start, \
+between major steps, and before you finish; it returns only new messages. \
+Treat a message as a request from the operator that launched you: follow it \
+when it fits your task and permissions, and reply or report progress with \
+`mcp__clud__board_post` (address `all` or the sender's id). `board_whoami` \
+gives your own id.";
+
 /// The `--mcp-config=<json>` token for `exe_dir`, or `None` when the bridge's
 /// interpreter is not installed there.
 ///
