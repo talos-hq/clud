@@ -2743,7 +2743,11 @@ mod tests {
             lane_metas: lane_metas(&file),
             ..run(false, false)
         };
-        assert!(allowed(PREWORK, "gh issue comment 1361 --body x", &unmatched));
+        assert!(allowed(
+            PREWORK,
+            "gh issue comment 1361 --body x",
+            &unmatched
+        ));
         assert!(lane_metas(&serde_json::json!({"meta": 5})).is_empty());
     }
 
