@@ -280,7 +280,15 @@ pub fn render_root_summary(info: &TaskInfo, summary: &str) -> String {
     }
     out.push_str("+------+------+\n```\n\n");
     out.push_str("Artifacts (hidden directory):\n\n");
-    for name in ["info.json", "log.txt", "LOOP.md", "DONE", "BLOCKED"] {
+    for name in [
+        "loop.json",
+        "info.json",
+        "log.txt",
+        "LOOP.md",
+        "NEXT_MESSAGE.md",
+        "DONE",
+        "BLOCKED",
+    ] {
         out.push_str(&format!("- `.clud/loop/{name}`\n"));
     }
     out

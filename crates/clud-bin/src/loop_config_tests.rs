@@ -14,6 +14,27 @@ fn full() -> LoopConfig {
 }
 
 #[test]
+fn from_cli_only_sets_explicit_values() {
+    let argv: Vec<String> = vec!["clud".into(), "loop".into(), "t".into()];
+    let cli = LoopConfig::from_cli(&argv, Some("t"), 50, None, false, None, false, None);
+    assert_eq!(
+        cli.loop_count, None,
+        "clap default must not override the file"
+    );
+    assert_eq!(cli.no_done, None);
+    assert_eq!(cli.refresh, None);
+    assert_eq!(cli.task.as_deref(), Some("t"));
+    let argv: Vec<String> = ["clud", "loop", "--loop-count=50"]
+        .map(String::from)
+        .to_vec();
+    let cli = LoopConfig::from_cli(&argv, None, 50, None, true, None, true, Some("m"));
+    assert_eq!(cli.loop_count, Some(50));
+    assert_eq!(cli.no_done, Some(true));
+    assert_eq!(cli.refresh, Some(true));
+    assert_eq!(cli.message.as_deref(), Some("m"));
+}
+
+#[test]
 fn round_trips_through_json() {
     let cfg = full();
     let text = serde_json::to_string(&cfg).unwrap();

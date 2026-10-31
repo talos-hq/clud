@@ -129,6 +129,34 @@ impl LoopConfig {
         }
     }
 
+    /// Build the CLI side of the overlay. `argv` is the raw command line,
+    /// used only to tell an explicit `--loop-count 50` from clap's default.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_cli(
+        argv: &[String],
+        task: Option<&str>,
+        loop_count: u32,
+        done: Option<&str>,
+        no_done: bool,
+        repeat: Option<&str>,
+        refresh: bool,
+        message: Option<&str>,
+    ) -> Self {
+        let explicit_count = argv
+            .iter()
+            .any(|a| a == "--loop-count" || a.starts_with("--loop-count="));
+        Self {
+            schema_version: SCHEMA_VERSION,
+            task: task.map(str::to_string),
+            loop_count: explicit_count.then_some(loop_count),
+            done: done.map(str::to_string),
+            no_done: no_done.then_some(true),
+            repeat: repeat.map(str::to_string),
+            refresh: refresh.then_some(true),
+            message: message.map(str::to_string),
+        }
+    }
+
     /// Where the resolved config for the current run is recorded.
     pub fn resolved_path(git_root: &Path) -> PathBuf {
         loop_dir(git_root).join(FILE_NAME)

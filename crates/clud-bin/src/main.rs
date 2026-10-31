@@ -1209,6 +1209,8 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
         }
     }
 
+    apply_loop_config(args);
+
     if let Some(args::Command::Loop {
         repeat,
         done,
@@ -1226,6 +1228,72 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
     resolve_grind_target(args);
     store_inline_api_key(args);
     preflight_provider_credentials(args, launch_target);
+}
+
+/// Overlay `loop.json` (explicit `--config` or `<git-root>/loop.json`)
+/// under the CLI flags, queue a file-supplied message, and record the
+/// resolved config under `.clud/loop/loop.json` (#2471). Invalid configs
+/// exit 2 with the typed error.
+fn apply_loop_config(args: &mut args::Args) {
+    use clud::loop_config::LoopConfig;
+    let Some(args::Command::Loop {
+        task,
+        loop_count,
+        refresh,
+        no_done,
+        done,
+        repeat,
+        message,
+        config,
+    }) = &mut args.command
+    else {
+        return;
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let git_root = clud::loop_spec::git_root_from(&cwd);
+    let explicit = config.as_deref().map(|p| cwd.join(p));
+    let file = match LoopConfig::discover(&git_root, explicit.as_deref()) {
+        Ok(Some((path, cfg))) => {
+            eprintln!("[clud] using loop config {}", path.display());
+            cfg
+        }
+        Ok(None) => LoopConfig {
+            schema_version: clud::loop_config::SCHEMA_VERSION,
+            ..LoopConfig::default()
+        },
+        Err(e) => {
+            eprintln!("[clud] {e}");
+            std::process::exit(2);
+        }
+    };
+    let argv: Vec<String> = std::env::args().collect();
+    let cli = LoopConfig::from_cli(
+        &argv,
+        task.as_deref(),
+        *loop_count,
+        done.as_deref(),
+        *no_done,
+        repeat.as_deref(),
+        *refresh,
+        message.as_deref(),
+    );
+    let resolved = file.overridden_by(&cli);
+    if message.is_none() {
+        if let Some(text) = resolved.message.as_deref() {
+            if !args.dry_run {
+                let _ = clud::loop_artifacts::queue_message(&git_root, text);
+            }
+        }
+    }
+    *task = resolved.task.clone();
+    *loop_count = resolved.loop_count.unwrap_or(*loop_count);
+    *done = resolved.done.clone();
+    *no_done = resolved.no_done.unwrap_or(false);
+    *repeat = resolved.repeat.clone();
+    *refresh = resolved.refresh.unwrap_or(false);
+    if !args.dry_run {
+        let _ = resolved.write_resolved(&git_root);
+    }
 }
 
 fn run_wasm(dry_run: bool, module: &str, invoke: &str) -> i32 {
