@@ -77,7 +77,7 @@ def test_pr_checks_watch_routes_to_bundled_watcher_and_preserves_exit(tmp_path: 
     result = process.run(
         [
             str(shim), "--repo", "zackees/clud", "pr", "checks", "123",
-            "--watch", "--fail-fast", "-i", "7",
+            "--watch", "--fail-fast", "--required", "-i", "7",
         ],
         env=env,
         cwd=tmp_path,
@@ -160,7 +160,7 @@ def test_watch_hands_a_non_numeric_selector_to_the_watcher(
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX recording fixtures")
-@pytest.mark.parametrize("flag", ["--json", "--jq", "--template", "--web", "--required"])
+@pytest.mark.parametrize("flag", ["--json", "--jq", "--template", "--web"])
 def test_incompatible_watch_flags_fail_closed(tmp_path: Path, flag: str) -> None:
     alias = _alias(tmp_path)
     real_gh = tmp_path / "real-gh"
