@@ -180,6 +180,7 @@ fn classify_kind_at(tool_name: &str, command: &str, cwd: Option<&Path>) -> Optio
     {
         return Some(Kind::Edit);
     }
+    let text = runner_text(command);
     let has = |words: &[&str]| words.iter().any(|word| text.contains(word));
     // CI replays run everything, so they win over the words they contain.
     let kind = if has(CI_WORDS) {
@@ -202,6 +203,42 @@ pub(super) fn classify(tool_name: &str, command: &str) -> Option<Class> {
     classify_kind(tool_name, command).and_then(Kind::class)
 }
 
+/// Programs whose arguments are text to print or post, never a check (#2470).
+const TEXT_PROGRAMS: &[&str] = &["printf", "echo", "gh", "cat"];
+
+/// The lowercased command without its text-only segments: separators are
+/// split outside quotes, and a segment run by a `TEXT_PROGRAMS` entry is
+/// dropped, so `printf 'bash lint passed' | gh issue comment` is not a lint.
+fn runner_text(command: &str) -> String {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    for ch in command.chars() {
+        match (quote, ch) {
+            (Some(q), c) if c == q => quote = None,
+            (None, '\'' | '"') => quote = Some(ch),
+            (None, '|' | '&' | ';' | '\n') => {
+                segments.push(std::mem::take(&mut current));
+                continue;
+            }
+            _ => {}
+        }
+        current.push(ch);
+    }
+    segments.push(current);
+    segments
+        .iter()
+        .filter(|segment| {
+            segment
+                .split_whitespace()
+                .next()
+                .is_some_and(|program| !TEXT_PROGRAMS.contains(&program))
+        })
+        .map(|segment| segment.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(" ; ")
+}
+
 /// The command passes a flag that widens it past one package.
 pub(super) fn is_wide(command: &str) -> bool {
     command
@@ -211,7 +248,7 @@ pub(super) fn is_wide(command: &str) -> bool {
 
 /// A workspace-wide lint: a lint or CI call that is wide or a full gate.
 fn is_workspace_lint(kind: Kind, command: &str) -> bool {
-    let text = command.to_ascii_lowercase();
+    let text = runner_text(command);
     matches!(kind, Kind::Lint | Kind::Ci)
         && (is_wide(command)
             || FULL_GATE_WORDS.iter().any(|word| text.contains(word))
