@@ -16,7 +16,10 @@ launched with clud's MCP bridge reads its own mail.
 
 An agent's board id is `CLUD_BOARD_ID` when set, otherwise the
 `CLUD_SESSION_ID` clud mints for every launch. A spawner that wants a stable
-name sets `CLUD_BOARD_ID` in the child's environment. The recipient `all`
+name sets `CLUD_BOARD_ID` in the child's environment. A turn the daemon
+runs for an API session (the bridge's `session_start`) gets `CLUD_BOARD_ID`
+set to that session's id, so the creator can steer the agent with
+`board_post(to=session_id, ...)`. The recipient `all`
 reaches every reader.
 
 ## Wire

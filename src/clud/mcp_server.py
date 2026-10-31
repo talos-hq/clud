@@ -664,6 +664,9 @@ async def session_start(
     420 s by default) or the client will abandon the wait while the turn keeps
     running. For longer work, return immediately and wait out-of-band.
 
+    The returned `session_id` is also the agent's bulletin-board address:
+    `board_post(to=session_id, body=...)` sends it instructions mid-run.
+
     Args:
         prompt: The task prompt. This is a full autonomous agent run under
             `clud` (Claude Code by default, Codex with backend="codex") in YOLO
@@ -697,7 +700,9 @@ async def session_start(
                 "waited_s": 0.0,
                 "note": (
                     "Turn submitted; the daemon owns it. Probe with "
-                    "session_status/session_result, or wait with session_wait."
+                    "session_status/session_result, or wait with session_wait. "
+                    "The agent reads the bulletin board at its session_id: "
+                    "board_post(to=session_id, ...) steers it."
                 ),
             }
         )
