@@ -1886,3 +1886,24 @@ fn test_loop_message_flag_with_and_without_task() {
         _ => panic!("expected Loop subcommand"),
     }
 }
+
+#[test]
+fn test_workflow_subcommand_with_args() {
+    let args = parse(&[
+        "clud",
+        "workflow",
+        "review.js",
+        "--args",
+        r#"{"mode":"fast"}"#,
+    ]);
+    match args.command {
+        Some(Command::Workflow {
+            ref script,
+            ref args_json,
+        }) => {
+            assert_eq!(script, "review.js");
+            assert_eq!(args_json.as_deref(), Some(r#"{"mode":"fast"}"#));
+        }
+        other => panic!("expected Workflow subcommand, got {other:?}"),
+    }
+}

@@ -188,3 +188,54 @@ mod runner_tests {
             .contains("exited 7 without a result"));
     }
 }
+
+mod board_tests {
+    use super::super::cli::{render_board, render_done, Row, RowStatus};
+
+    fn rows() -> Vec<Row> {
+        vec![
+            Row {
+                id: 1,
+                label: "review:bugs".into(),
+                phase: "Review".into(),
+                status: RowStatus::Done,
+                detail: "3 turns $0.10".into(),
+            },
+            Row {
+                id: 2,
+                label: "a-very-long-label-that-must-be-truncated".into(),
+                phase: "Verify".into(),
+                status: RowStatus::Failed,
+                detail: "rate limited".into(),
+            },
+            Row {
+                id: 3,
+                label: "verify:c".into(),
+                phase: String::new(),
+                status: RowStatus::Running,
+                detail: String::new(),
+            },
+        ]
+    }
+
+    #[test]
+    fn board_rows_have_uniform_width_and_status_words() {
+        let board = render_board("running", &rows());
+        let lines: Vec<&str> = board.lines().skip(1).collect();
+        let w = lines[0].chars().count();
+        assert!(lines.iter().all(|l| l.chars().count() == w), "{board}");
+        assert!(board.contains("| done    |"));
+        assert!(board.contains("| FAILED  |"));
+        assert!(board.contains("| running |"));
+        assert!(board.contains("a-very-long-label-that-~"), "{board}");
+    }
+
+    #[test]
+    fn done_file_points_at_artifacts_and_reports_failure() {
+        let text = render_done(&Err("boom".into()), &rows(), ".clud/workflow/x-1");
+        assert!(text.starts_with("# WORKFLOW_DONE"));
+        assert!(text.contains("Outcome: FAILED: boom"));
+        assert!(text.contains("`.clud/workflow/x-1/result.json`"));
+        assert!(text.contains("Agents: 3"));
+    }
+}

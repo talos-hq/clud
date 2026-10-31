@@ -11,6 +11,7 @@
 //! concurrently), resolves the promises with the results, and repeats until
 //! the script's promise settles. No async runtime is required.
 
+pub mod cli;
 mod engine;
 mod meta;
 pub mod runner;
