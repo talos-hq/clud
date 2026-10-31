@@ -693,7 +693,7 @@ const upstreamContext = (g) => {
   return `\nUpstream results (approved blockers):\n${JSON.stringify(results, null, 1)}`
 }
 
-const ctx = (g) => `${REPO_HEADER} Mode: ${args.mode}. Local CI (act): ${CI ? `on, lane ${args.lane || '(pick from ci.yml)'}` : 'off'}.\nGoal ${g.id}: ${g.title}\n${g.brief}` +
+const ctx = (g) => `${REPO_HEADER} Mode: ${args.mode}. Local CI (bosn): ${CI ? `on, lane ${args.lane || '(pick from ci.yml)'}` : 'off'}.\nGoal ${g.id}: ${g.title}\n${g.brief}` +
   (PLAN_URL ? `\nPlan comment: ${PLAN_URL} (read it before you start; it is the recorded plan and never changes).` : '') +
   featureCheckout(g) + upstreamContext(g)
 const others = (g) => args.goals.filter(o => o.id !== g.id).map(o => `${o.id}: ${o.title}`).join('\n') || '(none)'

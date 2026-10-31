@@ -1,6 +1,6 @@
 ---
 name: grind-integrate
-description: "Integrate one reviewed /grind goal: commit, rebase onto its base, lint, build and test until green, optionally run ci.yml under act, then push and open the PR, or park a failed sequential goal's changes on a local wip branch. The only grind role that builds; runs one at a time."
+description: "Integrate one reviewed /grind goal: commit, rebase onto its base, lint, build and test until green, optionally replay ci.yml jobs under bosn, then push and open the PR, or park a failed sequential goal's changes on a local wip branch. The only grind role that builds; runs one at a time."
 triggers:
   - When the grind workflow integrates a reviewed goal
   - When the grind lander hands back a failing PR for a fix round
@@ -95,9 +95,14 @@ You hold the run's build lock, so nothing else builds while you do.
    - **Wait by condition.** Wait on a background run by its exit (the
      completion notice, or an exit code or marker file it writes), never in
      fixed 540–600 s sleep blocks.
-5. **Local CI**, only when on: run the named `ci.yml` job with
-   `act -W .github/workflows/ci.yml -j <job> --pull=false`. Do not wrap it
-   in `bosn` or start containers yourself. This is the only CI a "skip CI"
+5. **Local CI**, only when on: run the relevant `ci.yml` jobs under bosn:
+   `bosn ci run --workspace . --trigger pr --job <job> --wait` (or
+   `clud ci [JOB] [--filter RE]`). Run the full PR plan at most once per
+   change, and prefer focused `--job` runs. Read the verdict with
+   `bosn ci report RUN`. If the run stays `queued` for 2 minutes, cancel
+   it with `bosn ci cancel RUN` and report "local CI skipped: bosn daemon
+   busy". Stop only your own run: never `pkill`/`pgrep` bosn. Do not call
+   `act` or start containers yourself. This is the only CI a "skip CI"
    choice skips: never put `[skip ci]` (or any skip marker) in a commit or
    PR text, and never remove a CI-lane label; remote CI always runs.
    This does not mean adding optional native coverage to every PR. Select

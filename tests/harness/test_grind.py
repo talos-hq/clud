@@ -338,7 +338,7 @@ def test_the_main_session_cannot_delegate_to_a_grind_role(harness: Harness) -> N
     assert not [r for r in result.requests if r["role"] != "main"]
 
 
-def test_router_skill_carries_the_docker_and_ci_preconditions(harness: Harness) -> None:
+def test_router_skill_carries_the_bosn_and_ci_preconditions(harness: Harness) -> None:
     # The router is explicit-only: type the slash command as the user would.
     # A model-side Skill call is intentionally refused (#1510).
     script = {
@@ -348,7 +348,7 @@ def test_router_skill_carries_the_docker_and_ci_preconditions(harness: Harness) 
     result = harness.run("/grind https://github.com/o/r/issues/1", script)
     assert "READ" in result.stdout, result.stdout[-2000:]
     context = result.prompt_text("main")
-    assert "Docker/github actions disabled due to no docker running" in context
+    assert "bosn not installed; local CI replay skipped" in context
     assert ".github/workflows/ci.yml" in context
     assert "Finish (always, as the very last step)" in context
     assert "git pull --ff-only origin <main>" in context

@@ -61,7 +61,7 @@ later, one goal at a time.
 5. **Verify.** The exact lint, build and test commands the integrator runs,
    newest-first focused test before the broad gates, taken from the repo's
    own docs (for example `bash lint`, `bash test`). Name the `ci.yml` job
-   to run under `act` only if local CI is on. When the prompt says the run
+   to replay under bosn only if local CI is on. When the prompt says the run
    has scripts (`./lint`, `./test`), the integrator already runs them before
    every push: do not invent lint or test commands; verify is just the
    focused test.

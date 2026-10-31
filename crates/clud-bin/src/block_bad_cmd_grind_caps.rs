@@ -19,7 +19,7 @@
 //! `session_id`, which a workflow agent shares with its parent session, so
 //! concurrent runs never see each other's facts. The facts are `mode`
 //! (`parallel` permits the planner's `git worktree add`) and `ci` (permits the
-//! integrator's `act`), plus the optional `scripts: {lint, test}` the router
+//! integrator's `bosn ci run`), plus the optional `scripts: {lint, test}` the router
 //! detected. Workers and reviewers may never run the repo's lint/test
 //! scripts; the integrator runs them before every push. During the read-only
 //! planning pass the router also writes `"phase": "plan"`, which puts the
@@ -525,7 +525,7 @@ const CI_LANE_LABELS: &[&str] = &["ci-test", "ci-full", "ci:full", "ci-windows"]
 
 /// Grind only ever adds remote testing (#1429): a command that would
 /// suppress remote CI is refused for every grind role. The "skip CI" choice
-/// in a run controls local `act` only, so a marker in a commit or PR text, a
+/// in a run controls local `bosn` only, so a marker in a commit or PR text, a
 /// removed CI-lane label or a disabled workflow is always the model
 /// misreading it. Adding a lane label stays allowed.
 fn remote_ci_reason(role: &str, words: &[String]) -> Option<String> {
@@ -539,7 +539,7 @@ fn remote_ci_reason(role: &str, words: &[String]) -> Option<String> {
     let rule = |what: &str| {
         Some(format!(
             "{role} may not {what}: grind only adds remote CI, never removes or skips it. \
-             The run's CI choice controls local `act` only (#1429)"
+             The run's CI choice controls local `bosn` only (#1429)"
         ))
     };
     match program.as_str() {
@@ -703,6 +703,25 @@ pub(super) fn tool_reason(role: &str, tool_name: &str, run: &RunFacts) -> Option
         ""
     };
     Some(format!("{role} may not write files{mode}"))
+}
+
+/// The integrator's bosn allowance (#2432): only the bounded `bosn ci` verbs
+/// that drive a run of its own, and `run` only when the router turned local
+/// CI on. `init`, daemon control and everything else stay refused.
+fn bosn_denial(role: &str, rest: &[String], ci_on: bool) -> Option<String> {
+    let verb = (
+        rest.first().map(String::as_str),
+        rest.get(1).map(String::as_str),
+    );
+    match verb {
+        (Some("ci"), Some("run")) if !ci_on => {
+            Some("local CI (bosn) is disabled for this grind run".to_string())
+        }
+        (Some("ci"), Some("run" | "show" | "report" | "logs" | "cancel" | "runners")) => None,
+        _ => Some(format!(
+            "{role} may run only `bosn ci run|show|report|logs|cancel|runners`"
+        )),
+    }
 }
 
 #[expect(
@@ -900,16 +919,30 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             // statements of its own (#1962).
             let tokens: Vec<String> = words.iter().map(|w| program_name(w)).collect();
             let has = |name: &str| tokens.iter().any(|t| t == name);
-            if has("bosn") {
-                return deny("bosn");
+            if (has("pkill") || has("pgrep") || has("killall")) && has("bosn") {
+                return Some(format!(
+                    "{role} may not signal bosn by pattern; stop only your own run with \
+                     `bosn ci cancel RUN`"
+                ));
+            }
+            if let Some(i) = tokens.iter().position(|t| t == "bosn") {
+                if let Some(reason) = bosn_denial(role, &tokens[i + 1..], run.ci) {
+                    return Some(reason);
+                }
             }
             if has("docker") || has("podman") {
                 return Some(format!(
-                    "{role} may not run containers directly; local CI goes through act"
+                    "{role} may not run containers directly; local CI goes through bosn"
                 ));
             }
-            if has("act") && !run.ci {
-                return Some("local CI (act) is disabled for this grind run".to_string());
+            if has("act") {
+                return Some(format!(
+                    "{role} may not run act directly; local CI goes through \
+                     `bosn ci run --workspace . --trigger pr` or `clud ci`"
+                ));
+            }
+            if !run.ci && tokens.windows(2).any(|w| w[0] == "clud" && w[1] == "ci") {
+                return Some("local CI (bosn) is disabled for this grind run".to_string());
             }
             if tokens
                 .windows(2)
@@ -2247,10 +2280,33 @@ mod tests {
     }
 
     #[test]
-    fn integrator_act_follows_the_ci_answer() {
+    fn integrator_local_ci_runs_under_bosn_not_act() {
+        let bosn = "bosn ci run --workspace . --trigger pr --job static-checks --wait";
+        assert!(!allowed(INTEGRATOR, bosn, &run(true, false)));
+        assert!(allowed(INTEGRATOR, bosn, &run(true, true)));
+        assert!(!allowed(
+            INTEGRATOR,
+            "clud ci static-checks",
+            &run(true, false)
+        ));
+        assert!(allowed(
+            INTEGRATOR,
+            "clud ci static-checks",
+            &run(true, true)
+        ));
+        for verb in ["show", "report", "logs", "cancel", "runners"] {
+            let cmd = format!("bosn ci {verb} RUN");
+            assert!(allowed(INTEGRATOR, &cmd, &run(true, false)), "{cmd}");
+        }
+        assert!(!allowed(INTEGRATOR, "bosn daemon stop", &run(true, true)));
+        assert!(!allowed(INTEGRATOR, "pkill -f bosn", &run(true, true)));
+        assert!(!allowed(
+            INTEGRATOR,
+            "kill $(pgrep -f bosn)",
+            &run(true, true)
+        ));
         let act = "act -W .github/workflows/ci.yml -j test --pull=false";
-        assert!(!allowed(INTEGRATOR, act, &run(true, false)));
-        assert!(allowed(INTEGRATOR, act, &run(true, true)));
+        assert!(!allowed(INTEGRATOR, act, &run(true, true)));
     }
 
     /// #1339 items 4-5: every role may outline code; workers and reviewers
@@ -2532,6 +2588,8 @@ mod tests {
         assert!(!allowed(INTEGRATOR, "bash -c 'docker run img'", &facts));
         assert!(!allowed(INTEGRATOR, "env act -j test", &facts));
         assert!(!allowed(INTEGRATOR, "sh -c bosn", &facts));
+        assert!(!allowed(INTEGRATOR, "env bosn init", &facts));
+        assert!(allowed(INTEGRATOR, "env bosn ci show RUN", &facts));
         assert!(!allowed(
             INTEGRATOR,
             "bash -c 'git worktree add /x'",
