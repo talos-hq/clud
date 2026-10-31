@@ -785,7 +785,10 @@ fn first_block_in_a_session_is_full_then_short() {
     let first = condense_at(Some(dir.path()), Some("s1"), full_denial());
     assert_eq!(first, full_denial());
     let second = condense_at(Some(dir.path()), Some("s1"), full_denial());
-    assert!(second.len() < first.len() / 2, "{second}");
+    // The full text is itself compact since #2441, so bound the repeat in
+    // absolute terms as well as against the first refusal.
+    assert!(second.len() < first.len(), "{second}");
+    assert!(second.len() <= 200, "{second}");
     assert!(second.contains("[block-cd]"), "{second}");
     assert!(second.contains("cd /elsewhere"), "{second}");
     assert!(second.contains("(cd DIR && CMD)"), "{second}");
