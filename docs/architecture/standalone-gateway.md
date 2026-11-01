@@ -84,11 +84,18 @@ own error body reach the client as-is.
 is rewritten to a `data:` URL under `images[]`, which is the JSON contract the
 Codex endpoint accepts. A JSON edit body is forwarded like a generation.
 
-Deliberate limits: `stream: true` is a 400 because this surface is buffered; a
-launch without `--codex` answers 501 naming `--codex`, because no other clud
-provider sells an image model; an edit without an uploaded image is a local 400
-rather than a paid upstream round-trip; and an image request is never retried,
-because a retry is a second billed image the caller did not ask for.
+`stream: true` on either door is forwarded as `true` and the upstream's SSE body
+is relayed event by event (`text/event-stream`, chunked). Nothing is written
+until the upstream's first byte lands, so a failure before that point is still a
+clean OpenAI error envelope; after the head is out the response is committed and
+an upstream failure only ends the stream. A non-2xx upstream answer is relayed
+whole, never turned into a local error.
+
+Deliberate limits: a launch without `--codex` answers 501 naming `--codex`,
+because no other clud provider sells an image model; an edit without an uploaded
+image is a local 400 rather than a paid upstream round-trip; and an image request
+is never retried, because a retry is a second billed image the caller did not ask
+for.
 
 ## MCP bridge inside `clud --claude`
 

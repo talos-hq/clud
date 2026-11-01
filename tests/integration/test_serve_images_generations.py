@@ -191,15 +191,129 @@ def test_serve_images_refuses_an_unknown_model_without_spending(
         # A refused request costs no upstream call.
         assert not upstream.requests
 
-        status, body = _call(
-            address,
-            "/v1/images/generations",
-            {"model": "gpt-image-1.5", "prompt": "a cat", "stream": True},
-            token,
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=15)
+        upstream.close()
+
+
+_STREAM_EVENTS = (
+    'event: image_generation.partial_image\ndata: {"b64_json": "cGFydGlhbA=="}\n\n',
+    'event: image_generation.completed\ndata: {"b64_json": "ZmluYWw="}\n\n',
+)
+
+
+class _FakeStreamingImagesServer:
+    """A Codex images endpoint that answers ``stream: true`` with SSE.
+
+    The body is written and flushed event by event with no ``Content-Length``
+    and ``Connection: close``, which is how a real image stream arrives: the
+    client only knows the answer is over when the body ends.
+    """
+
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, dict[str, str], bytes]] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def log_message(self, format: str, *args: object) -> None:
+                pass
+
+            def do_POST(self) -> None:
+                size = int(self.headers.get("Content-Length", "0"))
+                body = self.rfile.read(size)
+                owner.requests.append((self.path, dict(self.headers), body))
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                for event in _STREAM_EVENTS:
+                    self.wfile.write(event.encode())
+                    self.wfile.flush()
+                self.close_connection = True
+
+        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base_url = f"http://127.0.0.1:{self._server.server_port}"
+        self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
+        self._thread.start()
+
+    def close(self) -> None:
+        self._server.shutdown()
+        self._server.server_close()
+        self._thread.join(timeout=5)
+
+
+def test_serve_codex_relays_a_streaming_image_request(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    """`stream: true` is forwarded and the upstream SSE body is relayed."""
+    import http.client
+    from urllib.parse import urlsplit
+
+    token = "images-stream-token-0123456789abcd"
+    upstream = _FakeStreamingImagesServer()
+    env = mock_env.copy()
+    env.update(
+        {
+            "HOME": str(tmp_path),
+            "USERPROFILE": str(tmp_path),
+            "CLUD_INTEGRATION_TESTS": "1",
+            "CLUD_SERVE_CLIENT_TOKEN": token,
+            "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": upstream.base_url,
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
+        }
+    )
+    env.pop("ANTHROPIC_API_KEY", None)
+    child = process.Popen(
+        [str(clud_binary), "serve", "--codex", "--port", "0"],
+        env=env,
+        stdout=process.PIPE,
+        stderr=process.PIPE,
+        text=True,
+        creationflags=process.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        line = child.next_stdout(timeout=60)
+        assert isinstance(line, str), (line, child.poll())
+        assert "listening at " in line, (line, child.poll())
+        address = urlsplit(line.strip().split("listening at ", 1)[1])
+        connection = http.client.HTTPConnection(
+            address.hostname or "127.0.0.1", address.port or 0, timeout=30
         )
-        assert status == 400, body
-        assert "streaming" in json.loads(body)["error"]["message"].lower()
-        assert not upstream.requests
+        connection.request(
+            "POST",
+            "/v1/images/generations",
+            body=json.dumps(
+                {"model": "gpt-image-1.5", "prompt": "a cat", "stream": True}
+            ),
+            headers={"x-api-key": token, "content-type": "application/json"},
+        )
+        response = connection.getresponse()
+        status = response.status
+        body = response.read().decode()
+        content_type = response.getheader("Content-Type")
+        connection.close()
+
+        assert status == 200, body
+        assert content_type == "text/event-stream", content_type
+        assert "image_generation.partial_image" in body, body
+        assert "image_generation.completed" in body, body
+        assert body == "".join(_STREAM_EVENTS), body
+
+        # The flag travelled upstream, and the client token never became the
+        # upstream bearer.
+        assert len(upstream.requests) == 1
+        path, headers, raw = upstream.requests[0]
+        assert path.endswith("/images/generations"), path
+        forwarded = json.loads(raw)
+        assert forwarded["stream"] is True, forwarded
+        assert headers.get("Authorization") != f"Bearer {token}"
+        assert headers.get("Accept") == "text/event-stream", headers
     finally:
         if child.poll() is None:
             child.terminate()

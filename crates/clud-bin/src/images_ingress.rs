@@ -4,17 +4,17 @@
 //! path (`internal/runtime/executor/codex_openai_images.go:341`,
 //! `prepareOpenAICompatImagesPayload` in `openai_compat_executor.go:866`) is a
 //! small contract -- validate the JSON, rewrite `model` to a model the upstream
-//! accepts, drop `stream`, POST to `{base}/images/generations`, and hand the
+//! accepts, POST to `{base}/images/generations`, and hand the
 //! upstream body back verbatim. This module owns the validation half; the
 //! transport half lives in [`crate::codex_upstream`] and the route in
 //! [`crate::codex_bridge`].
 //!
 //! Deliberate differences from upstream:
 //!
-//! * `stream: true` is refused by name instead of being forwarded. The
-//!   streaming images path is a separate upstream implementation
-//!   (`executeDirectOpenAIImageStream`) and is not ported yet; silently
-//!   forwarding the flag would answer an SSE client with one JSON body.
+//! * `stream: true` is honoured: the flag is forwarded as `true` and the
+//!   upstream's SSE body is relayed chunk by chunk (`executeDirectOpenAIImageStream`),
+//!   which is the only difference between upstream's two direct image paths --
+//!   the buffered one deletes the flag, the streaming one sets it.
 //! * `POST /v1/images/edits` accepts a multipart form and rewrites it to the
 //!   JSON contract upstream uses (`codexRewriteOpenAIImageEditMultipartToJSON`).
 //!   A form with no uploaded image is refused locally instead of spending an
@@ -46,8 +46,11 @@ pub struct ImageGeneration {
     /// The upstream model name after normalisation (provider prefix stripped).
     pub model: String,
     /// The body the upstream receives: the client's JSON with `model`
-    /// normalised and `stream` removed.
+    /// normalised and `stream` forced to `true` or removed.
     pub body: Vec<u8>,
+    /// Whether the client asked for the SSE form of the answer. This decides
+    /// the transport (relay the upstream stream) and the response framing.
+    pub stream: bool,
 }
 
 /// Why an image request was refused. Every variant is a 400 the client can act
@@ -63,8 +66,6 @@ pub enum ImagesError {
     MissingPrompt,
     /// No usable `model`.
     MissingModel,
-    /// A `stream: true` request, which this route cannot answer yet.
-    Streaming,
     /// A model outside [`DIRECT_IMAGE_MODELS`].
     UnknownModel(String),
     /// A multipart edit body that is neither JSON nor a multipart form.
@@ -85,11 +86,6 @@ impl std::fmt::Display for ImagesError {
                 formatter,
                 "request is missing a model; supported: {}",
                 DIRECT_IMAGE_MODELS.join(", ")
-            ),
-            Self::Streaming => write!(
-                formatter,
-                "streaming image generation is not supported on this route; send \
-                 `stream: false`"
             ),
             Self::UnknownModel(model) => write!(
                 formatter,
@@ -115,7 +111,8 @@ impl std::error::Error for ImagesError {}
 
 /// Validate an `images/generations` body and produce the upstream body.
 ///
-/// Only `model` is rewritten and only `stream` is removed; every other field
+/// Only `model` is rewritten and `stream` is normalised (set to `true` for a
+/// streaming request, removed otherwise); every other field
 /// (`n`, `size`, `quality`, `background`, `output_format`,
 /// `output_compression`, `moderation`, `response_format`, ...) is forwarded
 /// untouched, so the upstream stays the authority on its own options.
@@ -137,21 +134,24 @@ pub fn prepare_generation(body: &[u8]) -> Result<ImageGeneration, ImagesError> {
         .map(str::trim)
         .filter(|model| !model.is_empty())
         .ok_or(ImagesError::MissingModel)?;
-    if object.get("stream").and_then(Value::as_bool) == Some(true) {
-        return Err(ImagesError::Streaming);
-    }
+    let stream = object.get("stream").and_then(Value::as_bool) == Some(true);
     let model = normalise_model(raw_model);
     if !DIRECT_IMAGE_MODELS.contains(&model.as_str()) {
         return Err(ImagesError::UnknownModel(raw_model.to_string()));
     }
     object.insert("model".to_string(), Value::String(model.clone()));
-    // The upstream's direct path deletes `stream` outright
-    // (`prepareOpenAICompatImagesPayload`), so a `stream: false` that arrives
-    // here leaves in the same shape every upstream implementation expects.
-    object.remove("stream");
+    // Upstream's two direct paths differ only here: the buffered one deletes
+    // `stream` outright, the streaming one sets it to `true`
+    // (`prepareOpenAICompatImagesPayload`, `openai_compat_executor.go:866`).
+    if stream {
+        object.insert("stream".to_string(), Value::Bool(true));
+    } else {
+        object.remove("stream");
+    }
     Ok(ImageGeneration {
         model,
         body: serde_json::to_vec(&Value::Object(object)).unwrap_or_default(),
+        stream,
     })
 }
 
@@ -337,12 +337,9 @@ pub fn prepare_edit(body: &[u8], content_type: &str) -> Result<ImageGeneration, 
         bracketed_images
     };
 
-    if fields
+    let stream = fields
         .iter()
-        .any(|(name, value)| name == "stream" && value.trim().eq_ignore_ascii_case("true"))
-    {
-        return Err(ImagesError::Streaming);
-    }
+        .any(|(name, value)| name == "stream" && value.trim().eq_ignore_ascii_case("true"));
     let field = |wanted: &str| {
         fields
             .iter()
@@ -403,10 +400,14 @@ pub fn prepare_edit(body: &[u8], content_type: &str) -> Result<ImageGeneration, 
         .map(|image| serde_json::json!({ "image_url": data_url(image) }))
         .collect();
     object.insert("images".to_string(), Value::Array(images));
+    if stream {
+        object.insert("stream".to_string(), Value::Bool(true));
+    }
 
     Ok(ImageGeneration {
         model,
         body: serde_json::to_vec(&Value::Object(object)).unwrap_or_default(),
+        stream,
     })
 }
 
@@ -570,14 +571,16 @@ mod tests {
     }
 
     #[test]
-    fn refuses_streaming_instead_of_forwarding_the_flag() {
-        let error = prepare_generation(&body(serde_json::json!({
+    fn a_true_stream_flag_is_forwarded_and_reported() {
+        let prepared = prepare_generation(&body(serde_json::json!({
             "model": "gpt-image-1.5",
             "prompt": "a cat",
             "stream": true,
         })))
-        .expect_err("must refuse");
-        assert_eq!(error, ImagesError::Streaming);
+        .expect("streaming is answered by the SSE relay");
+        assert!(prepared.stream);
+        let forwarded: Value = serde_json::from_slice(&prepared.body).expect("json");
+        assert_eq!(forwarded["stream"], serde_json::json!(true));
     }
 
     #[test]
@@ -590,6 +593,7 @@ mod tests {
         .expect("valid request");
         let forwarded: Value = serde_json::from_slice(&prepared.body).expect("json");
         assert!(forwarded.get("stream").is_none());
+        assert!(!prepared.stream);
     }
 
     #[test]
@@ -793,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn refuses_a_streaming_edit_form() {
+    fn a_streaming_edit_form_keeps_the_flag_in_the_rewritten_body() {
         let body = multipart(
             EDIT_CONTENT_TYPE,
             &[
@@ -803,10 +807,12 @@ mod tests {
                 ("image", Some("a.png"), Some("image/png"), b"aaa"),
             ],
         );
-        assert_eq!(
-            prepare_edit(&body, EDIT_CONTENT_TYPE).expect_err("must refuse"),
-            ImagesError::Streaming
-        );
+        let prepared = prepare_edit(&body, EDIT_CONTENT_TYPE).expect("streaming edit is allowed");
+        assert!(prepared.stream);
+        let forwarded: Value = serde_json::from_slice(&prepared.body).expect("json");
+        assert_eq!(forwarded["stream"], serde_json::json!(true));
+        // The form's own `stream` field must not leak in as a string.
+        assert_eq!(forwarded["prompt"], "edit");
     }
 
     #[test]

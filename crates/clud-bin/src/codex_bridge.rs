@@ -10,8 +10,8 @@ use crate::codex_model::ModelSpec;
 use crate::codex_pipeline::{Pipeline, PipelineError, ProviderFailure};
 use crate::codex_sse::InBandFailure;
 use crate::codex_upstream::{
-    ApiKeyCredentials, CredentialSource, FailureClass, ResolvedCredentials, UpstreamClient,
-    UpstreamConfig, UpstreamError, UpstreamFailure, UpstreamTarget,
+    ApiKeyCredentials, CredentialSource, FailureClass, ImagesStreamOutcome, ResolvedCredentials,
+    UpstreamClient, UpstreamConfig, UpstreamError, UpstreamFailure, UpstreamTarget,
 };
 use crate::failover::{FailoverLadder, FailoverRung};
 use crate::provider_catalog;
@@ -1538,7 +1538,8 @@ fn refuse_chat(stream: &mut TcpStream, status: u16, message: &str) {
 /// model -- Claude, DeepSeek, Kimi and OpenRouter do not expose one -- so a
 /// launch without `--codex` refuses by name instead of pretending to answer.
 ///
-/// Streaming is refused, not forwarded: see [`crate::images_ingress`].
+/// A `stream: true` request is forwarded as `true` and the upstream SSE body is
+/// relayed as it arrives: see [`serve_images_stream`].
 fn route_images_generations(
     stream: &mut TcpStream,
     connection: &ConnectionContext<'_>,
@@ -1652,6 +1653,16 @@ fn serve_images(
             return;
         }
     };
+    if prepared.stream {
+        serve_images_stream(
+            stream,
+            &client,
+            &prepared.body,
+            connection,
+            config.stream_idle_timeout,
+        );
+        return;
+    }
     match client.images(&prepared.body, connection.shutdown) {
         // The upstream's envelope is the client contract, on success and on
         // failure alike: an images client parses `{"error": ...}` from a 4xx.
@@ -1664,6 +1675,107 @@ fn serve_images(
             record_rejection(log, status, "images_upstream_failure");
             refuse_images(stream, status, message);
         }
+    }
+}
+
+/// Relay a streaming (`stream: true`) images answer.
+///
+/// The upstream body is SSE and is forwarded as it arrives
+/// (`executeDirectOpenAIImageStream`, `codex_openai_images.go:413`). Nothing is
+/// written until the upstream's first byte lands, so a failure before that
+/// point is still a clean OpenAI error envelope; after the head is out the
+/// response is committed and an upstream failure only terminates the chunked
+/// body (DD-029's rule, as on the Messages relay). Never retried: a retry is a
+/// second billed image.
+fn serve_images_stream(
+    stream: &mut TcpStream,
+    client: &UpstreamClient<ResolvedCredentials>,
+    body: &[u8],
+    connection: &ConnectionContext<'_>,
+    idle_timeout: Duration,
+) {
+    let log = connection.log;
+    let mut writer = ChunkedImagesBody::new(stream, idle_timeout);
+    let outcome = {
+        let mut sink = |chunk: &[u8]| {
+            writer
+                .write_chunk(chunk)
+                .map_err(|_| UpstreamError::Transport("client went away"))
+        };
+        client.images_stream(body, connection.shutdown, &mut sink)
+    };
+    match outcome {
+        Ok(ImagesStreamOutcome::Streamed(_)) | Err(UpstreamError::Cancelled) => {
+            let _ = writer.finish();
+        }
+        // The upstream's own envelope is the client contract, on failure too.
+        Ok(ImagesStreamOutcome::Rejected(reply)) => {
+            let _ = write_response(
+                writer.stream,
+                reply.status,
+                "application/json",
+                &reply.body,
+                false,
+            );
+        }
+        Err(error) => {
+            if writer.started {
+                record_rejection(log, 502, "images_stream_upstream_failure");
+                let _ = writer.finish();
+            } else {
+                let (status, message) = images_failure(&error);
+                record_rejection(log, status, "images_upstream_failure");
+                refuse_images(writer.stream, status, message);
+            }
+        }
+    }
+}
+
+/// Write an SSE images answer as an HTTP/1.1 chunked body.
+///
+/// `started` is what makes the pre-commit rule work: the head is written with
+/// the first chunk, so callers know whether a failure still fits in an error
+/// envelope.
+struct ChunkedImagesBody<'a> {
+    stream: &'a mut TcpStream,
+    started: bool,
+    idle_timeout: Duration,
+}
+
+impl<'a> ChunkedImagesBody<'a> {
+    fn new(stream: &'a mut TcpStream, idle_timeout: Duration) -> Self {
+        Self {
+            stream,
+            started: false,
+            idle_timeout,
+        }
+    }
+
+    fn write_chunk(&mut self, chunk: &[u8]) -> io::Result<()> {
+        if !self.started {
+            let _ = self.stream.set_write_timeout(Some(self.idle_timeout));
+            self.stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+            )?;
+            self.stream.flush()?;
+            self.started = true;
+        }
+        write!(self.stream, "{:x}\r\n", chunk.len())?;
+        self.stream.write_all(chunk)?;
+        self.stream.write_all(b"\r\n")?;
+        self.stream.flush()
+    }
+
+    /// Seal the body. A no-op when nothing was written, so a refusal can still
+    /// own the response.
+    fn finish(&mut self) -> io::Result<()> {
+        if !self.started {
+            return Ok(());
+        }
+        self.stream.write_all(b"0\r\n\r\n")?;
+        self.stream.flush()?;
+        let _ = self.stream.shutdown(Shutdown::Both);
+        Ok(())
     }
 }
 
