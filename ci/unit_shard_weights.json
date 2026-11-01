@@ -139,6 +139,7 @@
   "tests/test_safe_rm.py": 0.41,
   "tests/test_safe_rm_windows.py": 0.0,
   "tests/test_shim_dispatch.py": 3.67,
+  "tests/test_slice_tool.py": 0.02,
   "tests/test_tool_watchdog_cli.py": 0.23,
   "tests/test_transcript_report.py": 0.36,
   "tests/test_unit_shards.py": 0.06,

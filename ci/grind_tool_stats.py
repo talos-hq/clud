@@ -33,7 +33,14 @@ REPO = r"(?:-R\s+\S+\s+|--repo\s+\S+\s+)?"
 CI_POLL = re.compile(r"\bgh\s+" + REPO + r"(pr\s+checks|run\s+view|run\s+list)\b")
 ISSUE_VIEW = re.compile(r"\bgh\s+issue\s+view\s+" + REPO + r"#?(\d+)")
 SHELL_SEARCH = re.compile(r"(?:^|[;&|(]\s*)(grep|ls)\b")
-BUNDLED = ("git/state.py", "code/outline.py", "code/patch.py", "code/ast_grep.py", "pr_merge_watch")
+BUNDLED = (
+    "git/state.py",
+    "code/outline.py",
+    "code/slice.py",
+    "code/patch.py",
+    "code/ast_grep.py",
+    "pr_merge_watch",
+)
 
 
 @dataclass

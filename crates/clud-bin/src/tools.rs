@@ -208,6 +208,16 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         quiet_ok: false,
     },
     BundledTool {
+        rel_path: "code/slice.py",
+        body: include_str!("../assets/tools/code/slice.py"),
+        // Read-only bounded read (#1676): exact line ranges under a byte cap.
+        // Killing it loses no work.
+        kill_semantics: KillSemantics::Resumable,
+        command_timeout: DEFAULT_RESUMABLE_TIMEOUT,
+        progress_timeout: None,
+        quiet_ok: false,
+    },
+    BundledTool {
         rel_path: "code/patch.py",
         body: include_str!("../assets/tools/code/patch.py"),
         // Writes files all-or-nothing (#1339 item 5) and finishes in
@@ -565,6 +575,21 @@ mod tests {
         assert!(tool.body.contains("managed-by: clud"));
         assert!(!tool.body.contains("import subprocess"));
         assert!(tool.body.contains("\"tree-sitter=="));
+    }
+
+    /// Issue #1676: one bounded read of several line ranges.
+    #[test]
+    fn bundled_includes_code_slice() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|t| t.rel_path == "code/slice.py")
+            .expect("BUNDLED_TOOLS must include code/slice.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
+        assert!(
+            tool.body.contains("--max-bytes") && tool.body.contains("--lines"),
+            "slice.py must expose the bounded range interface its routing promises"
+        );
     }
 
     #[test]

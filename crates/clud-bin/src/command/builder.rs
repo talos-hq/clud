@@ -400,7 +400,7 @@ fn land_instructions(args: &Args) -> &'static str {
 
 /// The patterns clud's command hooks refuse most often, stated before the
 /// agent tries them: a refused call still costs a full round trip (#2354).
-pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refused call is a wasted round trip): never wait with a while/until/sleep loop, `watch` or `tail -f`, in Bash or Monitor; use run_in_background and its completion notification, or a tool with its own deadline (pr_merge_watch, clud ci). Prefer `(cd DIR && CMD)` or absolute paths over a bare `cd`. Run one GitHub mutation (push, PR create, merge, issue or API write) per call.";
+pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refused call is a wasted round trip): never wait with a while/until/sleep loop, `watch` or `tail -f`, in Bash or Monitor; use run_in_background and its completion notification, or a tool with its own deadline (pr_merge_watch, clud ci). Prefer `(cd DIR && CMD)` or absolute paths over a bare `cd`. Run one GitHub mutation (push, PR create, merge, issue or API write) per call. Read code in bounded slices: `clud tool run code/outline.py FILE` gives the line ranges, then `clud tool run code/slice.py FILE --lines A-B [--lines C-D]` prints exactly those ranges under a byte cap with a footer naming the line to continue from; use it instead of `cat`, a whole-file read, or several `sed -n` slices in one command, and never re-read a range you already have.";
 
 fn append_instructions(target: &mut String, text: &str) {
     if !text.is_empty() {
