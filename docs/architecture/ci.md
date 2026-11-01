@@ -1323,3 +1323,30 @@ Not fixed here, recorded so they are not rediscovered:
 - **Bundle size.** Each harness statically links the whole workspace; per-OS
   filtering is applied in `ci/bundle.py`, but `split-debuginfo = "packed"` plus
   excluding the debug files from the bundle would cut substantially more.
+
+### Inspect the managed pre-push hook
+
+A Git hook is local state shared by linked worktrees. An older ci-lint managed
+`pre-push` hook can require a local-gate receipt even when this repository uses
+`mode = "shadow"`. Inspect the effective path and policy with:
+
+```sh
+uv run --no-sync python -m ci.pre_push_policy
+```
+
+To opt out of the recognized legacy hook, run the command again with
+`--disable-managed`. It moves only the exact known hook to a uniquely named
+backup beside it and prints that path. It refuses custom or modified hooks,
+symlinks, and policies other than shadow; it never changes a hook on inspection.
+This choice affects every worktree sharing that hooks directory. To restore the
+hook, inspect the printed backup, ensure `pre-push` does not already exist, and
+move the backup back to `pre-push`. Users who deliberately require a local gate
+can keep the existing hook or reinstall one with ci-lint. Hosted CI remains the
+required merge gate in either case.
+
+The move uses an atomic no-overwrite operation and checks the moved file's
+identity and contents. If the hook changed during the operation, it attempts
+to restore that file without replacing a newly created hook. If restoration
+cannot complete, the diagnostic names the preserved backup for manual review.
+Run the command only when no other process is editing the shared hooks
+directory; unsupported filesystems or platforms are refused.
