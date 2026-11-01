@@ -182,6 +182,15 @@ fn claude_mcp_bridge_arg(backend: Backend, target: ResolvedLaunchTarget) -> Opti
     super::mcp_config::claude_mcp_config_arg(&super::mcp_config::current_exe_dir()?)
 }
 
+/// The [`super::mcp_config::bridge_missing_notice`] for a Claude launch that
+/// would otherwise register the bridge.
+pub fn mcp_bridge_missing_notice(backend: Backend, target: ResolvedLaunchTarget) -> Option<String> {
+    if backend != Backend::Claude || is_codex_claude_bridge(target) {
+        return None;
+    }
+    super::mcp_config::bridge_missing_notice(&super::mcp_config::current_exe_dir()?)
+}
+
 pub fn bridge_suppresses_plan_mode(args: &Args, target: ResolvedLaunchTarget) -> bool {
     !args.allow_plan_mode && is_non_claude_claude_harness_bridge(target)
 }

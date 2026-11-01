@@ -340,6 +340,15 @@ pub(super) fn checkout_from(cwd: &Path) -> io::Result<Option<CheckoutKey>> {
     }))
 }
 
+/// This foreground process's session id, as recorded in its checkout claim.
+pub fn foreground_session_id() -> String {
+    format!(
+        "clud-{}-{}",
+        std::process::id(),
+        crate::process_identity::self_start_time()
+    )
+}
+
 pub fn start_foreground_presence(
     state_dir: &Path,
     cwd: &Path,
@@ -358,11 +367,7 @@ pub fn start_foreground_presence(
             Ok(None)
         };
     };
-    let session_id = format!(
-        "clud-{}-{}",
-        std::process::id(),
-        crate::process_identity::self_start_time()
-    );
+    let session_id = foreground_session_id();
     let occupant = CheckoutOccupant {
         session_id: session_id.clone(),
         pid: std::process::id(),

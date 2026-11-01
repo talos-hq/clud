@@ -41,6 +41,21 @@ pub(super) fn claude_mcp_config_arg(exe_dir: &Path) -> Option<String> {
     Some(format!("--mcp-config={config}"))
 }
 
+/// Why the agent will not see `mcp__clud__*` tools, with the fix, or `None`
+/// when the bridge interpreter is installed beside `exe_dir` (#2521).
+pub(super) fn bridge_missing_notice(exe_dir: &Path) -> Option<String> {
+    if bridge_python(exe_dir).is_some() {
+        return None;
+    }
+    Some(format!(
+        "[clud] note: the clud MCP server is not connected for this launch (no bridge \
+interpreter beside {}), so `mcp__clud__*` tools such as session_start and board_read are \
+absent. Fix: run clud from its installed wheel (`uv tool install clud`), not a bare \
+dev binary.",
+        exe_dir.display()
+    ))
+}
+
 /// The directory of the running `clud`, resolved through the launcher symlink
 /// a `uv tool install` leaves on `PATH`.
 pub(super) fn current_exe_dir() -> Option<PathBuf> {
@@ -62,6 +77,18 @@ fn bridge_python(exe_dir: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_bridge_explains_how_to_connect_it() {
+        // #2521: an absent `mcp__clud__*` tool used to fail with no hint.
+        let dir = tempfile::tempdir().unwrap();
+        let notice = bridge_missing_notice(dir.path()).expect("notice when absent");
+        assert!(
+            notice.contains("clud MCP server is not connected"),
+            "{notice}"
+        );
+        assert!(notice.contains("uv tool install clud"), "{notice}");
+    }
 
     #[test]
     fn no_sibling_python_registers_nothing() {

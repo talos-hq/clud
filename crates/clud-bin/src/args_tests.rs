@@ -1952,3 +1952,38 @@ fn test_workflow_reuse_flag() {
         Some(Command::Workflow { resume: true, .. })
     ));
 }
+
+fn strings(list: &[&str]) -> Vec<String> {
+    list.iter().map(|value| (*value).to_string()).collect()
+}
+
+#[test]
+fn a_global_flag_after_the_subcommand_names_the_fix() {
+    // #2521: `clud do --model x …` used to end in a bare `Usage:` dump.
+    let message = misplaced_global_flag(&strings(&["clud", "do", "--model", "opus-5.5", "fix it"]))
+        .expect("misplaced flag is reported");
+    assert!(
+        message.contains("global flags go before the subcommand"),
+        "{message}"
+    );
+    assert!(
+        message.contains("clud --model opus-5.5 do 'fix it'"),
+        "{message}"
+    );
+    let message = misplaced_global_flag(&strings(&["clud", "grind", "--safe"])).unwrap();
+    assert!(message.contains("clud --safe grind"), "{message}");
+}
+
+#[test]
+fn correctly_placed_or_escaped_flags_pass() {
+    for argv in [
+        &["clud", "--model", "opus", "do", "fix it"][..],
+        &["clud", "do", "fix it"],
+        &["clud", "do", "--", "--model"],
+        &["clud", "--model", "opus"],
+        &["clud", "-p", "do --model x"],
+        &["clud", "claim", "release", "--yes", "/repo"],
+    ] {
+        assert_eq!(misplaced_global_flag(&strings(argv)), None, "{argv:?}");
+    }
+}

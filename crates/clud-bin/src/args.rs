@@ -1680,6 +1680,85 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__openai-chat-translate",
 ];
 
+/// Quote `token` for a copy-pasteable shell example.
+fn shell_example_token(token: &str) -> String {
+    let plain = !token.is_empty()
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._/:=@-+,".contains(c));
+    if plain {
+        token.to_string()
+    } else {
+        format!("'{}'", token.replace('\'', "'\\''"))
+    }
+}
+
+/// Whether `cmd` or any nested subcommand declares `--name`.
+fn subtree_has_long(cmd: &clap::Command, name: &str) -> bool {
+    cmd.get_arguments().any(|arg| arg.get_long() == Some(name))
+        || cmd.get_subcommands().any(|sub| subtree_has_long(sub, name))
+}
+
+/// A root-only flag written after the subcommand (`clud do --model x …`),
+/// reported with the reordered call instead of clap's bare usage dump
+/// (#2521). `None` when every flag is where clap accepts it.
+pub(crate) fn misplaced_global_flag(raw: &[String]) -> Option<String> {
+    use clap::CommandFactory;
+    let root = Args::command();
+    let root_arg = |name: &str| {
+        root.get_arguments()
+            .find(|arg| arg.get_long() == Some(name))
+            .cloned()
+    };
+    let mut i = 1;
+    while i < raw.len() && raw[i].starts_with('-') {
+        let flag = raw[i].trim_start_matches('-');
+        let takes_value = !raw[i].contains('=')
+            && (root_arg(flag).is_some_and(|arg| arg.get_action().takes_values())
+                || (raw[i].len() == 2
+                    && root.get_arguments().any(|arg| {
+                        arg.get_short().map(String::from).as_deref() == Some(flag)
+                            && arg.get_action().takes_values()
+                    })));
+        i += if takes_value { 2 } else { 1 };
+    }
+    let sub_name = raw.get(i)?;
+    let sub = root.find_subcommand(sub_name)?;
+    let rest = &raw[i + 1..];
+    for (at, token) in rest.iter().enumerate() {
+        if token == "--" {
+            return None;
+        }
+        let Some(long) = token.strip_prefix("--") else {
+            continue;
+        };
+        let name = long.split('=').next().unwrap_or(long);
+        let Some(arg) = root_arg(name) else {
+            continue;
+        };
+        if arg.is_global_set() || subtree_has_long(sub, name) {
+            continue;
+        }
+        let width = if arg.get_action().takes_values() && !long.contains('=') && at + 1 < rest.len()
+        {
+            2
+        } else {
+            1
+        };
+        let mut example: Vec<String> = raw[..i].to_vec();
+        example.extend(rest[at..at + width].iter().cloned());
+        example.push(sub_name.clone());
+        example.extend(rest[..at].iter().cloned());
+        example.extend(rest[at + width..].iter().cloned());
+        let example: Vec<String> = example.iter().map(|t| shell_example_token(t)).collect();
+        return Some(format!(
+            "`--{name}` is a global flag, and global flags go before the subcommand. Run: {}",
+            example.join(" ")
+        ));
+    }
+    None
+}
+
 impl Args {
     pub fn parse_with_passthrough() -> Self {
         let raw: Vec<String> = std::env::args().collect();
@@ -1708,6 +1787,12 @@ impl Args {
                     .exit()
             }
         };
+        if let Some(message) = misplaced_global_flag(&known) {
+            use clap::CommandFactory;
+            Args::command()
+                .error(clap::error::ErrorKind::UnknownArgument, message)
+                .exit()
+        }
         let mut args = Args::parse_from(known.clone());
         if let Some(Command::SafeRm { args: command_args }) = &mut args.command {
             // Clap consumes global options even after a trailing subcommand.

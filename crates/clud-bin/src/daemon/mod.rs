@@ -46,7 +46,7 @@ mod worker_shared;
 
 pub(crate) use checkout_claims::claimed_by_other;
 pub use checkout_claims::{
-    run_claim_command, start_foreground_presence, ForegroundCheckoutPresence,
+    foreground_session_id, run_claim_command, start_foreground_presence, ForegroundCheckoutPresence,
 };
 pub use client::try_register_gc_watch;
 pub use client::{
