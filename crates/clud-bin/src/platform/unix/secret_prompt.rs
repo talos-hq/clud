@@ -2,6 +2,24 @@
 
 use std::ffi::CStr;
 
+/// Why no external helper produced a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalFailure {
+    Cancelled,
+    Unavailable,
+}
+
+/// Linux fallback when the native window cannot load (#2197).
+pub fn external_prompt(
+    title: &str,
+    label: &str,
+) -> Result<zeroize::Zeroizing<String>, ExternalFailure> {
+    if !super::host::LINUX {
+        return Err(ExternalFailure::Unavailable);
+    }
+    super::secret_helper::prompt(title, label)
+}
+
 pub fn configure(options: &mut eframe::NativeOptions) {
     options.renderer = eframe::Renderer::Glow;
 }

@@ -10,6 +10,24 @@ use zeroize::Zeroizing;
 use super::{Failure, Options, Secret};
 
 pub(super) fn prompt(options: &Options) -> Result<Secret, Failure> {
+    match native_prompt(options) {
+        Err(Failure::Unavailable) if !options.multiline && !super::test_mode() => {
+            external_fallback(options)
+        }
+        other => other,
+    }
+}
+
+/// #2197: zenity/kdialog/ksshaskpass/pinentry when the native window can't load.
+fn external_fallback(options: &Options) -> Result<Secret, Failure> {
+    use crate::platform::secret_prompt::{external_prompt, ExternalFailure};
+    external_prompt(&options.title, &options.label).map_err(|error| match error {
+        ExternalFailure::Cancelled => Failure::Cancelled,
+        ExternalFailure::Unavailable => Failure::Unavailable,
+    })
+}
+
+fn native_prompt(options: &Options) -> Result<Secret, Failure> {
     if !crate::platform::secret_prompt::graphics_available() {
         return Err(Failure::Unavailable);
     }
