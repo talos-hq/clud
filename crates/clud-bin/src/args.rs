@@ -781,6 +781,16 @@ pub enum Command {
         #[arg(long = "home", value_name = "DIR")]
         home: Option<std::path::PathBuf>,
     },
+    /// Run an Anthropic-format workflow script (`export const meta` +
+    /// `agent()`/`parallel()`/`pipeline()`/`phase()`); every `agent()` call
+    /// is a headless `clud -p` child.
+    Workflow {
+        /// Path to the workflow script (`.js`).
+        script: String,
+        /// JSON value exposed to the script as the global `args`.
+        #[arg(long = "args")]
+        args_json: Option<String>,
+    },
     Wasm {
         module: String,
         #[arg(long = "invoke", default_value = "run")]
@@ -1590,6 +1600,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "grind",
     "video",
     "wasm",
+    "workflow",
     "attach",
     "kill",
     "slay",
@@ -1877,6 +1888,8 @@ const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--loop-count",
     "--done",
     "--repeat",
+    // `clud workflow <script> --args JSON` (#2471).
+    "--args",
     "--message",
     "--config",
     "--daemon-state-dir",

@@ -872,6 +872,9 @@ fn build_launch_plan_for_target_at(
         Some(Command::Wasm { .. }) => {
             unreachable!("wasm execution is handled directly in main")
         }
+        Some(Command::Workflow { .. }) => {
+            unreachable!("workflow execution is handled directly in main")
+        }
         Some(Command::DoPrompt { .. }) => {
             unreachable!("do-prompt is handled directly in main")
         }

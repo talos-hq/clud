@@ -1182,6 +1182,14 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
         }
     }
 
+    if let Some(args::Command::Workflow { script, args_json }) = &args.command {
+        std::process::exit(clud::workflow::cli::run(
+            std::path::Path::new(script),
+            args_json.as_deref(),
+            args.dry_run,
+        ));
+    }
+
     if let Some(args::Command::Wasm { module, invoke }) = &args.command {
         std::process::exit(run_wasm(args.dry_run, module, invoke));
     }
