@@ -1077,6 +1077,31 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    /// Hidden test seam for Kimi Code's RFC 8628 device login: request a device
+    /// code, poll until authorized, and print progress as JSON lines. With
+    /// `--refresh-stored` it renews the login already in the OS vault instead.
+    /// Never used by a launched session.
+    #[command(name = "__kimi-device-login", hide = true)]
+    InternalKimiDeviceLogin {
+        /// Kimi domain: `com` (default) or `ai`.
+        #[arg(long)]
+        domain: Option<String>,
+        /// Device authorization endpoint, overriding the compiled-in one.
+        #[arg(long = "device-endpoint", requires = "token_endpoint")]
+        device_endpoint: Option<String>,
+        /// Token endpoint, overriding the compiled-in one.
+        #[arg(long = "token-endpoint", requires = "device_endpoint")]
+        token_endpoint: Option<String>,
+        /// Minimum poll interval in milliseconds.
+        #[arg(long = "interval-ms")]
+        interval_ms: Option<u64>,
+        /// Bound on the whole polling wait, in milliseconds.
+        #[arg(long = "max-poll-ms")]
+        max_poll_ms: Option<u64>,
+        /// Refresh the login stored in the OS vault instead of starting a new one.
+        #[arg(long = "refresh-stored")]
+        refresh_stored: bool,
+    },
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
         #[arg(long = "state-dir")]
@@ -1641,6 +1666,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__worker",
     "__start-cmd",
     "__openai-chat-translate",
+    "__kimi-device-login",
 ];
 
 impl Args {
