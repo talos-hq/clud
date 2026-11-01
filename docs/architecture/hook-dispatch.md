@@ -413,6 +413,31 @@ retry stays denied.
   `0` turns the guard off (the rollback switch). Evidence and tradeoff:
   [DD-140](../DESIGN_DECISIONS.md#dd-140-the-repeated-call-guard-denies-call-201-of-an-identical-streak-and-fails-open).
 
+### Unchanged-re-read guard (#2233)
+
+A `Read` that repeats a call already made in this session — same path, same
+`offset`/`limit` — returns bytes the model already holds, and every later
+request in the session pays for them again. The hook keys the call on its
+canonical `tool_input` (so a different range is a different read) and
+fingerprints the file as `(len, mtime)`:
+
+- **Unchanged fingerprint** (byte-identical copy already read): denied, with
+  a message naming the bounded alternatives — one range via `offset`+`limit`,
+  or `clud tool run code/outline.py` to map an unfamiliar file first.
+- **Changed fingerprint** (any edit, checkout or rewrite): allowed and
+  re-recorded, so read-after-edit verification is never refused.
+- **Files under 8 KiB** are never refused: a small re-read costs less than
+  the friction of refusing it.
+
+State is one small JSON ledger per session under
+`<state dir>/reread-guard/`, capped at 256 entries and pruned like the repeat
+guard's. **Fails open** on a missing session id, an unreadable state dir, or a
+file that cannot be `stat`ed. `CLUD_REREAD_GUARD=0` turns it off.
+
+Evidence (24 h probe, 2026-10-31): 308 of 1,035 `Read` calls repeated a
+call already made in the same session, re-supplying 1,029,780 bytes, led by
+one 2,142-line file read 23 times.
+
 ### Verification-to-edit ratio note (#1988)
 
 `block_bad_cmd_verify_ratio.rs` classifies each PreToolUse call as an edit
