@@ -727,6 +727,16 @@ pub struct ImagesReply {
     pub body: Vec<u8>,
 }
 
+/// How a streaming images request ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ImagesStreamOutcome {
+    /// The upstream answered non-2xx; `body` is the client's error envelope and
+    /// nothing has been sent downstream yet.
+    Rejected(ImagesReply),
+    /// The upstream streamed a 2xx body; every byte went to the caller's sink.
+    Streamed(usize),
+}
+
 impl<C: CredentialSource> UpstreamClient<C> {
     pub fn new(credentials: C, config: UpstreamConfig) -> Self {
         Self {
@@ -1081,6 +1091,102 @@ impl<C: CredentialSource> UpstreamClient<C> {
                 UpstreamError::Transport("connection failed")
             }),
         }
+    }
+
+    /// Stream one prepared images body, handing each upstream chunk to `sink`.
+    ///
+    /// The streaming half of the images contract, ported from
+    /// `executeDirectOpenAIImageStream` (`codex_openai_images.go:413`): the
+    /// upstream body is SSE and is relayed as it arrives. Deliberately ONE
+    /// attempt, for the same reason [`Self::images`] has none -- a retried
+    /// generation is a second billed image -- so a transport failure is
+    /// surfaced rather than silently re-spent.
+    ///
+    /// A non-2xx answer is read whole and returned as [`ImagesStreamOutcome::Rejected`]
+    /// so the caller can relay the upstream's own error envelope. Only a 2xx
+    /// body is streamed, and once the first chunk reaches `sink` the response is
+    /// committed: the caller must not answer with a second, competing response.
+    pub fn images_stream(
+        &self,
+        body: &[u8],
+        cancel: &AtomicBool,
+        sink: &mut dyn FnMut(&[u8]) -> Result<(), UpstreamError>,
+    ) -> Result<ImagesStreamOutcome, UpstreamError> {
+        /// An SSE image stream is bounded the same way a buffered answer is.
+        const MAX_RESPONSE_BYTES: u64 = 64 * 1024 * 1024;
+
+        if cancel.load(Ordering::Acquire) {
+            return Err(UpstreamError::Cancelled);
+        }
+        let target = self.credentials.resolve()?;
+        *self
+            .last_target
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(target.clone());
+        let request = self
+            .identity_request(&target, &target.images_url(), "text/event-stream")
+            .timeout(self.config.overall_timeout);
+        let read_reply =
+            |reader: &mut dyn Read, status: u16| -> Result<ImagesReply, UpstreamError> {
+                let mut buffer = Vec::new();
+                reader
+                    .take(MAX_RESPONSE_BYTES)
+                    .read_to_end(&mut buffer)
+                    .map_err(|error| {
+                        if error.kind() == std::io::ErrorKind::TimedOut {
+                            UpstreamError::Timeout
+                        } else {
+                            UpstreamError::Transport("images response could not be read")
+                        }
+                    })?;
+                Ok(ImagesReply {
+                    status,
+                    body: buffer,
+                })
+            };
+        let mut reader = match request.send_bytes(body) {
+            Ok(response) => response.into_reader(),
+            // A non-2xx answer is the client's error envelope, not ours.
+            Err(ureq::Error::Status(status, response)) => {
+                let mut failure = response.into_reader();
+                return Ok(ImagesStreamOutcome::Rejected(read_reply(
+                    &mut failure,
+                    status,
+                )?));
+            }
+            Err(ureq::Error::Transport(error)) => {
+                return Err(if is_timeout_transport(&error) {
+                    UpstreamError::Timeout
+                } else {
+                    UpstreamError::Transport("connection failed")
+                });
+            }
+        };
+
+        let mut buffer = [0_u8; 8192];
+        let mut forwarded = 0_u64;
+        loop {
+            if cancel.load(Ordering::Acquire) {
+                return Err(UpstreamError::Cancelled);
+            }
+            let count = match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(count) => count,
+                Err(error) => {
+                    return Err(if error.kind() == std::io::ErrorKind::TimedOut {
+                        UpstreamError::Timeout
+                    } else {
+                        UpstreamError::Transport("images stream could not be read")
+                    });
+                }
+            };
+            forwarded += count as u64;
+            if forwarded > MAX_RESPONSE_BYTES {
+                return Err(UpstreamError::TooLarge);
+            }
+            sink(&buffer[..count])?;
+        }
+        Ok(ImagesStreamOutcome::Streamed(forwarded as usize))
     }
 
     fn attempt(
@@ -1466,6 +1572,74 @@ mod tests {
             UpstreamTarget::new("https://gw.test/images/generations/", "Bearer x").images_url(),
             "https://gw.test/images/generations"
         );
+    }
+
+    #[test]
+    fn images_stream_relays_the_upstream_body_in_one_attempt() {
+        let body = "event: image_generation.partial_image\ndata: {\"b64_json\":\"aa\"}\n\nevent: image_generation.completed\ndata: {\"b64_json\":\"bb\"}\n\n";
+        let server = FakeUpstream::start(vec![sse_response(body)]);
+        let client = client(&server.base_url, fast_config());
+        let mut chunks: Vec<Vec<u8>> = Vec::new();
+        let outcome = client
+            .images_stream(
+                br#"{"model":"gpt-image-1","prompt":"a cat","stream":true}"#,
+                &AtomicBool::new(false),
+                &mut |chunk| {
+                    chunks.push(chunk.to_vec());
+                    Ok(())
+                },
+            )
+            .expect("streaming images body");
+
+        assert_eq!(
+            outcome,
+            ImagesStreamOutcome::Streamed(body.len()),
+            "every relayed byte is counted"
+        );
+        assert_eq!(
+            String::from_utf8(chunks.concat()).expect("utf8"),
+            body,
+            "the upstream SSE body reaches the sink unchanged"
+        );
+        assert_eq!(server.hits(), 1, "a streaming image is never retried");
+        let request = &server.requests()[0];
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("accept: text/event-stream"),
+            "{request}"
+        );
+        assert!(request.contains("\"stream\":true"), "{request}");
+    }
+
+    #[test]
+    fn images_stream_returns_a_non_2xx_envelope_without_streaming() {
+        let server = FakeUpstream::start(vec![status_response(400)]);
+        let client = client(&server.base_url, fast_config());
+        let mut chunks = 0_usize;
+        let outcome = client
+            .images_stream(
+                br#"{"model":"gpt-image-1","prompt":"a cat","stream":true}"#,
+                &AtomicBool::new(false),
+                &mut |_| {
+                    chunks += 1;
+                    Ok(())
+                },
+            )
+            .expect("a refusal is a reply, not an upstream error");
+
+        match outcome {
+            ImagesStreamOutcome::Rejected(reply) => {
+                assert_eq!(reply.status, 400);
+                assert!(
+                    String::from_utf8_lossy(&reply.body).contains("\"error\""),
+                    "the upstream envelope is returned verbatim"
+                );
+            }
+            other => panic!("expected a rejection, got {other:?}"),
+        }
+        assert_eq!(chunks, 0, "nothing is streamed for a rejection");
+        assert_eq!(server.hits(), 1);
     }
 
     #[test]
