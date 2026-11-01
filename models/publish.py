@@ -14,7 +14,13 @@ from typing import Any
 from installer.site import published_paths
 from models.manifest import merge_manifest, should_publish, validate_manifest
 
-PAGES = "https://talos-hq.github.io/clud"
+# The canonical custom domain; github.io 301-redirects to it (#2449).
+PAGES = "https://talosbot.ai/clud"
+# GitHub-owned fallback for the model document (published by model-pages.yml).
+MODEL_MANIFEST_URLS = (
+    f"{PAGES}/models/manifest.json",
+    "https://github.com/talos-hq/clud/releases/latest/download/models-manifest.json",
+)
 OPENROUTER_MODELS = "https://openrouter.ai/api/v1/models"
 MODELS_DEV = "https://models.dev/api.json"
 MAX_RESPONSE = 8_000_000
@@ -77,14 +83,21 @@ def observed_model_ids() -> set[str]:
 
 
 def _previous_document() -> dict[str, Any] | None:
-    try:
-        document = fetch_json(f"{PAGES}/models/manifest.json")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return None
-        raise
-    validate_manifest(document)
-    return document
+    error: Exception | None = None
+    for url in MODEL_MANIFEST_URLS:
+        try:
+            document = fetch_json(url)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404 and url == MODEL_MANIFEST_URLS[0]:
+                return None
+            error = exc
+            continue
+        except OSError as exc:
+            error = exc
+            continue
+        validate_manifest(document)
+        return document
+    raise OSError("no published model manifest is reachable") from error
 
 
 def stage_site(destination: Path, *, trigger: str, now: datetime) -> str:

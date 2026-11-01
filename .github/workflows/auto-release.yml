@@ -135,6 +135,9 @@ jobs:
     name: Exact SHA full CI
     needs: preflight
     uses: ./.github/workflows/ci.yml
+    # Reusable workflows get no secrets by default; setup-soldr's remote S3
+    # build cache needs SOLDR_S3_CACHE_ACCESS_KEY / _SECRET_KEY.
+    secrets: inherit
     with:
       candidate_sha: ${{ needs.preflight.outputs.candidate_sha }}
     # The union ci.yml's jobs request; a called workflow cannot exceed it.
@@ -200,6 +203,7 @@ jobs:
     # This is the ONLY caller in the repo permitted to pass profile: release.
     # _build-target.yml enforces that with a guard on github.workflow.
     uses: ./.github/workflows/_build-target.yml
+    secrets: inherit
     with:
       source_ref: ${{ needs.preflight.outputs.candidate_sha }}
       target: ${{ matrix.target }}
@@ -238,6 +242,7 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.release-matrix.outputs.static_musl) }}
     uses: ./.github/workflows/_build-target.yml
+    secrets: inherit
     with:
       source_ref: ${{ needs.preflight.outputs.candidate_sha }}
       target: ${{ matrix.target }}
@@ -487,6 +492,7 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/installer-check.yml
+    secrets: inherit
     with:
       release_tag: ${{ needs.preflight.outputs.release_tag }}
       mode: candidate
@@ -594,9 +600,9 @@ jobs:
           expected='${{ needs.build-install-site.outputs.public_digest }}'
           for attempt in $(seq 1 12); do
             actual=fetch-failed
-            if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/index.html -o public-site/index.html &&
-               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/install/index.html -o public-site/install/index.html &&
-               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talos-hq.github.io/clud/install/manifest.json -o public-site/install/manifest.json; then
+            if curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/index.html -o public-site/index.html &&
+               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/install/index.html -o public-site/install/index.html &&
+               curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/install/manifest.json -o public-site/install/manifest.json; then
               actual=$(sha256sum public-site/index.html public-site/install/index.html public-site/install/manifest.json | cut -d ' ' -f 1 | sha256sum | cut -d ' ' -f 1)
               if [ "$actual" = "$expected" ]; then
                 python -m installer.verify_site public-site
@@ -634,6 +640,7 @@ jobs:
     permissions:
       contents: read
     uses: ./.github/workflows/installer-check.yml
+    secrets: inherit
     with:
       release_tag: ${{ needs.preflight.outputs.release_tag }}
       mode: released

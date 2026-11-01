@@ -701,6 +701,7 @@ fn test_loop_subcommand() {
             no_done,
             ref done,
             ref repeat,
+            ..
         }) => {
             assert_eq!(task.as_deref(), Some("do the task"));
             assert_eq!(loop_count, 50);
@@ -1856,4 +1857,63 @@ fn ci_is_a_dispatched_subcommand_with_its_flags() {
         other => panic!("expected ci, got {other:?}"),
     }
     assert!(args.passthrough.is_empty());
+}
+
+#[test]
+fn test_loop_message_flag_with_and_without_task() {
+    let args = parse(&["clud", "loop", "--message", "hi there"]);
+    match args.command {
+        Some(Command::Loop {
+            ref task,
+            ref message,
+            ..
+        }) => {
+            assert!(task.is_none());
+            assert_eq!(message.as_deref(), Some("hi there"));
+        }
+        _ => panic!("expected Loop subcommand"),
+    }
+    let args = parse(&["clud", "loop", "--message", "m", "do it"]);
+    match args.command {
+        Some(Command::Loop {
+            ref task,
+            ref message,
+            ..
+        }) => {
+            assert_eq!(task.as_deref(), Some("do it"));
+            assert_eq!(message.as_deref(), Some("m"));
+        }
+        _ => panic!("expected Loop subcommand"),
+    }
+}
+
+#[test]
+fn test_workflow_subcommand_with_args() {
+    let args = parse(&[
+        "clud",
+        "workflow",
+        "review.js",
+        "--args",
+        r#"{"mode":"fast"}"#,
+    ]);
+    match args.command {
+        Some(Command::Workflow {
+            ref script,
+            ref args_json,
+            ..
+        }) => {
+            assert_eq!(script, "review.js");
+            assert_eq!(args_json.as_deref(), Some(r#"{"mode":"fast"}"#));
+        }
+        other => panic!("expected Workflow subcommand, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_workflow_reuse_flag() {
+    let args = parse(&["clud", "workflow", "w.js", "--reuse"]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Workflow { resume: true, .. })
+    ));
 }

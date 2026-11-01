@@ -335,6 +335,10 @@ LOG_LINE_PREFIX = re.compile(
 # and the anchored patterns below could not see it through the prefix.
 GHA_ANNOTATION = re.compile(r"^##\[(?:error|warning)\]")
 
+# The runner's own epilogue for any failed step. It names no cause, so as a
+# first error it only sent the reader back to the raw log (#2445).
+GENERIC_STEP_EXIT = re.compile(r"^##\[error\]Process completed with exit code \d+\.?$")
+
 # Cargo's per-test result lines. These are NOT errors, and matching them is
 # not hypothetical: `test tests::oversized_codes_are_truncated_not_panicked_on
 # ... ok` contains the substring "panicked", so an unanchored search reported
@@ -1334,6 +1338,9 @@ def strip_ansi(text: str) -> str:
 # what a build or test harness prints on its way there.
 FIRST_ERROR_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^##\[error\]"),
+    # A harness's own preflight refusal (`FATAL [pre-extract]: insufficient
+    # free disk ...`) names the cause in plain text (#2457).
+    re.compile(r"^FATAL\b"),
     re.compile(r"^FAILED \S"),
     re.compile(r"^test result: FAILED"),
     re.compile(r"^--- FAILED"),
@@ -1364,7 +1371,7 @@ def first_error_line(sample: str) -> str:
     lines = [raw.strip() for raw in sample.splitlines()]
     passed = {m.group(1) for line in lines if (m := CARGO_TEST_OK.match(line))}
     for line in lines:
-        if not line or CARGO_TEST_OUTCOME.match(line):
+        if not line or CARGO_TEST_OUTCOME.match(line) or GENERIC_STEP_EXIT.match(line):
             continue
         panic = PANIC_THREAD.match(line)
         if panic and panic.group(1) in passed:
@@ -1402,6 +1409,23 @@ def classify_failure_explained(
 
 
 FIRST_ERROR_CAP_CHARS = 1000
+
+# Failing non-required jobs diagnosed when the required failure is an
+# aggregate gate with nothing to say (#2445). Each costs one log request.
+ROOT_CAUSE_REPORTS = 3
+
+
+def root_cause_reports(primary, advisory, build) -> list:
+    """Reports for the jobs behind an uninformative required failure.
+
+    A gate such as `CI OK` fails only because the jobs it needs failed, and its
+    log holds nothing but the runner's exit line. Diagnose up to
+    `ROOT_CAUSE_REPORTS` of the failing advisory jobs instead, so one watcher
+    call ends with the real errors.
+    """
+    if primary.first_error or primary.classifier:
+        return []
+    return [build(item) for item in advisory[:ROOT_CAUSE_REPORTS]]
 
 
 @dataclass
@@ -3772,6 +3796,15 @@ def _act_on_verdict(  # noqa: C901
         print(report.render())
         if judgment.workflow_broken:
             print("  note:       startup_failure: the workflow is broken, not the code")
+    causes = root_cause_reports(
+        reports[0],
+        verdict.advisory_failing,
+        lambda j: _build_failure_report(j.as_check_row(), repo_for_reports),
+    )
+    if causes:
+        print(f"NOTE  {first.name} names no cause; failing jobs behind it:")
+        for cause in causes:
+            print(cause.render())
     if log and (reports[0].first_error or reports[0].classifier):
         log.emit(
             "failure_diagnostic",
@@ -3868,7 +3901,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       state
       baseRefName
       autoMergeRequest { enabledAt }
-      mergeQueueEntry { state position headCommit { oid } }
+      mergeQueueEntry { state position enqueuedAt headCommit { oid } }
       timelineItems(last: 1, itemTypes: [REMOVED_FROM_MERGE_QUEUE_EVENT]) {
         nodes { ... on RemovedFromMergeQueueEvent { reason createdAt } }
       }
@@ -3888,6 +3921,9 @@ class QueueState:
     queue_sha: str | None
     removal_reason: str | None
     removed_at: datetime | None
+    # When this entry joined the queue: older merge-group runs belong to an
+    # earlier attempt and must not eject it again (#2481).
+    enqueued_at: datetime | None = None
 
 
 def _removal(pr: dict) -> tuple[str | None, datetime | None]:
@@ -3928,7 +3964,17 @@ def parse_queue_state(data: object) -> QueueState | None:
         queue_sha=(entry.get("headCommit") or {}).get("oid") if entry else None,
         removal_reason=reason,
         removed_at=removed_at,
+        enqueued_at=_stamp(entry.get("enqueuedAt")) if entry else None,
     )
+
+
+def _stamp(value: object) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def _complete_queue_response(pr: dict) -> bool:
@@ -3970,27 +4016,69 @@ def fetch_queue_state(repo: str, pr: int) -> QueueState | None:
     return parse_queue_state(data)
 
 
-def merge_group_failure(jobs_by_run: list[tuple[dict, list[dict]]], required: set[str] | None) -> str | None:
-    """The first required failed job on the queue's commit, as `workflow / job`."""
+def failed_merge_group_job(
+    jobs_by_run: list[tuple[dict, list[dict]]], required: set[str] | None,
+) -> tuple[dict, dict] | None:
+    """The first required failed job on the queue's commit, with its run."""
     for run, jobs in jobs_by_run:
         for job in jobs:
             conclusion = _lower(job.get("conclusion"))
             name = str(job.get("name") or "")
             if conclusion not in MERGE_GROUP_FAILURES or (required and name not in required):
                 continue
-            return f"{run.get('name') or 'workflow'} / {name}: {conclusion} {job.get('html_url') or ''}".rstrip()
+            return run, job
     return None
 
 
-def fetch_merge_group_jobs(repo: str, sha: str) -> list[tuple[dict, list[dict]]]:
+def merge_group_failure(jobs_by_run: list[tuple[dict, list[dict]]], required: set[str] | None) -> str | None:
+    """The first required failed job on the queue's commit, as `workflow / job`."""
+    found = failed_merge_group_job(jobs_by_run, required)
+    if found is None:
+        return None
+    run, job = found
+    conclusion = _lower(job.get("conclusion"))
+    name = str(job.get("name") or "")
+    return f"{run.get('name') or 'workflow'} / {name}: {conclusion} {job.get('html_url') or ''}".rstrip()
+
+
+def merge_group_cause(repo: str, run: dict, job: dict) -> str:
+    """The ejecting job's first error line, so no follow-up log read is needed."""
+    first_err, _label, unavailable = classify_failure_explained(
+        repo, _id_text(run.get("id")), _id_text(job.get("id")),
+    )
+    if first_err:
+        return f"\n  first error: {first_err}"
+    return f"\n  log unavailable: {unavailable}" if unavailable else ""
+
+
+def _id_text(value: object) -> str | None:
+    return str(value) if value not in (None, "") else None
+
+
+def fetch_merge_group_jobs(
+    repo: str, sha: str, since: datetime | None = None,
+) -> list[tuple[dict, list[dict]]]:
     data = gh_json("api", f"repos/{repo}/actions/runs?head_sha={sha}&event=merge_group&per_page=100")
     runs = data.get("workflow_runs") if isinstance(data, dict) else None
     result = []
-    for run in runs if isinstance(runs, list) else []:
+    for run in current_attempt_runs(runs if isinstance(runs, list) else [], since):
         jobs = gh_json("api", f"repos/{repo}/actions/runs/{run.get('id')}/jobs?per_page=100")
         listed = jobs.get("jobs") if isinstance(jobs, dict) else None
         result.append((run, listed if isinstance(listed, list) else []))
     return result
+
+
+def current_attempt_runs(runs: list, since: datetime | None) -> list[dict]:
+    """Runs from this queue attempt; one created before `since` is stale (#2481)."""
+    kept = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        created = _stamp(run.get("created_at"))
+        if since is not None and created is not None and created < since:
+            continue
+        kept.append(run)
+    return kept
 
 
 @dataclass
@@ -4040,8 +4128,13 @@ def _merge_group_verdict(repo: str, q: QueueState, seen: MergeFollow) -> tuple[i
     if not seen.required_read:
         seen.required = fetch_required_check_names(repo, q.base_ref) if q.base_ref else None
         seen.required_read = True
-    failed = merge_group_failure(fetch_merge_group_jobs(repo, q.queue_sha), seen.required)
-    return (EXIT_EJECTED, f"required merge-group check failed: {failed}") if failed else None
+    jobs = fetch_merge_group_jobs(repo, q.queue_sha, q.enqueued_at)
+    failed = merge_group_failure(jobs, seen.required)
+    if not failed:
+        return None
+    run, job = failed_merge_group_job(jobs, seen.required) or ({}, {})
+    cause = merge_group_cause(repo, run, job)
+    return EXIT_EJECTED, f"required merge-group check failed: {failed}{cause}"
 
 
 _UNTIL_MERGED_LABELS = {

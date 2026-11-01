@@ -249,6 +249,14 @@ impl HarnessSetupAction for BundledSkillsAction {
             for name in &report.refreshed {
                 let _ = writeln!(ctx.out, "\x1b[32m[clud] updated /{name}\x1b[0m");
             }
+            for name in &report.user_owned_diverged {
+                let _ = writeln!(
+                    ctx.out,
+                    "\x1b[33m[clud] /{name} is user-owned and differs from this clud's bundled \
+                     copy, so it is not updated; restore the `managed-by: clud` marker or \
+                     delete its SKILL.md to get updates\x1b[0m"
+                );
+            }
         }
         // The /grind agents and workflow ride along with the skills that
         // route to them; they are Claude-only file kinds.

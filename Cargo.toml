@@ -28,11 +28,23 @@ exclude = [
 cognitive_complexity = "warn"
 too_many_lines = "warn"
 
+[workspace.metadata.soldr]
+# Cross targets `soldr lint` and `bash lint` clippy on top of the host, so
+# cfg(windows) / cfg(target_os = "macos") code fails at lint, not in a native
+# lane (RUST-033, #2370). Keep in step with the remote build lanes. Dylint stays
+# host-only locally until forge-ci/soldr#4016 (MSVC env under the Dylint nightly).
+targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu"]
+
+[workspace.metadata.soldr.lint]
+# Dylint runs in `bash lint` with the pinned nightly (dylints/*/rust-toolchain);
+# a `soldr lint` Dylint step would run without that pin and fail.
+steps = ["fmt", "clippy"]
+
 [workspace.metadata.dylint]
 libraries = [{ path = "dylints/*" }]
 
 [workspace.package]
-version = "2.8.47"
+version = "2.8.50"
 edition = "2021"
 rust-version = "1.95"
 license-file = "LICENSE"

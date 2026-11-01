@@ -125,6 +125,8 @@ similar). The default paths are `<git-root>/.clud/loop/DONE` and
 BLOCKED path is derived via `blocked_path_from_done` (`DONE.md` →
 `BLOCKED.md`).
 
+A PR accepted into a merge queue counts as complete: the contract tells the agent to write DONE with the PR URL as soon as the enqueue succeeds rather than waiting for the merge, so the loop moves on to the next item (#2471).
+
 The contract also documents a token fallback for agents that cannot
 write files: a line that starts with `<<<CLUD_LOOP_DONE:` and ends with
 `>>>`. `scan_completion_token` (`loop_spec.rs:557`) parses captured
@@ -304,3 +306,7 @@ re-enters cold. The unified gateway keeps it warm out of band
   source of truth for what clud runs.
 - [`daemon-ipc.md`](daemon-ipc.md) — TCP JSON protocol the repeat
   worker reports through.
+
+## Restarting a finished loop (#2471)
+
+When an interactive `clud loop` ends (stdin and stderr are terminals, not `--dry-run`, not interrupted), clud offers **Restart loop / Exit** through the shared selector (`loop_restart.rs`). Restart moves the run artifacts (`info.json`, `log.txt`, `NEXT_MESSAGE.md`, `motivation.md`, root `LOOP_DONE.md`, DONE/BLOCKED markers) into `.clud/loop/history/<millis>/`, keeps `loop.json` and `inbox/`, and re-runs the same argv.

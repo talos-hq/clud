@@ -130,6 +130,19 @@ fn skips_existing_and_preserves_user_edits() {
         "USER EDIT",
         "existing user content must not be overwritten"
     );
+    assert_eq!(report.user_owned_diverged, vec!["alpha"]);
+}
+
+#[test]
+fn user_owned_copy_matching_bundle_is_not_reported_diverged() {
+    let dir = tempdir().unwrap();
+    let alpha_dir = dir.path().join("alpha");
+    std::fs::create_dir_all(&alpha_dir).unwrap();
+    std::fs::write(alpha_dir.join("SKILL.md"), "alpha body\n").unwrap();
+
+    let report = install_to(dir.path(), &fake_skills()).unwrap();
+    assert_eq!(report.skipped_existing, vec!["alpha"]);
+    assert!(report.user_owned_diverged.is_empty());
 }
 
 #[test]
@@ -1155,5 +1168,22 @@ fn worktrees_need_a_named_condition() {
     assert!(
         grind.contains("For a Rust repo, offer *Sequential* first"),
         "grind must recommend sequential mode for Rust"
+    );
+}
+
+#[test]
+fn pending_upgrade_patch_is_refreshed() {
+    let dir = tempdir().unwrap();
+    let alpha_dir = dir.path().join("alpha");
+    std::fs::create_dir_all(&alpha_dir).unwrap();
+    let patch = "---\nname: alpha\n---\n<!-- Local explicit-invocation policy; \
+                 preserve until the updated clud binary is installed. -->\nold\n";
+    std::fs::write(alpha_dir.join("SKILL.md"), patch).unwrap();
+
+    let report = install_to(dir.path(), &fake_skills()).unwrap();
+    assert_eq!(report.refreshed, vec!["alpha"]);
+    assert_eq!(
+        std::fs::read_to_string(alpha_dir.join("SKILL.md")).unwrap(),
+        "alpha body\n"
     );
 }

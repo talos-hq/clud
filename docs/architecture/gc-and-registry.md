@@ -537,6 +537,18 @@ the default branch, so ancestry-based checks call them live work forever
   the root dropping under the limit removes it from the schedule. Observe
   mode only logs; no process snapshot means no scheduling
   (`gc::worktree_schedule` decides, `gc_service::worktree_schedule_exec` acts).
+- **Age retention (#2487).** Size alone missed a root full of small, long-idle
+  worktrees. Any worktree directly under `~/.clud/worktrees` that has been idle
+  for `MAX_AGE_SECS` (14 days) is also a candidate, even when the root is under
+  budget and the worktree is not among the largest. It gets the same exemptions,
+  the same dirty/unpushed probe (fail closed, never trashes uncommitted work,
+  #2418), the same `target/` prune first and the same 7-day warn-then-trash
+  grace (`worktree_schedule::aged`, `due`).
+- **Stray root logs (#2487).** Agents redirect `lint*.log`/`red*.log` into the
+  worktrees root. Each Delete-mode probe moves every top-level `*.log` file
+  idle for 1 h into `~/.clud/logs/worktrees`. That directory is capped at
+  7 days and 256 MiB, and the oldest files go first. Directories and
+  non-`.log` files are never touched (`gc::worktree_root_logs`).
 - **Dirty worktrees are never trashed (#2302 follow-up).** When the root is
   over budget, a schedulable candidate (non-exempt, idle >= 24 h) is probed
   once per tick with
@@ -611,10 +623,17 @@ period of repeated failure without progress emits a nonfatal persistent-failure 
 that fails `MAX_ITEM_RETRIES` (8, about 36 minutes of backoff) times in a row is dropped from
 the queue and so spared; the next pass re-derives it from disk. A candidate that no longer exists
 completes instead of failing. Owner-writable read-only directories inside an idle candidate are
-made writable (`chmod u+wx`) and the unlink retried once; foreign-owned files still fail and are
+made writable (`chmod u+wx`) and the unlink retried once; foreign-owned paths are skipped, see below, not
 abandoned. Without the bound, one root-owned file kept the queue non-empty, a new pass never
 started, and nothing that went stale later was ever looked at (#1672,
-[DD-142](../DESIGN_DECISIONS.md#dd-142-a-session-tmp-sweep-pass-always-retires)). `daemon-events.jsonl` records per-tick examined entries, files and
+[DD-142](../DESIGN_DECISIONS.md#dd-142-a-session-tmp-sweep-pass-always-retires)).
+**Unremovable subtrees (#2486).** A directory owned by another uid (typically `root` output of a
+Docker bind mount into a scratchpad) or any path that returns `PermissionDenied` is terminal on the
+first hit: the scan skips it without descending, its ancestor is kept (`Busy`) so Explore still
+reaches removable siblings, and the path goes into the pass's `foreign_owned` set instead of the
+backoff queue. A finished pass writes the list to `~/.clud/state/session-tmp-foreign-owned.json`;
+`clud gc list` prints each path with a `sudo rm -rf` and a `docker run --rm -v <parent>:/x alpine
+rm -rf /x/<name>` command. The next pass re-derives the list from disk. `daemon-events.jsonl` records per-tick examined entries, files and
 directories removed, reclaimed apparent bytes, pending phases, retry count, work age, and the
 last error path/class, current phase/path, and cursor position. An exclusive lock prevents
 concurrent daemons from overwriting the continuation queue.

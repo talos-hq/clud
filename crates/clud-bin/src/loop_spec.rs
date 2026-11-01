@@ -545,7 +545,27 @@ DONE signal. Use `<<<CLUD_LOOP_BLOCKED: <reason>>>>` for the BLOCKED \
 equivalent. Writing the marker file is still strongly preferred.\n\
 \n\
 Do not write DONE prematurely — only after you are confident the work is \
-complete. Otherwise, continue working — you will be re-invoked.\n"
+complete. Otherwise, continue working — you will be re-invoked.\n\
+\n\
+If the work lands through a pull request and the base branch uses a merge \
+queue, a PR accepted into the merge queue counts as complete: write DONE \
+with the PR URL as soon as the enqueue succeeds and stop. Do not wait for \
+the merge itself; the queue (or a chaperone) owns it from there, and the \
+loop moves on to the next item.\n"
+    )
+}
+
+/// Prompt paragraph telling the agent where operator messages for the
+/// current iteration appear (#2471). Appended after the DONE/BLOCKED
+/// contract whenever marker injection is active.
+pub fn next_message_contract(next_message_abs: &Path) -> String {
+    format!(
+        "\nAt the start of every iteration, check whether this file exists:\n\n    {}\n\n\
+If it does, it holds messages the operator queued for this iteration. \
+Read it first and follow its instructions; they take priority over the \
+original task text where they conflict. Do not edit or delete it; clud \
+manages it.\n",
+        next_message_abs.display()
     )
 }
 
@@ -928,5 +948,26 @@ mod tests {
         assert!(rendered.contains("## Body"));
         assert!(rendered.contains("## Comments"));
         assert!(rendered.contains("@bo"));
+    }
+
+    #[test]
+    fn next_message_contract_names_exact_path() {
+        let p = Path::new("/repo/.clud/loop/NEXT_MESSAGE.md");
+        let text = next_message_contract(p);
+        assert!(
+            text.contains("    /repo/.clud/loop/NEXT_MESSAGE.md\n"),
+            "{text}"
+        );
+        assert!(text.contains("Do not edit or delete it"));
+    }
+
+    #[test]
+    fn done_contract_treats_merge_queue_enqueue_as_complete() {
+        let text = done_marker_contract(Path::new("/r/DONE"), Path::new("/r/BLOCKED"));
+        assert!(
+            text.contains("accepted into the merge queue counts as complete"),
+            "{text}"
+        );
+        assert!(text.contains("Do not wait for"), "{text}");
     }
 }

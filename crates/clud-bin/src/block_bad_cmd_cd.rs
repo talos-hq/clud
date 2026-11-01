@@ -450,12 +450,21 @@ fn is_within(path: &Path, root: &Path) -> bool {
     path_key.starts_with(&prefix)
 }
 
+/// Roots shown in a refusal. A machine with dozens of registered roots made
+/// each refusal ~4KB of paths the agent never needed (#2441).
+const ROOTS_SHOWN: usize = 3;
+
 fn roots_display(roots: &[PathBuf]) -> String {
-    roots
+    let mut shown = roots
         .iter()
+        .take(ROOTS_SHOWN)
         .map(|root| crate::path_norm::display_slash(root))
         .collect::<Vec<_>>()
-        .join(", ")
+        .join(", ");
+    if roots.len() > ROOTS_SHOWN {
+        shown.push_str(&format!(", +{} more", roots.len() - ROOTS_SHOWN));
+    }
+    shown
 }
 
 fn strict_message(
@@ -473,12 +482,9 @@ fn strict_message(
     };
     format!(
         "Blocked `cd {described}`: it mutates the session cwd for every later tool call, and {why}.\
-         {because} Run the command without moving the session instead — `(cd DIR && CMD)`, \
-         `git -C DIR ...`, `cargo --manifest-path DIR/Cargo.toml ...`, or an absolute path; a \
-         subshell `cd` is always allowed because it cannot leak. `cd` back to a registered root \
-         ({roots}) stays allowed as the way to recover. To change the policy set \
-         `bash.block_cd` in .clud/settings.json, or bypass this one call with \
-         CLUD_BAD_CMD_OVERRIDE={rule}:<reason>.",
+         {because} Use `(cd DIR && CMD)`, `git -C DIR ...` or an absolute path; `cd` back to a \
+         registered root ({roots}) is allowed to recover. Policy: `bash.block_cd` in .clud/settings.json; \
+         override: CLUD_BAD_CMD_OVERRIDE={rule}:<reason>.",
         roots = roots_display(roots),
         rule = BLOCK_CD_RULE_ID,
     )
@@ -550,11 +556,9 @@ pub(super) fn condense_denial(full: String, session_id: Option<&str>) -> String 
 fn escape_message(described: &str, roots: &[PathBuf]) -> String {
     format!(
         "Blocked `cd {described}`: it moves the session cwd outside the registered repos \
-         ({roots}) for every later tool call, where repo-relative tooling stops resolving and \
-         the session loses its orientation. Use `(cd DIR && CMD)`, `git -C DIR ...`, or an \
-         absolute path instead; a subshell `cd` is always allowed because it cannot leak. To \
-         change the policy set `bash.block_cd` in .clud/settings.json, or bypass this one call \
-         with CLUD_BAD_CMD_OVERRIDE={rule}:<reason>.",
+         ({roots}) for every later tool call. Use `(cd DIR && CMD)`, `git -C DIR ...` or an \
+         absolute path. Policy: `bash.block_cd` in .clud/settings.json; override: \
+         CLUD_BAD_CMD_OVERRIDE={rule}:<reason>.",
         roots = roots_display(roots),
         rule = BLOCK_CD_RULE_ID,
     )

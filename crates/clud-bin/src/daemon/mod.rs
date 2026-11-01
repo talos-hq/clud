@@ -5,6 +5,7 @@ pub mod api_sessions;
 pub mod api_turn_controller;
 mod attach;
 mod attach_input;
+mod board;
 mod checkout_claims;
 mod client;
 mod client_compat;

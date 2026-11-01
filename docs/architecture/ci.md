@@ -514,6 +514,13 @@ admins can bypass the queue. So:
 - The label picks the PR's lanes. Every mode, `ci-windows` included, requires
   the routine Linux x64 lanes on the head SHA before `CI OK` is green
   (#1652); macOS runs only under `ci-full`.
+- A PR's superseded run (opened and labeled events firing together,
+  #2273) is cancelled by the ref's concurrency group. `CI OK` keeps
+  `always()`, because a skipped required check counts as success. When a
+  need was cancelled and a newer run of the workflow exists on the same head
+  SHA, `CI OK` passes without verifying, so no stale failure blocks the
+  replacement run's verdict at `enqueuePullRequest`. A hand-cancelled run
+  with no replacement, or a failed, skipped or missing lane, fails the gate.
 - A `merge_group` run selects the `minimal` tier, the same lanes as a `main`
   push (#2125). Full native coverage stays on the nightly run, `ci-full`
   labels and release validation; a full queue tier would make every merge
@@ -1174,7 +1181,7 @@ checked target, so the host pass never reaches `cfg(windows)` or
 `cfg(target_os = "macos")` modules. The job therefore adds check-only passes
 with `--target x86_64-pc-windows-msvc` and `--target aarch64-apple-darwin`.
 `soldr dylint prepare --target` installs the pinned nightly's `rust-std` for
-each target; Soldr's verified 6.0.3 tools and nightly driver stay prebuilt, so
+each target; Soldr's verified 6.2.0 tools and nightly driver stay prebuilt, so
 no pass builds a toolchain. Dylint lints only workspace crates, but each pass
 must first type-check every dependency with that nightly, which the stable
 build caches cannot supply. zccache caches those check units per target in the

@@ -656,6 +656,9 @@ impl<'s> Walker<'s, '_> {
             .is_some_and(|keyword| keyword.kind() == "until");
         let kind = if until {
             LoopKind::Until
+        } else if reads_lines(node, self.src) {
+            // `... | while read x; do` ends at EOF: it walks lines (#2489).
+            LoopKind::ForEach
         } else {
             LoopKind::While
         };
@@ -964,6 +967,14 @@ fn reads_script_from_stdin(invocation: &super::Invocation) -> bool {
                 text.starts_with('-') && !text.trim_start_matches('-').contains('c')
             }) || word.as_literal() == Some("-s")
         })
+}
+
+/// Whether a `while` loop's condition is a bare `read`, which fails at EOF.
+fn reads_lines(node: Node<'_>, src: &str) -> bool {
+    node.child_by_field_name("condition")
+        .and_then(|condition| condition.utf8_text(src.as_bytes()).ok())
+        .and_then(|text| text.trim().trim_end_matches(';').split_whitespace().next())
+        == Some("read")
 }
 
 fn lookup(name: &str, raw: &str, env: &Env) -> Value {

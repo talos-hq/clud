@@ -10,8 +10,10 @@ re-explaining.
 |---|---|---|
 | [architecture/secret-prompt.md](architecture/secret-prompt.md) | ~60 | Masked native credential input, direct sinks, caller-checked askpass, output secrecy and cancellation |
 | [architecture/loop-subsystem.md](architecture/loop-subsystem.md) | ~250 | `clud loop`: task resolution, plan synthesis, iteration run, DONE/BLOCKED marker contract, artifact rollover, repeat scheduling |
+| [architecture/workflow.md](architecture/workflow.md) | ~60 | `clud workflow`: Anthropic-format scripts in embedded QuickJS, `agent()` batches as concurrent `clud -p` children, ASCII board, `WORKFLOW_DONE.md` |
 | [architecture/testing-tiers.md](architecture/testing-tiers.md) | ~110 | The three test tiers; tier 3 runs the real Claude Code on `mock-agent serve` (scripted model), with the `tests/harness/` fixture and its pitfalls |
 | [architecture/grind.md](architecture/grind.md) | ~550 | `clud grind` and the `/grind` skill DAG: meta-issue routing, the plan-only pass and regroup threshold, meta of metas, preflight and the single question round, prework's plan comment, bug and feature stages, feature-branch mode, problem reporting, reconcile, capped `grind-*` agent roles, one-at-a-time integration |
+| [architecture/agent-board.md](architecture/agent-board.md) | ~45 | Agent bulletin board: daemon `/v1/board/messages`, the bridge's `board_*` MCP tools, and the system-prompt directive to poll it |
 | [architecture/daemon-ipc.md](architecture/daemon-ipc.md) | ~250 | Always-on clud daemon hosting session ops + GC: TCP JSON IPC, daemon/worker re-entry model, snapshot persistence, attach broker |
 | [architecture/checkout-claims.md](architecture/checkout-claims.md) | ~35 | Live checkout presence, exclusive mutation claims, CLI and hook behavior, restart grace |
 | [architecture/daemon-environment.md](architecture/daemon-environment.md) | ~100 | Daemon session environment: login-baseline materialization, client overlay, refresh, worker snapshot compatibility |

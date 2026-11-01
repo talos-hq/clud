@@ -1182,9 +1182,48 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
         }
     }
 
+    if let Some(args::Command::Workflow {
+        script,
+        args_json,
+        resume,
+    }) = &args.command
+    {
+        std::process::exit(clud::workflow::cli::run(
+            std::path::Path::new(script),
+            args_json.as_deref(),
+            args.dry_run,
+            *resume,
+        ));
+    }
+
     if let Some(args::Command::Wasm { module, invoke }) = &args.command {
         std::process::exit(run_wasm(args.dry_run, module, invoke));
     }
+
+    if let Some(args::Command::Loop {
+        task,
+        message: Some(message),
+        ..
+    }) = args.command.as_ref().filter(|_| !args.dry_run)
+    {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let git_root = clud::loop_spec::git_root_from(&cwd);
+        match clud::loop_artifacts::queue_message(&git_root, message) {
+            Ok(path) => eprintln!(
+                "[clud] queued message for next iteration: {}",
+                path.display()
+            ),
+            Err(e) => {
+                eprintln!("[clud] failed to queue loop message: {e}");
+                std::process::exit(1);
+            }
+        }
+        if task.is_none() {
+            std::process::exit(0);
+        }
+    }
+
+    apply_loop_config(args);
 
     if let Some(args::Command::Loop {
         repeat,
@@ -1203,6 +1242,72 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
     resolve_grind_target(args);
     store_inline_api_key(args);
     preflight_provider_credentials(args, launch_target);
+}
+
+/// Overlay `loop.json` (explicit `--config` or `<git-root>/loop.json`)
+/// under the CLI flags, queue a file-supplied message, and record the
+/// resolved config under `.clud/loop/loop.json` (#2471). Invalid configs
+/// exit 2 with the typed error.
+fn apply_loop_config(args: &mut args::Args) {
+    use clud::loop_config::LoopConfig;
+    let Some(args::Command::Loop {
+        task,
+        loop_count,
+        refresh,
+        no_done,
+        done,
+        repeat,
+        message,
+        config,
+    }) = &mut args.command
+    else {
+        return;
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let git_root = clud::loop_spec::git_root_from(&cwd);
+    let explicit = config.as_deref().map(|p| cwd.join(p));
+    let file = match LoopConfig::discover(&git_root, explicit.as_deref()) {
+        Ok(Some((path, cfg))) => {
+            eprintln!("[clud] using loop config {}", path.display());
+            cfg
+        }
+        Ok(None) => LoopConfig {
+            schema_version: clud::loop_config::SCHEMA_VERSION,
+            ..LoopConfig::default()
+        },
+        Err(e) => {
+            eprintln!("[clud] {e}");
+            std::process::exit(2);
+        }
+    };
+    let argv: Vec<String> = std::env::args().collect();
+    let cli = LoopConfig::from_cli(
+        &argv,
+        task.as_deref(),
+        *loop_count,
+        done.as_deref(),
+        *no_done,
+        repeat.as_deref(),
+        *refresh,
+        message.as_deref(),
+    );
+    let resolved = file.overridden_by(&cli);
+    if message.is_none() {
+        if let Some(text) = resolved.message.as_deref() {
+            if !args.dry_run {
+                let _ = clud::loop_artifacts::queue_message(&git_root, text);
+            }
+        }
+    }
+    *task = resolved.task.clone();
+    *loop_count = resolved.loop_count.unwrap_or(*loop_count);
+    *done = resolved.done.clone();
+    *no_done = resolved.no_done.unwrap_or(false);
+    *repeat = resolved.repeat.clone();
+    *refresh = resolved.refresh.unwrap_or(false);
+    if !args.dry_run {
+        let _ = resolved.write_resolved(&git_root);
+    }
 }
 
 fn run_wasm(dry_run: bool, module: &str, invoke: &str) -> i32 {
@@ -1993,7 +2098,60 @@ fn launch_and_clean_up(
         ctrl_c_track::InvocationKind::Direct
     };
     flush_ctrl_c_exit_event(kind, exit_code);
-    exit_code
+    let was_loop = loop_session.is_some();
+    let was_interrupted = interrupted.load(std::sync::atomic::Ordering::SeqCst);
+    offer_loop_restart(args, plan, exit_code, was_loop && !was_interrupted)
+}
+
+/// #2471: after an interactive `clud loop` ends, offer to restart it. A
+/// restart archives the run, clears the markers and re-runs the same argv;
+/// its exit code becomes ours. Any other case returns `exit_code` as is.
+fn offer_loop_restart(
+    args: &args::Args,
+    plan: &command::LaunchPlan,
+    exit_code: i32,
+    eligible: bool,
+) -> i32 {
+    use clud::loop_restart::{archive_run, should_offer, Choice, RestartPrompt};
+    if !eligible
+        || !should_offer(
+            io::stdin().is_terminal(),
+            io::stderr().is_terminal(),
+            args.dry_run,
+        )
+    {
+        return exit_code;
+    }
+    let summary = runner::summarize_loop_outcome(exit_code).0;
+    let mut prompt = RestartPrompt::new(summary);
+    match clud::selector::run(&mut io::stderr(), &mut prompt) {
+        Ok(Choice::Restart) => {}
+        _ => return exit_code,
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let git_root = loop_spec::git_root_from(&cwd);
+    let (done, blocked) = plan.loop_markers.as_ref().map_or_else(
+        || {
+            let d = loop_spec::loop_dir(&git_root);
+            (d.join("DONE"), d.join("BLOCKED"))
+        },
+        |m| (m.done_path.clone().into(), m.blocked_path.clone().into()),
+    );
+    match archive_run(&git_root, &done, &blocked) {
+        Ok(history) => eprintln!("[clud] archived previous run to {}", history.display()),
+        Err(e) => {
+            eprintln!("[clud] cannot archive previous loop run: {e}");
+            return exit_code;
+        }
+    }
+    let argv: Vec<String> = std::env::args().collect();
+    match clud::subprocess::ManagedSubprocess::start_inheriting_env(argv, Some(cwd), false, None) {
+        Ok(child) => child.wait(None).unwrap_or(exit_code),
+        Err(e) => {
+            eprintln!("[clud] cannot restart loop: {e}");
+            exit_code
+        }
+    }
 }
 
 /// Issue #79 / #65 / #66: register `clud` as the IDropTarget for

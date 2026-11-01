@@ -337,6 +337,29 @@ mod tests {
     }
 
     #[test]
+    fn stopped_run_resumes_with_identical_launch_args_2470() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("session.jsonl");
+        std::fs::write(&path, record(json!("2.1.306"), "session")).unwrap();
+        let mut payload = payload(&path);
+        let args = json!({"orchestration": {"goals": ["a"]}, "gateEpoch": 0});
+        payload.tool_input = Some(json!({"scriptPath": "/native/script.js", "args": args}));
+        let response =
+            json!({"tool_response": {"runId": "wf-new", "scriptPath": "/native/script.js"}});
+        observe("PostToolUse", &response, &payload);
+        let directory = path.with_extension("").join("workflows");
+        std::fs::create_dir_all(&directory).unwrap();
+        let snapshot = json!({"runId": "wf-new", "scriptPath": "/native/script.js",
+            "status": "stopped", "args": args});
+        std::fs::write(directory.join("wf-new.json"), snapshot.to_string()).unwrap();
+        payload.tool_input = Some(json!({"resumeFromRunId": "wf-new",
+            "scriptPath": "/native/script.js", "args": args}));
+        assert!(reason_for(&payload, None).is_none());
+        payload.tool_input.as_mut().unwrap()["args"]["gateEpochs"] = json!({"a": 1});
+        assert!(reason_for(&payload, None).is_some());
+    }
+
+    #[test]
     fn non_graph_resumes_are_unchanged_and_facts_cannot_hide_a_graph() {
         let root = tempfile::tempdir().unwrap();
         let mut payload = payload(&root.path().join("session.jsonl"));

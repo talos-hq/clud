@@ -40,6 +40,8 @@
 //!                               // rustdoc through soldr (default: true when
 //!                               // a settings file is present).
 //!     "install":   true,        // auto-install soldr if missing (default: true).
+//!     "porcelain": true,        // export SOLDR_PORCELAIN=1 to the agent session so soldr
+//!                               // prints one JSON line (default: false, #2443).
 //!     "version":   "0.7.55"     // IGNORED with a yellow warning: soldr
 //!                               // cannot be pinned (DD-173); the installed
 //!                               // soldr is used and kept at latest.
@@ -92,6 +94,7 @@ pub struct RawRustConfig {
     pub use_soldr: Option<bool>,
     pub install: Option<bool>,
     pub version: Option<String>,
+    pub porcelain: Option<bool>,
 }
 
 /// The `bash` section. `block_cd` is deliberately typed as a raw
@@ -832,6 +835,8 @@ pub struct RustConfig {
     pub use_soldr: bool,
     pub install: bool,
     pub version: Option<String>,
+    /// Export `SOLDR_PORCELAIN=1` into agent sessions (#2443).
+    pub porcelain: bool,
 }
 
 impl Default for RustConfig {
@@ -840,6 +845,7 @@ impl Default for RustConfig {
             use_soldr: true,
             install: true,
             version: None,
+            porcelain: false,
         }
     }
 }
@@ -1086,6 +1092,7 @@ pub fn merge(upper: RawRepoCludConfig, lower: RawRepoCludConfig) -> RawRepoCludC
         rust: RawRustConfig {
             use_soldr: upper_rust.use_soldr.or(lower_rust.use_soldr),
             install: upper_rust.install.or(lower_rust.install),
+            porcelain: upper_rust.porcelain.or(lower_rust.porcelain),
             version: if upper_has_rust_directive {
                 upper_rust.version.or_else(|| Some("latest".to_string()))
             } else {
@@ -1130,6 +1137,7 @@ fn normalize_raw_rust(raw: RawRepoCludConfig) -> RawRustConfig {
         use_soldr: rust.use_soldr.or(optimize.rust.use_soldr_shims),
         install: rust.install.or(optimize.rust.install_soldr),
         version: rust.version.or(optimize.rust.soldr_version),
+        porcelain: rust.porcelain,
     }
 }
 
@@ -1139,12 +1147,14 @@ pub fn resolve(raw: RawRepoCludConfig) -> RepoCludConfig {
         use_soldr,
         install,
         version,
+        porcelain,
     } = raw.rust;
     RepoCludConfig {
         rust: RustConfig {
             use_soldr: use_soldr.unwrap_or(true),
             install: install.unwrap_or(true),
             version: version.filter(|value| !value.eq_ignore_ascii_case("latest")),
+            porcelain: porcelain.unwrap_or(false),
         },
         bash: BashConfig {
             block_cd: raw

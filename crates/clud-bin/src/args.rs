@@ -693,6 +693,14 @@ pub enum Command {
         /// between runs (for example `30s`, `5m`, `1h`).
         #[arg(long = "repeat")]
         repeat: Option<String>,
+        /// Queue a message for the next loop iteration (delivered via
+        /// `.clud/loop/NEXT_MESSAGE.md`). Without a task, queue and exit.
+        #[arg(long = "message")]
+        message: Option<String>,
+        /// Read loop settings from this `loop.json` instead of the implicit
+        /// `<git-root>/loop.json`. CLI flags override file values.
+        #[arg(long = "config")]
+        config: Option<String>,
     },
     Up {
         #[arg(short = 'm', long = "message")]
@@ -772,6 +780,20 @@ pub enum Command {
     InstallAssets {
         #[arg(long = "home", value_name = "DIR")]
         home: Option<std::path::PathBuf>,
+    },
+    /// Run an Anthropic-format workflow script (`export const meta` +
+    /// `agent()`/`parallel()`/`pipeline()`/`phase()`); every `agent()` call
+    /// is a headless `clud -p` child.
+    Workflow {
+        /// Path to the workflow script (`.js`).
+        script: String,
+        /// JSON value exposed to the script as the global `args`.
+        #[arg(long = "args")]
+        args_json: Option<String>,
+        /// Reuse cached results of agent() calls whose inputs are unchanged
+        /// (named `--reuse` because `--resume` belongs to the harness).
+        #[arg(long = "reuse")]
+        resume: bool,
     },
     Wasm {
         module: String,
@@ -1582,6 +1604,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "grind",
     "video",
     "wasm",
+    "workflow",
     "attach",
     "kill",
     "slay",
@@ -1869,6 +1892,10 @@ const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--loop-count",
     "--done",
     "--repeat",
+    // `clud workflow <script> --args JSON` (#2471).
+    "--args",
+    "--message",
+    "--config",
     "--daemon-state-dir",
     "--stale-after",
     // Issue: `clud gc prune/purge --older-than <dur>` value arg.
@@ -1902,6 +1929,8 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
     let value_flags: &[&str] = SPLITTER_VALUE_FLAGS;
     let short_value_flags: &[&str] = SPLITTER_SHORT_VALUE_FLAGS;
     let bool_flags: &[&str] = &[
+        // `clud workflow --reuse` (#2471).
+        "--reuse",
         "--zdr",
         "--no-data-collection",
         "--redact-secrets",
