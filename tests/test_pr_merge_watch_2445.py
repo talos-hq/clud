@@ -31,7 +31,7 @@ def watcher():
 
 
 AGGREGATE_LOG = """\
-Run python3 ci/ci_ok.py
+Run python ci/ci_ok.py
 some job failed
 ##[error]Process completed with exit code 1.
 """
