@@ -363,7 +363,7 @@ def test_session_result_can_include_the_raw_events(bridge, wired):
 
 def test_session_kill_reports_termination(bridge, wired):
     payload = _result(_run(bridge.session_kill("sess-x", _FakeCtx())))
-    assert payload == {"session_id": "sess-x", "status": "terminated"}
+    assert payload == {"ok": True, "session_id": "sess-x", "status": "terminated"}
     assert [r for r in wired.requests if r[0] == "DELETE"]
 
 

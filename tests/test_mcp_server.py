@@ -219,7 +219,7 @@ def test_run_rejects_unknown_backend(
     fake = _fake_clud(tmp_path, "hi\n")
     monkeypatch.setenv("CLUD_BIN", fake)
     result = asyncio.run(bridge.run("hello", _FakeCtx(), backend="gpt"))
-    assert result.startswith("error: unknown backend")
+    assert json.loads(result)["code"] == "invalid_backend"
 
 
 def test_discover_api_reads_base_url_and_token(bridge, tmp_path: Path, monkeypatch) -> None:
@@ -273,7 +273,7 @@ def test_serve_lifecycle_returns_only_client_credentials(bridge, monkeypatch, tm
 
     async def check() -> None:
         async with bridge._gateway_lifespan(bridge.server):
-            assert json.loads(await bridge.serve_status()) == {"running": False}
+            assert json.loads(await bridge.serve_status()) == {"ok": True, "running": False}
             started = json.loads(await bridge.serve_start(openrouter=True))
             assert started["running"]
             assert started["protocol"] == "anthropic_messages"
@@ -286,8 +286,8 @@ def test_serve_lifecycle_returns_only_client_credentials(bridge, monkeypatch, tm
             assert "error" in json.loads(await bridge.serve_start(backend="claude"))
             child = bridge._gateway._process
         assert child.returncode is not None
-        assert json.loads(await bridge.serve_status()) == {"running": False}
-        assert json.loads(await bridge.serve_stop()) == {"running": False}
+        assert json.loads(await bridge.serve_status()) == {"ok": True, "running": False}
+        assert json.loads(await bridge.serve_stop()) == {"ok": True, "running": False}
 
     asyncio.run(check())
 
@@ -299,7 +299,7 @@ def test_serve_start_failures_do_not_echo_provider_output(bridge, monkeypatch, t
         result = await bridge.serve_start()
         assert "error" in json.loads(result)
         assert "provider-secret-canary" not in result
-        assert json.loads(await bridge.serve_status()) == {"running": False}
+        assert json.loads(await bridge.serve_status()) == {"ok": True, "running": False}
         assert "error" in json.loads(await bridge.serve_start(backend="unknown"))
         assert "error" in json.loads(await bridge.serve_start(port=-1))
 
@@ -345,6 +345,6 @@ def test_serve_start_timeout_or_cancellation_reaps_child(
         else:
             assert "error" in json.loads(await start)
         assert children[0].returncode is not None
-        assert json.loads(await bridge.serve_status()) == {"running": False}
+        assert json.loads(await bridge.serve_status()) == {"ok": True, "running": False}
 
     asyncio.run(check())
