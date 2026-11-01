@@ -10,8 +10,8 @@ use crate::codex_model::ModelSpec;
 use crate::codex_pipeline::{Pipeline, PipelineError, ProviderFailure};
 use crate::codex_sse::InBandFailure;
 use crate::codex_upstream::{
-    ApiKeyCredentials, CredentialSource, FailureClass, ResolvedCredentials, UpstreamClient,
-    UpstreamConfig, UpstreamError, UpstreamFailure, UpstreamTarget,
+    ApiKeyCredentials, CredentialSource, FailureClass, ImagesStreamOutcome, ResolvedCredentials,
+    UpstreamClient, UpstreamConfig, UpstreamError, UpstreamFailure, UpstreamTarget,
 };
 use crate::failover::{FailoverLadder, FailoverRung};
 use crate::provider_catalog;
@@ -1270,6 +1270,12 @@ fn route_request(
         ("POST", "/v1/chat/completions") => {
             route_chat_completions(stream, connection, &mut parsed, conversation_key);
         }
+        ("POST", "/v1/images/generations") => {
+            route_images_generations(stream, connection, &mut parsed, conversation_key);
+        }
+        ("POST", "/v1/images/edits") => {
+            route_images_edits(stream, connection, &mut parsed, conversation_key);
+        }
         _ => {
             if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
                 eprintln!(
@@ -1518,6 +1524,279 @@ fn refuse_chat(stream: &mut TcpStream, status: u16, message: &str) {
     // Every refusal on this route is an OpenAI error envelope: the client did
     // not ask for, and cannot parse, an Anthropic one.
     let envelope = crate::openai_ingress::render_chat_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
+/// `POST /v1/images/generations` -- OpenAI's images API on the Codex lane.
+///
+/// Upstream capability: CLIProxyAPI answers `/v1/images/generations` from the
+/// Codex executor (`internal/runtime/executor/codex_openai_images.go:341`
+/// `executeDirectOpenAIImage`, routed at `internal/api/server_routes.go`).
+/// clud had no image door at all. This route forwards the validated body to the
+/// Codex images endpoint and hands the upstream's own envelope back, so an
+/// OpenAI images client works unchanged. Only the Codex lane can spend an image
+/// model -- Claude, DeepSeek, Kimi and OpenRouter do not expose one -- so a
+/// launch without `--codex` refuses by name instead of pretending to answer.
+///
+/// A `stream: true` request is forwarded as `true` and the upstream SSE body is
+/// relayed as it arrives: see [`serve_images_stream`].
+fn route_images_generations(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    serve_images(
+        stream,
+        connection,
+        parsed,
+        conversation_key,
+        ImagesDoor::Generations,
+    );
+}
+
+/// `POST /v1/images/edits` -- the multipart half of OpenAI's images API.
+///
+/// Upstream capability: CLIProxyAPI routes `/v1/images/edits` through the same
+/// Codex executor and rewrites the multipart form into the JSON contract
+/// (`internal/runtime/executor/codex_openai_images.go:556`
+/// `codexPrepareDirectOpenAIImageEditPayload`). clud accepted only JSON
+/// generations before this door. The upstream answer is forwarded verbatim, as
+/// on the generations door, and an edit is never retried because a retry is a
+/// second billed image.
+fn route_images_edits(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    serve_images(
+        stream,
+        connection,
+        parsed,
+        conversation_key,
+        ImagesDoor::Edits,
+    );
+}
+
+/// Which images contract a request arrived on. The two doors differ only in how
+/// the client's body is validated and rewritten; the credential, upstream and
+/// error handling are shared so they cannot drift apart.
+#[derive(Clone, Copy)]
+enum ImagesDoor {
+    Generations,
+    Edits,
+}
+
+impl ImagesDoor {
+    /// The path a refusal names, so the client sees its own door.
+    fn path(self) -> &'static str {
+        match self {
+            Self::Generations => "/v1/images/generations",
+            Self::Edits => "/v1/images/edits",
+        }
+    }
+}
+
+/// Shared body of both images doors: codex availability, validation, one
+/// non-retried upstream call, and the OpenAI error envelope on refusal.
+fn serve_images(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+    door: ImagesDoor,
+) {
+    let (config, log) = (connection.config, connection.log);
+    let content_type = parsed
+        .header("content-type")
+        .unwrap_or_default()
+        .to_string();
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    let codex_available = match &config.gateway_mode {
+        GatewayMode::Codex => true,
+        GatewayMode::Unified(unified) => unified.codex_available,
+    };
+    if !codex_available {
+        record_rejection(log, 501, "images_route_missing");
+        refuse_images(
+            stream,
+            501,
+            &format!(
+                "POST {} needs the Codex route; start the gateway with --codex",
+                door.path()
+            ),
+        );
+        return;
+    }
+    let prepared = match door {
+        ImagesDoor::Generations => crate::images_ingress::prepare_generation(&body),
+        ImagesDoor::Edits => crate::images_ingress::prepare_edit(&body, &content_type),
+    };
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            record_rejection(log, 400, "invalid_image_request");
+            refuse_images(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let client = match codex_upstream_client(config, log, conversation_key, codex_redactor(config))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            let (status, message) = images_failure(&error);
+            record_rejection(log, status, "images_credentials");
+            refuse_images(stream, status, message);
+            return;
+        }
+    };
+    if prepared.stream {
+        serve_images_stream(
+            stream,
+            &client,
+            &prepared.body,
+            connection,
+            config.stream_idle_timeout,
+        );
+        return;
+    }
+    match client.images(&prepared.body, connection.shutdown) {
+        // The upstream's envelope is the client contract, on success and on
+        // failure alike: an images client parses `{"error": ...}` from a 4xx.
+        Ok(reply) => {
+            let _ = write_response(stream, reply.status, "application/json", &reply.body, false);
+        }
+        Err(UpstreamError::Cancelled) => {}
+        Err(error) => {
+            let (status, message) = images_failure(&error);
+            record_rejection(log, status, "images_upstream_failure");
+            refuse_images(stream, status, message);
+        }
+    }
+}
+
+/// Relay a streaming (`stream: true`) images answer.
+///
+/// The upstream body is SSE and is forwarded as it arrives
+/// (`executeDirectOpenAIImageStream`, `codex_openai_images.go:413`). Nothing is
+/// written until the upstream's first byte lands, so a failure before that
+/// point is still a clean OpenAI error envelope; after the head is out the
+/// response is committed and an upstream failure only terminates the chunked
+/// body (DD-029's rule, as on the Messages relay). Never retried: a retry is a
+/// second billed image.
+fn serve_images_stream(
+    stream: &mut TcpStream,
+    client: &UpstreamClient<ResolvedCredentials>,
+    body: &[u8],
+    connection: &ConnectionContext<'_>,
+    idle_timeout: Duration,
+) {
+    let log = connection.log;
+    let mut writer = ChunkedImagesBody::new(stream, idle_timeout);
+    let outcome = {
+        let mut sink = |chunk: &[u8]| {
+            writer
+                .write_chunk(chunk)
+                .map_err(|_| UpstreamError::Transport("client went away"))
+        };
+        client.images_stream(body, connection.shutdown, &mut sink)
+    };
+    match outcome {
+        Ok(ImagesStreamOutcome::Streamed(_)) | Err(UpstreamError::Cancelled) => {
+            let _ = writer.finish();
+        }
+        // The upstream's own envelope is the client contract, on failure too.
+        Ok(ImagesStreamOutcome::Rejected(reply)) => {
+            let _ = write_response(
+                writer.stream,
+                reply.status,
+                "application/json",
+                &reply.body,
+                false,
+            );
+        }
+        Err(error) => {
+            if writer.started {
+                record_rejection(log, 502, "images_stream_upstream_failure");
+                let _ = writer.finish();
+            } else {
+                let (status, message) = images_failure(&error);
+                record_rejection(log, status, "images_upstream_failure");
+                refuse_images(writer.stream, status, message);
+            }
+        }
+    }
+}
+
+/// Write an SSE images answer as an HTTP/1.1 chunked body.
+///
+/// `started` is what makes the pre-commit rule work: the head is written with
+/// the first chunk, so callers know whether a failure still fits in an error
+/// envelope.
+struct ChunkedImagesBody<'a> {
+    stream: &'a mut TcpStream,
+    started: bool,
+    idle_timeout: Duration,
+}
+
+impl<'a> ChunkedImagesBody<'a> {
+    fn new(stream: &'a mut TcpStream, idle_timeout: Duration) -> Self {
+        Self {
+            stream,
+            started: false,
+            idle_timeout,
+        }
+    }
+
+    fn write_chunk(&mut self, chunk: &[u8]) -> io::Result<()> {
+        if !self.started {
+            let _ = self.stream.set_write_timeout(Some(self.idle_timeout));
+            self.stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+            )?;
+            self.stream.flush()?;
+            self.started = true;
+        }
+        write!(self.stream, "{:x}\r\n", chunk.len())?;
+        self.stream.write_all(chunk)?;
+        self.stream.write_all(b"\r\n")?;
+        self.stream.flush()
+    }
+
+    /// Seal the body. A no-op when nothing was written, so a refusal can still
+    /// own the response.
+    fn finish(&mut self) -> io::Result<()> {
+        if !self.started {
+            return Ok(());
+        }
+        self.stream.write_all(b"0\r\n\r\n")?;
+        self.stream.flush()?;
+        let _ = self.stream.shutdown(Shutdown::Both);
+        Ok(())
+    }
+}
+
+/// Map an upstream failure to a status and a message that names no credential.
+fn images_failure(error: &UpstreamError) -> (u16, &'static str) {
+    match error {
+        UpstreamError::Credentials(_) => (
+            503,
+            "Codex credentials are unavailable; run `clud auth login codex`",
+        ),
+        UpstreamError::Timeout => (
+            504,
+            "the Codex upstream timed out before returning an image",
+        ),
+        _ => (502, "the Codex upstream failed before returning an image"),
+    }
+}
+
+/// Answer a refused images turn in the OpenAI error envelope its client parses.
+fn refuse_images(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::images_ingress::render_error(status, message);
     let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
@@ -2045,6 +2324,26 @@ fn build_pipeline(
     conversation_key: &ConversationKey,
     redaction: Option<&SharedSession>,
 ) -> Result<Pipeline<ResolvedCredentials>, UpstreamError> {
+    let client = codex_upstream_client(config, log, conversation_key, redaction)?;
+    let mut pipeline = Pipeline::new(client);
+    if let Some(model) = config.default_model.clone() {
+        pipeline = pipeline.with_default_model(model);
+    }
+    Ok(pipeline)
+}
+
+/// Build the upstream client alone, without a Messages pipeline.
+///
+/// The images door needs the same credential resolution, test-upstream seam and
+/// session identity as the Messages path but none of its translation state, so
+/// both callers share this one constructor rather than each resolving
+/// credentials their own way.
+fn codex_upstream_client(
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+    conversation_key: &ConversationKey,
+    redaction: Option<&SharedSession>,
+) -> Result<UpstreamClient<ResolvedCredentials>, UpstreamError> {
     let mut credentials = match config.test_upstream_url.as_deref() {
         Some(base_url) => ResolvedCredentials::ApiKey(ApiKeyCredentials::new(
             "clud-test-upstream-key",
@@ -2062,9 +2361,9 @@ fn build_pipeline(
         read_timeout: config.stream_idle_timeout,
         ..UpstreamConfig::default()
     };
-    // `build_pipeline` runs for every Messages request. A fresh client UUID
-    // here would rotate the upstream prompt-cache key and session headers on
-    // every turn, defeating cache reuse for a long Claude conversation.
+    // A fresh client UUID here would rotate the upstream prompt-cache key and
+    // session headers on every turn, defeating cache reuse for a long Claude
+    // conversation.
     let mut client = UpstreamClient::new(credentials, upstream_config)
         .with_session_id(conversation_key.id.clone())
         .with_redaction(redaction.cloned());
@@ -2076,11 +2375,7 @@ fn build_pipeline(
             record_retry(&log, error, attempt, budget, backoff);
         });
     }
-    let mut pipeline = Pipeline::new(client);
-    if let Some(model) = config.default_model.clone() {
-        pipeline = pipeline.with_default_model(model);
-    }
-    Ok(pipeline)
+    Ok(client)
 }
 
 fn codex_redactor(config: &BridgeConfig) -> Option<&SharedSession> {

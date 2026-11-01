@@ -66,6 +66,37 @@ Use `/v1/models` to discover the advertised Codex IDs (for example,
 Codex-only discovery does not contact Anthropic. This is an Anthropic-compatible
 frontend; `/v1/responses` and `/v1/chat/completions` are not exposed.
 
+## Images
+
+`clud serve --codex` also answers `POST /v1/images/generations` on the same
+listener, behind the same client token. The body is OpenAI's images request;
+`model` and `prompt` are required and the model must be one of `gpt-image-1`,
+`gpt-image-1.5`, `gpt-image-2`, `gpt-image-2.5`, `gpt-image-2.5-flare`,
+`gpt-image-2.5-sunburst` (a provider prefix such as `openai/` is stripped).
+clud forwards the body to the Codex `/images/generations` endpoint and returns
+the upstream's JSON envelope unchanged, so `b64_json`/`url` and the upstream's
+own error body reach the client as-is.
+
+`POST /v1/images/edits` sits beside it and takes OpenAI's multipart form:
+`model`, `prompt` and at least one `image`/`image[]` file are required; a
+`mask` file becomes `mask.image_url`, text fields are copied (with `n`,
+`output_compression` and `partial_images` coerced to integers) and every upload
+is rewritten to a `data:` URL under `images[]`, which is the JSON contract the
+Codex endpoint accepts. A JSON edit body is forwarded like a generation.
+
+`stream: true` on either door is forwarded as `true` and the upstream's SSE body
+is relayed event by event (`text/event-stream`, chunked). Nothing is written
+until the upstream's first byte lands, so a failure before that point is still a
+clean OpenAI error envelope; after the head is out the response is committed and
+an upstream failure only ends the stream. A non-2xx upstream answer is relayed
+whole, never turned into a local error.
+
+Deliberate limits: a launch without `--codex` answers 501 naming `--codex`,
+because no other clud provider sells an image model; an edit without an uploaded
+image is a local 400 rather than a paid upstream round-trip; and an image request
+is never retried, because a retry is a second billed image the caller did not ask
+for.
+
 ## MCP bridge inside `clud --claude`
 
 Every Claude launch (except the Codex->Claude bridge) registers this same
