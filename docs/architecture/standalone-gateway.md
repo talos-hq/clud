@@ -77,11 +77,18 @@ clud forwards the body to the Codex `/images/generations` endpoint and returns
 the upstream's JSON envelope unchanged, so `b64_json`/`url` and the upstream's
 own error body reach the client as-is.
 
-Deliberate limits: `stream: true` is a 400 because this surface is buffered;
-`POST /v1/images/edits` (multipart) is not routed yet; a launch without
-`--codex` answers 501 naming `--codex`, because no other clud provider sells an
-image model; and a generation is never retried, because a retry is a second
-billed image the caller did not ask for.
+`POST /v1/images/edits` sits beside it and takes OpenAI's multipart form:
+`model`, `prompt` and at least one `image`/`image[]` file are required; a
+`mask` file becomes `mask.image_url`, text fields are copied (with `n`,
+`output_compression` and `partial_images` coerced to integers) and every upload
+is rewritten to a `data:` URL under `images[]`, which is the JSON contract the
+Codex endpoint accepts. A JSON edit body is forwarded like a generation.
+
+Deliberate limits: `stream: true` is a 400 because this surface is buffered; a
+launch without `--codex` answers 501 naming `--codex`, because no other clud
+provider sells an image model; an edit without an uploaded image is a local 400
+rather than a paid upstream round-trip; and an image request is never retried,
+because a retry is a second billed image the caller did not ask for.
 
 ## MCP bridge inside `clud --claude`
 
