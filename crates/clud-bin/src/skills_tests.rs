@@ -130,6 +130,19 @@ fn skips_existing_and_preserves_user_edits() {
         "USER EDIT",
         "existing user content must not be overwritten"
     );
+    assert_eq!(report.user_owned_diverged, vec!["alpha"]);
+}
+
+#[test]
+fn user_owned_copy_matching_bundle_is_not_reported_diverged() {
+    let dir = tempdir().unwrap();
+    let alpha_dir = dir.path().join("alpha");
+    std::fs::create_dir_all(&alpha_dir).unwrap();
+    std::fs::write(alpha_dir.join("SKILL.md"), "alpha body\n").unwrap();
+
+    let report = install_to(dir.path(), &fake_skills()).unwrap();
+    assert_eq!(report.skipped_existing, vec!["alpha"]);
+    assert!(report.user_owned_diverged.is_empty());
 }
 
 #[test]
