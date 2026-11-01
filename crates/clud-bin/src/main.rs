@@ -355,8 +355,10 @@ fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
             claude,
             codex,
             openrouter,
+            deepseek,
+            kimi,
             port,
-        } => clud::serve_gateway::run(*port, *claude, *codex, *openrouter),
+        } => clud::serve_gateway::run(*port, *claude, *codex, *openrouter, *deepseek, *kimi),
         args::Command::CodexUpdate => {
             if !args.passthrough.is_empty() {
                 eprintln!("codex-update accepts no passthrough arguments");

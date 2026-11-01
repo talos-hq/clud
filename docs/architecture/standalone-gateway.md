@@ -2,8 +2,13 @@
 
 `clud serve --claude` runs a foreground, loopback-only Anthropic Messages API
 for independent local clients. `--openrouter` adds the OpenRouter route using
-`clud auth login openrouter`; `--port` chooses a port (default `8317`, or `0`
-to let the OS choose). Startup prints the base URL. Ctrl+C closes client and
+`clud auth login openrouter`; `--deepseek` and `--kimi` add the other two
+Anthropic-compatible registry providers through the credentials `clud auth
+login deepseek` / `clud auth login kimi` stored (their `DEEPSEEK_API_KEY` /
+`KIMI_API_KEY` environment variables remain the last source). Every selected
+provider must hold a credential or startup fails with that provider's login
+command as the remedy. `--port` chooses a port (default `8317`, or `0` to let
+the OS choose). Startup prints the base URL. Ctrl+C closes client and
 connected upstream sockets; DNS resolution or connection setup may delay exit.
 
 The current Claude credential path takes an Anthropic Console API key from
@@ -14,7 +19,7 @@ client token for each operator or service. For example, configure the two
 variables in your shell or secret manager, then run:
 
 ```sh
-clud serve --claude --openrouter
+clud serve --claude --openrouter --deepseek --kimi
 ```
 
 In another shell with `CLUD_SERVE_CLIENT_TOKEN` set to the same value:
@@ -29,7 +34,10 @@ curl http://127.0.0.1:8317/v1/messages \
 ```
 
 Choose a Claude model ID returned by `/v1/models`; the same list includes the
-configured OpenRouter discovery IDs. Messages requests accept streaming and
+configured OpenRouter discovery IDs plus the DeepSeek and Kimi catalog rows
+(`deepseek-flash`, `deepseek-v4-pro`, `kimi-k3`). Each row is routed to its own
+provider with that provider's own key; a model ID from one route never reaches
+another route's upstream. Messages requests accept streaming and
 tools through the Anthropic protocol. Client `x-api-key` or bearer credentials
 are removed before forwarding; the gateway separately resolves the selected
 provider's upstream credential. Missing OpenRouter credentials make startup

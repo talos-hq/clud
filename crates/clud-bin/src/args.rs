@@ -606,10 +606,11 @@ impl Args {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
-    /// Serve Claude or Codex and optional OpenRouter models to local API clients.
+    /// Serve Claude or Codex and optional Anthropic-compatible provider models
+    /// to local API clients.
     Serve {
         /// Enable the Claude upstream.
-        #[arg(long, required_unless_present = "codex")]
+        #[arg(long, required_unless_present_any = ["codex", "deepseek", "kimi", "openrouter"])]
         claude: bool,
         /// Enable Codex using clud's managed login or OPENAI_API_KEY.
         #[arg(long)]
@@ -617,6 +618,12 @@ pub enum Command {
         /// Add the configured OpenRouter upstream.
         #[arg(long)]
         openrouter: bool,
+        /// Add the configured DeepSeek upstream (vault key or DEEPSEEK_API_KEY).
+        #[arg(long)]
+        deepseek: bool,
+        /// Add the configured Kimi upstream (vault key or KIMI_API_KEY).
+        #[arg(long)]
+        kimi: bool,
         /// Local port for API clients; zero chooses an available port.
         #[arg(long, default_value_t = 8317)]
         port: u16,
