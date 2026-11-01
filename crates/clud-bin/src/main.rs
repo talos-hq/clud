@@ -329,6 +329,22 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
                 clud::openai_ingress::run_translate_stdin()
             }
         }
+        args::Command::InternalGeminiClientTranslate {
+            model,
+            response,
+            stream,
+            http,
+        } => {
+            if *response {
+                clud::gemini_client_ingress::run_translate_response_stdin(
+                    *stream,
+                    model.as_deref(),
+                    *http,
+                )
+            } else {
+                clud::gemini_client_ingress::run_translate_stdin(model.as_deref(), *stream)
+            }
+        }
         args::Command::DoPrompt { target } => command::do_prompt::run(target),
         args::Command::GrindScripts => command::grind_scripts::run(),
         args::Command::GrindFacts { args } => clud::grind_facts::run_cli(args),
