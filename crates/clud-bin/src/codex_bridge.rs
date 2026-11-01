@@ -1273,6 +1273,9 @@ fn route_request(
         ("POST", "/v1/images/generations") => {
             route_images_generations(stream, connection, &mut parsed, conversation_key);
         }
+        ("POST", "/v1/images/edits") => {
+            route_images_edits(stream, connection, &mut parsed, conversation_key);
+        }
         _ => {
             if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
                 eprintln!(
@@ -1542,7 +1545,72 @@ fn route_images_generations(
     parsed: &mut ParsedRequest,
     conversation_key: &ConversationKey,
 ) {
+    serve_images(
+        stream,
+        connection,
+        parsed,
+        conversation_key,
+        ImagesDoor::Generations,
+    );
+}
+
+/// `POST /v1/images/edits` -- the multipart half of OpenAI's images API.
+///
+/// Upstream capability: CLIProxyAPI routes `/v1/images/edits` through the same
+/// Codex executor and rewrites the multipart form into the JSON contract
+/// (`internal/runtime/executor/codex_openai_images.go:556`
+/// `codexPrepareDirectOpenAIImageEditPayload`). clud accepted only JSON
+/// generations before this door. The upstream answer is forwarded verbatim, as
+/// on the generations door, and an edit is never retried because a retry is a
+/// second billed image.
+fn route_images_edits(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    serve_images(
+        stream,
+        connection,
+        parsed,
+        conversation_key,
+        ImagesDoor::Edits,
+    );
+}
+
+/// Which images contract a request arrived on. The two doors differ only in how
+/// the client's body is validated and rewritten; the credential, upstream and
+/// error handling are shared so they cannot drift apart.
+#[derive(Clone, Copy)]
+enum ImagesDoor {
+    Generations,
+    Edits,
+}
+
+impl ImagesDoor {
+    /// The path a refusal names, so the client sees its own door.
+    fn path(self) -> &'static str {
+        match self {
+            Self::Generations => "/v1/images/generations",
+            Self::Edits => "/v1/images/edits",
+        }
+    }
+}
+
+/// Shared body of both images doors: codex availability, validation, one
+/// non-retried upstream call, and the OpenAI error envelope on refusal.
+fn serve_images(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+    door: ImagesDoor,
+) {
     let (config, log) = (connection.config, connection.log);
+    let content_type = parsed
+        .header("content-type")
+        .unwrap_or_default()
+        .to_string();
     let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
         return;
     };
@@ -1555,11 +1623,18 @@ fn route_images_generations(
         refuse_images(
             stream,
             501,
-            "POST /v1/images/generations needs the Codex route; start the gateway with --codex",
+            &format!(
+                "POST {} needs the Codex route; start the gateway with --codex",
+                door.path()
+            ),
         );
         return;
     }
-    let prepared = match crate::images_ingress::prepare_generation(&body) {
+    let prepared = match door {
+        ImagesDoor::Generations => crate::images_ingress::prepare_generation(&body),
+        ImagesDoor::Edits => crate::images_ingress::prepare_edit(&body, &content_type),
+    };
+    let prepared = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             record_rejection(log, 400, "invalid_image_request");
