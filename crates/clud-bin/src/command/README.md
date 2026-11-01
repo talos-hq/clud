@@ -54,6 +54,7 @@ deny. See [loop-scoped plan mode](../../../../docs/architecture/hook-dispatch.md
 - `build_fix_prompt(url) -> String` — `prompts.rs`
 - `build_do_prompt(rendered) -> String` — `prompts.rs` (Codex seed: the whole contract as `/goal`)
 - `build_claude_do_goal(target, prepared) -> String` — `prompts.rs` (Claude seed: a short `/goal` under the 4000-char cap; the contract rides in `--append-system-prompt`, #2372)
+- `goal_compact::prepare_for_launch(target)` / `compact_goal(preamble, brief, lm)` — `goal_compact.rs` (#2522: a target over the cap is condensed by `claude -p --model $CLUD_GOAL_COMPACT_MODEL` (default `haiku`); the result is accepted only if every hard-constraint clause survives verbatim, else the verbatim constraint list is used, else launch fails quoting the clause that cannot fit. Brief and exercised goal are recorded under `~/.clud/state/do-goals/<epoch>-<pid>/`, echoed to stderr and appended to the system prompt; `args.do_goal` carries it to the builder)
 - `struct LaunchPlan` — executable argv plus provider/harness metadata, launch mode, repeat state, task summary, markers, and stream-json state
 - `struct LoopMarkers { done_path, blocked_path }`
 - `struct RepeatSchedule { interval_secs }`

@@ -73,4 +73,4 @@ def test_read_resumes_from_the_last_cursor(bridge, fake_api) -> None:
 def test_board_id_override_wins(bridge, fake_api, monkeypatch) -> None:
     del fake_api
     monkeypatch.setenv("CLUD_BOARD_ID", "worker-7")
-    assert json.loads(asyncio.run(bridge.board_whoami())) == {"id": "worker-7"}
+    assert json.loads(asyncio.run(bridge.board_whoami())) == {"ok": True, "id": "worker-7"}

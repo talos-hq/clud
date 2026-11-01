@@ -2,6 +2,7 @@ mod builder;
 mod do_input;
 pub mod do_kind;
 pub mod do_prompt;
+pub mod goal_compact;
 pub mod grind_scripts;
 mod loop_task;
 mod mcp_config;

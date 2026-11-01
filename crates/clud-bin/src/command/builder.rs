@@ -857,8 +857,9 @@ fn build_launch_plan_for_target_at(
             // follow-up input, so both Claude and Codex seed an interactive
             // session. `main` resolves the optional target before plan building.
             if seed_interactive_builtin && target.is_some() {
-                let prompt = match (backend, target.as_deref()) {
-                    (Backend::Claude, Some(target)) => build_claude_do_goal(
+                let prompt = match (backend, target.as_deref(), args.do_goal.as_deref()) {
+                    (Backend::Claude, Some(_), Some(goal)) => format!("/goal {goal}"),
+                    (Backend::Claude, Some(target), None) => build_claude_do_goal(
                         target,
                         args.do_rendered_prompt
                             .as_deref()

@@ -198,3 +198,39 @@ fn test_build_grind_prompt_substitutes_url() {
     assert!(prompt.contains("https://example.com/repo/issues"));
     assert!(!prompt.contains("{url}"));
 }
+
+#[test]
+fn test_claude_do_goal_keeps_constraints_from_a_long_target() {
+    // #2522: the old seed cut the target at 1000 chars, silently dropping a
+    // late "never push" or "do not touch" clause.
+    let target = format!(
+        "Fix crates/clud-bin/src/args.rs. {} Do not touch ~/dev/clud4. Never push to main.",
+        "Background prose that explains the history at length. ".repeat(90)
+    );
+    let mut args = parse(&["clud", "do", &target]);
+    args.do_rendered_prompt = Some("# /do: rendered".into());
+    let backend = crate::backend::resolve_backend(args.claude, args.codex);
+    let p = build_launch_plan(&args, backend, backend.executable_name());
+    let seed = last_arg(&p);
+    assert!(seed.chars().count() - "/goal ".len() <= CLAUDE_GOAL_CONDITION_LIMIT);
+    for clause in [
+        "crates/clud-bin/src/args.rs",
+        "Do not touch ~/dev/clud4.",
+        "Never push to main.",
+    ] {
+        assert!(seed.contains(clause), "{clause:?} lost from {seed}");
+    }
+}
+
+#[test]
+fn test_claude_do_goal_prefers_the_prepared_compacted_goal() {
+    let mut args = parse(&["clud", "do", "anything"]);
+    args.do_rendered_prompt = Some("# /do: rendered".into());
+    args.do_goal = Some("Execute /x/brief.md exactly. Never push.".into());
+    let backend = crate::backend::resolve_backend(args.claude, args.codex);
+    let p = build_launch_plan(&args, backend, backend.executable_name());
+    assert_eq!(
+        last_arg(&p),
+        "/goal Execute /x/brief.md exactly. Never push."
+    );
+}

@@ -690,8 +690,22 @@ fn resolve_do_target(args: &mut args::Args) {
         match kind {
             Ok(kind) => {
                 args.do_meta = kind == command::do_kind::DoKind::Meta;
-                args.do_rendered_prompt =
-                    Some(command::do_prompt::render_current(target, &Ok(kind)));
+                let mut rendered = command::do_prompt::render_current(target, &Ok(kind));
+                if !args.codex {
+                    match command::goal_compact::prepare_for_launch(target) {
+                        Ok(Some(goal)) => {
+                            rendered.push_str("\n\n## Exercised goal (compacted, #2522)\n\n");
+                            rendered.push_str(&goal);
+                            args.do_goal = Some(goal);
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            eprintln!("[clud] error: {error}");
+                            std::process::exit(2);
+                        }
+                    }
+                }
+                args.do_rendered_prompt = Some(rendered);
             }
             Err(error) => {
                 eprintln!("[clud] error: {error}");

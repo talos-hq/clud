@@ -243,6 +243,12 @@ pub struct Args {
     #[arg(skip)]
     pub do_rendered_prompt: Option<String>,
 
+    /// The exercised `/goal` condition for Claude, compacted to fit the cap
+    /// before launch setup (#2522). Never a CLI flag; see
+    /// `command::goal_compact`.
+    #[arg(skip)]
+    pub do_goal: Option<String>,
+
     #[arg(long = "detach", conflicts_with = "dry_run")]
     pub detach: bool,
 

@@ -31,7 +31,6 @@ import codecs
 import json
 import os
 import shlex
-import shutil
 import time
 import urllib.error
 import urllib.parse
@@ -43,6 +42,7 @@ import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 
+from clud import mcp_validate as v
 from clud.serve_mcp import GatewayManager
 
 #: Upper bound on harness output returned to the client, in characters. Hermes'
@@ -189,18 +189,21 @@ async def run(
         extra_flags: Optional space-separated extra clud flags to pass through.
     """
     clud_bin = os.environ.get("CLUD_BIN", "clud")
-    if not os.path.isabs(clud_bin) and shutil.which(clud_bin) is None:
-        return f"error: clud binary '{clud_bin}' not found on PATH"
-
-    if backend not in ("claude", "codex"):
-        return f"error: unknown backend '{backend}' (expected 'claude' or 'codex')"
+    workdir = _resolve_cwd(cwd, "") if cwd else None
+    rejected = v.first_error(
+        v.check_prompt(prompt, "run"),
+        v.check_backend(backend, "run"),
+        v.check_goal_length(prompt),
+        v.check_model(model),
+        v.check_extra_flags(extra_flags),
+        v.check_cwd(cwd, workdir or ""),
+        v.check_seconds("timeout", timeout, minimum=1, tool="run"),
+        v.check_clud_bin(clud_bin),
+    )
+    if rejected is not None:
+        return _dump(rejected.payload())
 
     argv = _build_argv(prompt, backend, model, extra_flags)
-    workdir = cwd or None
-    if workdir is not None:
-        workdir = _resolve_cwd(workdir, "")
-        if not os.path.isdir(workdir):
-            return f"error: cwd '{workdir}' is not a directory"
 
     try:
         await ctx.info(f"running: {shlex.join(argv)}")
@@ -272,13 +275,13 @@ class SessionError(RuntimeError):
         out: dict = {"error": str(self)}
         if self.session_id:
             out["session_id"] = self.session_id
-        return out
+        return v.normalize(out)
 
 
 def _dump(payload: dict) -> str:
-    """Serialize a tool result. Never raises on odd payloads."""
+    """Serialize a tool result in the ``{ok, code, message, fix}`` shape."""
     try:
-        return json.dumps(payload, indent=2, default=str)
+        return json.dumps(v.normalize(payload), indent=2, default=str)
     except (TypeError, ValueError):
         return json.dumps({"error": "result was not JSON-serializable"})
 
@@ -612,16 +615,27 @@ async def _resolve_and_start(
     safe: bool,
     name: str,
     resume_session_id: str,
+    tool: str = "session_start",
 ) -> tuple[str, str, str, str]:
-    """Validate + discover + submit. Returns (base, token, session_id, turn_id)."""
-    if backend not in ("claude", "codex"):
-        raise SessionError(f"unknown backend '{backend}' (expected 'claude' or 'codex')")
-    if not prompt.strip():
-        raise SessionError("prompt must not be empty")
+    """Validate + discover + submit. Returns (base, token, session_id, turn_id).
+
+    Raises :class:`mcp_validate.ToolError` before any side effect on bad input.
+    """
+    resolved_cwd = _resolve_cwd(cwd, "") if cwd else ""
+    rejected = v.first_error(
+        v.check_prompt(prompt, tool),
+        v.check_backend(backend, tool),
+        v.check_goal_length(prompt),
+        v.check_model(model),
+        v.check_cwd(cwd, resolved_cwd),
+        v.check_session_id(resume_session_id, tool) if resume_session_id else None,
+    )
+    if rejected is not None:
+        raise rejected
     try:
         base, token = await _discover_api()
     except Exception as exc:  # discovery must never mask a usable handle
-        raise SessionError(f"could not discover clud daemon API: {exc}") from exc
+        raise v.daemon_unavailable(exc) from exc
     session_id, turn_id = await _start_turn(
         base,
         token,
@@ -683,11 +697,14 @@ async def session_start(
         wait_seconds: Seconds to block waiting for the turn before returning
             the handle (0 = return immediately, always async).
     """
+    rejected = v.check_seconds("wait_seconds", wait_seconds, minimum=0, tool="session_start")
+    if rejected is not None:
+        return _dump(rejected.payload())
     try:
         base, token, session_id, turn_id = await _resolve_and_start(
             prompt, backend, cwd, model, safe, name, resume_session_id
         )
-    except SessionError as exc:
+    except (SessionError, v.ToolError) as exc:
         return _dump(exc.payload())
 
     if not wait_seconds:
@@ -728,13 +745,16 @@ async def session_status(session_id: str, ctx: Context) -> str:
     Args:
         session_id: The id returned by `session_start` (`sess-...`).
     """
+    rejected = v.check_session_id(session_id, "session_status")
+    if rejected is not None:
+        return _dump(rejected.payload())
     try:
         base, token = await _discover_api()
         snapshot = await _snapshot(base, token, session_id)
     except SessionError as exc:
         return _dump(exc.payload())
     except Exception as exc:
-        return _dump({"error": f"could not discover clud daemon API: {exc}"})
+        return _dump(v.daemon_unavailable(exc).payload())
     snapshot.pop("_record", None)
     return _dump(snapshot)
 
@@ -764,6 +784,9 @@ async def session_result(
         include_events: Include the normalised event records in the result
             (large; off by default).
     """
+    rejected = v.check_session_id(session_id, "session_result")
+    if rejected is not None:
+        return _dump(rejected.payload())
     try:
         base, token = await _discover_api()
         payload = await _result_payload(
@@ -777,7 +800,7 @@ async def session_result(
     except SessionError as exc:
         return _dump(exc.payload())
     except Exception as exc:
-        return _dump({"error": f"could not discover clud daemon API: {exc}"})
+        return _dump(v.daemon_unavailable(exc).payload())
     return _dump(payload)
 
 
@@ -808,6 +831,9 @@ async def session_wait(
         after: Event cursor to start collecting text from.
         include_events: Include the normalised event records in the result.
     """
+    rejected = v.check_session_id(session_id, "session_wait")
+    if rejected is not None:
+        return _dump(rejected.payload())
     try:
         base, token = await _discover_api()
         record, waited_s = await _wait_for_turn(base, token, session_id, turn_id, wait_seconds)
@@ -824,7 +850,7 @@ async def session_wait(
     except SessionError as exc:
         return _dump(exc.payload())
     except Exception as exc:
-        return _dump({"error": f"could not discover clud daemon API: {exc}"})
+        return _dump(v.daemon_unavailable(exc).payload())
     return _dump(payload)
 
 
@@ -835,10 +861,13 @@ async def session_kill(session_id: str, ctx: Context) -> str:
     Args:
         session_id: The id returned by `session_start`.
     """
+    rejected = v.check_session_id(session_id, "session_kill")
+    if rejected is not None:
+        return _dump(rejected.payload())
     try:
         base, token = await _discover_api()
     except Exception as exc:
-        return _dump({"error": f"could not discover clud daemon API: {exc}"})
+        return _dump(v.daemon_unavailable(exc).payload())
     status, payload = await _api(base, token, "DELETE", f"/v1/sessions/{session_id}")
     if status != 200:
         return _dump({"error": f"kill failed ({status}): {payload}", "session_id": session_id})
@@ -871,7 +900,7 @@ async def board_post(to: str, body: str) -> str:
     try:
         base, token = await _discover_api()
     except Exception as exc:
-        return _dump({"error": f"could not discover clud daemon API: {exc}"})
+        return _dump(v.daemon_unavailable(exc).payload())
     message = {"to": to, "from": _board_identity(), "body": body}
     status, payload = await _api(base, token, "POST", "/v1/board/messages", message)
     if status != 201:
@@ -893,7 +922,7 @@ async def board_read(after: int = -1) -> str:
     try:
         base, token = await _discover_api()
     except Exception as exc:
-        return _dump({"error": f"could not discover clud daemon API: {exc}"})
+        return _dump(v.daemon_unavailable(exc).payload())
     cursor = _board_cursor if after < 0 else after
     query = urllib.parse.urlencode({"to": _board_identity(), "after": cursor})
     status, payload = await _api(base, token, "GET", f"/v1/board/messages?{query}")
@@ -920,10 +949,15 @@ async def dry_run(
         extra_flags: Optional space-separated extra clud flags.
     """
     clud_bin = _clud_bin()
-    if not os.path.isabs(clud_bin) and shutil.which(clud_bin) is None:
-        return f"error: clud binary '{clud_bin}' not found on PATH"
-    if backend not in ("claude", "codex"):
-        return f"error: unknown backend '{backend}' (expected 'claude' or 'codex')"
+    rejected = v.first_error(
+        v.check_prompt(prompt, "dry_run"),
+        v.check_backend(backend, "dry_run"),
+        v.check_model(model),
+        v.check_extra_flags(extra_flags),
+        v.check_clud_bin(clud_bin),
+    )
+    if rejected is not None:
+        return _dump(rejected.payload())
     argv = [clud_bin, "--dry-run", "-p", prompt]
     if backend == "codex":
         argv.append("--codex")
@@ -977,12 +1011,15 @@ async def run_json(
         resume_session_id: Reuse an existing logical session instead of
             creating a new one (enables multi-turn conversations).
     """
+    rejected = v.check_seconds("timeout", timeout, minimum=1, tool="run_json")
+    if rejected is not None:
+        return _dump(rejected.payload())
     try:
         base, token, session_id, turn_id = await _resolve_and_start(
-            prompt, backend, cwd, model, safe, "", resume_session_id
+            prompt, backend, cwd, model, safe, "", resume_session_id, tool="run_json"
         )
         record, waited_s = await _wait_for_turn(base, token, session_id, turn_id, timeout)
-    except SessionError as exc:
+    except (SessionError, v.ToolError) as exc:
         return _dump(exc.payload())
 
     if not _turn_done(record, turn_id):
