@@ -1270,6 +1270,9 @@ fn route_request(
         ("POST", "/v1/chat/completions") => {
             route_chat_completions(stream, connection, &mut parsed, conversation_key);
         }
+        ("POST", "/v1/images/generations") => {
+            route_images_generations(stream, connection, &mut parsed, conversation_key);
+        }
         _ => {
             if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
                 eprintln!(
@@ -1518,6 +1521,95 @@ fn refuse_chat(stream: &mut TcpStream, status: u16, message: &str) {
     // Every refusal on this route is an OpenAI error envelope: the client did
     // not ask for, and cannot parse, an Anthropic one.
     let envelope = crate::openai_ingress::render_chat_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
+/// `POST /v1/images/generations` -- OpenAI's images API on the Codex lane.
+///
+/// Upstream capability: CLIProxyAPI answers `/v1/images/generations` from the
+/// Codex executor (`internal/runtime/executor/codex_openai_images.go:341`
+/// `executeDirectOpenAIImage`, routed at `internal/api/server_routes.go`).
+/// clud had no image door at all. This route forwards the validated body to the
+/// Codex images endpoint and hands the upstream's own envelope back, so an
+/// OpenAI images client works unchanged. Only the Codex lane can spend an image
+/// model -- Claude, DeepSeek, Kimi and OpenRouter do not expose one -- so a
+/// launch without `--codex` refuses by name instead of pretending to answer.
+///
+/// Streaming is refused, not forwarded: see [`crate::images_ingress`].
+fn route_images_generations(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    let codex_available = match &config.gateway_mode {
+        GatewayMode::Codex => true,
+        GatewayMode::Unified(unified) => unified.codex_available,
+    };
+    if !codex_available {
+        record_rejection(log, 501, "images_route_missing");
+        refuse_images(
+            stream,
+            501,
+            "POST /v1/images/generations needs the Codex route; start the gateway with --codex",
+        );
+        return;
+    }
+    let prepared = match crate::images_ingress::prepare_generation(&body) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            record_rejection(log, 400, "invalid_image_request");
+            refuse_images(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let client = match codex_upstream_client(config, log, conversation_key, codex_redactor(config))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            let (status, message) = images_failure(&error);
+            record_rejection(log, status, "images_credentials");
+            refuse_images(stream, status, message);
+            return;
+        }
+    };
+    match client.images(&prepared.body, connection.shutdown) {
+        // The upstream's envelope is the client contract, on success and on
+        // failure alike: an images client parses `{"error": ...}` from a 4xx.
+        Ok(reply) => {
+            let _ = write_response(stream, reply.status, "application/json", &reply.body, false);
+        }
+        Err(UpstreamError::Cancelled) => {}
+        Err(error) => {
+            let (status, message) = images_failure(&error);
+            record_rejection(log, status, "images_upstream_failure");
+            refuse_images(stream, status, message);
+        }
+    }
+}
+
+/// Map an upstream failure to a status and a message that names no credential.
+fn images_failure(error: &UpstreamError) -> (u16, &'static str) {
+    match error {
+        UpstreamError::Credentials(_) => (
+            503,
+            "Codex credentials are unavailable; run `clud auth login codex`",
+        ),
+        UpstreamError::Timeout => (
+            504,
+            "the Codex upstream timed out before returning an image",
+        ),
+        _ => (502, "the Codex upstream failed before returning an image"),
+    }
+}
+
+/// Answer a refused images turn in the OpenAI error envelope its client parses.
+fn refuse_images(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::images_ingress::render_error(status, message);
     let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
@@ -2045,6 +2137,26 @@ fn build_pipeline(
     conversation_key: &ConversationKey,
     redaction: Option<&SharedSession>,
 ) -> Result<Pipeline<ResolvedCredentials>, UpstreamError> {
+    let client = codex_upstream_client(config, log, conversation_key, redaction)?;
+    let mut pipeline = Pipeline::new(client);
+    if let Some(model) = config.default_model.clone() {
+        pipeline = pipeline.with_default_model(model);
+    }
+    Ok(pipeline)
+}
+
+/// Build the upstream client alone, without a Messages pipeline.
+///
+/// The images door needs the same credential resolution, test-upstream seam and
+/// session identity as the Messages path but none of its translation state, so
+/// both callers share this one constructor rather than each resolving
+/// credentials their own way.
+fn codex_upstream_client(
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+    conversation_key: &ConversationKey,
+    redaction: Option<&SharedSession>,
+) -> Result<UpstreamClient<ResolvedCredentials>, UpstreamError> {
     let mut credentials = match config.test_upstream_url.as_deref() {
         Some(base_url) => ResolvedCredentials::ApiKey(ApiKeyCredentials::new(
             "clud-test-upstream-key",
@@ -2062,9 +2174,9 @@ fn build_pipeline(
         read_timeout: config.stream_idle_timeout,
         ..UpstreamConfig::default()
     };
-    // `build_pipeline` runs for every Messages request. A fresh client UUID
-    // here would rotate the upstream prompt-cache key and session headers on
-    // every turn, defeating cache reuse for a long Claude conversation.
+    // A fresh client UUID here would rotate the upstream prompt-cache key and
+    // session headers on every turn, defeating cache reuse for a long Claude
+    // conversation.
     let mut client = UpstreamClient::new(credentials, upstream_config)
         .with_session_id(conversation_key.id.clone())
         .with_redaction(redaction.cloned());
@@ -2076,11 +2188,7 @@ fn build_pipeline(
             record_retry(&log, error, attempt, budget, backoff);
         });
     }
-    let mut pipeline = Pipeline::new(client);
-    if let Some(model) = config.default_model.clone() {
-        pipeline = pipeline.with_default_model(model);
-    }
-    Ok(pipeline)
+    Ok(client)
 }
 
 fn codex_redactor(config: &BridgeConfig) -> Option<&SharedSession> {

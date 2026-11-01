@@ -95,6 +95,23 @@ orphan `tool_result`), and a `tool_use` with no result is closed with an
 the namespace/custom-tool name map are not ported yet; `cache_control` markers
 are not replayed.
 
+## Images
+
+`clud serve --codex` also answers `POST /v1/images/generations` on the same
+listener, behind the same client token. The body is OpenAI's images request;
+`model` and `prompt` are required and the model must be one of `gpt-image-1`,
+`gpt-image-1.5`, `gpt-image-2`, `gpt-image-2.5`, `gpt-image-2.5-flare`,
+`gpt-image-2.5-sunburst` (a provider prefix such as `openai/` is stripped).
+clud forwards the body to the Codex `/images/generations` endpoint and returns
+the upstream's JSON envelope unchanged, so `b64_json`/`url` and the upstream's
+own error body reach the client as-is.
+
+Deliberate limits: `stream: true` is a 400 because this surface is buffered;
+`POST /v1/images/edits` (multipart) is not routed yet; a launch without
+`--codex` answers 501 naming `--codex`, because no other clud provider sells an
+image model; and a generation is never retried, because a retry is a second
+billed image the caller did not ask for.
+
 ## MCP bridge inside `clud --claude`
 
 Every Claude launch (except the Codex->Claude bridge) registers this same
