@@ -94,19 +94,18 @@ def explain_readonly_failure(argv: list[str]) -> None:
     )
 
 
-#: The Windows triple `--windows` type-checks locally (#1441). soldr prepares
-#: the MSVC sysroot, so a Linux or macOS host can run the same clippy the
-#: Windows build job runs, before a push spends a `ci-windows` run on it.
-WINDOWS_TARGET = "x86_64-pc-windows-msvc"
+def clippy_argv(soldr: str, host_only: bool) -> list[str]:
+    """Clippy for the host and every declared cross target, through `soldr lint` (#2370).
 
-
-def clippy_subcommands(windows: bool) -> list[list[str]]:
-    """The cargo clippy invocations to run: the host, plus Windows on request."""
-    host = ["clippy", "--workspace", "--all-targets", "--", "-D", "warnings"]
-    if not windows:
-        return [host]
-    target = ["clippy", "--workspace", "--all-targets", "--target", WINDOWS_TARGET]
-    return [host, [*target, "--", "-D", "warnings"]]
+    `soldr lint rust` reads `[workspace.metadata.soldr].targets`, prepares each
+    sysroot and runs `cargo clippy --workspace --all-targets -- -D warnings`
+    per target, so a Linux host type-checks the Windows and macOS `cfg` code
+    the native lanes build (#1441). It is the same path the edit loop's bare
+    `soldr lint` takes, so the two share one warm cache instead of each
+    rebuilding the graph under different flags.
+    """
+    argv = [soldr, "lint", "rust"]
+    return [*argv, "--host-only"] if host_only else argv
 
 
 def main(argv: list[str] | None = None) -> int:  # noqa: C901
@@ -120,13 +119,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     the old per-platform workflows did, meant 6x ruff and 6x cargo fmt for
     checks whose result cannot vary by platform.
 
-    `bash lint` (local, no flags) still runs everything, unchanged.
-    `--windows` also runs clippy for `x86_64-pc-windows-msvc` through soldr,
-    catching Windows-only `cfg` code before a `ci-windows` run does.
+    `bash lint` (local, no flags) runs everything.
+    Clippy runs on the host and then on every target `Cargo.toml` declares
+    under `[workspace.metadata.soldr].targets`, so Windows and macOS `cfg`
+    code fails here, not in a native lane (#2370). `--host-only` skips the
+    cross targets for a fast edit loop; `--windows` is accepted and ignored,
+    since the declared targets already include it.
     """
     argv = list(sys.argv[1:] if argv is None else argv)
     static_only = "--static-only" in argv
-    windows = "--windows" in argv
+    host_only = "--host-only" in argv
 
     from ci.env import activate
 
@@ -208,11 +210,16 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
 
     if static_only:
         return 0
-    for clippy in clippy_subcommands(windows):
-        clippy_argv = _cargo(clippy)
-        if run(clippy_argv) != 0:
-            explain_readonly_failure(clippy_argv)
-            return 1
+    from ci.env import soldr_path
+
+    soldr = soldr_path()
+    if soldr is None:
+        print("lint: install soldr (./install) to run clippy", file=sys.stderr)
+        return 1
+    argv = clippy_argv(soldr, host_only)
+    if run(argv) != 0:
+        explain_readonly_failure(argv)
+        return 1
     return 0
 
 

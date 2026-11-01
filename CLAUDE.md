@@ -17,7 +17,7 @@ calling unchanged Windows APIs stays on routine CI; inspect the changed code
 before selecting native coverage.
 
 - **Build**: `bash build` — dev wheel (Rust binary + Python package)
-- **Lint**: `bash lint` — `cargo fmt`, `cargo clippy`, `ruff` (**MANDATORY** after any code edit). `bash lint --windows` also runs clippy for `x86_64-pc-windows-msvc` through soldr — run it before pushing Windows-only code ([ci.md](docs/architecture/ci.md#local-validation-before-remote-ci))
+- **Lint**: `bash lint` — `cargo fmt`, `cargo clippy`, `ruff` (**MANDATORY** after any code edit). Clippy runs on the host and every target in `Cargo.toml`'s `[workspace.metadata.soldr].targets` (Windows, both macOS, Linux arm64) through soldr, so platform `cfg` code fails at lint; `bash lint --host-only` skips the cross targets for a fast edit loop ([ci.md](docs/architecture/ci.md#local-validation-before-remote-ci))
 - **Test (Tier 0, host)**: `bash test --host` — Rust library tests + Python tests with no built binary or daemon; run constantly ([tiers](docs/architecture/ci.md#two-local-test-tiers-2356))
 - **Test**: `bash test` — Rust unit tests + Python unit tests
 - **Test (full)**: `bash test --integration` — adds integration tests with mock agents
