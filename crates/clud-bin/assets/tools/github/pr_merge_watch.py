@@ -335,6 +335,10 @@ LOG_LINE_PREFIX = re.compile(
 # and the anchored patterns below could not see it through the prefix.
 GHA_ANNOTATION = re.compile(r"^##\[(?:error|warning)\]")
 
+# The runner's own epilogue for any failed step. It names no cause, so as a
+# first error it only sent the reader back to the raw log (#2445).
+GENERIC_STEP_EXIT = re.compile(r"^##\[error\]Process completed with exit code \d+\.?$")
+
 # Cargo's per-test result lines. These are NOT errors, and matching them is
 # not hypothetical: `test tests::oversized_codes_are_truncated_not_panicked_on
 # ... ok` contains the substring "panicked", so an unanchored search reported
@@ -1334,6 +1338,9 @@ def strip_ansi(text: str) -> str:
 # what a build or test harness prints on its way there.
 FIRST_ERROR_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^##\[error\]"),
+    # A harness's own preflight refusal (`FATAL [pre-extract]: insufficient
+    # free disk ...`) names the cause in plain text (#2457).
+    re.compile(r"^FATAL\b"),
     re.compile(r"^FAILED \S"),
     re.compile(r"^test result: FAILED"),
     re.compile(r"^--- FAILED"),
@@ -1364,7 +1371,7 @@ def first_error_line(sample: str) -> str:
     lines = [raw.strip() for raw in sample.splitlines()]
     passed = {m.group(1) for line in lines if (m := CARGO_TEST_OK.match(line))}
     for line in lines:
-        if not line or CARGO_TEST_OUTCOME.match(line):
+        if not line or CARGO_TEST_OUTCOME.match(line) or GENERIC_STEP_EXIT.match(line):
             continue
         panic = PANIC_THREAD.match(line)
         if panic and panic.group(1) in passed:
@@ -1402,6 +1409,23 @@ def classify_failure_explained(
 
 
 FIRST_ERROR_CAP_CHARS = 1000
+
+# Failing non-required jobs diagnosed when the required failure is an
+# aggregate gate with nothing to say (#2445). Each costs one log request.
+ROOT_CAUSE_REPORTS = 3
+
+
+def root_cause_reports(primary, advisory, build) -> list:
+    """Reports for the jobs behind an uninformative required failure.
+
+    A gate such as `CI OK` fails only because the jobs it needs failed, and its
+    log holds nothing but the runner's exit line. Diagnose up to
+    `ROOT_CAUSE_REPORTS` of the failing advisory jobs instead, so one watcher
+    call ends with the real errors.
+    """
+    if primary.first_error or primary.classifier:
+        return []
+    return [build(item) for item in advisory[:ROOT_CAUSE_REPORTS]]
 
 
 @dataclass
@@ -3772,6 +3796,15 @@ def _act_on_verdict(  # noqa: C901
         print(report.render())
         if judgment.workflow_broken:
             print("  note:       startup_failure: the workflow is broken, not the code")
+    causes = root_cause_reports(
+        reports[0],
+        verdict.advisory_failing,
+        lambda j: _build_failure_report(j.as_check_row(), repo_for_reports),
+    )
+    if causes:
+        print(f"NOTE  {first.name} names no cause; failing jobs behind it:")
+        for cause in causes:
+            print(cause.render())
     if log and (reports[0].first_error or reports[0].classifier):
         log.emit(
             "failure_diagnostic",
