@@ -125,6 +125,8 @@ similar). The default paths are `<git-root>/.clud/loop/DONE` and
 BLOCKED path is derived via `blocked_path_from_done` (`DONE.md` →
 `BLOCKED.md`).
 
+A PR accepted into a merge queue counts as complete: the contract tells the agent to write DONE with the PR URL as soon as the enqueue succeeds rather than waiting for the merge, so the loop moves on to the next item (#2471).
+
 The contract also documents a token fallback for agents that cannot
 write files: a line that starts with `<<<CLUD_LOOP_DONE:` and ends with
 `>>>`. `scan_completion_token` (`loop_spec.rs:557`) parses captured

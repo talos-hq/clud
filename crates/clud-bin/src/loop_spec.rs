@@ -545,7 +545,13 @@ DONE signal. Use `<<<CLUD_LOOP_BLOCKED: <reason>>>>` for the BLOCKED \
 equivalent. Writing the marker file is still strongly preferred.\n\
 \n\
 Do not write DONE prematurely — only after you are confident the work is \
-complete. Otherwise, continue working — you will be re-invoked.\n"
+complete. Otherwise, continue working — you will be re-invoked.\n\
+\n\
+If the work lands through a pull request and the base branch uses a merge \
+queue, a PR accepted into the merge queue counts as complete: write DONE \
+with the PR URL as soon as the enqueue succeeds and stop. Do not wait for \
+the merge itself; the queue (or a chaperone) owns it from there, and the \
+loop moves on to the next item.\n"
     )
 }
 
@@ -953,5 +959,15 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("Do not edit or delete it"));
+    }
+
+    #[test]
+    fn done_contract_treats_merge_queue_enqueue_as_complete() {
+        let text = done_marker_contract(Path::new("/r/DONE"), Path::new("/r/BLOCKED"));
+        assert!(
+            text.contains("accepted into the merge queue counts as complete"),
+            "{text}"
+        );
+        assert!(text.contains("Do not wait for"), "{text}");
     }
 }
