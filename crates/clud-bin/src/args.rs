@@ -1077,6 +1077,37 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    /// Test seam for the JSON-path payload rules: read `{"rules": ..., "payload": ...}`
+    /// on stdin (or the rules from `--rules` and the payload on stdin), write the
+    /// rewritten payload and what each rule kind did to stdout. Never used by a
+    /// launched session.
+    #[command(name = "__apply-payload-rules", hide = true)]
+    InternalApplyPayloadRules {
+        /// Read the rules from this file instead of the stdin document. This is
+        /// the same loader `CLUD_PAYLOAD_RULES` uses at gateway time.
+        #[arg(long = "rules")]
+        rules: Option<PathBuf>,
+        /// Model the rules select on. Absent matches no `models` entry, so only
+        /// model-agnostic rules fire.
+        #[arg(long)]
+        model: Option<String>,
+        /// Protocol the rules select on (`claude` for `POST /v1/messages`).
+        #[arg(long, default_value = "claude")]
+        protocol: String,
+        /// Protocol the *client* spoke (`openai` for `POST /v1/chat/completions`),
+        /// which a rule's `from-protocol` selector matches. Empty means unknown.
+        #[arg(long = "from-protocol", default_value = "")]
+        from_protocol: String,
+        /// A request header the rules can select on, as `Name: value`.
+        /// Repeatable; mirrors the headers a real request carries.
+        #[arg(long = "header", value_name = "NAME: VALUE")]
+        headers: Vec<String>,
+        /// Read the rules from `requests.payload` in this settings file instead
+        /// of the stdin document — the owner the gateway uses when
+        /// `CLUD_PAYLOAD_RULES` is unset.
+        #[arg(long = "settings-file", conflicts_with = "rules")]
+        settings_file: Option<PathBuf>,
+    },
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
         #[arg(long = "state-dir")]
@@ -1641,6 +1672,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__worker",
     "__start-cmd",
     "__openai-chat-translate",
+    "__apply-payload-rules",
 ];
 
 impl Args {

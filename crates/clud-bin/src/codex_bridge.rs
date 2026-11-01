@@ -1406,7 +1406,7 @@ fn route_messages(
     let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
         return;
     };
-    let json: serde_json::Value = match serde_json::from_slice(&body) {
+    let mut json: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(json) => json,
         Err(_) => {
             record_rejection(log, 400, "invalid_json");
@@ -1414,6 +1414,27 @@ fn route_messages(
             return;
         }
     };
+    // CLIProxyAPI's `requests.payload` parity: rewrite the body before a route
+    // is chosen, so the rules see exactly what the caller sent. A launch with no
+    // `CLUD_PAYLOAD_RULES` gets its bytes back untouched.
+    let requested_model = json
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let (body, rules_outcome) = crate::payload_rules::rewrite_body_with_source(
+        &requested_model,
+        "claude",
+        "claude",
+        &parsed.headers,
+        body,
+        &mut json,
+    );
+    // A rule that cannot be applied is an operator mistake, not a client one:
+    // the request keeps going with every change that did land.
+    for problem in &rules_outcome.problems {
+        eprintln!("payload rules: {problem}");
+    }
     record_request_effort(&config.status_usage, &json, parsed.agent_id.is_some());
     let streaming = json.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
     if matches!(config.gateway_mode, GatewayMode::Unified(_)) {
@@ -1498,6 +1519,27 @@ fn route_chat_completions(
         }
     };
     let translated = serde_json::to_vec(&translated).unwrap_or_default();
+    // CLIProxyAPI applies payload rules in the executor, on the body it is
+    // about to forward, with `protocol` = the target protocol and
+    // `fromProtocol` = the shape the client spoke
+    // (`payload_helpers.go`: `ApplyPayloadConfigWithRequest`). Do the same on
+    // the translated Messages body so a rule can target chat callers only
+    // (`from-protocol: openai`) instead of every Messages request.
+    let (translated, rules_outcome) = match serde_json::from_slice::<serde_json::Value>(&translated)
+    {
+        Ok(mut translated_json) => crate::payload_rules::rewrite_body_with_source(
+            &model,
+            "claude",
+            "openai",
+            &parsed.headers,
+            translated,
+            &mut translated_json,
+        ),
+        Err(_) => (translated, crate::payload_rules::Outcome::default()),
+    };
+    for problem in &rules_outcome.problems {
+        eprintln!("payload rules: {problem}");
+    }
     serve_unified_messages(
         stream,
         config,

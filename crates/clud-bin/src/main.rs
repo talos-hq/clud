@@ -329,6 +329,21 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
                 clud::openai_ingress::run_translate_stdin()
             }
         }
+        args::Command::InternalApplyPayloadRules {
+            rules,
+            settings_file,
+            model,
+            protocol,
+            from_protocol,
+            headers,
+        } => clud::payload_rules::run_apply_stdin(
+            rules.as_deref(),
+            settings_file.as_deref(),
+            model.as_deref().unwrap_or_default(),
+            protocol,
+            from_protocol,
+            headers.to_vec(),
+        ),
         args::Command::DoPrompt { target } => command::do_prompt::run(target),
         args::Command::GrindScripts => command::grind_scripts::run(),
         args::Command::GrindFacts { args } => clud::grind_facts::run_cli(args),

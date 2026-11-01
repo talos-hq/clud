@@ -944,6 +944,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Daemon { .. })
         | Some(Command::InternalStartCmd)
         | Some(Command::InternalOpenAiChatTranslate { .. })
+        | Some(Command::InternalApplyPayloadRules { .. })
         | Some(Command::InternalDaemon { .. })
         | Some(Command::Statusline { .. })
         | Some(Command::Session { .. })
