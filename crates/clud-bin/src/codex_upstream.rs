@@ -630,6 +630,23 @@ impl UpstreamTarget {
     pub fn compact_url(&self) -> String {
         format!("{}/compact", self.responses_url())
     }
+
+    /// Absolute URL of the OpenAI images generation endpoint on this target.
+    ///
+    /// The Codex backend exposes `/images/generations` beside `/responses`
+    /// under the same base (`codexDirectImagesGenerations` in upstream
+    /// `codex_openai_images.go:47`); an OpenAI-compatible base keeps its `/v1`
+    /// segment, exactly as [`Self::responses_url`] does.
+    pub fn images_url(&self) -> String {
+        let trimmed = self.base_url.trim_end_matches('/');
+        if trimmed.ends_with("/images/generations") {
+            trimmed.to_string()
+        } else if self.uses_codex_backend() {
+            format!("{trimmed}/images/generations")
+        } else {
+            format!("{trimmed}/v1/images/generations")
+        }
+    }
 }
 
 /// Neither the bearer nor the endpoint appears here: error snapshots and log
@@ -696,6 +713,18 @@ impl<C: CredentialSource> std::fmt::Debug for UpstreamClient<C> {
             .field("config", &self.config)
             .finish()
     }
+}
+
+/// The upstream's answer to an images request.
+///
+/// The status is kept beside the body because this door forwards the upstream
+/// envelope verbatim: an images client parses `{"error": {...}}` from a 4xx
+/// exactly as it parses `{"data": [...]}` from a 200, so re-encoding it here
+/// could only lose fields clud does not know about.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImagesReply {
+    pub status: u16,
+    pub body: Vec<u8>,
 }
 
 impl<C: CredentialSource> UpstreamClient<C> {
@@ -964,30 +993,17 @@ impl<C: CredentialSource> UpstreamClient<C> {
         }
     }
 
-    fn attempt(
-        &self,
-        target: &UpstreamTarget,
-        body: &[u8],
-        cancel: &AtomicBool,
-        deadline: Instant,
-        sink: &mut dyn FnMut(&[u8]) -> Result<(), UpstreamError>,
-        delivered: &AtomicBool,
-    ) -> Result<usize, UpstreamError> {
-        let body = self.redacted_body(body, target)?;
-        let attempt_deadline = self
-            .config
-            .first_frame_timeout
-            .map(|timeout| Instant::now() + timeout);
-        let agent = self.agent();
-
-        // Every header is constructed here. Nothing from the downstream request
-        // is copied, so the harness's Anthropic bearer cannot travel upstream.
-        // Identity headers the Codex client sends. `session-id`/`thread-id`
-        // are hyphenated upstream, not underscored.
-        let mut request = agent
-            .post(&target.responses_url())
+    /// One upstream request carrying clud's full identity header set.
+    ///
+    /// Every header is constructed here and nothing from the downstream request
+    /// is copied, so the harness's Anthropic bearer cannot travel upstream.
+    /// `session-id`/`thread-id` are hyphenated upstream, not underscored.
+    fn identity_request(&self, target: &UpstreamTarget, url: &str, accept: &str) -> ureq::Request {
+        let mut request = self
+            .agent()
+            .post(url)
             .set("Content-Type", "application/json")
-            .set("Accept", "text/event-stream")
+            .set("Accept", accept)
             .set("Authorization", &target.authorization)
             .set("originator", CODEX_ORIGINATOR)
             .set("OpenAI-Beta", CODEX_BETA_HEADER_VALUE)
@@ -1005,6 +1021,88 @@ impl<C: CredentialSource> UpstreamClient<C> {
         for (name, value) in &target.extra_headers {
             request = request.set(name, value);
         }
+        request
+    }
+
+    /// POST a prepared images body and return the upstream's answer.
+    ///
+    /// Deliberately ONE attempt with no retry: a retried generation is a second
+    /// billed image the caller never asked for, so a transport failure is
+    /// surfaced instead of silently re-spending. A non-2xx answer is returned
+    /// as a reply, not an error, because the upstream's own error envelope is
+    /// the contract the client parses.
+    pub fn images(&self, body: &[u8], cancel: &AtomicBool) -> Result<ImagesReply, UpstreamError> {
+        /// Base64 images are large but finite; the cap keeps a hostile or
+        /// broken upstream from growing the bridge's heap without bound.
+        const MAX_RESPONSE_BYTES: u64 = 64 * 1024 * 1024;
+
+        if cancel.load(Ordering::Acquire) {
+            return Err(UpstreamError::Cancelled);
+        }
+        let target = self.credentials.resolve()?;
+        *self
+            .last_target
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(target.clone());
+        let request = self
+            .identity_request(&target, &target.images_url(), "application/json")
+            .timeout(self.config.overall_timeout);
+        let read_reply =
+            |reader: &mut dyn Read, status: u16| -> Result<ImagesReply, UpstreamError> {
+                let mut buffer = Vec::new();
+                reader
+                    .take(MAX_RESPONSE_BYTES)
+                    .read_to_end(&mut buffer)
+                    .map_err(|error| {
+                        if error.kind() == std::io::ErrorKind::TimedOut {
+                            UpstreamError::Timeout
+                        } else {
+                            UpstreamError::Transport("images response could not be read")
+                        }
+                    })?;
+                Ok(ImagesReply {
+                    status,
+                    body: buffer,
+                })
+            };
+        match request.send_bytes(body) {
+            Ok(response) => {
+                let status = response.status();
+                let mut reader = response.into_reader();
+                read_reply(&mut reader, status)
+            }
+            Err(ureq::Error::Status(status, response)) => {
+                let mut reader = response.into_reader();
+                read_reply(&mut reader, status)
+            }
+            Err(ureq::Error::Transport(error)) => Err(if is_timeout_transport(&error) {
+                UpstreamError::Timeout
+            } else {
+                UpstreamError::Transport("connection failed")
+            }),
+        }
+    }
+
+    fn attempt(
+        &self,
+        target: &UpstreamTarget,
+        body: &[u8],
+        cancel: &AtomicBool,
+        deadline: Instant,
+        sink: &mut dyn FnMut(&[u8]) -> Result<(), UpstreamError>,
+        delivered: &AtomicBool,
+    ) -> Result<usize, UpstreamError> {
+        let body = self.redacted_body(body, target)?;
+        let attempt_deadline = self
+            .config
+            .first_frame_timeout
+            .map(|timeout| Instant::now() + timeout);
+
+        // Every header is constructed in `identity_request`; nothing from the
+        // downstream request is copied, so the harness's Anthropic bearer
+        // cannot travel upstream. `session-id`/`thread-id` are hyphenated
+        // upstream, not underscored.
+        let request = self.identity_request(target, &target.responses_url(), "text/event-stream");
 
         let response = match match attempt_deadline {
             Some(deadline) => request
@@ -1349,6 +1447,24 @@ mod tests {
         assert_eq!(
             UpstreamTarget::new(CODEX_BACKEND_BASE_URL, "Bearer x").compact_url(),
             "https://chatgpt.com/backend-api/codex/responses/compact"
+        );
+    }
+
+    #[test]
+    fn images_url_follows_platform_and_subscription_routes() {
+        assert_eq!(
+            UpstreamTarget::new(DEFAULT_BASE_URL, "Bearer x").images_url(),
+            "https://api.openai.com/v1/images/generations"
+        );
+        assert_eq!(
+            UpstreamTarget::new(CODEX_BACKEND_BASE_URL, "Bearer x").images_url(),
+            "https://chatgpt.com/backend-api/codex/images/generations"
+        );
+        // A base that already names the endpoint is left alone, so an operator
+        // can point at a gateway with a fixed path.
+        assert_eq!(
+            UpstreamTarget::new("https://gw.test/images/generations/", "Bearer x").images_url(),
+            "https://gw.test/images/generations"
         );
     }
 
