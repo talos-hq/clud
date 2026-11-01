@@ -163,6 +163,7 @@ pub mod subprocess;
 pub(crate) mod test_env;
 pub mod video;
 
+pub mod kimi_auth;
 pub mod kitty_term;
 pub mod symbols;
 pub(crate) mod terminal_queries;
