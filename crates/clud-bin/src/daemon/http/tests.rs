@@ -1721,28 +1721,7 @@ fn spawn_inject_daemon(
     (port, store)
 }
 
-#[test]
-fn tier1_injection_mid_turn_is_delivered_once_as_the_next_user_turn() {
-    let temp = tempfile::tempdir().unwrap();
-    let cwd = temp.path().join("cwd");
-    std::fs::create_dir(&cwd).unwrap();
-    let script = temp.path().join("claude.jsonl");
-    let mut stream = String::from(
-        "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"provider-inj\"}\n",
-    );
-    stream.push_str(&"{\"type\":\"future.event\"}\n".repeat(6));
-    std::fs::write(&script, stream).unwrap();
-    let _mock_guard = super::super::api_session_http::set_test_headless_executable(
-        http_test_mock_agent().to_string_lossy().into_owned(),
-        vec![
-            "--mock-stream-json".to_string(),
-            script.to_string_lossy().into_owned(),
-            "--mock-stream-delay-ms".to_string(),
-            "200".to_string(),
-            "--mock-stream-echo-argv".to_string(),
-        ],
-    );
-    let (port, store) = spawn_inject_daemon(temp.path());
+fn create_session_with_running_turn(port: u16, cwd: &std::path::Path) -> String {
     let create = format!(
         r#"{{"backend":"claude","cwd":"{}"}}"#,
         cwd.to_string_lossy().replace('\\', "\\\\")
@@ -1772,6 +1751,32 @@ fn tier1_injection_mid_turn_is_delivered_once_as_the_next_user_turn() {
     )
     .unwrap();
     assert_status(&status, "202");
+    id
+}
+
+#[test]
+fn tier1_injection_mid_turn_is_delivered_once_as_the_next_user_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("cwd");
+    std::fs::create_dir(&cwd).unwrap();
+    let script = temp.path().join("claude.jsonl");
+    let mut stream = String::from(
+        "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"provider-inj\"}\n",
+    );
+    stream.push_str(&"{\"type\":\"future.event\"}\n".repeat(6));
+    std::fs::write(&script, stream).unwrap();
+    let _mock_guard = super::super::api_session_http::set_test_headless_executable(
+        http_test_mock_agent().to_string_lossy().into_owned(),
+        vec![
+            "--mock-stream-json".to_string(),
+            script.to_string_lossy().into_owned(),
+            "--mock-stream-delay-ms".to_string(),
+            "200".to_string(),
+            "--mock-stream-echo-argv".to_string(),
+        ],
+    );
+    let (port, store) = spawn_inject_daemon(temp.path());
+    let id = create_session_with_running_turn(port, &cwd);
 
     let inject = r#"{"message":"REFINEMENT-7Q: also add a test","client_msg_id":"c-1","from":"operator","ticket":"T-7"}"#;
     let (status, first) = post_inject(port, &id, inject);
