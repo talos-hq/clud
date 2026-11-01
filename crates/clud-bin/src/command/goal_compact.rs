@@ -243,14 +243,18 @@ fn constraints_only(
     })
 }
 
-/// Where a run's brief and exercised goal are recorded: one directory per
-/// launch under `~/.clud/state/do-goals/`.
-pub(crate) fn record_dir(home: &Path, epoch_secs: u64, pid: u32) -> PathBuf {
+/// Where a session's brief and exercised goal are recorded:
+/// `~/.clud/state/do-goals/<session-id>/`, keyed by the same id as the
+/// session's checkout claim.
+pub(crate) fn session_record_dir(home: &Path, session_id: &str) -> PathBuf {
     home.join(".clud")
         .join("state")
         .join("do-goals")
-        .join(format!("{epoch_secs}-{pid}"))
+        .join(session_id)
 }
+
+/// Exported to the harness: the recorded `goal.txt` of this session.
+pub const GOAL_RECORD_ENV: &str = "CLUD_DO_GOAL_FILE";
 
 /// Write the original brief and the exercised goal; returns the brief path.
 pub(crate) fn record(dir: &Path, brief: &str, goal: &CompactGoal) -> std::io::Result<PathBuf> {
@@ -287,18 +291,22 @@ fn run_model(prompt: &str) -> Result<String, String> {
     Ok(out)
 }
 
+/// A compacted goal ready for launch, and where it was recorded.
+pub struct PreparedGoal {
+    pub condition: String,
+    pub record: Option<PathBuf>,
+}
+
 /// Before launch: the exercised Claude `/do` goal for `target`, or `None`
 /// when the target fits the cap verbatim. A compacted goal is recorded with
-/// the original brief under `~/.clud/state/do-goals/` and echoed to stderr.
-pub fn prepare_for_launch(target: &str) -> Result<Option<String>, CompactError> {
+/// the original brief under the session's record dir and echoed to stderr.
+pub fn prepare_for_launch(target: &str) -> Result<Option<PreparedGoal>, CompactError> {
     let plain = super::prompts::do_goal_preamble(None);
     if plain.chars().count() + target.chars().count() <= CLAUDE_GOAL_CONDITION_LIMIT {
         return Ok(None);
     }
-    let epoch = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    let dir = crate::home::user_home().map(|home| record_dir(&home, epoch, std::process::id()));
+    let session_id = crate::daemon::foreground_session_id();
+    let dir = crate::home::user_home().map(|home| session_record_dir(&home, &session_id));
     let brief_path = dir.as_ref().map(|dir| dir.join("brief.md"));
     let preamble = super::prompts::do_goal_preamble(
         brief_path
@@ -306,19 +314,27 @@ pub fn prepare_for_launch(target: &str) -> Result<Option<String>, CompactError> 
             .map(|p| p.to_str().unwrap_or_default()),
     );
     let goal = compact_goal(&preamble, target, run_model)?;
-    if let Some(dir) = &dir {
-        if let Err(error) = record(dir, target, &goal) {
-            eprintln!("[clud] warning: could not record the compacted goal: {error}");
-        }
-    }
+    let record = dir
+        .as_ref()
+        .and_then(|dir| match record(dir, target, &goal) {
+            Ok(_) => Some(dir.join("goal.txt")),
+            Err(error) => {
+                eprintln!("[clud] warning: could not record the compacted goal: {error}");
+                None
+            }
+        });
     eprintln!(
-        "[clud] /goal compacted from {} to {} characters ({:?}); exercised goal:\n{}",
+        "[clud] /goal compacted from {} to {} characters ({:?}) for session {session_id}; \
+exercised goal:\n{}",
         target.chars().count(),
         goal.condition.chars().count(),
         goal.kind,
         goal.condition
     );
-    Ok(Some(goal.condition))
+    Ok(Some(PreparedGoal {
+        condition: goal.condition,
+        record,
+    }))
 }
 
 #[cfg(test)]

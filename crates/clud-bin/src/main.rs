@@ -101,6 +101,7 @@ fn run(mut args: args::Args) {
     let foreground_client_lease = start_early_daemon(&args);
     let foreground_checkout_presence =
         start_checkout_presence(&args, foreground_client_lease.is_some(), &interrupted);
+    compact_do_goal(&mut args, launch.target);
 
     // #569: the persistent daemon deliberately starts before this foreground
     // process joins the Windows tracking job, so it can outlive the CLI.
@@ -690,27 +691,46 @@ fn resolve_do_target(args: &mut args::Args) {
         match kind {
             Ok(kind) => {
                 args.do_meta = kind == command::do_kind::DoKind::Meta;
-                let mut rendered = command::do_prompt::render_current(target, &Ok(kind));
-                if !args.codex {
-                    match command::goal_compact::prepare_for_launch(target) {
-                        Ok(Some(goal)) => {
-                            rendered.push_str("\n\n## Exercised goal (compacted, #2522)\n\n");
-                            rendered.push_str(&goal);
-                            args.do_goal = Some(goal);
-                        }
-                        Ok(None) => {}
-                        Err(error) => {
-                            eprintln!("[clud] error: {error}");
-                            std::process::exit(2);
-                        }
-                    }
-                }
-                args.do_rendered_prompt = Some(rendered);
+                args.do_rendered_prompt =
+                    Some(command::do_prompt::render_current(target, &Ok(kind)));
             }
             Err(error) => {
                 eprintln!("[clud] error: {error}");
                 std::process::exit(2);
             }
+        }
+    }
+}
+
+/// Fit a long Claude `/do` goal into the cap (#2522). Runs only after the
+/// checkout claim succeeded, so a refused launch never spends a model call or
+/// writes a record, and never for `--dry-run`, whose plan uses the
+/// deterministic constraint-preserving goal instead.
+fn compact_do_goal(args: &mut args::Args, launch_target: backend::ResolvedLaunchTarget) {
+    if args.dry_run || launch_target.effective_harness != backend::Backend::Claude {
+        return;
+    }
+    let Some(args::Command::Do {
+        target: Some(target),
+    }) = &args.command
+    else {
+        return;
+    };
+    match command::goal_compact::prepare_for_launch(target) {
+        Ok(Some(prepared)) => {
+            if let Some(rendered) = args.do_rendered_prompt.as_mut() {
+                rendered.push_str("\n\n## Exercised goal (compacted, #2522)\n\n");
+                rendered.push_str(&prepared.condition);
+            }
+            if let Some(path) = &prepared.record {
+                std::env::set_var(command::goal_compact::GOAL_RECORD_ENV, path);
+            }
+            args.do_goal = Some(prepared.condition);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("[clud] error: {error}");
+            std::process::exit(2);
         }
     }
 }
@@ -1959,6 +1979,13 @@ fn print_dry_run_and_exit(
 }
 
 fn emit_launch_notices(args: &args::Args, launch_target: backend::ResolvedLaunchTarget) {
+    if io::stderr().is_terminal() {
+        if let Some(notice) =
+            command::mcp_bridge_missing_notice(launch_target.effective_harness, launch_target)
+        {
+            eprintln!("{notice}");
+        }
+    }
     if let Some(notice) =
         backend::saved_harness_override_notice(launch_target, io::stderr().is_terminal(), false)
     {

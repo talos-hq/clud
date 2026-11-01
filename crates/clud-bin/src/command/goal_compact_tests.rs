@@ -124,8 +124,7 @@ fn constraints_that_cannot_fit_fail_with_the_clause_quoted() {
 #[test]
 fn the_brief_and_goal_are_recorded() {
     let home = tempfile::tempdir().unwrap();
-    let dir = record_dir(home.path(), 1_700_000_000, 42);
-    assert!(dir.ends_with(".clud/state/do-goals/1700000000-42"));
+    let dir = session_record_dir(home.path(), "clud-42-1700000000");
     let goal = CompactGoal {
         condition: "the goal".into(),
         kind: CompactKind::Model,
@@ -136,4 +135,27 @@ fn the_brief_and_goal_are_recorded() {
         std::fs::read_to_string(dir.join("goal.txt")).unwrap(),
         "the goal"
     );
+}
+
+#[test]
+fn the_record_is_keyed_by_the_session_id() {
+    let home = tempfile::tempdir().unwrap();
+    let dir = session_record_dir(home.path(), "clud-42-1700");
+    assert!(dir.ends_with(".clud/state/do-goals/clud-42-1700"));
+}
+
+/// Exercises the real `claude -p` model call; run with `--ignored` on a host
+/// with an authenticated Claude Code.
+#[test]
+#[ignore = "calls the real claude -p model"]
+fn the_real_model_compacts_a_long_brief_and_keeps_constraints() {
+    let brief = long_brief();
+    let goal = compact_goal(PREAMBLE, &brief, run_model).unwrap();
+    eprintln!(
+        "kind={:?} chars={}",
+        goal.kind,
+        goal.condition.chars().count()
+    );
+    assert!(goal.condition.chars().count() <= CLAUDE_GOAL_CONDITION_LIMIT);
+    assert_constraints_survive(&brief, &goal.condition);
 }
