@@ -790,6 +790,10 @@ pub enum Command {
         /// JSON value exposed to the script as the global `args`.
         #[arg(long = "args")]
         args_json: Option<String>,
+        /// Reuse cached results of agent() calls whose inputs are unchanged
+        /// (named `--reuse` because `--resume` belongs to the harness).
+        #[arg(long = "reuse")]
+        resume: bool,
     },
     Wasm {
         module: String,
@@ -1925,6 +1929,8 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
     let value_flags: &[&str] = SPLITTER_VALUE_FLAGS;
     let short_value_flags: &[&str] = SPLITTER_SHORT_VALUE_FLAGS;
     let bool_flags: &[&str] = &[
+        // `clud workflow --reuse` (#2471).
+        "--reuse",
         "--zdr",
         "--no-data-collection",
         "--redact-secrets",

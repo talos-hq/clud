@@ -44,6 +44,7 @@ return { r, mode: args.mode }
 - Each run writes `.clud/workflow/<script>-<unix>/result.json` and
   `agents.json`, plus a visible `WORKFLOW_DONE.md` at the git root that
   points at them, mirroring `LOOP_DONE.md` for `clud loop`.
+- `--reuse` replays cached results (`.clud/workflow/cache/<script>.jsonl`, keyed by a hash of prompt, label, phase, model and schema; the request id is excluded) and re-runs only calls whose inputs changed. A run without `--reuse` truncates the cache. It is not named `--resume` because that flag belongs to the harness.
 - `--dry-run` resolves schema calls with `{}` and text calls with `""` and
   prints each call's argv as JSON instead of launching agents.
 
