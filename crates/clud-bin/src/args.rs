@@ -1077,6 +1077,29 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    /// Test seam for the Claude <-> Gemini translator: read one Anthropic
+    /// Messages request body on stdin, write the translated Gemini
+    /// `generateContent` request body to stdout. `--model` names the target
+    /// Gemini model; without it the request's own model is kept. With
+    /// `--response` it runs the other direction instead (a Gemini
+    /// `generateContent` response in, the Anthropic Messages response out).
+    /// Never used by a launched session.
+    #[command(name = "__claude-gemini-translate", hide = true)]
+    InternalClaudeGeminiTranslate {
+        /// Target Gemini model id.
+        #[arg(long)]
+        model: Option<String>,
+        /// Translate a Gemini response, not an Anthropic request.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one Anthropic event per line.
+        #[arg(long, requires = "response")]
+        stream: bool,
+        /// Emit the exact HTTP body a route writes (a Messages body, or
+        /// `event: <kind>` frames), not one JSON object per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
         #[arg(long = "state-dir")]
@@ -1641,6 +1664,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__worker",
     "__start-cmd",
     "__openai-chat-translate",
+    "__claude-gemini-translate",
 ];
 
 impl Args {
