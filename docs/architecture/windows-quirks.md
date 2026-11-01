@@ -114,15 +114,16 @@ the codebase stays portable.
   decision to the Ctrl+C teardown path so clud can treat the intermediate
   `cmd.exe` differently from a native backend executable.
 
-- **File**: `crates/clud-bin/src/subprocess.rs:34`
-  (`command_spec_for_subprocess`); the case-insensitive `.cmd`/`.bat` check
-  at `:47` (`is_windows_batch_wrapper`); per-arg quoting at `:106`
-  (`quote_for_cmd`); `argv_is_batch_wrapped` for Ctrl+C teardown gating.
+- **File**: `crates/clud-bin/src/subprocess.rs`
+  (`command_spec_for_subprocess`, `argv_is_batch_wrapped` for Ctrl+C
+  teardown gating) over `crates/clud-bin/src/platform/windows/subprocess.rs`:
+  the case-insensitive `.cmd`/`.bat` check (`is_batch_wrapper`) and per-arg
+  quoting (`quote_for_cmd`).
 
-- **POSIX behavior**: No-op. `is_windows_batch_wrapper` is gated
-  `#[cfg(windows)]`; on POSIX every argv stays as `CommandSpec::Argv` and a
-  file literally named `codex.cmd` is just treated as an executable (test
-  at `subprocess.rs:294`).
+- **POSIX behavior**: No-op. `is_batch_wrapper` lives only in the Windows
+  platform tree; on POSIX every argv stays as `CommandSpec::Argv` and a
+  file literally named `codex.cmd` is just treated as an executable (tests
+  in `platform/unix/subprocess.rs`).
 
 ### (c) `ENABLE_VIRTUAL_TERMINAL_INPUT` RAII
 
@@ -185,17 +186,31 @@ the codebase stays portable.
   opts back in. The shadow also models the CSI sequences `vt100` drops
   (`toast/shadow_input.rs`).
 
-- **File**: `crates/clud-bin/src/console_setup.rs:85`
-  (`enable_console_vt_output`) over the testable `enable_vt_processing` at
-  `:92`; `ConsoleVtGuard` at `:110`, constructed at `:140`
-  (`enable_console_vt_input`); the guard's `Get/SetConsoleMode` calls at
-  `:175` (`or_console_mode`) and `:190` (`restore_console_mode`).
+- **Symptom: output garbles until the window is resized.** A resize makes
+  the child repaint its whole screen, so anything that only a resize clears
+  means clud's relayed bytes and the terminal's grid disagree. Check, in
+  order: the session's stdout mode lacks `DISABLE_NEWLINE_AUTO_RETURN`
+  (eager wrap, #1942); a text-cell toast repaint behind ConPTY (only with
+  `CLUD_TOAST_TIER=text`, #2028); a launch notice written with per-line
+  `eprintln!` while the child's UI is up (#515, #1346). The CPU HUD is a
+  kitty image only (`Compositor::cpu_cells` returns nothing outside the
+  Kitty tier), and the Claude status-line mirror (#2367, #2395) writes no
+  grid bytes, so neither can cause this. `clud --verbose` logs the toast
+  decision (`[clud] toasts: tier=… fallback=…`, `runner_execution.rs`);
+  ask for that line first when triaging a report.
 
-- **POSIX behavior**: No-op. The `ConsoleVtGuard` struct has no
-  `original_mode` / `original_output_mode` fields off Windows (see the
-  `#[cfg(windows)]` fields at `:111`); the `Drop` impl is empty on POSIX; the
-  `enable_console_vt_input` constructor at `:168` returns the empty-struct form,
-  and `enable_console_vt_output` sees no console stream. POSIX terminals are
+- **File**: `crates/clud-bin/src/console_setup.rs` holds the mode bits
+  (`PTY_SESSION_OUTPUT_MODE_BITS`) and `enable_console_vt_output` over the
+  testable `enable_vt_processing`. The Windows half is
+  `crates/clud-bin/src/platform/windows/console_setup.rs`: `ConsoleVtGuard`,
+  its constructor `enable_console_vt_input`, and the guard's
+  `Get/SetConsoleMode` calls (`or_console_mode`, `restore_console_mode`).
+  Callers: `runner_execution.rs` (PTY session) and `daemon/attach.rs`.
+
+- **POSIX behavior**: No-op. `platform/unix/console_setup.rs` defines an
+  empty `ConsoleVtGuard` with no saved modes and no `Drop` work; its
+  `enable_console_vt_input` returns that empty struct, and
+  `enable_console_vt_output` sees no console stream. POSIX terminals are
   already in canonical VT mode and need no opt-in.
 
 ### (d) Native terminal input via running-process (issues #141 / #575 / #1351)
@@ -294,13 +309,14 @@ the codebase stays portable.
   52 clipboard, 133 prompt marks, etc.) pass through verbatim — stripping
   them would break TUIs that rely on the response.
 
-- **File**: `crates/clud-bin/src/console_title.rs:48`
-  (`set_for_current_cwd`); keeper at `:70` (`keep_setting_in_background`)
-  and `:76` (`spawn_keeper_thread`, Windows); `OscTitleStripper` at `:176`.
+- **File**: `crates/clud-bin/src/console_title.rs`
+  (`set_for_current_cwd`, keeper `keep_setting_in_background`); the
+  Windows keeper thread and `set_title` in
+  `crates/clud-bin/src/platform/windows/console_title.rs`
+  (`spawn_keeper_thread`); `OscTitleStripper` in `console_title_osc.rs`.
 
-- **POSIX behavior**: No-op for the keeper half. `spawn_keeper_thread` at
-  `:95` is an empty `#[cfg(not(windows))]` stub; `set_title` at `:158` is
-  also a no-op. The `OscTitleStripper` is platform-agnostic because the
+- **POSIX behavior**: No-op for the keeper half. `spawn_keeper_thread` and
+  `set_title` in `platform/unix/console_title.rs` are empty stubs. The `OscTitleStripper` is platform-agnostic because the
   PTY pump runs on every OS.
 
 ### (f) `IDropTarget` adapter for terminal drag-drop
@@ -360,22 +376,23 @@ the codebase stays portable.
   - **Anything else** (legacy conhost, unknown hosts):
     `GetConsoleWindow()` only; no process snapshot is taken.
 
-- **File**: `crates/clud-bin/src/dnd/console_drop_target.rs` (COM wiring in `crates/clud-bin/src/platform/windows/dnd/console_drop_target.rs`)
-  (`register_console_drop_target`, Windows); `:394` (POSIX stub);
-  `ConsoleDropTargetGuard` at `:335`; platform-agnostic dispatch at `:413`
-  (`dispatch_dropfiles_to_injector`) and the effect decision at `:448`
-  (`drag_effect`). Injectors at
-  `crates/clud-bin/src/dnd/injectors.rs:71` (`build_input_records`),
-  `:138` (`pty_master_injector`), `:157` (`subprocess_console_injector`,
-  Windows only).
+- **File**: `crates/clud-bin/src/dnd/console_drop_target.rs`
+  (`register_console_drop_target`, `ConsoleDropTargetGuard`, the
+  platform-agnostic `dispatch_dropfiles_to_injector` and the effect
+  decision `drag_effect`); COM wiring in
+  `crates/clud-bin/src/platform/windows/dnd/console_drop_target.rs` and the
+  POSIX stub in `platform/unix/dnd.rs`. Injectors in
+  `crates/clud-bin/src/dnd/injectors.rs` (`build_input_records`,
+  `pty_master_injector`) and `platform/windows/dnd/injectors.rs`
+  (`subprocess_console_injector`).
 
 - **POSIX behavior**: Different mechanism. POSIX terminals deliver drops as
   stdin bytes (cmd-style quoted paths, mintty `/c/...` MSYS paths,
   PowerShell `& 'C:\...'`, macOS backslash-escaped spaces, GNOME
   `file://` URIs); the cross-platform `dnd::normalize_dropped_path` and
-  `looks_like_dropped_path` string transforms in `dnd/mod.rs:49,77`
+  `looks_like_dropped_path` string transforms in `dnd/mod.rs`
   handle those. The non-Windows stub of `register_console_drop_target`
-  at `:394` returns `Err(RegisterError::UnsupportedPlatform)` so POSIX
+  (`platform/unix/dnd.rs`) returns `Err(RegisterError::UnsupportedPlatform)` so POSIX
   call sites simply no-op.
 
 - **Tests**: the COM layer (the `IDropTarget` vtable and the `CF_HDROP`
@@ -408,11 +425,10 @@ the codebase stays portable.
   is then responsible for tearing the child tree down, which it does via
   quirk (i).
 
-- **File**: `crates/clud-bin/src/win_creation_flags.rs:38`
-  (`invisible_helper_flags`); `:51` (`invisible_helper_creationflags`);
-  `:88` (`new_process_group_flags`); `:108`
-  (`user_facing_backend_creationflags`); the `CREATE_NO_WINDOW` literal
-  anchored at `:25` and the `CREATE_NEW_PROCESS_GROUP` literal at `:35`.
+- **File**: `crates/clud-bin/src/win_creation_flags.rs`
+  (`invisible_helper_flags`, `invisible_helper_creationflags`,
+  `new_process_group_flags`, `user_facing_backend_creationflags`, and the
+  `CREATE_NO_WINDOW` / `CREATE_NEW_PROCESS_GROUP` constants).
 
 - **POSIX behavior**: All four helpers return `0` / `None` on non-Windows.
   POSIX has no equivalent of `CREATE_NO_WINDOW` — there is no separate
@@ -451,9 +467,10 @@ the codebase stays portable.
   raw parent map can walk into an unrelated older tree (#1738; see
   [process-reaping.md](process-reaping.md#parent-links-go-stale-too)).
 
-- **File**: `crates/clud-bin/src/process_tree.rs:46` (`kill_tree`); `:75`
-  (`descendant_pids`); `should_cooperative_break`; `:113`
-  (`try_break_group`).
+- **File**: `crates/clud-bin/src/process_tree.rs` (`kill_tree`,
+  `descendant_pids`, `should_cooperative_break`, `try_break_group`); the
+  native halves in `platform/windows/process_tree.rs` and
+  `platform/unix/process_tree.rs`.
 
 - **POSIX behavior**: Same `kill_tree` code path runs (`sysinfo` is
   cross-platform; `Signal::Kill` is SIGKILL on Unix; `process.kill()`
@@ -623,10 +640,10 @@ the codebase stays portable.
 
 - **RAII for console state.** Anything that mutates global console state
   returns a guard whose `Drop` impl restores the previous state:
-  - `console_setup::ConsoleVtGuard` (`console_setup.rs:8`) restores the
+  - `console_setup::ConsoleVtGuard` (`platform/windows/console_setup.rs`) restores the
     saved console-input mode.
   - `dnd::console_drop_target::ConsoleDropTargetGuard`
-    (`dnd/console_drop_target.rs:335`) revokes each registered window
+    (`dnd/console_drop_target.rs`) revokes each registered window
     and calls `OleUninitialize` on the same STA thread.
   - `windows_stdio::NonInheritableStdioGuard`
     (`platform/windows/trampoline.rs`) restores `HANDLE_FLAG_INHERIT` on the three
@@ -661,7 +678,7 @@ unit-test runs cover only the dispatch logic, not the OS calls themselves.
   `translate_key_records` and the real upstream translator (#1351). The
   surrogate-pairing rules themselves live in `console_surrogates.rs` and are
   unit-tested on every OS. The Windows integration test
-  `shift_enter_dual_reader.rs` passes native `KEY_EVENT_RECORD`s through
+  `tests/integration/pty/platform/windows/shift_enter_dual_reader.rs` passes native `KEY_EVENT_RECORD`s through
   running-process's real translator and verifies arrow/Home/End/Insert/Delete/
   Page sequences plus trace bytes even on a headless runner. When stdin is an
   attached console, the same test additionally injects records (including an
@@ -671,7 +688,7 @@ unit-test runs cover only the dispatch logic, not the OS calls themselves.
 - Cross-platform, `console_title::OscTitleStripper` is a pure byte filter and is
   fully unit-tested cross-platform — including split-across-chunks,
   back-to-back OSCs, and passthrough for OSC 8/10/52/133. See the test
-  cases at `crates/clud-bin/src/console_title.rs:395-513`.
+  cases in `crates/clud-bin/src/console_title_osc.rs`.
 
 The other quirks (`trampoline::unlock_exe`,
 `subprocess::command_spec_for_subprocess` Windows branch,
