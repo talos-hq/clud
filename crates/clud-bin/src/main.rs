@@ -459,8 +459,8 @@ fn init_foreground_process(args: &args::Args) {
     trampoline::unlock_exe();
 
     // Stamp the console title with `clud <cwd-name>` so the active
-    // window is identifiable at a glance. Windows-only effective; a
-    // no-op on POSIX (out of scope per the originating request).
+    // window is identifiable at a glance. On POSIX it is a one-shot OSC 2
+    // (no keeper: POSIX cannot read the title back).
     //
     // The one-shot stamp gets overwritten as soon as the backend (and
     // its tool subprocesses) emit OSC 0/2 sequences, so we also kick
