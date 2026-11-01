@@ -35,9 +35,21 @@ const DO_NOT_PREPARED: &str =
 /// request-free reply, so the session silently does nothing (#2372).
 pub(super) const CLAUDE_GOAL_CONDITION_LIMIT: usize = 4000;
 
-/// Longest target quoted in the short Claude `/goal` condition. The full
-/// target always reaches the model inside the rendered procedure.
-const DO_GOAL_TARGET_MAX_CHARS: usize = 1000;
+/// Opening of Claude's `/do` goal condition; the target follows it.
+const DO_GOAL_LEAD: &str = "Complete `clud do` for the target below by following the /do \
+procedure rendered by `clud do-prompt` in your system prompt, through its Finish step.";
+
+/// The text before the target in Claude's `/do` goal. `brief_path` names the
+/// recorded full target when the goal is a compaction of it (#2522).
+pub(crate) fn do_goal_preamble(brief_path: Option<&str>) -> String {
+    match brief_path {
+        Some(path) => format!(
+            "{DO_GOAL_LEAD} The full target is saved at {path} and quoted in your system \
+prompt; execute it exactly. Target: "
+        ),
+        None => format!("{DO_GOAL_LEAD} Target: "),
+    }
+}
 
 /// The rendered `clud do-prompt` contract, or a fail-closed stop instruction.
 pub(super) fn do_procedure(rendered: Option<&str>) -> &str {
@@ -53,23 +65,23 @@ pub(super) fn build_do_prompt(rendered: Option<&str>) -> String {
     format!("/goal {}", do_procedure(rendered))
 }
 
-/// Claude's `/goal` seed: a short condition naming the target. The rendered
+/// Claude's `/goal` seed: a condition naming the target. The rendered
 /// procedure travels in the appended system prompt, so the first request
 /// still carries it while the condition stays under Claude Code's cap (#2372).
+///
+/// A target too long to quote keeps its hard constraints verbatim (#2522);
+/// `main` normally prepares a model-compacted `args.do_goal` instead, and this
+/// deterministic path covers plans built without that step.
 pub(super) fn build_claude_do_goal(target: &str, prepared: bool) -> String {
     if !prepared {
         return format!("/goal {DO_NOT_PREPARED}");
     }
-    let mut quoted: String = target.chars().take(DO_GOAL_TARGET_MAX_CHARS).collect();
-    if quoted.len() < target.len() {
-        quoted.push_str("...");
+    match super::goal_compact::compact_goal(&do_goal_preamble(None), target, |_| {
+        Err("no model at plan time".into())
+    }) {
+        Ok(goal) => format!("/goal {}", goal.condition),
+        Err(error) => format!("/goal Stop: {error}. Tell the user and do not start work."),
     }
-    let goal = format!(
-        "/goal Complete `clud do` for the target below by following the /do procedure \
-rendered by `clud do-prompt` in your system prompt, through its Finish step. Target: {quoted}"
-    );
-    debug_assert!(goal.chars().count() - "/goal ".len() < CLAUDE_GOAL_CONDITION_LIMIT);
-    goal
 }
 
 pub(super) const REBASE_PROMPT: &str = "\
