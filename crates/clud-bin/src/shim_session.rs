@@ -170,7 +170,7 @@ pub fn activate_rm(env: &mut Vec<(String, String)>) {
 }
 
 /// soldr's agent mode: one JSON line on success, a failure digest otherwise.
-const SOLDR_PORCELAIN_KEY: &str = "SOLDR_PORCELAIN";
+pub(crate) const SOLDR_PORCELAIN_KEY: &str = "SOLDR_PORCELAIN";
 
 /// #2443: `rust.porcelain` for the launch directory exports
 /// `SOLDR_PORCELAIN=1` to the agent, so no agent has to remember it. Only the
