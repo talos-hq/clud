@@ -1077,6 +1077,27 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    /// Hidden test seam for xAI's RFC 8628 device login: run discovery, request
+    /// a device code, poll until authorized, and print progress as JSON lines.
+    /// Never used by a launched session.
+    #[command(name = "__xai-device-login", hide = true)]
+    InternalXaiDeviceLogin {
+        /// Discovery document URL (defaults to xAI's).
+        #[arg(long = "discovery-url")]
+        discovery_url: Option<String>,
+        /// Device authorization endpoint, skipping discovery.
+        #[arg(long = "device-endpoint", requires = "token_endpoint")]
+        device_endpoint: Option<String>,
+        /// Token endpoint, skipping discovery.
+        #[arg(long = "token-endpoint", requires = "device_endpoint")]
+        token_endpoint: Option<String>,
+        /// Minimum poll interval in milliseconds.
+        #[arg(long = "interval-ms")]
+        interval_ms: Option<u64>,
+        /// Bound on the whole polling wait, in milliseconds.
+        #[arg(long = "max-poll-ms")]
+        max_poll_ms: Option<u64>,
+    },
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
         #[arg(long = "state-dir")]
@@ -1641,6 +1662,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__worker",
     "__start-cmd",
     "__openai-chat-translate",
+    "__xai-device-login",
 ];
 
 impl Args {

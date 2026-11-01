@@ -329,6 +329,19 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
                 clud::openai_ingress::run_translate_stdin()
             }
         }
+        args::Command::InternalXaiDeviceLogin {
+            discovery_url,
+            device_endpoint,
+            token_endpoint,
+            interval_ms,
+            max_poll_ms,
+        } => clud::xai_auth::run_seam(&clud::xai_auth::SeamArgs {
+            discovery_url: discovery_url.as_deref(),
+            device_endpoint: device_endpoint.as_deref(),
+            token_endpoint: token_endpoint.as_deref(),
+            interval_ms: *interval_ms,
+            max_poll_ms: *max_poll_ms,
+        }),
         args::Command::DoPrompt { target } => command::do_prompt::run(target),
         args::Command::GrindScripts => command::grind_scripts::run(),
         args::Command::GrindFacts { args } => clud::grind_facts::run_cli(args),
