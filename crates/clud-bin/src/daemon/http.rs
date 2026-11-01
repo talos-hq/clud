@@ -697,6 +697,14 @@ fn run_dashboard_loop(
                     let Some(request) = super::board::handle(request, &method, &path, &url) else {
                         continue;
                     };
+                    let Some(request) = super::api_session_inject::handle_http(
+                        request,
+                        &method,
+                        &path,
+                        &api_lifecycle,
+                    ) else {
+                        continue;
+                    };
                     super::api_session_http::handle(
                         request,
                         method,
@@ -801,10 +809,17 @@ fn openapi_document() -> serde_json::Value {
         serde_json::from_str(OPENAPI_JSON).expect("embedded OpenAPI is valid JSON");
     let id_parameter =
         serde_json::json!({"name":"id","in":"path","required":true,"schema":{"type":"string"}});
+    // Operator injection (docs/architecture/session-inject.md).
+    document["paths"]["/v1/sessions/{id}/inject"] = serde_json::json!({"post":{
+        "requestBody":{"required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/InjectRequest"}}}},
+        "responses":{"202":{"description":"accepted: queued, delivered or failed","content":{"application/json":{"schema":{"$ref":"#/components/schemas/InjectResponse"}}}},
+            "400":{"$ref":"#/components/responses/Error"},"404":{"$ref":"#/components/responses/Error"},
+            "409":{"$ref":"#/components/responses/Error"},"422":{"$ref":"#/components/responses/Error"}}}});
     for path in [
         "/v1/sessions/{id}/interrupt",
         "/v1/sessions/{id}/turns",
         "/v1/sessions/{id}/events",
+        "/v1/sessions/{id}/inject",
     ] {
         document["paths"][path]["parameters"] =
             serde_json::Value::Array(vec![id_parameter.clone()]);
@@ -823,8 +838,16 @@ fn openapi_document() -> serde_json::Value {
         "generation":{"type":"integer"}, "current_turn_id":{"type":"string"},
         "created_at_ms":{"type":"integer"}, "updated_at_ms":{"type":"integer"}, "last_error":{"type":"string"},
         "turns":{"type":"array","items":{"type":"object"}}, "events":{"type":"array","items":{"$ref":"#/components/schemas/Event"}},
-        "next_event_cursor":{"type":"integer"}, "idempotency":{"type":"array","items":{"type":"object"}}
+        "next_event_cursor":{"type":"integer"}, "idempotency":{"type":"array","items":{"type":"object"}},
+        "injections":{"type":"array","items":{"type":"object"}}
     });
+    schemas["InjectRequest"] = serde_json::json!({"type":"object","required":["message"],"properties":{
+        "message":{"type":"string","minLength":1,"maxLength":65536},"client_msg_id":{"type":"string"},
+        "interrupt":{"type":"boolean"},"from":{"type":"string"},"ticket":{"type":"string"}}});
+    schemas["InjectResponse"] = serde_json::json!({"type":"object","required":["accepted","session_id","seq","state","duplicate"],"properties":{
+        "accepted":{"type":"boolean"},"session_id":{"type":"string"},"seq":{"type":"integer"},
+        "state":{"type":"string","enum":["queued","delivered","failed"]},"turn_id":{"type":"string"},
+        "error":{"type":"string"},"duplicate":{"type":"boolean"}}});
     schemas["Event"]["properties"] = serde_json::json!({
         "cursor":{"type":"integer"}, "at_ms":{"type":"integer"}, "turn_id":{"type":"string"},
         "kind":{"type":"string"}, "data":{}

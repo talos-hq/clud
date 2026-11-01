@@ -81,7 +81,10 @@ before exiting with the test-requested code.
     the Python fake upstream owns the allowlisted wire assertions.
   - `--mock-stream-json <path>` with `--mock-stream-delay-ms <ms>` - emit one
     pre-canned `--output-format stream-json` line per file line, flushing
-    between each, then exit (no JSON report tail).
+    between each, then exit (no JSON report tail). Add
+    `--mock-stream-echo-argv` to append one `{"type":"mock.argv","argv":[...]}`
+    line, so a test can see which user message a turn received
+    (session injection, `docs/architecture/session-inject.md`).
 - Env vars `IN_CLUD` and `RUNNING_PROCESS_ORIGINATOR` are captured and
   included under `env` in the report; #626 bridge variables are recorded as
   presence booleans and non-secret tuning values only; current working

@@ -7459,3 +7459,24 @@ rm` command that removes it.
 **Why not retry:** the running user cannot gain permission on a `root` tree,
 so a retry only spends the pass's time. A later pass re-derives the list from
 disk, so a fixed permission is picked up within one cadence.
+
+## DD-197: injected messages are resumed user turns at the boundary, not stdin writes
+
+**Context:** operators could not steer a headless run after launch: text
+appended to a brief was invisible to the agent. Claude Code accepts
+streaming JSON user messages on stdin, so one option was to hold that stdin
+open and write into the live process.
+
+**Decision:** an injection is recorded on the durable API-session record,
+then delivered as the next resumed user turn (`--resume` / `codex exec
+resume`). By default this happens when the running turn seals. With
+`interrupt: true` the running turn is interrupted and the injection starts
+immediately. Contract: [session-inject.md](architecture/session-inject.md).
+
+**Why not stdin:** the daemon runs one process per turn and keeps no stdin.
+A pipe would be Claude-only, would lose queued messages on a daemon restart,
+and could not report `queued` vs `delivered` honestly. Resume-based delivery
+uses one code path for Claude and Codex, survives restarts, and reuses the
+lifecycle's existing idempotency and interrupt machinery. A harness that cannot
+take daemon turns (DeepSeek Harness) fails closed with its name instead of
+queueing a message that would never arrive.

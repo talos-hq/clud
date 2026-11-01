@@ -110,6 +110,7 @@ and why it matters.
 - `api_session_lifecycle.rs` — #1043 serialized logical-session lifecycle: one active API generation, atomic durable idempotency claim/replay/conflict, provider-ID-gated resume, graceful interrupt with bounded forced fallback, replace sequencing, and terminal kill. It does not alter interactive attach Ctrl-C or legacy daemon interrupt RPC behavior.
 - `board.rs` — in-memory agent bulletin board behind `/v1/board/messages`; see [agent-board.md](../../../../docs/architecture/agent-board.md).
 - `api_session_http.rs` — #1044 bearer-only `/v1/sessions` routing: typed create/list/get/events/turn/interrupt/delete DTOs, idempotency replay, stable errors, and headless-plan reconstruction from durable settings and the immutable canonical CWD. It is separate from dashboard capability auth and worker attach routes.
+- `api_session_inject.rs` — operator injection: durable `injections[]` on the session record, `POST /v1/sessions/{id}/inject`, delivery now / at the next turn boundary (drained by the lifecycle observer) / via `interrupt`. `inject_client.rs` is the `clud inject` CLI. See [session-inject.md](../../../../docs/architecture/session-inject.md).
 
 - `proc_sampler.rs` - daemon-owned process sampler for `clud top`: keeps one persistent `sysinfo::System`, refreshes CPU/RSS/parent data on the hot tick, refreshes `RUNNING_PROCESS_ORIGINATOR` tags on a slower cadence, and serves cached `ProcTreeSnapshot` replies over daemon IPC.
   `decide_cadence` parks the tick at 30 s when nobody has asked for a snapshot

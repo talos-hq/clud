@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import codecs
+import hashlib
 import json
 import os
 import shlex
@@ -843,6 +844,82 @@ async def session_kill(session_id: str, ctx: Context) -> str:
     if status != 200:
         return _dump({"error": f"kill failed ({status}): {payload}", "session_id": session_id})
     return _dump({"session_id": session_id, "status": "terminated"})
+
+
+def _default_client_msg_id(session_id: str, message: str) -> str:
+    """Stable id for one (session, message) pair, so a retried call dedupes."""
+    digest = hashlib.sha256(f"{session_id}\n{message}".encode()).hexdigest()[:16]
+    return f"mcp-{digest}"
+
+
+@server.tool()
+async def session_inject(
+    session_id: str,
+    message: str,
+    ctx: Context,
+    interrupt: bool = False,
+    client_msg_id: str = "",
+    ticket: str = "",
+) -> str:
+    """Inject a user message into a RUNNING clud session (steer it mid-run).
+
+    The message becomes the session's next user turn. By default it is queued
+    and delivered when the current turn ends. With `interrupt=true`, the running
+    turn is interrupted and the message starts right away. It is never a system
+    override. Every call returns `{accepted, state, seq}`. `state` is
+    `queued`, `delivered` (with `turn_id`) or `failed` (with `error`). The
+    injection is recorded on the session (`injections[]` in its record) with
+    who sent it and when.
+
+    Works for daemon sessions (`session_start`) on the claude and codex
+    harnesses. A terminated session returns `session_sealed`. An unsupported
+    harness returns `harness_not_supported` and names the harness.
+    Interactive PTY sessions are not daemon sessions; use `board_post` for
+    those.
+
+    Args:
+        session_id: The id returned by `session_start` (`sess-...`).
+        message: The text the agent receives as its next user turn.
+        interrupt: Interrupt the running turn instead of waiting for it.
+        client_msg_id: Idempotency key. A repeat with the same key is never
+            delivered twice. Defaults to a hash of session_id + message.
+        ticket: Optional ticket/issue reference recorded with the injection.
+    """
+    if not message.strip():
+        return _dump(
+            {"accepted": False, "session_id": session_id, "error": "message must not be empty"}
+        )
+    try:
+        base, token = await _discover_api()
+    except Exception as exc:
+        return _dump(
+            {
+                "accepted": False,
+                "session_id": session_id,
+                "error": f"could not discover clud daemon API: {exc}",
+            }
+        )
+    body = {
+        "message": message,
+        "client_msg_id": client_msg_id or _default_client_msg_id(session_id, message),
+        "interrupt": bool(interrupt),
+        "from": _board_identity() or "mcp",
+    }
+    if ticket:
+        body["ticket"] = ticket
+    path = f"/v1/sessions/{urllib.parse.quote(session_id, safe='')}/inject"
+    status, payload = await _api(base, token, "POST", path, body)
+    if status == 202 and isinstance(payload, dict):
+        return _dump(payload)
+    detail = payload if isinstance(payload, dict) else {}
+    return _dump(
+        {
+            "accepted": False,
+            "session_id": session_id,
+            "code": detail.get("code", "error"),
+            "error": f"inject failed ({status}): {detail.get('message', payload)}",
+        }
+    )
 
 
 #: Where this agent's next ``board_read`` resumes; per bridge process.

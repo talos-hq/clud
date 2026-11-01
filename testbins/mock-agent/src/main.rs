@@ -93,6 +93,7 @@ fn main() {
     // claude subscription key.
     let mut stream_json_script: Option<PathBuf> = None;
     let mut stream_delay_ms: u64 = 0;
+    let mut stream_echo_argv = false;
     let mut filtered_args: Vec<String> = Vec::new();
     let mut skip_next = false;
     for (i, arg) in args.iter().enumerate().skip(1) {
@@ -301,6 +302,10 @@ fn main() {
             skip_next = true;
             continue;
         }
+        if arg == "--mock-stream-echo-argv" {
+            stream_echo_argv = true;
+            continue;
+        }
         if arg == "--mock-stream-delay-ms" {
             if let Some(ms) = args.get(i + 1) {
                 stream_delay_ms = ms.parse().unwrap_or(0);
@@ -364,6 +369,12 @@ fn main() {
                     std::thread::sleep(Duration::from_millis(stream_delay_ms));
                 }
             }
+        }
+        if stream_echo_argv {
+            // Lets a test see which user message this turn was given.
+            let line = serde_json::json!({"type": "mock.argv", "argv": filtered_args});
+            let _ = writeln!(io::stdout(), "{line}");
+            let _ = io::stdout().flush();
         }
         std::process::exit(exit_code);
     }
