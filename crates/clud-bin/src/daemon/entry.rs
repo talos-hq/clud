@@ -118,6 +118,38 @@ fn grant_daemon_spawn() {
     }
 }
 
+/// `clud inject` (docs/architecture/session-inject.md).
+fn run_inject_command(args: &Args) -> i32 {
+    let Some(Command::Inject {
+        session,
+        message,
+        interrupt,
+        client_msg_id,
+        from,
+        ticket,
+        detach,
+        timeout,
+        json,
+    }) = &args.command
+    else {
+        return 2;
+    };
+    let state_dir = state_dir(args);
+    grant_daemon_spawn();
+    let options = super::inject_client::InjectOptions {
+        session: session.clone(),
+        message: message.clone(),
+        interrupt: *interrupt,
+        client_msg_id: client_msg_id.clone(),
+        from: from.clone(),
+        ticket: ticket.clone(),
+        detach: *detach,
+        timeout_secs: *timeout,
+        json: *json,
+    };
+    super::inject_client::run(&state_dir, &options)
+}
+
 fn run_daemon_subcommand(state_dir: &Path, subcommand: &DaemonSubcommand) -> i32 {
     match subcommand {
         DaemonSubcommand::ApiInfo { json } => {
@@ -755,6 +787,7 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             grant_spawn_for_daemon_subcommand(subcommand);
             Some(run_daemon_subcommand(&state_dir, subcommand))
         }
+        Some(Command::Inject { .. }) => Some(run_inject_command(args)),
         Some(Command::InternalDaemon { state_dir }) => {
             super::startup_phases::install_panic_hook(state_dir);
             super::startup_phases::redirect_stderr_to_log(state_dir);

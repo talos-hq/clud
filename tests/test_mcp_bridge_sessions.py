@@ -39,6 +39,8 @@ class _DaemonState:
         #: Override the recorded turns list (e.g. [] for the submit window).
         self.turns: list[dict] | None = None
         self.base_url = ""
+        #: client_msg_id -> seq, mirroring the daemon's idempotency.
+        self.injections: dict[str, int] = {}
 
 
 def _make_handler(state: _DaemonState):  # noqa: C901
@@ -117,9 +119,7 @@ def _make_handler(state: _DaemonState):  # noqa: C901
             if route.startswith("/v1/sessions/"):
                 session_id = route[len("/v1/sessions/") :]
                 if session_id == "missing":
-                    return self._send(
-                        404, {"code": "not_found", "message": "session not found"}
-                    )
+                    return self._send(404, {"code": "not_found", "message": "session not found"})
                 return self._send(200, self._record_payload(session_id))
             if route == "/v1/sessions":
                 return self._send(200, [])
@@ -158,14 +158,40 @@ def _make_handler(state: _DaemonState):  # noqa: C901
                         "status": "started",
                     },
                 )
+            if path.startswith("/v1/sessions/") and path.endswith("/inject"):
+                return self._inject(path[len("/v1/sessions/") : -len("/inject")], body)
             return self._send(404, {"code": "not_found", "message": "API route not found"})
+
+        def _inject(self, session_id: str, body) -> None:
+            if session_id == "sealed":
+                return self._send(
+                    409, {"code": "session_sealed", "message": "session is terminated"}
+                )
+            if session_id == "dsh":
+                return self._send(
+                    422,
+                    {
+                        "code": "harness_not_supported",
+                        "message": "harness 'deepseek' cannot take injected turns",
+                    },
+                )
+            duplicate = body["client_msg_id"] in state.injections
+            seen = state.injections.setdefault(body["client_msg_id"], len(state.injections) + 1)
+            return self._send(
+                202,
+                {
+                    "accepted": True,
+                    "session_id": session_id,
+                    "seq": seen,
+                    "state": "queued",
+                    "duplicate": duplicate,
+                },
+            )
 
         def do_DELETE(self) -> None:
             path = self._record("DELETE")
             if path == "/v1/sessions/missing":
-                return self._send(
-                    404, {"code": "not_found", "message": "session not found"}
-                )
+                return self._send(404, {"code": "not_found", "message": "session not found"})
             return self._send(200, {"status": "terminated"})
 
     return _Handler
@@ -254,9 +280,7 @@ def test_session_start_rejects_a_missing_cwd(bridge, wired):
     assert "is not a directory" in payload["error"]
 
 
-def test_session_start_resumes_an_existing_session_without_creating_one(
-    bridge, wired, tmp_path
-):
+def test_session_start_resumes_an_existing_session_without_creating_one(bridge, wired, tmp_path):
     payload = _result(
         _run(
             bridge.session_start(
@@ -349,9 +373,7 @@ def test_session_result_filters_by_turn(bridge, wired):
 
 def test_session_result_can_include_the_raw_events(bridge, wired):
     wired.events = [_event(1, "turn-1", "mine")]
-    payload = _result(
-        _run(bridge.session_result("sess-x", _FakeCtx(), include_events=True))
-    )
+    payload = _result(_run(bridge.session_result("sess-x", _FakeCtx(), include_events=True)))
     assert payload["events"][0]["kind"] == "raw_jsonl"
     assert payload["retention_gap"] is False
 
@@ -374,15 +396,76 @@ def test_session_kill_surfaces_a_failure_with_the_handle(bridge, wired):
 
 
 # --------------------------------------------------------------------------- #
+# session_inject
+# --------------------------------------------------------------------------- #
+
+
+def _inject_posts(daemon) -> list:
+    return [r for r in daemon.requests if r[0] == "POST" and r[1].endswith("/inject")]
+
+
+def test_session_inject_queues_a_user_turn_and_returns_the_contract(bridge, wired):
+    payload = _result(
+        _run(
+            bridge.session_inject(
+                "sess-x", "use the v2 API", _FakeCtx(), client_msg_id="m-1", ticket="T-3"
+            )
+        )
+    )
+    assert payload["accepted"] is True
+    assert payload["state"] == "queued"
+    assert payload["seq"] == 1
+    (_, path, headers, body) = _inject_posts(wired)[0]
+    assert path == "/v1/sessions/sess-x/inject"
+    assert headers["authorization"] == "Bearer tok"
+    assert body["message"] == "use the v2 API"
+    assert body["client_msg_id"] == "m-1"
+    assert body["interrupt"] is False
+    assert body["ticket"] == "T-3"
+
+
+def test_session_inject_defaults_a_stable_client_msg_id_so_retries_dedupe(bridge, wired):
+    first = _result(_run(bridge.session_inject("sess-x", "same", _FakeCtx())))
+    again = _result(_run(bridge.session_inject("sess-x", "same", _FakeCtx())))
+    ids = {r[3]["client_msg_id"] for r in _inject_posts(wired)}
+    assert len(ids) == 1
+    assert first["seq"] == again["seq"]
+    assert again["duplicate"] is True
+
+
+def test_session_inject_passes_interrupt_through(bridge, wired):
+    _run(bridge.session_inject("sess-x", "stop and do Y", _FakeCtx(), interrupt=True))
+    assert _inject_posts(wired)[0][3]["interrupt"] is True
+
+
+def test_session_inject_reports_a_sealed_session(bridge, wired):
+    payload = _result(_run(bridge.session_inject("sealed", "late", _FakeCtx())))
+    assert payload["accepted"] is False
+    assert payload["code"] == "session_sealed"
+    assert payload["session_id"] == "sealed"
+
+
+def test_session_inject_names_an_unsupported_harness(bridge, wired):
+    payload = _result(_run(bridge.session_inject("dsh", "hi", _FakeCtx())))
+    assert payload["accepted"] is False
+    assert payload["code"] == "harness_not_supported"
+    assert "deepseek" in payload["error"]
+
+
+def test_session_inject_rejects_an_empty_message_without_calling_the_daemon(bridge, wired):
+    payload = _result(_run(bridge.session_inject("sess-x", "  ", _FakeCtx())))
+    assert payload["accepted"] is False
+    assert not _inject_posts(wired)
+
+
+# --------------------------------------------------------------------------- #
 # back-compat
 # --------------------------------------------------------------------------- #
 
 
 def test_run_json_keeps_its_blocking_shape(bridge, wired, tmp_path):
     wired.events = [_event(1, "turn-1", "legacy answer")]
-    payload = _result(
-        _run(bridge.run_json("hello", _FakeCtx(), cwd=str(tmp_path), timeout=10))
-    )
+    payload = _result(_run(bridge.run_json("hello", _FakeCtx(), cwd=str(tmp_path), timeout=10)))
     assert payload["session_id"] == "sess-created-1"
     assert payload["turn_id"] == "turn-1"
     assert payload["text"] == "legacy answer"

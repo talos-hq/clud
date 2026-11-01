@@ -242,7 +242,7 @@ fn new_claude_session_id() -> Result<String, String> {
     crate::session_history::new_session_uuid()
 }
 
-fn turn_plan(record: &ApiSessionRecord, message: String) -> Result<LaunchPlan, String> {
+pub(super) fn turn_plan(record: &ApiSessionRecord, message: String) -> Result<LaunchPlan, String> {
     if message.trim().is_empty() || message.len() > MAX_MESSAGE_BYTES {
         return Err("message must be non-empty and at most 64 KiB".to_string());
     }

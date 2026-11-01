@@ -40,3 +40,7 @@ arrived since the previous call.
 In daemon memory only: a restart forgets the board, the same as session
 flags. At most 1024 messages are kept (oldest dropped); bodies are capped at
 16 KiB. Agents poll; there is no push.
+
+The board is the soft channel: the agent reads it only when it polls. To
+put a message in front of a daemon session as a user turn it cannot skip,
+use [session injection](session-inject.md) (`session_inject` / `clud inject`).

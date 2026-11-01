@@ -329,6 +329,7 @@ fn api_openapi_contract_covers_each_implemented_session_route() {
         "/v1/sessions/{id}/turns",
         "/v1/sessions/{id}/interrupt",
         "/v1/sessions/{id}/events",
+        "/v1/sessions/{id}/inject",
     ] {
         assert!(paths.contains_key(path), "missing route {path}");
     }
@@ -340,6 +341,7 @@ fn api_openapi_contract_covers_each_implemented_session_route() {
         "/v1/sessions/{id}/interrupt",
         "/v1/sessions/{id}/turns",
         "/v1/sessions/{id}/events",
+        "/v1/sessions/{id}/inject",
     ] {
         assert_eq!(paths[path]["parameters"][0]["name"], "id");
     }
@@ -1676,4 +1678,175 @@ fn fetch_api_request_with_headers(
     let body = String::from_utf8(raw[body_start..].to_vec())
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?;
     Ok((status, head, body))
+}
+
+/// Session injection (docs/architecture/session-inject.md): POST one
+/// injection to the running session and return the parsed reply.
+fn post_inject(port: u16, id: &str, body: &str) -> (String, serde_json::Value) {
+    let (status, _, reply) = fetch_api_request(
+        port,
+        "POST",
+        &format!("/v1/sessions/{id}/inject"),
+        "127.0.0.1",
+        Some("Bearer api-token"),
+        None,
+        Some(body),
+    )
+    .unwrap();
+    (status, serde_json::from_str(&reply).unwrap_or_default())
+}
+
+fn spawn_inject_daemon(
+    temp: &std::path::Path,
+) -> (u16, super::super::api_sessions::ApiSessionStore) {
+    let store = super::super::api_sessions::ApiSessionStore::new(temp);
+    let lifecycle = std::sync::Arc::new(
+        super::super::api_session_lifecycle::ApiSessionLifecycle::new(store.clone()),
+    );
+    let port = spawn_dashboard_with_activity_and_lifecycle(
+        temp.to_path_buf(),
+        None,
+        9999,
+        100,
+        empty_live_provider(),
+        TelemetryStore::new(),
+        ToolTelemetryStore::new(),
+        "dashboard-token".to_string(),
+        "api-token".to_string(),
+        None,
+        None,
+        lifecycle,
+    )
+    .unwrap();
+    (port, store)
+}
+
+fn create_session_with_running_turn(port: u16, cwd: &std::path::Path) -> String {
+    let create = format!(
+        r#"{{"backend":"claude","cwd":"{}"}}"#,
+        cwd.to_string_lossy().replace('\\', "\\\\")
+    );
+    let (_, _, body) = fetch_api_request(
+        port,
+        "POST",
+        "/v1/sessions",
+        "127.0.0.1",
+        Some("Bearer api-token"),
+        None,
+        Some(&create),
+    )
+    .unwrap();
+    let id = serde_json::from_str::<serde_json::Value>(&body).unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, _, _) = fetch_api_request(
+        port,
+        "POST",
+        &format!("/v1/sessions/{id}/turns"),
+        "127.0.0.1",
+        Some("Bearer api-token"),
+        None,
+        Some(r#"{"message":"original brief"}"#),
+    )
+    .unwrap();
+    assert_status(&status, "202");
+    id
+}
+
+#[test]
+fn tier1_injection_mid_turn_is_delivered_once_as_the_next_user_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let cwd = temp.path().join("cwd");
+    std::fs::create_dir(&cwd).unwrap();
+    let script = temp.path().join("claude.jsonl");
+    let mut stream = String::from(
+        "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"provider-inj\"}\n",
+    );
+    stream.push_str(&"{\"type\":\"future.event\"}\n".repeat(6));
+    std::fs::write(&script, stream).unwrap();
+    let _mock_guard = super::super::api_session_http::set_test_headless_executable(
+        http_test_mock_agent().to_string_lossy().into_owned(),
+        vec![
+            "--mock-stream-json".to_string(),
+            script.to_string_lossy().into_owned(),
+            "--mock-stream-delay-ms".to_string(),
+            "200".to_string(),
+            "--mock-stream-echo-argv".to_string(),
+        ],
+    );
+    let (port, store) = spawn_inject_daemon(temp.path());
+    let id = create_session_with_running_turn(port, &cwd);
+
+    let inject = r#"{"message":"REFINEMENT-7Q: also add a test","client_msg_id":"c-1","from":"operator","ticket":"T-7"}"#;
+    let (status, first) = post_inject(port, &id, inject);
+    assert_status(&status, "202");
+    assert_eq!(first["accepted"], true);
+    assert_eq!(first["state"], "queued", "{first}");
+    assert_eq!(first["seq"], 1);
+    let (_, again) = post_inject(port, &id, inject);
+    assert_eq!(
+        (again["seq"].clone(), again["duplicate"].clone()),
+        (1.into(), true.into())
+    );
+
+    wait_for_api_generation_to_finish(&store, &id, 2);
+    std::thread::sleep(Duration::from_millis(500));
+    let record = store.get(&id).unwrap();
+    assert_eq!(
+        record.generation, 2,
+        "the duplicate must not start a third turn"
+    );
+    let entry = &record.injections[0];
+    assert_eq!(record.injections.len(), 1);
+    assert_eq!(entry.state.as_str(), "delivered");
+    assert_eq!(entry.from.as_deref(), Some("operator"));
+    assert_eq!(entry.ticket.as_deref(), Some("T-7"));
+    let second_turn = &record.turns[1].id;
+    assert_eq!(entry.turn_id.as_ref(), Some(second_turn));
+    let raw = std::fs::read_to_string(
+        temp.path()
+            .join("logs")
+            .join("api")
+            .join(&id)
+            .join("2.jsonl"),
+    )
+    .unwrap();
+    assert!(
+        raw.contains("REFINEMENT-7Q"),
+        "turn 2 must carry the injection: {raw}"
+    );
+    assert!(
+        raw.contains("provider-inj"),
+        "turn 2 must resume the same conversation"
+    );
+    let first_raw = std::fs::read_to_string(
+        temp.path()
+            .join("logs")
+            .join("api")
+            .join(&id)
+            .join("1.jsonl"),
+    )
+    .unwrap();
+    assert!(!first_raw.contains("REFINEMENT-7Q"));
+    assert!(record
+        .events
+        .iter()
+        .any(|event| event.kind == "injection_delivered"));
+
+    let (status, _, _) = fetch_api_request(
+        port,
+        "DELETE",
+        &format!("/v1/sessions/{id}"),
+        "127.0.0.1",
+        Some("Bearer api-token"),
+        None,
+        None,
+    )
+    .unwrap();
+    assert_status(&status, "200");
+    let (status, sealed) =
+        post_inject(port, &id, r#"{"message":"too late","client_msg_id":"c-2"}"#);
+    assert_status(&status, "409");
+    assert_eq!(sealed["code"], "session_sealed");
 }

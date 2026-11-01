@@ -165,6 +165,9 @@ pub struct ApiSessionRecord {
     pub next_event_cursor: u64,
     #[serde(default)]
     pub idempotency: VecDeque<IdempotencyRecord>,
+    /// Operator injections, oldest first (see `docs/architecture/session-inject.md`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injections: Vec<super::api_session_inject::ApiInjectionRecord>,
 }
 
 impl ApiSessionRecord {
@@ -278,6 +281,7 @@ impl ApiSessionStore {
             events: VecDeque::new(),
             next_event_cursor: 1,
             idempotency: VecDeque::new(),
+            injections: Vec::new(),
         };
         self.write(&record)?;
         Ok(record)
@@ -681,7 +685,7 @@ impl ApiSessionStore {
         }
     }
 
-    fn mutate<T>(
+    pub(super) fn mutate<T>(
         &self,
         session_id: &str,
         action: impl FnOnce(&mut ApiSessionRecord) -> Result<T, ApiSessionStoreError>,

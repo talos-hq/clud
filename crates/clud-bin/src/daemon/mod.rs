@@ -1,5 +1,6 @@
 mod activity;
 mod api_session_http;
+pub mod api_session_inject;
 pub mod api_session_lifecycle;
 pub mod api_sessions;
 pub mod api_turn_controller;
@@ -18,6 +19,7 @@ mod gc_service;
 mod handover_registry;
 mod headless_adapter;
 mod http;
+pub mod inject_client;
 pub(crate) mod io_helpers;
 mod login_env;
 mod paths;

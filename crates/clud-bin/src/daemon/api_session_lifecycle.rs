@@ -68,6 +68,9 @@ impl ApiSessionLifecycle {
             ..Self::new(store)
         }
     }
+    pub(super) fn store(&self) -> ApiSessionStore {
+        self.store.clone()
+    }
     fn gate_for(&self, session_id: &str) -> Arc<Mutex<()>> {
         self.gates
             .lock()
@@ -189,18 +192,29 @@ impl ApiSessionLifecycle {
         let observed = Arc::clone(&process);
         let observed_id = session_id.to_string();
         let activity = self.activity.as_ref().map(DaemonActivity::start_job);
+        let lifecycle = self.clone();
+        let observed_turn = turn.id.clone();
         thread::spawn(move || {
             let _activity = activity;
             while observed.returncode().is_none() {
                 thread::sleep(Duration::from_millis(25));
             }
-            let mut active = active.lock().unwrap_or_else(|p| p.into_inner());
-            if active
-                .get(&observed_id)
-                .is_some_and(|current| Arc::ptr_eq(current, &observed))
             {
-                active.remove(&observed_id);
+                let mut active = active.lock().unwrap_or_else(|p| p.into_inner());
+                if active
+                    .get(&observed_id)
+                    .is_some_and(|current| Arc::ptr_eq(current, &observed))
+                {
+                    active.remove(&observed_id);
+                }
             }
+            // Turn boundary: hand the next queued operator injection, if
+            // any, its turn (docs/architecture/session-inject.md).
+            lifecycle.drain_after_turn(
+                &observed_id,
+                &observed_turn,
+                super::api_session_http::turn_plan,
+            );
         });
         Ok(LifecycleReply::Started {
             generation: turn.generation,

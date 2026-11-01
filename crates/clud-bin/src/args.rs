@@ -648,6 +648,36 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inject a user message into a running daemon session: queued for the
+    /// next turn boundary, or `--interrupt` to replace the running turn
+    /// (docs/architecture/session-inject.md). Never prompts.
+    Inject {
+        /// Session id (`sess-...`) returned by `session_start` / `POST /v1/sessions`.
+        session: String,
+        /// The message the agent receives as its next user turn.
+        message: String,
+        /// Interrupt the running turn instead of waiting for it to end.
+        #[arg(long)]
+        interrupt: bool,
+        /// Idempotency key; defaults to a hash of session + message.
+        #[arg(long = "client-msg-id")]
+        client_msg_id: Option<String>,
+        /// Who is steering (recorded on the session); defaults to the board id.
+        #[arg(long = "from")]
+        from: Option<String>,
+        /// Ticket or issue reference recorded with the injection.
+        #[arg(long = "ticket")]
+        ticket: Option<String>,
+        /// Return once accepted instead of waiting for delivery.
+        #[arg(long)]
+        detach: bool,
+        /// Seconds to wait for delivery when not detached.
+        #[arg(long = "timeout", default_value_t = 600)]
+        timeout: u64,
+        /// Print the result as one JSON object.
+        #[arg(long)]
+        json: bool,
+    },
     /// Run a CI job locally under bosn and show only the verdict and the
     /// failing steps' diagnostics (#1839).
     Ci {
@@ -1627,6 +1657,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "tool",
     "optimize",
     "daemon",
+    "inject",
     "symbols",
     "settings",
     "test",

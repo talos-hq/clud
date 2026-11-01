@@ -420,6 +420,41 @@ fn deepseek_harness_accepts_model_only_when_clud_routes_the_model() {
 }
 
 #[test]
+fn inject_is_a_dispatched_subcommand_not_backend_passthrough() {
+    let args = parse(&[
+        "clud",
+        "inject",
+        "sess-abc",
+        "use the v2 API",
+        "--interrupt",
+        "--detach",
+        "--ticket",
+        "T-9",
+        "--timeout",
+        "30",
+        "--json",
+    ]);
+    match args.command {
+        Some(Command::Inject {
+            session,
+            message,
+            interrupt: true,
+            detach: true,
+            ticket: Some(ticket),
+            timeout: 30,
+            json: true,
+            ..
+        }) => {
+            assert_eq!(session, "sess-abc");
+            assert_eq!(message, "use the v2 API");
+            assert_eq!(ticket, "T-9");
+        }
+        other => panic!("unexpected parse: {other:?}"),
+    }
+    assert!(args.passthrough.is_empty());
+}
+
+#[test]
 fn doctor_is_a_dispatched_subcommand() {
     let args = parse(&["clud", "doctor"]);
     assert!(matches!(
