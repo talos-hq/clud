@@ -306,3 +306,7 @@ re-enters cold. The unified gateway keeps it warm out of band
   source of truth for what clud runs.
 - [`daemon-ipc.md`](daemon-ipc.md) — TCP JSON protocol the repeat
   worker reports through.
+
+## Restarting a finished loop (#2471)
+
+When an interactive `clud loop` ends (stdin and stderr are terminals, not `--dry-run`, not interrupted), clud offers **Restart loop / Exit** through the shared selector (`loop_restart.rs`). Restart moves the run artifacts (`info.json`, `log.txt`, `NEXT_MESSAGE.md`, `motivation.md`, root `LOOP_DONE.md`, DONE/BLOCKED markers) into `.clud/loop/history/<millis>/`, keeps `loop.json` and `inbox/`, and re-runs the same argv.
