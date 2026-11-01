@@ -345,10 +345,14 @@ impl UnifiedGatewayConfig {
         upstreams: &UnifiedIntegrationUpstreams,
     ) -> Self {
         self.anthropic_base_url = upstreams.anthropic_base_url.clone();
+        self.override_route_base_url(ModelProvider::DeepSeek, upstreams.deepseek_base_url.clone());
         self.override_route_base_url(
             ModelProvider::OpenRouter,
             upstreams.openrouter_base_url.clone(),
         );
+        if let Some(url) = &upstreams.kimi_base_url {
+            self.override_route_base_url(ModelProvider::Kimi, url.clone());
+        }
         self
     }
 

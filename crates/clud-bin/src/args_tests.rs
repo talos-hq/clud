@@ -6,6 +6,12 @@ fn serve_grammar_is_dispatched_without_backend_passthrough() {
     for arguments in [
         vec!["clud", "serve", "--claude"],
         vec!["clud", "serve", "--claude", "--openrouter"],
+        vec!["clud", "serve", "--claude", "--deepseek"],
+        vec!["clud", "serve", "--claude", "--kimi"],
+        vec!["clud", "serve", "--openrouter"],
+        vec!["clud", "serve", "--deepseek"],
+        vec!["clud", "serve", "--kimi"],
+        vec!["clud", "serve", "--deepseek", "--kimi"],
     ] {
         let raw: Vec<String> = arguments.iter().map(|value| (*value).to_string()).collect();
         let (known, unknown) = split_known_unknown(&raw).expect("known serve grammar");
@@ -14,14 +20,27 @@ fn serve_grammar_is_dispatched_without_backend_passthrough() {
             "{arguments:?} must not reach the harness"
         );
         let args = Args::try_parse_from(known).expect("serve arguments must parse");
-        assert!(
-            matches!(args.command, Some(Command::Serve { claude: true, codex: false, openrouter, port: 8317 })
-            if openrouter == (arguments.len() == 4)),
-            "serve must dispatch the selected routes"
-        );
+        let Some(Command::Serve {
+            claude,
+            codex,
+            openrouter,
+            deepseek,
+            kimi,
+            port,
+        }) = args.command
+        else {
+            panic!("{arguments:?} must dispatch serve");
+        };
+        let requested = |flag: &str| arguments.contains(&flag);
+        assert_eq!(port, 8317);
+        assert!(!codex, "{arguments:?} must not enable Codex");
+        assert_eq!(claude, requested("--claude"), "{arguments:?}");
+        assert_eq!(openrouter, requested("--openrouter"), "{arguments:?}");
+        assert_eq!(deepseek, requested("--deepseek"), "{arguments:?}");
+        assert_eq!(kimi, requested("--kimi"), "{arguments:?}");
         assert!(!args.claude && !args.openrouter, "serve flags are local");
     }
-    assert!(Args::try_parse_from(["clud", "serve", "--openrouter"]).is_err());
+    assert!(Args::try_parse_from(["clud", "serve"]).is_err());
 }
 
 #[test]
