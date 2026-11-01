@@ -267,7 +267,9 @@ pub(crate) mod gh_shim {
                 "pr" if command.is_empty() => command.push(word),
                 "checks" if command == ["pr"] => command.push(word),
                 "--watch" => watch_seen = true,
-                "--fail-fast" => {}
+                // #2444: the watcher's default scope is already the
+                // branch-required checks, which is what `--required` asks for.
+                "--fail-fast" | "--required" => {}
                 "--repo" | "-R" | "--interval" | "-i" => {
                     i += 1;
                     let Some(value) = words.get(i).copied() else {
