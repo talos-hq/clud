@@ -92,7 +92,11 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 zeroize = "1"
 prost = "0.14"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+# preserve_order: the gateway re-serializes provider request bodies (secret
+# redaction, provider pin, advisor strip). Sorted keys would rewrite tool
+# schemas and tool inputs, and the provider would re-bill the cached history
+# as new input (#2225).
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 sysinfo = "0.37"
 terminal_size = "0.4"
 # Plain serde-friendly TOML deserializer. Used by the shell::git_bash_resolver
