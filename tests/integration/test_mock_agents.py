@@ -19,6 +19,7 @@ import pytest
 
 from tests import process
 from tests._subprocess_helpers import is_ctrl_c_exit
+from tests.metered_consent import consent_for
 
 from ._daemon_helpers import (
     copy_launcher,
@@ -70,7 +71,9 @@ def _run(
         return run_clud(
             [str(launch), *args],
             timeout=_TIMEOUT,
-            env=env,
+            # Launch tests that pick a metered provider consent to it
+            # explicitly (subscription-first policy, #2529).
+            env=consent_for(env, args),
             input=input_data,
             cwd=cwd,
         )

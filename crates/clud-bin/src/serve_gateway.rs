@@ -65,6 +65,15 @@ fn start(port: u16, claude: bool, codex: bool, openrouter: bool) -> Result<Bridg
     if !claude && !codex {
         return Err("select --claude or --codex".to_string());
     }
+    if openrouter
+        && !crate::metered_policy::process_allows_metered(crate::backend::ModelProvider::OpenRouter)
+    {
+        return Err(
+            "OpenRouter is metered (pay-per-token API billing); set CLUD_ALLOW_METERED=1 and \
+             CLUD_METERED_PROVIDER=openrouter to serve it"
+                .to_string(),
+        );
+    }
     let claude_key = claude.then(claude_api_key).transpose()?;
     if codex {
         crate::codex_upstream::ResolvedCredentials::preflight_default()

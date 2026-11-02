@@ -235,3 +235,66 @@ fn only_the_explicit_metered_codex_route_permits_the_api_key() {
     .expect("metered codex");
     assert!(metered.allows_codex_api_key());
 }
+
+#[test]
+fn every_resolved_metered_provider_needs_consent_for_exactly_it() {
+    let none = resolve(&EnvSnapshot::default()).expect("default");
+    for provider in ModelProvider::ALL.iter().copied() {
+        let result = enforce_resolved(&none, provider, false);
+        if CostOwner::for_provider(provider) == CostOwner::Metered {
+            assert_eq!(
+                result,
+                Err(PolicyError::ResolvedMeteredWithoutConsent(provider)),
+                "{provider}"
+            );
+        } else {
+            assert_eq!(result, Ok(()), "{provider}");
+        }
+    }
+    let kimi = resolve(&env(&[
+        (ALLOW_METERED_ENV, "1"),
+        (METERED_PROVIDER_ENV, "kimi"),
+    ]))
+    .expect("kimi consent");
+    assert_eq!(enforce_resolved(&kimi, ModelProvider::Kimi, false), Ok(()));
+    assert_eq!(
+        enforce_resolved(&kimi, ModelProvider::OpenRouter, false),
+        Err(PolicyError::ResolvedMeteredWithoutConsent(
+            ModelProvider::OpenRouter
+        ))
+    );
+}
+
+#[test]
+fn failover_metered_consent_needs_the_environment_too() {
+    let none = resolve(&EnvSnapshot::default()).expect("default");
+    assert_eq!(
+        enforce_resolved(&none, ModelProvider::Claude, true),
+        Err(PolicyError::FailoverMeteredWithoutConsent)
+    );
+    assert_eq!(
+        enforce_resolved(&none, ModelProvider::Claude, false),
+        Ok(())
+    );
+}
+
+#[test]
+fn a_consent_list_serves_a_unified_session_but_not_a_single_route() {
+    let list = resolve(&env(&[
+        (ALLOW_METERED_ENV, "1"),
+        (METERED_PROVIDER_ENV, "openrouter, deepseek"),
+    ]))
+    .expect("consent list");
+    assert!(list.allows(ModelProvider::OpenRouter));
+    assert!(list.allows(ModelProvider::DeepSeek));
+    assert!(!list.allows(ModelProvider::Kimi));
+    assert_eq!(list.metered, None);
+    assert_eq!(list.provider(), ModelProvider::Claude);
+    let pinned = resolve(&env(&[
+        (PROVIDER_ENV, "openrouter"),
+        (ALLOW_METERED_ENV, "1"),
+        (METERED_PROVIDER_ENV, "openrouter,deepseek"),
+    ]))
+    .expect_err("CLUD_PROVIDER needs exactly its own consent");
+    assert!(pinned.to_string().contains("disagrees"), "{pinned}");
+}

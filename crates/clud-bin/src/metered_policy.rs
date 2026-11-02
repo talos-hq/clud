@@ -57,8 +57,12 @@ pub struct EnvPolicy {
     pub subscription_default_applied: bool,
     /// `CLUD_PROVIDER`, when set.
     pub selected: Option<ModelProvider>,
-    /// `Some` only for a legitimately enabled metered route.
+    /// `Some` only for a legitimately enabled single metered route.
     pub metered: Option<ModelProvider>,
+    /// Every metered provider the operator consented to. Without
+    /// `CLUD_PROVIDER`, `CLUD_METERED_PROVIDER` may list several
+    /// (comma-separated) for a unified gateway session.
+    pub consented: Vec<ModelProvider>,
 }
 
 impl EnvPolicy {
@@ -72,10 +76,15 @@ impl EnvPolicy {
         self.metered.map(metered_warning)
     }
 
+    /// Whether `provider`'s metered billing was consented to.
+    pub fn allows(&self, provider: ModelProvider) -> bool {
+        self.consented.contains(&provider)
+    }
+
     /// Whether the Codex bridge may use `OPENAI_API_KEY` when no
     /// subscription login exists. Only the explicit metered Codex route may.
     pub fn allows_codex_api_key(&self) -> bool {
-        self.metered == Some(ModelProvider::Codex)
+        self.allows(ModelProvider::Codex)
     }
 }
 
@@ -100,6 +109,11 @@ pub enum PolicyError {
         cli: ModelProvider,
         env: ModelProvider,
     },
+    /// A flag, saved setting or credential fallback resolved to a metered
+    /// provider the environment did not consent to.
+    ResolvedMeteredWithoutConsent(ModelProvider),
+    /// `--failover-allow-metered` without the environment consent.
+    FailoverMeteredWithoutConsent,
 }
 
 impl std::fmt::Display for PolicyError {
@@ -145,6 +159,19 @@ impl std::fmt::Display for PolicyError {
                 "contradiction: CLUD_ALLOW_METERED / CLUD_METERED_PROVIDER are set while \
                  CLUD_PROVIDER={provider} is a subscription provider. Unset the metered \
                  overrides, or select the metered provider you meant"
+            ),
+            Self::ResolvedMeteredWithoutConsent(provider) => write!(
+                f,
+                "provider {provider} is metered (pay-per-token API billing) and is refused: \
+                 it was selected by a flag, --model, a saved setting or a credential fallback \
+                 without consent. Set CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER={provider} \
+                 (and CLUD_PROVIDER={provider} if you set CLUD_PROVIDER), or launch your \
+                 subscription instead"
+            ),
+            Self::FailoverMeteredWithoutConsent => write!(
+                f,
+                "--failover-allow-metered descends onto pay-per-token rungs and needs \
+                 CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=<provider> as well"
             ),
             Self::InvalidAllowValue(value) => write!(
                 f,
@@ -192,53 +219,79 @@ pub fn resolve(env: &EnvSnapshot) -> Result<EnvPolicy, PolicyError> {
         Some("1") => true,
         Some(other) => return Err(PolicyError::InvalidAllowValue(other.to_string())),
     };
-    let metered_provider = env
+    let listed = env
         .metered_provider
         .as_deref()
-        .map(|value| parse_provider(METERED_PROVIDER_ENV, value))
-        .transpose()?;
+        .map(|value| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .map(|name| parse_provider(METERED_PROVIDER_ENV, name))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
     let selected = env
         .provider
         .as_deref()
         .map(|value| parse_provider(PROVIDER_ENV, value))
         .transpose()?;
-    let metered = check_overrides(selected, allow, metered_provider)?;
+    if listed.contains(&ModelProvider::Claude) {
+        return Err(PolicyError::AllowWithSubscriptionProvider(
+            ModelProvider::Claude,
+        ));
+    }
+    let consented = check_overrides(selected, allow, &listed)?;
+    let metered = match (selected, consented.as_slice()) {
+        (Some(provider), [only]) if *only == provider => Some(provider),
+        (None, [only]) => Some(*only),
+        _ => None,
+    };
     Ok(EnvPolicy {
         subscription_default,
         subscription_default_applied,
         selected,
         metered,
+        consented,
     })
 }
 
 fn check_overrides(
     selected: Option<ModelProvider>,
     allow: bool,
-    metered_provider: Option<ModelProvider>,
-) -> Result<Option<ModelProvider>, PolicyError> {
-    let overrides = allow || metered_provider.is_some();
-    if metered_provider == Some(ModelProvider::Claude) {
-        return Err(PolicyError::AllowWithSubscriptionProvider(
-            ModelProvider::Claude,
-        ));
-    }
-    // Without CLUD_PROVIDER, both overrides are consent for that provider
-    // when the command line selects it; either one alone is incomplete.
+    listed: &[ModelProvider],
+) -> Result<Vec<ModelProvider>, PolicyError> {
+    let overrides = allow || !listed.is_empty();
+    // Without CLUD_PROVIDER, both overrides are consent for the listed
+    // providers when the command line selects them; either one alone is
+    // incomplete.
     let Some(provider) = selected else {
-        return match (allow, metered_provider) {
-            (false, None) => Ok(None),
-            (true, Some(named)) => Ok(Some(named)),
-            (false, Some(named)) => Err(PolicyError::MeteredWithoutAllow(named)),
+        return match (allow, listed.first()) {
+            (false, None) => Ok(Vec::new()),
+            (true, Some(_)) => Ok(listed.to_vec()),
+            (false, Some(named)) => Err(PolicyError::MeteredWithoutAllow(*named)),
             (true, None) => Err(PolicyError::AllowWithoutMeteredProvider),
         };
     };
+    if listed.len() > 1 {
+        return Err(PolicyError::MeteredProviderMismatch {
+            provider: provider.as_str().to_string(),
+            metered: listed
+                .iter()
+                .map(|named| named.as_str())
+                .collect::<Vec<_>>()
+                .join(","),
+        });
+    }
+    let metered_provider = listed.first().copied();
     // Claude has no metered mode clud selects; Codex's metered mode is the
     // OPENAI_API_KEY bridge, reachable only through the same two overrides.
     if provider == ModelProvider::Claude && overrides {
         return Err(PolicyError::AllowWithSubscriptionProvider(provider));
     }
     if !is_metered(provider) && !overrides {
-        return Ok(None);
+        return Ok(Vec::new());
     }
     match (allow, metered_provider) {
         (false, None) => Err(PolicyError::MeteredWithoutOverrides(provider)),
@@ -248,7 +301,7 @@ fn check_overrides(
             provider: provider.as_str().to_string(),
             metered: named.as_str().to_string(),
         }),
-        (true, Some(_)) => Ok(Some(provider)),
+        (true, Some(_)) => Ok(vec![provider]),
     }
 }
 
@@ -263,6 +316,27 @@ pub fn reconcile_cli(policy: &EnvPolicy, cli: Option<ModelProvider>) -> Result<(
         Some(env) if env != cli => Err(PolicyError::CliContradictsEnv { cli, env }),
         _ => Ok(()),
     }
+}
+
+/// The final gate on a resolved launch: whatever selected it, a metered
+/// provider is reached only with the environment's consent for exactly it.
+pub fn enforce_resolved(
+    policy: &EnvPolicy,
+    provider: ModelProvider,
+    failover_allow_metered: bool,
+) -> Result<(), PolicyError> {
+    if is_metered(provider) && !policy.allows(provider) {
+        return Err(PolicyError::ResolvedMeteredWithoutConsent(provider));
+    }
+    if failover_allow_metered && policy.consented.is_empty() {
+        return Err(PolicyError::FailoverMeteredWithoutConsent);
+    }
+    Ok(())
+}
+
+/// Whether the process environment consents to `provider`'s metered key.
+pub fn process_allows_metered(provider: ModelProvider) -> bool {
+    resolve(&EnvSnapshot::from_process()).is_ok_and(|policy| policy.allows(provider))
 }
 
 /// The warning printed (and recorded on the launch) for a metered route.

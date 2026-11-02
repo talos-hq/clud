@@ -608,7 +608,8 @@ OpenRouter, and the Codex bridge's `OPENAI_API_KEY`).
 | `CLUD_SUBSCRIPTION_PROVIDER=codex` | Codex subscription, no warning |
 | `CLUD_PROVIDER=claude\|native\|codex` | that subscription, no warning |
 | `CLUD_PROVIDER=<metered>` + `CLUD_ALLOW_METERED=1` + `CLUD_METERED_PROVIDER=<same>` | metered route, loud warning |
-| `CLUD_ALLOW_METERED=1` + `CLUD_METERED_PROVIDER=<p>`, no `CLUD_PROVIDER` | subscription default; consent applies when the CLI selects `<p>` |
+| `CLUD_ALLOW_METERED=1` + `CLUD_METERED_PROVIDER=<p>[,<q>…]`, no `CLUD_PROVIDER` | subscription default; consent applies when the CLI or a unified gateway selects a listed provider |
+| a metered provider from a CLI flag, `--model`, saved setting or credential fallback without consent | error |
 | `CLUD_PROVIDER=<metered>` missing either override | error |
 | `CLUD_ALLOW_METERED=1` without `CLUD_METERED_PROVIDER` (or the reverse) | error |
 | overrides with `CLUD_PROVIDER=claude` or `CLUD_METERED_PROVIDER=claude` | error (contradiction) |
@@ -632,11 +633,19 @@ Codex bridge never falls back from a missing ChatGPT login to
 `OPENAI_API_KEY` unless both overrides name `codex`; otherwise the error names
 `clud auth login codex`.
 
-Known gaps: the explicit CLI flags (`--openrouter`, `--deepseek`, `--kimi`,
-`--provider`, a qualified `--model`, `--unified` and failover rungs), a saved
-`providers` setting, and the DeepSeek-only credential fallback still select a
-metered provider without the env overrides; the Claude harness itself may read
-an inherited `ANTHROPIC_API_KEY`.
+The same consent gates every other way a metered provider can be reached:
+the CLI flags (`--openrouter`, `--deepseek`, `--kimi`, `--provider`), a
+qualified `--model`, a saved provider setting and the DeepSeek-only credential
+fallback all resolve first and are then refused (exit 2) unless the consent
+names that provider. `--failover-allow-metered` additionally needs the
+environment consent; a unified gateway admits a metered key only for a
+consented provider; `clud serve --openrouter` refuses without consent. For a
+unified session, `CLUD_METERED_PROVIDER` may list several providers
+(`openrouter,deepseek`), which prints one warning per provider; with
+`CLUD_PROVIDER` set it must name exactly that provider.
+
+What clud cannot control: the Claude harness itself may use an inherited
+`ANTHROPIC_API_KEY`, and the native Codex CLI may use its own API-key login.
 
 ## Tests
 
