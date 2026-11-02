@@ -28,6 +28,11 @@ const SEAL_WAIT: Duration = Duration::from_secs(30);
 #[serde(rename_all = "snake_case")]
 pub enum InjectionState {
     Queued,
+    /// Claimed by one delivery attempt (#2523): the claim re-checks
+    /// supersession in the same record mutation, so a directive replaced
+    /// before this point is never submitted. Once claimed, a later directive
+    /// only marks `superseded_by_seq`; the turn still starts and settles it.
+    Delivering,
     Delivered,
     Failed,
     /// Terminal: a later directive replaced this one before it reached the
@@ -40,6 +45,7 @@ impl InjectionState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Queued => "queued",
+            Self::Delivering => "delivering",
             Self::Delivered => "delivered",
             Self::Failed => "failed",
             Self::Superseded => "superseded",
@@ -101,14 +107,32 @@ pub struct ApiInjectionRecord {
     pub superseded_by_seq: Option<u64>,
 }
 
-/// The session's current directive: the newest directive nobody superseded.
+/// The session's current directive: the newest live directive (queued,
+/// delivering or delivered) whose replacement, if any, is not itself live.
+/// A `failed` or `superseded` directive is never in force, and a failed
+/// replacement does not retire the directive it tried to replace (#2523).
 /// Legacy records (no supersession marks) still resolve to their newest one.
 pub fn current_directive(record: &ApiSessionRecord) -> Option<&ApiInjectionRecord> {
+    let live = |entry: &ApiInjectionRecord| {
+        entry.kind == InjectionKind::Directive
+            && matches!(
+                entry.state,
+                InjectionState::Queued | InjectionState::Delivering | InjectionState::Delivered
+            )
+    };
+    let replaced_by_live = |entry: &ApiInjectionRecord| {
+        entry.superseded_by_seq.is_some_and(|by| {
+            record
+                .injections
+                .iter()
+                .any(|other| other.seq == by && live(other))
+        })
+    };
     record
         .injections
         .iter()
         .rev()
-        .find(|entry| entry.kind == InjectionKind::Directive && entry.superseded_by_seq.is_none())
+        .find(|entry| live(entry) && !replaced_by_live(entry))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +166,7 @@ pub enum InjectError {
     Sealed,
     /// The session's harness cannot take daemon turns; carries its name.
     HarnessNotSupported(String),
-    /// `client_msg_id` reused with a different message.
+    /// `client_msg_id` reused with a different message or kind.
     Conflict,
     Invalid(&'static str),
     Store(String),
@@ -223,13 +247,64 @@ impl ApiSessionStore {
         for entry in record.injections.iter().filter(|entry| {
             entry.state == InjectionState::Superseded && entry.superseded_by_seq == Some(seq)
         }) {
-            let _ = self.append_event(
+            let written = self.append_event(
                 session_id,
                 None,
                 "injection_superseded".to_string(),
                 serde_json::json!({"seq": entry.seq, "superseded_by_seq": seq}),
             );
+            if let Err(error) = written {
+                self.note_unannounced(session_id, entry.seq, &error);
+            }
         }
+    }
+
+    /// The event log could not take `injection_superseded`: say so on the
+    /// entry itself, so the replacement is still visible on the record.
+    fn note_unannounced(&self, session_id: &str, seq: u64, error: &ApiSessionStoreError) {
+        let _ = self.mutate(session_id, |record| {
+            if let Some(entry) = record.injections.iter_mut().find(|entry| entry.seq == seq) {
+                entry.error = Some(format!("injection_superseded event not written: {error}"));
+            }
+            Ok(())
+        });
+    }
+
+    /// Claim a queued injection for one delivery attempt (#2523). The check
+    /// and the transition share one record mutation, so an entry superseded
+    /// (or claimed by another drain) after the caller read it is refused.
+    /// Returns the claimed entry, or `None` when it is no longer deliverable.
+    pub fn claim_injection(
+        &self,
+        session_id: &str,
+        seq: u64,
+    ) -> Result<Option<ApiInjectionRecord>, InjectError> {
+        Ok(self.mutate(session_id, |record| {
+            Ok(record
+                .injections
+                .iter_mut()
+                .find(|entry| entry.seq == seq)
+                .and_then(|entry| claim_in(entry).then(|| entry.clone())))
+        })?)
+    }
+
+    /// Return a claimed entry to the queue when no turn was started (another
+    /// turn holds the session). A directive replaced while it was claimed
+    /// becomes `superseded` instead, since it never reached the agent.
+    fn release_claim(&self, session_id: &str, seq: u64) -> Result<ApiInjectionRecord, InjectError> {
+        Ok(self.mutate(session_id, |record| {
+            let Some(entry) = record.injections.iter_mut().find(|entry| entry.seq == seq) else {
+                return Err(ApiSessionStoreError::NotFound(format!("injection {seq}")));
+            };
+            if entry.state == InjectionState::Delivering {
+                entry.state = if entry.superseded_by_seq.is_some() {
+                    InjectionState::Superseded
+                } else {
+                    InjectionState::Queued
+                };
+            }
+            Ok(entry.clone())
+        })?)
     }
 
     /// Seal one injection as delivered (with its turn) or failed.
@@ -243,33 +318,56 @@ impl ApiSessionStore {
             let Some(entry) = record.injections.iter_mut().find(|entry| entry.seq == seq) else {
                 return Err(ApiSessionStoreError::NotFound(format!("injection {seq}")));
             };
-            if entry.state == InjectionState::Queued {
-                match &settled {
-                    Ok(turn_id) => {
-                        entry.state = InjectionState::Delivered;
-                        entry.turn_id = Some(turn_id.clone());
-                        entry.delivered_at_ms = Some(unix_millis_now());
-                    }
-                    Err(error) => {
-                        entry.state = InjectionState::Failed;
-                        entry.error = Some(error.clone());
-                    }
-                }
-            }
+            settle_in(entry, &settled);
             Ok(entry.clone())
         })?;
-        let kind = match entry.state {
-            InjectionState::Delivered => "injection_delivered",
-            InjectionState::Superseded => "injection_superseded",
+        let kind = match (entry.state, entry.turn_id.is_some()) {
+            (InjectionState::Delivered, _) | (InjectionState::Superseded, true) => {
+                "injection_delivered"
+            }
+            (InjectionState::Superseded, false) => "injection_superseded",
             _ => "injection_failed",
         };
         let _ = self.append_event(
             session_id,
             entry.turn_id.clone(),
             kind.to_string(),
-            serde_json::json!({"seq": entry.seq, "error": entry.error}),
+            serde_json::json!({"seq": entry.seq, "error": entry.error,
+                "superseded_by_seq": entry.superseded_by_seq}),
         );
         Ok(entry)
+    }
+}
+
+/// Pure claim check behind [`ApiSessionStore::claim_injection`]: only a
+/// `queued` entry nobody replaced may move to `delivering`.
+pub(super) fn claim_in(entry: &mut ApiInjectionRecord) -> bool {
+    let claimable = entry.state == InjectionState::Queued && entry.superseded_by_seq.is_none();
+    if claimable {
+        entry.state = InjectionState::Delivering;
+    }
+    claimable
+}
+
+/// Pure settle transition. A started turn is always recorded (`turn_id`,
+/// `delivered_at_ms`), even on an entry already marked superseded, so the
+/// record shows both facts; `superseded_by_seq` is never cleared (#2523).
+fn settle_in(entry: &mut ApiInjectionRecord, settled: &Result<String, String>) {
+    match (entry.state, settled) {
+        (InjectionState::Queued | InjectionState::Delivering, Ok(turn_id)) => {
+            entry.state = InjectionState::Delivered;
+            entry.turn_id = Some(turn_id.clone());
+            entry.delivered_at_ms = Some(unix_millis_now());
+        }
+        (InjectionState::Superseded, Ok(turn_id)) if entry.turn_id.is_none() => {
+            entry.turn_id = Some(turn_id.clone());
+            entry.delivered_at_ms = Some(unix_millis_now());
+        }
+        (InjectionState::Queued | InjectionState::Delivering, Err(error)) => {
+            entry.state = InjectionState::Failed;
+            entry.error = Some(error.clone());
+        }
+        _ => {}
     }
 }
 
@@ -419,6 +517,10 @@ impl ApiSessionLifecycle {
         replace: bool,
     ) -> Result<ApiInjectionRecord, InjectError> {
         let store = self.store();
+        // Claim-then-submit: the lock covers only the claim, never the turn.
+        let Some(entry) = store.claim_injection(session_id, entry.seq)? else {
+            return Ok(current_entry(&store.get(session_id)?, entry.seq));
+        };
         let record = store.get(session_id)?;
         let plan = match build(&record, entry.message.clone()) {
             Ok(plan) => plan,
@@ -431,7 +533,7 @@ impl ApiSessionLifecycle {
                 Ok(turn_id)
             }
             // Someone else's turn is running; its drain delivers this one.
-            Ok(_) => return Ok(current_entry(&store.get(session_id)?, entry.seq)),
+            Ok(_) => return store.release_claim(session_id, entry.seq),
             Err(LifecycleError::Terminated) => Err("session terminated".to_string()),
             Err(error) => Err(format!("{error:?}")),
         };
@@ -520,7 +622,7 @@ pub(super) fn handle_http(
             "harness_not_supported",
             &format!("harness '{harness}' cannot take injected turns; supported: claude, codex"),
         ),
-        Err(InjectError::Conflict) => reply(request, 409, "injection_conflict", "client_msg_id was reused with a different message"),
+        Err(InjectError::Conflict) => reply(request, 409, "injection_conflict", "client_msg_id was reused with a different message or kind"),
         Err(InjectError::Invalid(message)) => reply(request, 400, "invalid_request", message),
         Err(InjectError::Store(message)) => reply(request, 500, "internal_error", &message),
     }
@@ -827,5 +929,143 @@ mod tests {
         assert_eq!(stored.injections[0].state, InjectionState::Queued);
         assert_eq!(stored.injections[0].superseded_by_seq, None);
         assert_eq!(next_queued(&stored).unwrap().client_msg_id, "n-1");
+    }
+
+    fn must_not_build(_: &ApiSessionRecord, message: String) -> Result<LaunchPlan, String> {
+        panic!("a superseded directive reached plan building: {message}");
+    }
+
+    #[test]
+    fn directive_superseded_between_read_and_claim_is_not_submitted() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        let lifecycle = ApiSessionLifecycle::new(store.clone());
+        // The drain's read: d-1 is the oldest queued entry.
+        store
+            .record_injection(&record.id, &request("d-1", "use v1"))
+            .unwrap();
+        let read = next_queued(&store.get(&record.id).unwrap())
+            .cloned()
+            .unwrap();
+        assert_eq!(read.state, InjectionState::Queued);
+        // The interleaved request replaces it before the drain claims.
+        store
+            .record_injection(&record.id, &request("d-2", "use v2"))
+            .unwrap();
+        // The drain proceeds with its stale copy; the claim refuses it.
+        let after = lifecycle
+            .deliver(&record.id, &read, must_not_build, false)
+            .unwrap();
+        assert_eq!(after.state, InjectionState::Superseded);
+        assert_eq!(after.superseded_by_seq, Some(2));
+        assert_eq!(after.turn_id, None);
+        // A stale-but-still-queued copy (mark without state change) is refused too.
+        let mut entry = read.clone();
+        entry.superseded_by_seq = Some(2);
+        assert!(!claim_in(&mut entry));
+        assert_eq!(entry.state, InjectionState::Queued);
+    }
+
+    #[test]
+    fn claim_is_exclusive_between_two_drains() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store
+            .record_injection(&record.id, &request("d-1", "use v1"))
+            .unwrap();
+        let first = store.claim_injection(&record.id, 1).unwrap();
+        assert_eq!(first.unwrap().state, InjectionState::Delivering);
+        assert_eq!(store.claim_injection(&record.id, 1).unwrap(), None);
+    }
+
+    #[test]
+    fn released_claim_of_a_replaced_directive_becomes_superseded() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store
+            .record_injection(&record.id, &request("d-1", "use v1"))
+            .unwrap();
+        store.claim_injection(&record.id, 1).unwrap().unwrap();
+        store
+            .record_injection(&record.id, &request("d-2", "use v2"))
+            .unwrap();
+        let released = store.release_claim(&record.id, 1).unwrap();
+        assert_eq!(released.state, InjectionState::Superseded);
+        assert_eq!(released.superseded_by_seq, Some(2));
+    }
+
+    #[test]
+    fn delivered_then_superseded_directive_keeps_turn_and_mark() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store
+            .record_injection(&record.id, &request("d-1", "use v1"))
+            .unwrap();
+        store.claim_injection(&record.id, 1).unwrap().unwrap();
+        // Replaced after the claim, while its turn is being submitted.
+        store
+            .record_injection(&record.id, &request("d-2", "use v2"))
+            .unwrap();
+        let settled = store
+            .settle_injection(&record.id, 1, Ok("turn-7".to_string()))
+            .unwrap();
+        assert_eq!(settled.state, InjectionState::Delivered);
+        assert_eq!(settled.turn_id.as_deref(), Some("turn-7"));
+        assert_eq!(settled.superseded_by_seq, Some(2));
+        assert!(settled.delivered_at_ms.is_some());
+        // Even a superseded-state entry keeps a turn that really started.
+        let late = store
+            .settle_injection(&record.id, 2, Ok("turn-8".to_string()))
+            .unwrap();
+        assert_eq!(late.turn_id.as_deref(), Some("turn-8"));
+        let mut entry = store.get(&record.id).unwrap().injections[0].clone();
+        entry.state = InjectionState::Superseded;
+        entry.turn_id = None;
+        settle_in(&mut entry, &Ok("turn-9".to_string()));
+        assert_eq!(
+            (
+                entry.state,
+                entry.turn_id.as_deref(),
+                entry.superseded_by_seq
+            ),
+            (InjectionState::Superseded, Some("turn-9"), Some(2))
+        );
+    }
+
+    #[test]
+    fn current_directive_skips_failed_and_returns_the_live_one() {
+        let temp = TempDir::new().unwrap();
+        let (_, mut record) = session(&temp, None);
+        record_injection_in(&mut record, &request("d-1", "use v1")).unwrap();
+        record.injections[0].state = InjectionState::Delivered;
+        record_injection_in(&mut record, &request("d-2", "use v2")).unwrap();
+        record.injections[1].state = InjectionState::Failed;
+        // d-2 never reached the agent, so d-1 is still the one in force.
+        assert_eq!(current_directive(&record).unwrap().seq, 1);
+        // A queued predecessor replaced by a failed one: nothing in force.
+        let (_, mut record) = session(&temp, None);
+        record_injection_in(&mut record, &request("d-1", "use v1")).unwrap();
+        record_injection_in(&mut record, &request("d-2", "use v2")).unwrap();
+        assert_eq!(record.injections[0].state, InjectionState::Superseded);
+        record.injections[1].state = InjectionState::Failed;
+        assert_eq!(current_directive(&record), None);
+    }
+
+    #[test]
+    fn conflict_message_names_message_and_kind() {
+        let source = include_str!("api_session_inject.rs");
+        let needle = concat!("reused with a different message", " or kind\"");
+        assert!(source.contains(needle));
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store
+            .record_injection(&record.id, &request("m1", "hi"))
+            .unwrap();
+        let mut note = request("m1", "hi");
+        note.kind = InjectionKind::Note;
+        assert_eq!(
+            store.record_injection(&record.id, &note),
+            Err(InjectError::Conflict)
+        );
     }
 }

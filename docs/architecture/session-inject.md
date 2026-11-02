@@ -61,6 +61,7 @@ attempted. The result is always `{accepted, state, seq}`:
 | state | meaning |
 |---|---|
 | `queued` | recorded; waits for the running turn to seal |
+| `delivering` | claimed by one delivery attempt; the claim re-checks supersession in the same record mutation, so a directive replaced before the claim is never submitted (#2523) |
 | `delivered` | a turn carrying the message was started; `turn_id` names it |
 | `failed` | delivery was attempted and could not start a turn; `error` says why (it is never left queued forever without a reason) |
 | `superseded` | a `directive` replaced by a newer directive while still `queued`; it is never delivered and `superseded_by_seq` names the replacement (#2523) |
@@ -69,7 +70,7 @@ attempted. The result is always `{accepted, state, seq}`:
 * Unsupported harness: rejected, `422 harness_not_supported`, with the harness named.
 * Idempotent on `client_msg_id`. A repeat with the same id and message
   returns the original `seq`/`state` with `duplicate: true`, and is never
-  delivered twice. The same id with a different message is `409
+  delivered twice. The same id with a different message or kind is `409
   injection_conflict`. Delivery itself submits the turn under the
   idempotency key `inject-<seq>`, so two racing deliverers (the inject
   call and the end-of-turn drain) start at most one turn.
@@ -102,7 +103,10 @@ mutation that adds its replacement, so the drain (which only picks `queued`
 entries) can never hand the agent a directive the operator already
 replaced; an `injection_superseded` event records the replacement, so
 nothing is dropped silently (section 3). A directive already `delivered`
-keeps its state and only gains `superseded_by_seq`. Notes are never
+(or `delivering`, i.e. claimed) keeps its state and only gains
+`superseded_by_seq`; once its turn starts it settles `delivered` with both
+`turn_id` and `superseded_by_seq`. A `failed` directive is never current,
+and a failed replacement does not retire the directive it tried to replace. Notes are never
 superseded and are delivered in `seq` order.
 
 ## 5. Surfaces
