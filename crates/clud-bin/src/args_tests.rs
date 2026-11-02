@@ -478,11 +478,26 @@ fn doctor_is_a_dispatched_subcommand() {
     let args = parse(&["clud", "doctor"]);
     assert!(matches!(
         args.command,
-        Some(Command::Doctor { json: false })
+        Some(Command::Doctor {
+            json: false,
+            fix: false
+        })
     ));
     assert!(args.passthrough.is_empty());
     let args = parse(&["clud", "doctor", "--json"]);
-    assert!(matches!(args.command, Some(Command::Doctor { json: true })));
+    assert!(matches!(
+        args.command,
+        Some(Command::Doctor {
+            json: true,
+            fix: false
+        })
+    ));
+    assert!(args.passthrough.is_empty());
+    let args = parse(&["clud", "doctor", "--fix"]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Doctor { fix: true, .. })
+    ));
     assert!(args.passthrough.is_empty());
 }
 
