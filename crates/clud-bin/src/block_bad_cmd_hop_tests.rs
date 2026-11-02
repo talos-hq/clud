@@ -77,11 +77,11 @@ fn two_files_get_independent_counts() {
     let b = "/w/b.py".to_string();
     let mut state: Option<State> = None;
     for _ in 0..LIMIT {
-        let (verdict, next) = decide(state.as_ref(), &[a.clone()], 1_000, LIMIT);
+        let (verdict, next) = decide(state.as_ref(), std::slice::from_ref(&a), 1_000, LIMIT);
         assert_eq!(verdict, Verdict::Allow);
         state = Some(next);
     }
-    let (verdict, _) = decide(state.as_ref(), &[b], 1_000, LIMIT);
+    let (verdict, _) = decide(state.as_ref(), std::slice::from_ref(&b), 1_000, LIMIT);
     assert_eq!(verdict, Verdict::Allow);
 }
 
@@ -93,7 +93,12 @@ fn the_state_map_is_bounded() {
         .collect();
     let mut current = Some(state);
     for (index, target) in targets.iter().enumerate() {
-        let (_, next) = decide(current.as_ref(), &[target.clone()], 1_000 + index as u64, LIMIT);
+        let (_, next) = decide(
+            current.as_ref(),
+            std::slice::from_ref(target),
+            1_000 + index as u64,
+            LIMIT,
+        );
         current = Some(next);
     }
     let state = current.unwrap_or_default();
@@ -109,7 +114,10 @@ fn only_read_verbs_contribute_targets() {
         hop_targets("sed -n 140,413p crates/a.rs"),
         vec!["crates/a.rs"]
     );
-    assert_eq!(hop_targets("cat src/main.py | head -40"), vec!["src/main.py"]);
+    assert_eq!(
+        hop_targets("cat src/main.py | head -40"),
+        vec!["src/main.py"]
+    );
     assert_eq!(hop_targets("nl -ba README.md"), vec!["README.md"]);
     assert!(hop_targets("git add crates/a.rs").is_empty());
     assert!(hop_targets("cargo build -p clud").is_empty());
