@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests import process
+from tests.metered_consent import consent_for
 
 pytestmark = pytest.mark.integration
 
@@ -23,7 +24,7 @@ def test_serve_without_claude_credentials_never_launches_a_harness(
     env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
     result = process.run(
         [str(clud_binary), "serve", "--claude", *extra],
-        env=env,
+        env=consent_for(env, extra),
         capture_output=True,
         text=True,
         timeout=15,
@@ -49,7 +50,7 @@ def test_serve_missing_openrouter_credential_is_actionable(
     env.pop("OPENROUTER_API_KEY", None)
     result = process.run(
         [str(clud_binary), "serve", "--claude", "--openrouter"],
-        env=env,
+        env=consent_for(env, ["--openrouter"]),
         capture_output=True,
         text=True,
         timeout=15,
@@ -216,7 +217,7 @@ def test_serve_http_routes_streams_and_isolates_credentials(
     )
     child = process.Popen(
         [str(clud_binary), "serve", "--claude", "--openrouter", "--port", "0"],
-        env=env,
+        env=consent_for(env, ["--openrouter"]),
         stdout=process.PIPE,
         stderr=process.PIPE,
         text=True,

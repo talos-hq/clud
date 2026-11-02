@@ -274,3 +274,61 @@ fn missing_codex_subscription_never_falls_back_to_openai_api_key() {
     assert!(!fx.marker.exists(), "a child spawned:\n{output}");
     assert!(!output.contains("sk-test-metered-key"), "{output}");
 }
+
+#[test]
+fn cli_flags_reaching_a_metered_provider_need_consent() {
+    let routes: &[&[&str]] = &[
+        &["--openrouter"],
+        &["--deepseek"],
+        &["--kimi"],
+        &["--provider", "openrouter"],
+        &["--failover-allow-metered"],
+    ];
+    for route in routes {
+        let fx = fixture();
+        let mut args: Vec<String> = route.iter().map(|arg| (*arg).to_string()).collect();
+        args.extend(launch_args(&fx));
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (exit, output) = run(&fx, &[], &args);
+        assert_refused_without_side_effects(&fx, exit, &output, "CLUD_ALLOW_METERED=1");
+    }
+}
+
+#[test]
+fn a_saved_metered_provider_needs_consent() {
+    let fx = fixture();
+    clud::clud_settings::save_global_launch_preferences_at(
+        &fx.home,
+        Some(clud::backend::ModelProvider::OpenRouter),
+        None,
+        clud::launch_setup::LaunchSetupScope::Global,
+    )
+    .expect("save provider");
+    let args = launch_args(&fx);
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (exit, output) = run(&fx, &[], &args);
+    assert_eq!(exit, 2, "{output}");
+    assert!(output.contains("is metered"), "{output}");
+    assert!(
+        !output.contains("\"program\":"),
+        "a child spawned:\n{output}"
+    );
+}
+
+#[test]
+fn serve_openrouter_needs_consent() {
+    let fx = fixture();
+    let (exit, output) = run(
+        &fx,
+        &[(
+            "CLUD_SERVE_CLIENT_TOKEN",
+            "client-token-0123456789abcdef0123456789",
+        )],
+        &["serve", "--claude", "--openrouter", "--port", "0"],
+    );
+    assert_ne!(exit, 0, "{output}");
+    assert!(
+        output.contains("CLUD_METERED_PROVIDER=openrouter"),
+        "{output}"
+    );
+}

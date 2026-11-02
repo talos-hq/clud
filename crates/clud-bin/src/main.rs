@@ -823,6 +823,14 @@ fn resolve_launch(args: &mut args::Args) -> LaunchResolution {
         deepseek_credential_fallback,
         &env_policy,
     );
+    if let Err(error) = clud::metered_policy::enforce_resolved(
+        &env_policy,
+        launch_target.model_provider,
+        args.failover_allow_metered,
+    ) {
+        eprintln!("[clud] error: {error}");
+        std::process::exit(2);
+    }
     announce_metered_route(&env_policy, launch_target);
     if launch_target.model_provider == backend::ModelProvider::OpenRouter {
         if let Some(error) = preferences_error {
@@ -952,7 +960,20 @@ fn announce_metered_route(
     policy: &clud::metered_policy::EnvPolicy,
     launch_target: backend::ResolvedLaunchTarget,
 ) {
-    if policy.metered != Some(launch_target.model_provider) {
+    let provider = launch_target.model_provider;
+    if launch_target.routing_mode == backend::RoutingMode::Unified && !policy.consented.is_empty() {
+        // A unified gateway may route any consented metered provider.
+        let warning = policy
+            .consented
+            .iter()
+            .map(|consented| clud::metered_policy::metered_warning(*consented))
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("{warning}");
+        launch_log::set_metered_warning(warning);
+        return;
+    }
+    if !policy.allows(provider) {
         return;
     }
     // Native Codex bills the ChatGPT login; only the Claude-harness bridge
@@ -962,10 +983,9 @@ fn announce_metered_route(
     {
         return;
     }
-    if let Some(warning) = policy.warning() {
-        eprintln!("{warning}");
-        launch_log::set_metered_warning(warning);
-    }
+    let warning = clud::metered_policy::metered_warning(provider);
+    eprintln!("{warning}");
+    launch_log::set_metered_warning(warning);
 }
 
 fn resolve_launch_target<'a>(

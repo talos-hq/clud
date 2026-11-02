@@ -342,6 +342,11 @@ impl ForegroundRuntime {
                 if fixture_keys {
                     return Some(format!("clud-test-{}-key", provider.as_str()));
                 }
+                // Subscription-first: a metered key joins the gateway only
+                // with the operator's two-override consent for it.
+                if !crate::metered_policy::process_allows_metered(provider) {
+                    return None;
+                }
                 // Integration runs probe Kimi only when a Kimi fake exists, so
                 // a stored key can never reach the real Moonshot endpoint from
                 // a test.
