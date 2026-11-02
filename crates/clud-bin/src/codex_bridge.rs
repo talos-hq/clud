@@ -2239,7 +2239,11 @@ fn sessionless_conversation_key(
         }
     };
     let digest = <sha2::Sha256 as sha2::Digest>::digest(identity.as_bytes());
-    let short: String = digest.iter().take(8).map(|byte| format!("{byte:02x}")).collect();
+    let short: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
     conversation_key_from_headers(None, agent_id, &format!("{fallback_root}-p{short}"))
 }
 
@@ -5808,10 +5812,11 @@ mod tests {
     /// prefixes and a client-supplied key stay distinct.
     #[test]
     fn sessionless_requests_sharing_a_prefix_share_one_cache_key() {
-        let turn = |system: &str, messages: serde_json::Value| {
-            serde_json::json!({"model": "m", "system": system, "tools": [{"name": "Bash"}], "messages": messages})
-        };
-        let first = turn("sys", serde_json::json!([{"role": "user", "content": "u1"}]));
+        let turn = |system: &str, messages: serde_json::Value| serde_json::json!({"model": "m", "system": system, "tools": [{"name": "Bash"}], "messages": messages});
+        let first = turn(
+            "sys",
+            serde_json::json!([{"role": "user", "content": "u1"}]),
+        );
         let later = turn(
             "sys",
             serde_json::json!([
@@ -5820,8 +5825,12 @@ mod tests {
                 {"role": "user", "content": "u2"}
             ]),
         );
-        let other = turn("other system", serde_json::json!([{"role": "user", "content": "u1"}]));
-        let key = |request: &serde_json::Value| sessionless_conversation_key(request, None, "root").id;
+        let other = turn(
+            "other system",
+            serde_json::json!([{"role": "user", "content": "u1"}]),
+        );
+        let key =
+            |request: &serde_json::Value| sessionless_conversation_key(request, None, "root").id;
 
         assert_eq!(key(&first), key(&later));
         assert_ne!(key(&first), key(&other));
