@@ -169,6 +169,16 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         quiet_ok: true,
     },
     BundledTool {
+        rel_path: "notify/watch.py",
+        body: include_str!("../assets/tools/notify/watch.py"),
+        // Session/PR event watcher with a durable JSONL log; the daemon and
+        // GitHub own the watched state, so a kill loses no work.
+        kill_semantics: KillSemantics::Resumable,
+        command_timeout: Duration::from_secs(24 * 60 * 60),
+        progress_timeout: None,
+        quiet_ok: true,
+    },
+    BundledTool {
         rel_path: "github/is_meta_issue.py",
         body: include_str!("../assets/tools/github/is_meta_issue.py"),
         // Read-only GitHub query (#1404): classifies an issue as meta or
@@ -743,6 +753,18 @@ mod tests {
             .iter()
             .find(|t| t.rel_path == "github/run_watch.py")
             .expect("BUNDLED_TOOLS must include github/run_watch.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
+        assert_eq!(tool.kill_semantics, KillSemantics::Resumable);
+    }
+
+    /// The notify/watch.py session+PR event watcher ships in the bundle.
+    #[test]
+    fn bundled_includes_notify_watch() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|t| t.rel_path == "notify/watch.py")
+            .expect("BUNDLED_TOOLS must include notify/watch.py");
         assert!(tool.body.contains("managed-by: clud"));
         assert!(!tool.body.contains("import subprocess"));
         assert_eq!(tool.kill_semantics, KillSemantics::Resumable);
