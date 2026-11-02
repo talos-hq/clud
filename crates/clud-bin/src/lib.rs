@@ -106,6 +106,7 @@ pub mod loop_config;
 pub mod loop_plan_mode;
 pub mod loop_restart;
 pub mod loop_spec;
+pub mod metered_policy;
 pub mod multicall;
 pub mod openai_ingress;
 pub mod openrouter_catalog;

@@ -292,6 +292,7 @@ CLI surface and backend resolution:
 - `video.rs` - `clud video`: browser-use/video-use as a session-scoped Claude
   plugin, never a global skill (#1851). See
   [`launch-targets.md`](../../../docs/architecture/launch-targets.md#clud-video-video-use-as-a-session-scoped-plugin-1851).
+- `metered_policy.rs` - subscription-first env policy (`CLUD_SUBSCRIPTION_PROVIDER`, `CLUD_PROVIDER`, `CLUD_ALLOW_METERED`, `CLUD_METERED_PROVIDER`): metered routes need both overrides and print a recorded warning; see [provider-selection.md](../../../docs/architecture/provider-selection.md#metered-access-needs-two-overrides).
 - `provider_catalog.rs` - the single registry mapping stable clud model IDs,
   gateway discovery IDs, provider wire IDs, compatibility aliases, and
   independent effort/context capability metadata.

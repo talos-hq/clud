@@ -22,7 +22,7 @@ impl std::fmt::Display for CodexBridgeCredentialError {
 \n\
 Choose one:\n\
   ChatGPT subscription: clud auth login codex --acknowledge-experimental\n\
-  OpenAI API (metered): set OPENAI_API_KEY\n\
+  OpenAI API (metered, pay-per-token): set OPENAI_API_KEY with CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=codex\n\
 \n\
 A native Codex CLI login can be imported after confirmation in an interactive bridge launch.\n\
 To use that login now: clud --codex --harness default",
@@ -97,6 +97,31 @@ impl std::fmt::Debug for ApiKeyCredentials {
 impl CredentialSource for ApiKeyCredentials {
     fn resolve(&self) -> Result<UpstreamTarget, UpstreamError> {
         Ok(self.target.clone())
+    }
+}
+
+/// The metered `OPENAI_API_KEY` fallback, refused unless the operator set
+/// both metered overrides for Codex. A missing subscription never silently
+/// becomes pay-per-token billing.
+pub(super) const METERED_API_KEY_REFUSED: &str =
+    "no clud ChatGPT subscription login; OPENAI_API_KEY is metered and needs \
+     CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=codex";
+
+fn metered_api_key_from_env() -> Result<ApiKeyCredentials, UpstreamError> {
+    metered_api_key_gate(
+        crate::metered_policy::process_allows_codex_api_key(),
+        ApiKeyCredentials::from_env,
+    )
+}
+
+pub(super) fn metered_api_key_gate(
+    allowed: bool,
+    api_key: impl FnOnce() -> Result<ApiKeyCredentials, UpstreamError>,
+) -> Result<ApiKeyCredentials, UpstreamError> {
+    if allowed {
+        api_key()
+    } else {
+        Err(UpstreamError::Credentials(METERED_API_KEY_REFUSED))
     }
 }
 
@@ -431,10 +456,7 @@ impl ResolvedCredentials {
         let Some(home) = crate::home::user_home() else {
             return Err(CodexBridgeCredentialError::Unreadable);
         };
-        Self::preflight_with(
-            codex_auth::load_fresh_at(&home),
-            ApiKeyCredentials::from_env,
-        )
+        Self::preflight_with(codex_auth::load_fresh_at(&home), metered_api_key_from_env)
     }
 
     fn preflight_with(
@@ -468,7 +490,7 @@ impl ResolvedCredentials {
     pub fn resolve_default() -> Result<Self, UpstreamError> {
         Self::resolve_with(
             CludSubscriptionCredentials::from_home(),
-            ApiKeyCredentials::from_env,
+            metered_api_key_from_env,
         )
     }
 
@@ -517,10 +539,30 @@ mod preflight_tests {
     use super::*;
 
     #[test]
+    fn missing_subscription_never_falls_back_to_a_metered_api_key_without_consent() {
+        let refused = metered_api_key_gate(false, || unreachable!("key must not be read"))
+            .expect_err("no consent");
+        assert!(matches!(
+            refused,
+            UpstreamError::Credentials(METERED_API_KEY_REFUSED)
+        ));
+        assert!(METERED_API_KEY_REFUSED.contains("CLUD_ALLOW_METERED=1"));
+        assert!(METERED_API_KEY_REFUSED.contains("CLUD_METERED_PROVIDER=codex"));
+        let missing = ResolvedCredentials::preflight_with(
+            Err("no clud ChatGPT subscription login".to_string()),
+            || metered_api_key_gate(false, || unreachable!("key must not be read")),
+        );
+        assert_eq!(missing, Err(CodexBridgeCredentialError::Missing));
+        let allowed = metered_api_key_gate(true, || ApiKeyCredentials::new("sk-test", None));
+        assert!(allowed.is_ok());
+    }
+
+    #[test]
     fn bridge_preflight_renderer_is_actionable_and_secret_free() {
         let missing = CodexBridgeCredentialError::Missing.to_string();
         assert!(missing.contains("clud auth login codex --acknowledge-experimental"));
         assert!(missing.contains("set OPENAI_API_KEY"));
+        assert!(missing.contains("CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=codex"));
         assert!(missing.contains("clud --codex --harness default"));
         assert!(missing.contains("can be imported after confirmation"));
         assert!(!missing.contains("Bearer "));
