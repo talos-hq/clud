@@ -79,9 +79,20 @@ pub fn heartbeat_body(recorded: &[u8]) -> Option<Vec<u8>> {
         .get_mut("messages")?
         .as_array_mut()?
         .push(serde_json::json!({"role": "user", "content": HEARTBEAT_PROMPT}));
-    object.insert("max_tokens".into(), HEARTBEAT_MAX_TOKENS.into());
+    // #2553: keep `thinking` as recorded. Providers cache the message prefix
+    // under the thinking parameters, so removing them warmed an entry the
+    // next real turn never read. `max_tokens` must exceed the thinking
+    // budget for the request to be valid; a one-word reply spends little of it.
+    let budget = object
+        .get("thinking")
+        .and_then(|thinking| thinking.get("budget_tokens"))
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    object.insert(
+        "max_tokens".into(),
+        budget.saturating_add(HEARTBEAT_MAX_TOKENS).into(),
+    );
     object.insert("stream".into(), false.into());
-    object.remove("thinking");
     serde_json::to_vec(&request).ok()
 }
 
@@ -242,7 +253,10 @@ mod tests {
         assert_eq!(sent["messages"][1]["content"], HEARTBEAT_PROMPT);
         assert_eq!(sent["messages"].as_array().unwrap().len(), 2);
         assert_eq!(sent["stream"], false);
-        assert!(sent.get("thinking").is_none());
+        // #2553: thinking parameters are part of what a provider caches the
+        // message prefix under; dropping them warmed a different entry.
+        assert_eq!(sent["thinking"], recorded["thinking"]);
+        assert_eq!(sent["max_tokens"], 1000 + HEARTBEAT_MAX_TOKENS);
         assert!(heartbeat_body(b"not json").is_none());
     }
 
