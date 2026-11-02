@@ -87,6 +87,18 @@ entry has `seq`, `client_msg_id`, `message`, `from` (who injected:
 also gets `injection_queued` / `injection_delivered` / `injection_failed`
 events, so a later reader can see exactly when and how the run was steered.
 
+Since #2523 each entry also has `kind` (`directive`, the default, or
+`note`), `message_sha256` (hex sha256 of `message`, so a reader can prove
+the text was not edited) and `superseded_by_seq`. The **current directive
+set** is a single entry: the newest `directive` without `superseded_by_seq`.
+Recording a new directive marks every earlier un-superseded directive with
+the new seq; they stay in `injections[]` as history. A `note` never
+supersedes. There is no second store. Entries written before #2523 have no
+`kind`/hash and read as un-superseded directives, so the newest one is
+current until the next directive marks them. Supersession is bookkeeping,
+not cancellation: an earlier directive that is still `queued` is still
+delivered in `seq` order (nothing is silently dropped, section 3).
+
 ## 5. Surfaces
 
 * HTTP: `POST /v1/sessions/{id}/inject` with

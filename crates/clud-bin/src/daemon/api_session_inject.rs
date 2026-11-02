@@ -42,6 +42,29 @@ impl InjectionState {
     }
 }
 
+/// What an injection means for the session's goal state (#2523).
+///
+/// A `Directive` supersedes every earlier directive: the session's current
+/// directive set is the single newest directive not marked superseded (see
+/// [`current_directive`]). A `Note` is informational and never supersedes.
+/// Records written before `kind` existed deserialize as `Directive`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InjectionKind {
+    #[default]
+    Directive,
+    Note,
+}
+
+/// Hex sha256 of an injected message, recorded as provenance (#2523).
+pub fn message_sha256(message: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(message.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 /// One durable injection entry on the session record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiInjectionRecord {
@@ -62,6 +85,25 @@ pub struct ApiInjectionRecord {
     pub turn_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Absent on records written before #2523; such entries are directives.
+    #[serde(default)]
+    pub kind: InjectionKind,
+    /// Hex sha256 of `message`; `None` on records written before #2523.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_sha256: Option<String>,
+    /// Seq of the later directive that replaced this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by_seq: Option<u64>,
+}
+
+/// The session's current directive: the newest directive nobody superseded.
+/// Legacy records (no supersession marks) still resolve to their newest one.
+pub fn current_directive(record: &ApiSessionRecord) -> Option<&ApiInjectionRecord> {
+    record
+        .injections
+        .iter()
+        .rev()
+        .find(|entry| entry.kind == InjectionKind::Directive && entry.superseded_by_seq.is_none())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +113,7 @@ pub struct InjectRequest {
     pub interrupt: bool,
     pub from: Option<String>,
     pub ticket: Option<String>,
+    pub kind: InjectionKind,
 }
 
 /// The `{accepted, state, seq}` result every accepted injection gets.
@@ -221,7 +264,7 @@ pub(super) fn record_injection_in(
         .iter()
         .find(|entry| entry.client_msg_id == request.client_msg_id)
     {
-        return if existing.message == request.message {
+        return if existing.message == request.message && existing.kind == request.kind {
             Ok((existing.clone(), true))
         } else {
             Err(InjectError::Conflict)
@@ -231,8 +274,16 @@ pub(super) fn record_injection_in(
         return Err(InjectError::Sealed);
     }
     check_harness(record)?;
+    let seq = record.injections.last().map_or(1, |last| last.seq + 1);
+    if request.kind == InjectionKind::Directive {
+        for earlier in record.injections.iter_mut() {
+            if earlier.kind == InjectionKind::Directive && earlier.superseded_by_seq.is_none() {
+                earlier.superseded_by_seq = Some(seq);
+            }
+        }
+    }
     let entry = ApiInjectionRecord {
-        seq: record.injections.last().map_or(1, |last| last.seq + 1),
+        seq,
         client_msg_id: request.client_msg_id.clone(),
         message: request.message.clone(),
         from: request.from.clone(),
@@ -243,6 +294,9 @@ pub(super) fn record_injection_in(
         delivered_at_ms: None,
         turn_id: None,
         error: None,
+        kind: request.kind,
+        message_sha256: Some(message_sha256(&request.message)),
+        superseded_by_seq: None,
     };
     record.injections.push(entry.clone());
     Ok((entry, false))
@@ -366,6 +420,8 @@ struct InjectDto {
     from: Option<String>,
     #[serde(default)]
     ticket: Option<String>,
+    #[serde(default)]
+    kind: InjectionKind,
 }
 
 /// Bound on one injected message; matches the turn endpoint's limit.
@@ -399,7 +455,7 @@ pub(super) fn handle_http(
             request,
             400,
             "invalid_request",
-            "expected message and optional client_msg_id, interrupt, from, ticket",
+            "expected message and optional client_msg_id, interrupt, from, ticket, kind (directive|note)",
         );
         return None;
     };
@@ -422,6 +478,7 @@ pub(super) fn handle_http(
         interrupt: body.interrupt,
         from: body.from,
         ticket: body.ticket,
+        kind: body.kind,
     };
     match lifecycle.inject(id, inject, super::api_session_http::turn_plan) {
         Ok(out) => respond_json(request, 202, &serde_json::to_vec(&out).unwrap_or_default()),
@@ -483,6 +540,7 @@ mod tests {
             interrupt: false,
             from: Some("operator".to_string()),
             ticket: Some("T-1".to_string()),
+            kind: InjectionKind::Directive,
         }
     }
 
@@ -606,5 +664,81 @@ mod tests {
             store.record_injection("sess-missing", &request("m", "x")),
             Err(InjectError::NotFound)
         );
+    }
+
+    #[test]
+    fn kind_defaults_to_directive_and_hash_matches_message() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store
+            .record_injection(&record.id, &request("k-1", "use v2"))
+            .unwrap();
+        let stored = store.get(&record.id).unwrap();
+        let entry = &stored.injections[0];
+        assert_eq!(entry.kind, InjectionKind::Directive);
+        assert_eq!(
+            entry.message_sha256.as_deref(),
+            Some(message_sha256("use v2").as_str())
+        );
+        assert_eq!(
+            message_sha256("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let json = serde_json::to_value(entry).unwrap();
+        assert_eq!(json["kind"], "directive");
+        let back: ApiInjectionRecord = serde_json::from_value(json).unwrap();
+        assert_eq!(&back, entry);
+    }
+
+    #[test]
+    fn second_directive_supersedes_first_and_both_stay_in_history() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store
+            .record_injection(&record.id, &request("d-1", "use v1"))
+            .unwrap();
+        store
+            .record_injection(&record.id, &request("d-2", "use v2"))
+            .unwrap();
+        let stored = store.get(&record.id).unwrap();
+        assert_eq!(stored.injections.len(), 2);
+        assert_eq!(stored.injections[0].superseded_by_seq, Some(2));
+        assert_eq!(stored.injections[1].superseded_by_seq, None);
+        assert_eq!(current_directive(&stored).unwrap().seq, 2);
+    }
+
+    #[test]
+    fn note_never_supersedes_a_directive() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store
+            .record_injection(&record.id, &request("d-1", "use v1"))
+            .unwrap();
+        let mut note = request("n-1", "fyi: CI is slow");
+        note.kind = InjectionKind::Note;
+        store.record_injection(&record.id, &note).unwrap();
+        let stored = store.get(&record.id).unwrap();
+        assert_eq!(stored.injections[0].superseded_by_seq, None);
+        assert_eq!(stored.injections[1].kind, InjectionKind::Note);
+        assert_eq!(current_directive(&stored).unwrap().seq, 1);
+    }
+
+    #[test]
+    fn legacy_record_without_kind_or_hash_deserializes_as_directive() {
+        let legacy = serde_json::json!({
+            "seq": 1, "client_msg_id": "old", "message": "use v1",
+            "interrupt": false, "state": "delivered", "submitted_at_ms": 5
+        });
+        let entry: ApiInjectionRecord = serde_json::from_value(legacy).unwrap();
+        assert_eq!(entry.kind, InjectionKind::Directive);
+        assert_eq!(entry.message_sha256, None);
+        assert_eq!(entry.superseded_by_seq, None);
+        let temp = TempDir::new().unwrap();
+        let (_, mut record) = session(&temp, None);
+        record.injections.push(entry);
+        assert_eq!(current_directive(&record).unwrap().seq, 1);
+        record_injection_in(&mut record, &request("new", "use v2")).unwrap();
+        assert_eq!(record.injections[0].superseded_by_seq, Some(2));
+        assert_eq!(current_directive(&record).unwrap().seq, 2);
     }
 }

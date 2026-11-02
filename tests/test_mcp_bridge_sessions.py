@@ -433,6 +433,27 @@ def test_session_inject_defaults_a_stable_client_msg_id_so_retries_dedupe(bridge
     assert again["duplicate"] is True
 
 
+def test_session_inject_defaults_kind_to_directive(bridge, wired):
+    _run(bridge.session_inject("sess-x", "use v2", _FakeCtx()))
+    assert _inject_posts(wired)[0][3]["kind"] == "directive"
+
+
+def test_session_inject_passes_note_kind_through(bridge, wired):
+    _run(bridge.session_inject("sess-x", "fyi", _FakeCtx(), kind="note"))
+    assert _inject_posts(wired)[0][3]["kind"] == "note"
+
+
+def test_session_inject_rejects_an_unknown_kind_without_calling_the_daemon(bridge, wired):
+    payload = _result(_run(bridge.session_inject("sess-x", "hi", _FakeCtx(), kind="order")))
+    assert payload["accepted"] is False
+    assert "kind" in payload["error"]
+    assert not _inject_posts(wired)
+
+
+def test_session_inject_instructions_mention_the_tool(bridge):
+    assert "session_inject" in bridge.server.instructions
+
+
 def test_session_inject_passes_interrupt_through(bridge, wired):
     _run(bridge.session_inject("sess-x", "stop and do Y", _FakeCtx(), interrupt=True))
     assert _inject_posts(wired)[0][3]["interrupt"] is True
