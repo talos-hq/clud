@@ -4333,6 +4333,20 @@ fn serve_messages(
             return;
         }
     };
+    // A tool-less side call (session title, summary) arrives under the main
+    // session header. It gets a one-request history store and its own cache
+    // key, so it neither splices its transcript into the main conversation
+    // nor moves the main cache prefix.
+    let side_store;
+    let side_key;
+    let (conversations, conversation_key) = match side_call_key(&redacted, conversation_key) {
+        Some(key) => {
+            side_store = ConversationStore::new(config.history_limits);
+            side_key = key;
+            (&side_store, &side_key)
+        }
+        None => (conversations, conversation_key),
+    };
     let pipeline = match build_pipeline(config, log, conversation_key, redaction) {
         Ok(pipeline) => pipeline,
         Err(error) => {
@@ -4361,6 +4375,40 @@ fn serve_messages(
     } else {
         serve_messages_complete(stream, &turn);
     }
+}
+
+/// The key for a Claude Code side call, or `None` for a conversation turn.
+///
+/// Claude Code's main and subagent turns send their tool list; its side calls
+/// (session titles, summaries) send `"tools": []`, under the main session
+/// header and with no agent id. Such a call is keyed beneath the main conversation by a
+/// digest of its system prompt, so repeated side calls of one kind share a
+/// stable cache key without touching the main one.
+fn side_call_key(body: &[u8], main: &ConversationKey) -> Option<ConversationKey> {
+    let request: serde_json::Value = serde_json::from_slice(body).ok()?;
+    // Captured from Claude Code 2.1.316: the side call sends `"tools": []`,
+    // explicitly empty. A turn that omits `tools` stays a conversation turn.
+    let explicitly_tool_less = request
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(Vec::is_empty);
+    if !explicitly_tool_less {
+        return None;
+    }
+    let system = request
+        .get("system")
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(system.as_bytes());
+    let short: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Some(ConversationKey {
+        id: format!("{}-side-{short}", main.id),
+        session_prefix: main.session_prefix.clone(),
+    })
 }
 
 /// One `POST /v1/messages` turn, once its pipeline is built.
@@ -11659,6 +11707,42 @@ Connection: close
                 );
             }
         }
+    }
+
+    /// Claude Code's tool-less side calls (session titles, summaries) carry
+    /// the main session header with no agent id. They must not read or write
+    /// the main conversation's history, or the main turn is sent with the
+    /// side call's transcript spliced in and its cache prefix moves.
+    #[test]
+    fn a_tool_less_side_call_does_not_enter_the_main_history() {
+        let upstream = FakeResponses::start();
+        let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+        let session = [("X-Claude-Code-Session-Id", "claude-session-side")];
+        let side = r#"{"model":"claude-x","system":"You are naming a coding session","tools":[],"messages":[{"role":"user","content":"SIDE-CALL-TRANSCRIPT"}],"stream":false}"#;
+        let main = r#"{"model":"claude-x","system":"main agent","tools":[{"name":"Bash","description":"run","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"MAIN-TURN"}],"stream":false}"#;
+        for body in [side, main] {
+            let response = request(
+                bridge.socket_addr(),
+                &authorized_with_headers(
+                    "POST",
+                    "/v1/messages",
+                    bridge.bearer_token(),
+                    body,
+                    &session,
+                ),
+            );
+            assert_eq!(status(&response), 200, "{response}");
+        }
+        let requests = upstream.requests();
+        assert_eq!(requests.len(), 2);
+        let main_sent = captured_body(&requests[1]);
+        assert!(main_sent.contains("MAIN-TURN"), "{main_sent}");
+        assert!(!main_sent.contains("SIDE-CALL-TRANSCRIPT"), "{main_sent}");
+        let key = |request: &str| {
+            let body: serde_json::Value = serde_json::from_str(captured_body(request)).unwrap();
+            body["prompt_cache_key"].as_str().unwrap().to_string()
+        };
+        assert_ne!(key(&requests[0]), key(&requests[1]));
     }
 
     /// #2554: a standalone client without a session header used to get a new
