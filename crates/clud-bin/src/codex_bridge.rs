@@ -3082,7 +3082,13 @@ fn heartbeat_replay(
     redaction: Option<&SharedSession>,
 ) -> Option<crate::cache_heartbeat::Target> {
     let sent = redact_request(body, redaction).ok()?;
-    Some(heartbeat_target(base_url, path, &sent, headers, injected_api_key))
+    Some(heartbeat_target(
+        base_url,
+        path,
+        &sent,
+        headers,
+        injected_api_key,
+    ))
 }
 
 fn heartbeat_target(
@@ -5741,10 +5747,11 @@ mod tests {
         let session: SharedSession = std::sync::Arc::new(std::sync::Mutex::new(
             crate::secret_redaction::reversible::Session::new(vec![secret.into()]).unwrap(),
         ));
-        let body = format!(
-            r#"{{"model":"m","messages":[{{"role":"user","content":"key {secret}"}}]}}"#
-        );
-        let sent = redact_request(body.as_bytes(), Some(&session)).unwrap().into_owned();
+        let body =
+            format!(r#"{{"model":"m","messages":[{{"role":"user","content":"key {secret}"}}]}}"#);
+        let sent = redact_request(body.as_bytes(), Some(&session))
+            .unwrap()
+            .into_owned();
 
         let target = heartbeat_replay(
             "http://up.invalid",

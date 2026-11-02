@@ -2163,23 +2163,32 @@ data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"outpu
     /// with the previous request's input, or the provider re-bills it all.
     #[test]
     fn successive_turns_extend_the_previous_request_as_a_prefix() {
-        let msg = |role: &str, text: &str| {
-            json!({"type": "message", "role": role, "content": [{"type": "input_text", "text": text}]})
-        };
+        let msg = |role: &str, text: &str| json!({"type": "message", "role": role, "content": [{"type": "input_text", "text": text}]});
         let dev = msg("developer", "system prompt");
         let first = vec![dev.clone(), msg("user", "u1")];
         let (request1, stored1, _) = history_aware_input(&[], &first, &first[1..]);
         let mut history = stored1;
         history.push(msg("assistant", "a1"));
 
-        let second = vec![dev.clone(), msg("user", "u1"), msg("assistant", "a1"), msg("user", "u2")];
+        let second = vec![
+            dev.clone(),
+            msg("user", "u1"),
+            msg("assistant", "a1"),
+            msg("user", "u2"),
+        ];
         let (request2, _, _) = history_aware_input(&history, &second, &second[3..]);
 
         assert!(
             request2.starts_with(&request1),
             "turn 2 must extend turn 1 as a prefix:\n{request1:#?}\n{request2:#?}"
         );
-        assert_eq!(request2.iter().filter(|item| is_developer_item(item)).count(), 1);
+        assert_eq!(
+            request2
+                .iter()
+                .filter(|item| is_developer_item(item))
+                .count(),
+            1
+        );
     }
 
     #[test]
