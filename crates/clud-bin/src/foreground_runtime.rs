@@ -4246,7 +4246,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             settings["hooks"]["PreToolUse"][1]["hooks"][0]["command"],
-            crate::clud_hooks_compile::DISPATCHER_BINARY
+            crate::clud_hooks_compile::dispatcher_command(crate::clud_hooks_compile::PRE_TOOL_USE)
         );
         assert_eq!(
             settings["permissions"]["deny"],
