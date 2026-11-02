@@ -302,7 +302,10 @@ class Harness:
         return env
 
     def settings(
-        self, *, cmd_scan: bool = True, answers: dict[str, Any] | None = None,
+        self,
+        *,
+        cmd_scan: bool = True,
+        answers: dict[str, Any] | None = None,
         record_scheduler: bool = False,
     ) -> Path:
         """A `--settings` file: the recorder, then clud's real command guard.
@@ -339,10 +342,12 @@ class Harness:
             }
         }
         if record_scheduler:
-            settings["hooks"]["PostToolUse"] = [{
-                "matcher": "CronCreate|CronDelete|ScheduleWakeup",
-                "hooks": [{"type": "command", "command": record}],
-            }]
+            settings["hooks"]["PostToolUse"] = [
+                {
+                    "matcher": "CronCreate|CronDelete|ScheduleWakeup",
+                    "hooks": [{"type": "command", "command": record}],
+                }
+            ]
         path = self.root / "settings.json"
         path.write_text(json.dumps(settings, indent=1), encoding="utf-8")
         return path
@@ -566,14 +571,16 @@ class Harness:
             if provider == "--unified":
                 # Every upstream and the gateway's native client credential
                 # belong to this disposable test world.
-                env.update({
-                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
-                    "ANTHROPIC_API_KEY": "fixture-api-key-canary",
-                    "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": base_url,
-                    "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": base_url,
-                    "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": base_url,
-                    "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": base_url,
-                })
+                env.update(
+                    {
+                        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
+                        "ANTHROPIC_API_KEY": "fixture-api-key-canary",
+                        "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": base_url,
+                        "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": base_url,
+                        "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": base_url,
+                        "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": base_url,
+                    }
+                )
             argv = [
                 str(self.clud),
                 provider,
@@ -613,10 +620,15 @@ class Harness:
             ],
         )
 
-
     def run_clud_interactive(
-        self, prompt: str, script: dict[str, Any], *, model: str, finished: str,
-        timeout: float = 90, confirm_background_exit: bool = True,
+        self,
+        prompt: str,
+        script: dict[str, Any],
+        *,
+        model: str,
+        finished: str,
+        timeout: float = 90,
+        confirm_background_exit: bool = True,
     ) -> RunResult:
         """Run the real interactive Claude surface in an owned PTY (#1844).
 
@@ -651,17 +663,28 @@ class Harness:
             # auth still needs a fixture Claude key, while upstream auth
             # comes from the isolated OpenRouter vault. Every possible
             # upstream stays on the scripted loopback backend.
-            env = self.clud_env(base_url, {
-                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
-                "ANTHROPIC_API_KEY": "fixture-api-key-canary",
-                "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": base_url,
-                "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": base_url,
-                "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": base_url,
-                "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": base_url,
-            })
+            env = self.clud_env(
+                base_url,
+                {
+                    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
+                    "ANTHROPIC_API_KEY": "fixture-api-key-canary",
+                    "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": base_url,
+                    "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": base_url,
+                    "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": base_url,
+                    "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": base_url,
+                },
+            )
             argv = [
-                str(self.clud), "--openrouter", "--model", model, "--", prompt,
-                "--settings", str(settings), "--session-id", self.session_id,
+                str(self.clud),
+                "--openrouter",
+                "--model",
+                model,
+                "--",
+                prompt,
+                "--settings",
+                str(settings),
+                "--session-id",
+                self.session_id,
             ]
             child = None
             try:
@@ -694,9 +717,12 @@ class Harness:
                     child.close()
                 self.stop_daemon(env)
         return RunResult(
-            returncode=code, stdout=output, stderr="",
+            returncode=code,
+            stdout=output,
+            stderr="",
             requests=_jsonl(self.logs / "requests.jsonl"),
-            hooks=_jsonl(self.logs / "hooks.jsonl"), events=[],
+            hooks=_jsonl(self.logs / "hooks.jsonl"),
+            events=[],
         )
 
 
