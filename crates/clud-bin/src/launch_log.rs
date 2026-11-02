@@ -59,6 +59,19 @@ fn failure_slot() -> std::sync::MutexGuard<'static, Option<PendingFailure>> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+static METERED_WARNING: Mutex<Option<String>> = Mutex::new(None);
+
+fn metered_warning_slot() -> std::sync::MutexGuard<'static, Option<String>> {
+    METERED_WARNING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Remember the metered-route warning so [`start_launch`] records it.
+pub fn set_metered_warning(warning: impl Into<String>) {
+    *metered_warning_slot() = Some(warning.into());
+}
+
 /// Record why the current launch is about to fail.
 ///
 /// Callers pass the text the user sees on stderr, so the record and the
@@ -144,6 +157,10 @@ pub struct LaunchRecord {
     /// terminal, never piped, so clud does not see it.
     #[serde(default)]
     pub failure_reason: Option<String>,
+    /// The metered-provider warning printed at launch, when the operator
+    /// enabled a pay-per-token route, so a later reader cannot miss it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metered_warning: Option<String>,
 }
 
 impl LaunchRecord {
@@ -192,6 +209,7 @@ pub fn start_launch(
         exited_at_ms: None,
         exit_code: None,
         failure_reason: None,
+        metered_warning: metered_warning_slot().clone(),
     };
     write_record(state_dir, &record)?;
     *failure_slot() = Some(PendingFailure {
@@ -476,6 +494,7 @@ mod tests {
             exited_at_ms: None,
             exit_code: None,
             failure_reason: None,
+            metered_warning: None,
         };
         write_record(dir.path(), &record).unwrap();
         *failure_slot() = Some(PendingFailure {

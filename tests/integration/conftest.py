@@ -261,6 +261,12 @@ def mock_env(mock_agent_binary: Path, tmp_path: Path) -> dict[str, str]:
     # can proceed to the mock bridge; credential-absence behavior has its own
     # isolated Rust CLI regression that explicitly removes this variable.
     env["OPENAI_API_KEY"] = "test-openai-api-key"
+    # The key is metered: the bridge reaches it only with both explicit
+    # overrides (subscription-first policy). Never inherit a developer's.
+    for name in ("CLUD_PROVIDER", "CLUD_SUBSCRIPTION_PROVIDER"):
+        env.pop(name, None)
+    env["CLUD_ALLOW_METERED"] = "1"
+    env["CLUD_METERED_PROVIDER"] = "codex"
     # Prevent any VIRTUAL_ENV interference
     env.pop("VIRTUAL_ENV", None)
 
