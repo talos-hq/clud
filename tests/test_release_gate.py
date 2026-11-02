@@ -47,14 +47,14 @@ def test_release_workflow_gates_every_publish_path() -> None:
     assert "needs: [preflight, full-ci-gate, release-matrix]" in text
     publish_needs = (
         "needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, "
-        "build-static-musl, verify-static-musl-arm64]"
+        "windows-signature-smoke, build-static-musl, verify-static-musl-arm64]"
     )
     assert publish_needs in text
     assert "name: Publish final bytes as public prerelease" in text
     assert "prerelease: true" in text
     assert "make_latest: false" in text
     pypi_needs = (
-        "needs: [preflight, full-ci-gate, build, wheel-smoke, "
+        "needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, "
         "candidate-acceptance-gate, verify-prior-public]"
     )
     assert pypi_needs in text

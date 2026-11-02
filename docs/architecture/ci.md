@@ -1146,6 +1146,25 @@ pip installs each `.data/scripts/*` entry with the Unix mode in its zip
   `verify_installed_scripts` (exec bits via `os.access`, `clud --version`, hook
   smokes). Both publish jobs `need` it.
 
+### Authenticode signing of Windows release wheels
+
+Release builds of the two `*-pc-windows-msvc` triples are Authenticode-signed
+through Azure Artifact Signing (talos-hq org secrets `AZURE_*`, OIDC via
+`azure/login`, no client secret). `_build-target.yml` runs
+`python -m ci.sign_windows_release sign --dist-dir dist/` right after
+"Build wheel" when `auto-release.yml` passes `sign-windows: true`: a pinned
+jsign jar signs every PE in the wheel that has no signature yet (`clud.exe`,
+`clud-webterm.exe`, the bundled Kitty terminal binaries), keeps
+vendor-signed ones (Microsoft `conpty.dll`, `OpenConsole.exe`), and the wheel
+is rewritten through `ci/wheel_rewrite.py`. PyPI, the standalone `.exe`
+assets (extracted from these wheels) and `SHA256SUMS` therefore all carry
+signed bytes. A structural post-check fails the step on any unsigned PE.
+`windows-signature-smoke` then requires `Get-AuthenticodeSignature` = `Valid`
+for every PE on native Windows x64/ARM64 and runs `clud.exe --version`; both
+publish jobs `need` it. Azure trusts the OIDC subject only for
+`refs/heads/main` and tags, so a release must be a tag push or a dispatch from
+`main`.
+
 ## Deduplicated checks
 
 | Check | Before | After |
