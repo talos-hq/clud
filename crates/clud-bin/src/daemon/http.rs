@@ -846,7 +846,7 @@ fn openapi_document() -> serde_json::Value {
         "interrupt":{"type":"boolean"},"from":{"type":"string"},"ticket":{"type":"string"}}});
     schemas["InjectResponse"] = serde_json::json!({"type":"object","required":["accepted","session_id","seq","state","duplicate"],"properties":{
         "accepted":{"type":"boolean"},"session_id":{"type":"string"},"seq":{"type":"integer"},
-        "state":{"type":"string","enum":["queued","delivered","failed"]},"turn_id":{"type":"string"},
+        "state":{"type":"string","enum":["queued","delivering","delivered","failed","superseded"]},"turn_id":{"type":"string"},
         "error":{"type":"string"},"duplicate":{"type":"boolean"}}});
     schemas["Event"]["properties"] = serde_json::json!({
         "cursor":{"type":"integer"}, "at_ms":{"type":"integer"}, "turn_id":{"type":"string"},

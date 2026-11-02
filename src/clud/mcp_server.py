@@ -75,7 +75,9 @@ server = MCPServer(
         'backend="codex" and a self-contained prompt and cwd, then session_wait or '
         "session_result for its result. Use run for short blocking jobs. Pass model "
         "to pick a specific Codex model. Check board_read periodically for messages "
-        "from clud, Hermes or other agents, and answer with board_post."
+        "from clud, Hermes or other agents, and answer with board_post. To steer a "
+        "running session_start session without restarting it, call session_inject "
+        '(kind="directive" replaces the earlier directive; kind="note" only informs).'
     ),
     description=(
         "Run the clud agent harness (Claude Code / Codex in YOLO mode) on a "
@@ -889,6 +891,7 @@ async def session_inject(
     interrupt: bool = False,
     client_msg_id: str = "",
     ticket: str = "",
+    kind: str = "directive",
 ) -> str:
     """Inject a user message into a RUNNING clud session (steer it mid-run).
 
@@ -896,9 +899,16 @@ async def session_inject(
     and delivered when the current turn ends. With `interrupt=true`, the running
     turn is interrupted and the message starts right away. It is never a system
     override. Every call returns `{accepted, state, seq}`. `state` is
-    `queued`, `delivered` (with `turn_id`) or `failed` (with `error`). The
+    `queued`, `delivered` (with `turn_id`), `failed` (with `error`) or
+    `superseded` (a newer directive replaced it before delivery). The
     injection is recorded on the session (`injections[]` in its record) with
     who sent it and when.
+
+    `kind="directive"` (the default) supersedes earlier directives: the
+    session keeps one current directive, and older ones stay in
+    `injections[]` marked `superseded_by_seq`. `kind="note"` is
+    informational and never supersedes. Each entry records
+    `message_sha256` as provenance.
 
     Works for daemon sessions (`session_start`) on the claude and codex
     harnesses. A terminated session returns `session_sealed`. An unsupported
@@ -913,7 +923,16 @@ async def session_inject(
         client_msg_id: Idempotency key. A repeat with the same key is never
             delivered twice. Defaults to a hash of session_id + message.
         ticket: Optional ticket/issue reference recorded with the injection.
+        kind: `directive` (supersedes earlier directives) or `note`.
     """
+    if kind not in ("directive", "note"):
+        return _dump(
+            {
+                "accepted": False,
+                "session_id": session_id,
+                "error": f"kind must be 'directive' or 'note', not {kind!r}",
+            }
+        )
     if not message.strip():
         return _dump(
             {"accepted": False, "session_id": session_id, "error": "message must not be empty"}
@@ -933,6 +952,7 @@ async def session_inject(
         "client_msg_id": client_msg_id or _default_client_msg_id(session_id, message),
         "interrupt": bool(interrupt),
         "from": _board_identity() or "mcp",
+        "kind": kind,
     }
     if ticket:
         body["ticket"] = ticket

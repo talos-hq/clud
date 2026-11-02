@@ -61,14 +61,16 @@ attempted. The result is always `{accepted, state, seq}`:
 | state | meaning |
 |---|---|
 | `queued` | recorded; waits for the running turn to seal |
+| `delivering` | claimed by one delivery attempt; the claim re-checks supersession in the same record mutation, so a directive replaced before the claim is never submitted (#2523) |
 | `delivered` | a turn carrying the message was started; `turn_id` names it |
 | `failed` | delivery was attempted and could not start a turn; `error` says why (it is never left queued forever without a reason) |
+| `superseded` | a `directive` replaced by a newer directive while still `queued`; it is never delivered and `superseded_by_seq` names the replacement (#2523) |
 
 * Session `terminated` (sealed): rejected, `409 session_sealed`, not recorded.
 * Unsupported harness: rejected, `422 harness_not_supported`, with the harness named.
 * Idempotent on `client_msg_id`. A repeat with the same id and message
   returns the original `seq`/`state` with `duplicate: true`, and is never
-  delivered twice. The same id with a different message is `409
+  delivered twice. The same id with a different message or kind is `409
   injection_conflict`. Delivery itself submits the turn under the
   idempotency key `inject-<seq>`, so two racing deliverers (the inject
   call and the end-of-turn drain) start at most one turn.
@@ -85,7 +87,27 @@ entry has `seq`, `client_msg_id`, `message`, `from` (who injected:
 (optional issue/ticket reference), `interrupt`, `state`,
 `submitted_at_ms`, `delivered_at_ms`, `turn_id` and `error`. The event log
 also gets `injection_queued` / `injection_delivered` / `injection_failed`
-events, so a later reader can see exactly when and how the run was steered.
+/ `injection_superseded` events, so a later reader can see exactly when and how the run was steered.
+
+Since #2523 each entry also has `kind` (`directive`, the default, or
+`note`), `message_sha256` (hex sha256 of `message`, so a reader can prove
+the text was not edited) and `superseded_by_seq`. The **current directive
+set** is a single entry: the newest `directive` without `superseded_by_seq`.
+Recording a new directive marks every earlier un-superseded directive with
+the new seq; they stay in `injections[]` as history. A `note` never
+supersedes. There is no second store. Entries written before #2523 have no
+`kind`/hash and read as un-superseded directives, so the newest one is
+current until the next directive marks them. A directive superseded while
+still `queued` moves to the terminal `superseded` state in the same record
+mutation that adds its replacement, so the drain (which only picks `queued`
+entries) can never hand the agent a directive the operator already
+replaced; an `injection_superseded` event records the replacement, so
+nothing is dropped silently (section 3). A directive already `delivered`
+(or `delivering`, i.e. claimed) keeps its state and only gains
+`superseded_by_seq`; once its turn starts it settles `delivered` with both
+`turn_id` and `superseded_by_seq`. A `failed` directive is never current,
+and a failed replacement does not retire the directive it tried to replace. Notes are never
+superseded and are delivered in `seq` order.
 
 ## 5. Surfaces
 
