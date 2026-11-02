@@ -82,6 +82,14 @@ to that head, never `jump`), prints the position, and keeps watching. An
 existing entry is never re-submitted; a dropped entry is re-enqueued only if
 the PR is still ready, at most `--max-enqueues` times. A merge prints mergedAt.
 
+`--land-when-ready` works on both repo shapes: it reads the base branch's
+rulesets (plus GraphQL `mergeQueue(branch:)`) and prints `STRATEGY queue|direct`
+with the evidence. Queue repos take the enqueue path above; repos with no queue
+are merged directly (squash preferred, `--merge-method` overrides), pinned to
+the validated head, printing `MERGE-COMMIT sha= mergedAt=`. Unreadable rulesets
+refuse. Only a `checks_timed_out`-style drop is re-enqueued; any other drop,
+and an entry UNMERGEABLE in the queue, is reported, not retried.
+
 The tool runner allows requested waits up to 86400 seconds and reserves 60
 seconds for the watcher to exit and finish cancellation. It rejects longer
 requests. The watcher still clamps to the wrapper cap if necessary.
@@ -168,6 +176,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import fnmatch
 import json
 import os
 import socket
@@ -4160,7 +4169,7 @@ READY_QUERY = """
 query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
-      id state isDraft mergeStateStatus headRefOid
+      id state isDraft mergeable mergeStateStatus headRefOid baseRefName
       mergeQueueEntry { position state }
       commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) {
         pageInfo { hasNextPage }
@@ -4187,26 +4196,47 @@ _GREEN_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
 class Readiness:
     ready: bool
     reason: str
+    code: str = ""
     pr_id: str = ""
     head_sha: str = ""
     queued_position: int | None = None
+    base_ref: str = ""
 
 
-def _required_check_problem(contexts: dict) -> str | None:
+_PENDING_STATUS_STATES = {"PENDING", "EXPECTED"}
+
+
+def _status_problem(node: dict) -> tuple[str, str] | None:
+    state = node.get("state")
+    if state == "SUCCESS":
+        return None
+    code = "check-pending" if state in _PENDING_STATUS_STATES else "check-failing"
+    return code, f"required status {node.get('context')} is {state}"
+
+
+def _required_check_problem(contexts: dict) -> tuple[str, str] | None:
+    """(NOT-READY code, detail) for the first unready required check, else None."""
     if (contexts.get("pageInfo") or {}).get("hasNextPage"):
-        return "check list truncated; required checks not all readable"
+        return "checks-unreadable", "check list truncated; required checks not all readable"
     for node in contexts.get("nodes") or []:
         if not isinstance(node, dict) or not node.get("isRequired"):
             continue
         if "context" in node:
-            if node.get("state") != "SUCCESS":
-                return f"required status {node.get('context')} is {node.get('state')}"
+            problem = _status_problem(node)
+            if problem:
+                return problem
             continue
         if node.get("status") != "COMPLETED":
-            return f"required check {node.get('name')} is pending ({node.get('status')})"
+            return ("check-pending",
+                    f"required check {node.get('name')} is pending ({node.get('status')})")
         if node.get("conclusion") not in _GREEN_CONCLUSIONS:
-            return f"required check {node.get('name')} is {node.get('conclusion')}"
+            return "check-failing", f"required check {node.get('name')} is {node.get('conclusion')}"
     return None
+
+
+# mergeStateStatus -> distinct NOT-READY code; anything else is `not-clean`.
+_STATE_CODES = {"BLOCKED": "blocked", "DIRTY": "dirty", "BEHIND": "behind",
+                "UNSTABLE": "unstable", "UNKNOWN": "state-unknown", "HAS_HOOKS": "has-hooks"}
 
 
 def judge_readiness(data: object) -> Readiness:
@@ -4218,21 +4248,32 @@ def judge_readiness(data: object) -> Readiness:
         return Readiness(False, "PR state unreadable")
     entry = pr.get("mergeQueueEntry")
     if entry:
-        return Readiness(False, "already queued", queued_position=entry.get("position"))
-    if pr.get("state") != "OPEN":
-        return Readiness(False, f"PR is {pr.get('state')}")
-    if pr.get("isDraft"):
-        return Readiness(False, "draft")
-    status = pr.get("mergeStateStatus")
-    if status != "CLEAN":
-        return Readiness(False, f"mergeStateStatus={status}")
+        return Readiness(False, "already queued", "queued", queued_position=entry.get("position"))
     head = pr.get("headRefOid")
+    gate = _pr_gate_problem(pr)
+    if gate:
+        return Readiness(False, gate[1], gate[0], head_sha=str(head or ""))
     if not head or commit.get("oid") != head:
-        return Readiness(False, "head commit checks unreadable")
+        return Readiness(False, "head commit checks unreadable", "checks-unreadable")
     problem = _required_check_problem((commit.get("statusCheckRollup") or {}).get("contexts") or {})
     if problem:
-        return Readiness(False, problem)
-    return Readiness(True, "ready", pr_id=str(pr.get("id") or ""), head_sha=str(head))
+        return Readiness(False, problem[1], problem[0], head_sha=str(head))
+    return Readiness(True, "ready", "ready", pr_id=str(pr.get("id") or ""), head_sha=str(head),
+                     base_ref=str(pr.get("baseRefName") or ""))
+
+
+def _pr_gate_problem(pr: dict) -> tuple[str, str] | None:
+    """(code, detail) when the PR's own state forbids landing it."""
+    if pr.get("state") != "OPEN":
+        return "not-open", f"PR is {pr.get('state')}"
+    if pr.get("isDraft"):
+        return "draft", "draft"
+    if pr.get("mergeable") == "CONFLICTING":
+        return "conflict", "merge conflict with the base (mergeable=CONFLICTING)"
+    status = pr.get("mergeStateStatus")
+    if status != "CLEAN":
+        return _STATE_CODES.get(str(status), "not-clean"), f"mergeStateStatus={status}"
+    return None
 
 
 def fetch_readiness(repo: str, pr: int) -> Readiness:
@@ -4267,7 +4308,7 @@ def maybe_enqueue(repo: str, pr: int, seen: MergeFollow) -> bool:
     ready = fetch_readiness(repo, pr)
     if not ready.ready:
         if ready.queued_position is None and ready.reason != seen.refused:
-            print(f"NOT-READY  #{pr} not enqueued: {ready.reason}")
+            print(f"NOT-READY {ready.code}  #{pr} not enqueued: {ready.reason}")
             seen.refused = ready.reason
         return False
     position = enqueue_pr(ready.pr_id, ready.head_sha)
@@ -4281,15 +4322,243 @@ def maybe_enqueue(repo: str, pr: int, seen: MergeFollow) -> bool:
     return True
 
 
+def is_timeout_drop(reason: str | None) -> bool:
+    """A queue removal caused by merge-group checks timing out, not by the PR."""
+    text = (reason or "").casefold().replace("_", " ")
+    return "timed out" in text or "timeout" in text
+
+
+def _drop_allows_requeue(pr: int, q: QueueState, seen: MergeFollow) -> bool:
+    """After our own entry vanished: re-enqueue only a checks_timed_out drop."""
+    if seen.enqueues == 0:
+        return True
+    if q.removed_at is None or q.removed_at < seen.started:
+        return False  # entry gone with no removal reason yet: wait for the event
+    reason = q.removal_reason or ""
+    if reason.casefold() == "merged":
+        return False
+    if is_timeout_drop(reason):
+        if seen.refused != f"drop:{q.removed_at}":
+            print(f"DROPPED-TIMEOUT  #{pr} merge-group checks timed out ({reason}); "
+                  "not a PR failure, re-enqueueing")
+            seen.refused = f"drop:{q.removed_at}"
+        return True
+    if seen.refused != f"drop:{q.removed_at}":
+        print(f"DROPPED  #{pr} removed from the merge queue: {reason or 'no reason'}; "
+              "a real failure, not re-enqueueing")
+        seen.refused = f"drop:{q.removed_at}"
+    return False
+
+
 def _enqueue_step(repo: str, pr: int, q: QueueState, seen: MergeFollow) -> bool:
-    """With --enqueue-when-ready, submit an open, unqueued PR; True when it was."""
-    if not (ENQUEUE_WHEN_READY and q.state == "OPEN" and q.entry_state is None):
+    """With --enqueue-when-ready / --land-when-ready, act on an open, unqueued PR."""
+    if not ((ENQUEUE_WHEN_READY or LAND_WHEN_READY) and q.state == "OPEN"
+            and q.entry_state is None):
+        return False
+    if LAND_WHEN_READY:
+        strategy = cached_strategy(repo, q.base_ref)
+        if strategy is None:
+            if seen.refused != "rulesets-unreadable":
+                print(f"NOT-READY rulesets-unreadable  #{pr} merge policy unknown; "
+                      "refusing to merge directly (could bypass a queue)")
+                seen.refused = "rulesets-unreadable"
+            return False
+        if strategy.kind == "direct":
+            return maybe_merge_direct(repo, pr, seen)
+    if not _drop_allows_requeue(pr, q, seen):
         return False
     if not maybe_enqueue(repo, pr, seen):
         return False
     seen.enqueued = True
     seen.removal_candidate = None
     return True
+
+
+# ---- landing a ready PR on either repo shape (--land-when-ready) ----
+
+# A repo whose base branch has a `merge_queue` ruleset rule must be landed
+# through the queue; a repo with none (zackees/robbiemann.com) has nothing that
+# will ever merge a green PR, so the watch merges it itself. Auto-merge is not
+# a substitute: `allow_auto_merge` only permits a per-PR request and lands
+# nothing, so this path never relies on it. Unknown policy is refused, never
+# treated as "no queue".
+LAND_WHEN_READY = False
+MERGE_METHOD: str | None = None  # explicit --merge-method; None = choose
+_STRATEGY_CACHE: dict[tuple[str, str], Strategy | None] = {}
+
+MERGE_QUEUE_PROBE = """
+query($owner: String!, $name: String!, $branch: String!) {
+  repository(owner: $owner, name: $name) { mergeQueue(branch: $branch) { id } }
+}
+"""
+
+
+@dataclass
+class Strategy:
+    kind: str  # "queue" | "direct"
+    evidence: str
+    repo_info: dict
+
+
+def _ruleset_targets(ruleset: dict, base: str, default_branch: str) -> bool:
+    if ruleset.get("target", "branch") != "branch" or ruleset.get("enforcement") != "active":
+        return False
+    ref = ((ruleset.get("conditions") or {}).get("ref_name")) or {}
+    names = {base, f"refs/heads/{base}"}
+
+    def hit(patterns: object) -> bool:
+        for pat in patterns if isinstance(patterns, list) else []:
+            pat = str(pat)
+            if pat == "~ALL" or (pat == "~DEFAULT_BRANCH" and base == default_branch):
+                return True
+            if any(fnmatch.fnmatchcase(n, pat) for n in names):
+                return True
+        return False
+
+    if not ref:
+        return True  # no ref condition: applies to every branch
+    return hit(ref.get("include")) and not hit(ref.get("exclude"))
+
+
+def _queue_rulesets(repo: str, base: str, default_branch: str) -> list[str] | None:
+    """`id:name` of every active ruleset with a merge_queue rule on `base`; None if unreadable."""
+    listed = gh_json("api", f"repos/{repo}/rulesets?includes_parents=true&per_page=100")
+    if not isinstance(listed, list):
+        return None
+    hits = []
+    for item in listed:
+        if not isinstance(item, dict) or "id" not in item:
+            return None
+        full = gh_json("api", f"repos/{repo}/rulesets/{item['id']}")
+        if not isinstance(full, dict) or not isinstance(full.get("rules"), list):
+            return None
+        if not _ruleset_targets(full, base, default_branch):
+            continue
+        if any(isinstance(r, dict) and r.get("type") == "merge_queue" for r in full["rules"]):
+            hits.append(f"{full['id']}:{full.get('name') or '?'}")
+    return hits
+
+
+def _queue_probe(repo: str, base: str) -> bool | None:
+    """GitHub's own answer to "does `base` have a merge queue"; None if unreadable."""
+    owner, _, name = repo.partition("/")
+    data = gh_json("api", "graphql", "-f", f"query={MERGE_QUEUE_PROBE}",
+                   "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"branch={base}")
+    try:
+        repo_node = data["data"]["repository"]  # type: ignore[index]
+    except (KeyError, TypeError):
+        return None
+    return isinstance(repo_node, dict) and repo_node.get("mergeQueue") is not None
+
+
+def detect_strategy(repo: str, base: str) -> Strategy | None:
+    """Queue vs direct from the base branch's rulesets, cross-checked; None = refuse."""
+    info = gh_json("api", f"repos/{repo}")
+    if not isinstance(info, dict) or not base:
+        return None
+    hits = _queue_rulesets(repo, base, str(info.get("default_branch") or ""))
+    probe = _queue_probe(repo, base)
+    if hits is None or probe is None:
+        return None
+    if hits:
+        return Strategy("queue", f"merge_queue rule in ruleset {', '.join(hits)}", info)
+    if probe:
+        # A queue the rulesets do not explain (classic protection): still a queue.
+        return Strategy("queue", f"mergeQueue({base}) exists outside rulesets", info)
+    return Strategy("direct", f"no active ruleset on {base} has a merge_queue rule; "
+                              f"mergeQueue({base}) is null", info)
+
+
+def cached_strategy(repo: str, base: str) -> Strategy | None:
+    key = (repo, base)
+    if key not in _STRATEGY_CACHE:
+        strategy = detect_strategy(repo, base)
+        if strategy is not None:
+            print(f"STRATEGY {strategy.kind}  {repo}@{base}: {strategy.evidence}")
+            _STRATEGY_CACHE[key] = strategy
+        return strategy
+    return _STRATEGY_CACHE[key]
+
+
+_METHOD_FLAGS = {"squash": "allow_squash_merge", "merge": "allow_merge_commit",
+                 "rebase": "allow_rebase_merge"}
+
+
+def _history_uses_merge_commits(repo: str, base: str) -> bool:
+    commits = gh_json("api", f"repos/{repo}/commits?sha={base}&per_page=20")
+    return isinstance(commits, list) and any(
+        isinstance(c, dict) and len(c.get("parents") or []) > 1 for c in commits)
+
+
+def choose_merge_method(
+    repo: str, base: str, info: dict, explicit: str | None,
+) -> tuple[str | None, str]:
+    """(method, why); method None means refuse with `why`."""
+    allowed = [m for m, flag in _METHOD_FLAGS.items() if info.get(flag)]
+    if explicit:
+        if explicit in allowed:
+            return explicit, f"--merge-method {explicit}"
+        return None, f"--merge-method {explicit} not allowed by {repo} (allows {allowed or 'none'})"
+    if not allowed:
+        return None, f"{repo} allows no merge method"
+    if "squash" in allowed:
+        return "squash", "squash allowed (preferred)"
+    if len(allowed) == 1:
+        return allowed[0], f"only {allowed[0]} allowed"
+    merge = _history_uses_merge_commits(repo, base)
+    return ("merge" if merge else "rebase"), (
+        f"history convention of {base}: {'merge commits' if merge else 'linear'}")
+
+
+def merge_pr_direct(repo: str, pr: int, head_sha: str, method: str) -> str | None:
+    """REST merge pinned to `head_sha` (GitHub rejects a moved head); the merge sha."""
+    data = gh_json("api", "--method", "PUT", f"repos/{repo}/pulls/{pr}/merge",
+                   "-f", f"sha={head_sha}", "-f", f"merge_method={method}")
+    if isinstance(data, dict) and data.get("merged") and isinstance(data.get("sha"), str):
+        return data["sha"]
+    return None
+
+
+def _refuse(pr: int, seen: MergeFollow, code: str, detail: str) -> bool:
+    if seen.refused != code + detail:
+        print(f"NOT-READY {code}  #{pr} not merged: {detail}")
+        seen.refused = code + detail
+    return False
+
+
+def maybe_merge_direct(repo: str, pr: int, seen: MergeFollow) -> bool:
+    """Merge a ready PR on a repo with no queue; re-validate once on a rejection."""
+    ready = fetch_readiness(repo, pr)
+    if not ready.ready:
+        return _refuse(pr, seen, ready.code, ready.reason)
+    strategy = _STRATEGY_CACHE.get((repo, ready.base_ref)) if ready.base_ref else None
+    info = strategy.repo_info if strategy else (gh_json("api", f"repos/{repo}") or {})
+    method, why = choose_merge_method(repo, ready.base_ref, info if isinstance(info, dict) else {},
+                                      MERGE_METHOD)
+    if method is None:
+        return _refuse(pr, seen, "method-not-allowed", why)
+    sha = merge_pr_direct(repo, pr, ready.head_sha, method)
+    if sha is None:
+        return _merge_rejected(repo, pr, seen, ready.head_sha)
+    seen.refused = None
+    print(f"MERGED-BY-WATCH  #{pr} method={method} ({why}) head={ready.head_sha[:12]}")
+    print(f"MERGE-COMMIT  #{pr} sha={sha} mergedAt={fetch_merged_at(repo, pr) or 'unknown'}")
+    seen.enqueued = True
+    return True
+
+
+def _merge_rejected(repo: str, pr: int, seen: MergeFollow, validated: str) -> bool:
+    """One re-validation after GitHub refused the merge; report, never retry blindly."""
+    again = fetch_readiness(repo, pr)
+    if again.head_sha and again.head_sha != validated:
+        return _refuse(pr, seen, "head-moved",
+                       f"head moved {validated[:12]} -> {(again.head_sha or '?')[:12]} "
+                       "between validation and merge")
+    if not again.ready:
+        return _refuse(pr, seen, again.code, f"merge rejected; re-validated: {again.reason}")
+    return _refuse(pr, seen, "merge-rejected",
+                   f"GitHub refused the merge ({LAST_GH_ERROR.strip()[:200] or 'no detail'}) "
+                   "though the PR re-validated ready; not retrying")
 
 
 def fetch_merged_at(repo: str, pr: int) -> str | None:
@@ -4326,10 +4595,11 @@ def _poll_queue(repo: str, pr: int, seen: MergeFollow, log: WatchLog | None) -> 
     if q is None or _enqueue_step(repo, pr, q, seen):
         return None
     verdict = _queue_verdict(q, seen)
-    if verdict is None and EXPLICIT_MERGE_WAIT:
+    if verdict is None and (EXPLICIT_MERGE_WAIT or ENQUEUE_WHEN_READY or LAND_WHEN_READY):
         seen.unmergeable_polls = seen.unmergeable_polls + 1 if q.entry_state == "UNMERGEABLE" else 0
         if seen.unmergeable_polls >= 2:
-            return EXIT_UNMERGEABLE, "queue entry remained unmergeable"
+            return EXIT_UNMERGEABLE, ("queue entry remained UNMERGEABLE (conflict against the "
+                                      "merge-group result); not re-enqueued")
     if not EXPLICIT_MERGE_WAIT:
         verdict = verdict or _merge_group_verdict(repo, q, seen)
     if verdict is None and q.entry_state is not None:
@@ -4468,6 +4738,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="submit the PR to the merge queue (enqueuePullRequest, never jump) once it is "
         "CLEAN, non-draft and every required check is green; re-enqueue a dropped entry at "
         "most --max-enqueues times. Default off: the watch only observes",
+    )
+    p.add_argument(
+        "--land-when-ready",
+        action="store_true",
+        help="land the PR on either repo shape (implies --until merged): detect the base "
+        "branch's strategy from its rulesets (merge_queue rule -> enqueue like "
+        "--enqueue-when-ready; none -> merge directly, pinned to the validated head). "
+        "Unreadable rulesets refuse; auto-merge is never relied on",
+    )
+    p.add_argument(
+        "--merge-method", choices=["squash", "merge", "rebase"], default=None,
+        help="direct strategy only: force this method (refused if the repo disallows it); "
+        "default squash when allowed, else the only allowed method, else history convention",
     )
     p.add_argument(
         "--max-enqueues", type=int, default=3,
@@ -4610,6 +4893,7 @@ def _print_triggers(repo: str | None, base: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     global FOLLOW, MERGE_WAIT, EXPLICIT_MERGE_WAIT, QUIET, ENQUEUE_WHEN_READY, MAX_ENQUEUES
+    global LAND_WHEN_READY, MERGE_METHOD
     ns = parse_args(argv if argv is not None else sys.argv[1:])
     QUIET = ns.quiet
     if ns.triggers_for_base is not None:
@@ -4636,7 +4920,9 @@ def main(argv: list[str] | None = None) -> int:
     try:
         FOLLOW = (ns.interval, time.monotonic() + ns.timeout)
         MERGE_WAIT = ns.merge_wait
-        EXPLICIT_MERGE_WAIT = ns.until == "merged"
+        LAND_WHEN_READY = ns.land_when_ready
+        MERGE_METHOD = ns.merge_method
+        EXPLICIT_MERGE_WAIT = ns.until == "merged" or LAND_WHEN_READY
         ENQUEUE_WHEN_READY = ns.enqueue_when_ready
         MAX_ENQUEUES = ns.max_enqueues
         if EXPLICIT_MERGE_WAIT:
