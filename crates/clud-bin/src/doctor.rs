@@ -25,6 +25,13 @@ pub enum Finding {
     Missing { path: PathBuf },
     /// The first `clud-cmd-scan` on PATH is another build.
     ForeignScanner { path: PathBuf, found: String },
+    /// A clud-owned name resolves to a toolstore build (or none) other than
+    /// the launcher's (#2558).
+    WrongBuild {
+        path: PathBuf,
+        found: String,
+        launcher: String,
+    },
 }
 
 impl Finding {
@@ -32,7 +39,7 @@ impl Finding {
     pub fn path(&self) -> &Path {
         match self {
             Self::Stale { path, .. } | Self::Retired { path } | Self::Missing { path } => path,
-            Self::ForeignScanner { path, .. } => path,
+            Self::ForeignScanner { path, .. } | Self::WrongBuild { path, .. } => path,
         }
     }
 
@@ -42,6 +49,7 @@ impl Finding {
             Self::Retired { .. } => "retired",
             Self::Missing { .. } => "missing",
             Self::ForeignScanner { .. } => "foreign_scanner",
+            Self::WrongBuild { .. } => "wrong_build",
         }
     }
 }
@@ -59,6 +67,9 @@ impl std::fmt::Display for Finding {
                 write!(f, "retired alias {path} {note}")
             }
             Self::Missing { .. } => write!(f, "alias {path} is missing"),
+            Self::WrongBuild {
+                found, launcher, ..
+            } => write!(f, "alias {path} runs build {found}; launcher is {launcher}"),
             Self::ForeignScanner { found, .. } => {
                 let note = "hooks relay to the launcher";
                 write!(
@@ -166,7 +177,18 @@ pub fn inspect(exe: &Path, own: &str, home: Option<&Path>, path_env: &str) -> Di
             (".clud/state/helper-bin", scanners.clone()),
         ];
         for (subdir, files) in dirs {
-            add(inspect_dir(&home.join(subdir), &files, &retired, own, true));
+            let dir = home.join(subdir);
+            let part = inspect_dir(&dir, &files, &retired, own, true);
+            let flagged: Vec<PathBuf> = part
+                .findings
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect();
+            add(part);
+            add(DirReport {
+                findings: wrong_builds(home, exe, &dir, &files, &flagged),
+                unknown: Vec::new(),
+            });
         }
     }
     if let Some(beside) = exe.parent() {
@@ -186,6 +208,35 @@ pub fn inspect(exe: &Path, own: &str, home: Option<&Path>, path_env: &str) -> Di
         }
     }
     report
+}
+
+/// One [`Finding::WrongBuild`] per present name in `dir` whose toolstore
+/// build is not the launcher's. Names already flagged are skipped. This is
+/// the exact test size/version fingerprints cannot make (#2558).
+fn wrong_builds(
+    home: &Path,
+    exe: &Path,
+    dir: &Path,
+    files: &[String],
+    flagged: &[PathBuf],
+) -> Vec<Finding> {
+    let Ok(launcher) = crate::toolstore::build_id(home, exe) else {
+        return Vec::new();
+    };
+    files
+        .iter()
+        .map(|file| dir.join(file))
+        .filter(|path| !flagged.contains(path) && std::fs::symlink_metadata(path).is_ok())
+        .filter_map(|path| {
+            let found = crate::toolstore::resolved_build(home, &path)
+                .unwrap_or_else(|| "unversioned (not in the toolstore)".to_string());
+            (found != launcher).then(|| Finding::WrongBuild {
+                path,
+                found,
+                launcher: launcher.clone(),
+            })
+        })
+        .collect()
 }
 
 /// The tool names a hook harness may report for a guarded tool besides its
@@ -361,7 +412,7 @@ pub fn repair(exe: &Path, report: &DirReport, home: Option<&Path>) -> Vec<String
     for finding in &report.findings {
         let path = finding.path();
         let replace = match finding {
-            Finding::Stale { .. } | Finding::Missing { .. } => true,
+            Finding::Stale { .. } | Finding::Missing { .. } | Finding::WrongBuild { .. } => true,
             Finding::ForeignScanner { .. } => in_owned_dir(path),
             Finding::Retired { .. } => continue,
         };
@@ -372,7 +423,11 @@ pub fn repair(exe: &Path, report: &DirReport, home: Option<&Path>) -> Vec<String
             ));
             continue;
         }
-        actions.push(match crate::alias_link::install_alias(exe, path) {
+        let placed = match home.filter(|_| in_owned_dir(path)) {
+            Some(home) => crate::toolstore::install_owned(home, exe, path),
+            None => crate::alias_link::install_alias(exe, path),
+        };
+        actions.push(match placed {
             Ok(_) => format!("fixed: {} now runs {}", path.display(), exe.display()),
             Err(error) => format!("could not fix {}: {error}", path.display()),
         });

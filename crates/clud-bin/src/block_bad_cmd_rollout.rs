@@ -453,8 +453,13 @@ fn refresh_owned_helper(found: &Path, clud: &Path, home: Option<&Path>) -> bool 
         let target = dir.join(crate::shim_registry::file_name(name));
         if name == crate::multicall::CMD_SCAN || target.is_file() {
             // Best effort: on Windows a running helper cannot be replaced,
-            // and the existing one still works.
-            let _ = crate::alias_link::install_alias(clud, &target);
+            // and the existing one still works. The helper-only dir points
+            // into the toolstore (#2558); a dir beside `clud` keeps the
+            // plain alias, since an installer owns that directory.
+            let _ = match home.filter(|_| helper_bin) {
+                Some(home) => crate::toolstore::install_owned(home, clud, &target),
+                None => crate::alias_link::install_alias(clud, &target),
+            };
         }
     }
     true
@@ -513,7 +518,7 @@ fn expose_helper_at(home: &Path, clud: &Path) -> io::Result<PathBuf> {
         crate::multicall::LEGACY_CMD_SCAN,
     ] {
         let target = dir.join(crate::shim_registry::file_name(name));
-        if let Err(error) = crate::alias_link::install_alias(clud, &target) {
+        if let Err(error) = crate::toolstore::install_owned(home, clud, &target) {
             if !target.is_file() {
                 return Err(error);
             }
@@ -929,7 +934,7 @@ mod tests {
             "the foreign helper is still warned about"
         );
         assert!(
-            crate::alias_link::is_fresh(&clud.canonicalize().unwrap(), &decoy),
+            crate::toolstore::is_current(&home, &clud, &decoy),
             "helper-bin entry was not refreshed"
         );
         assert_eq!(fs::read_to_string(&decoy).unwrap(), "clud-v2-current");

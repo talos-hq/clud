@@ -196,3 +196,50 @@ fn fix_leaves_a_foreign_scanner_outside_clud_dirs_alone() {
     assert!(actions[0].starts_with("left alone:"), "{actions:?}");
     assert_eq!(std::fs::read(&foreign).unwrap(), vec![b'x'; 7]);
 }
+
+/// #2558: a name on another build of the *same size* is invisible to the
+/// size fingerprint; the toolstore build check reports and fixes it.
+#[test]
+fn a_same_size_build_skew_is_a_wrong_build_finding_and_fix_repoints_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let exe = tmp.path().join("new").join("clud");
+    let old = tmp.path().join("old").join("clud");
+    for (path, body) in [(&exe, b"build-two"), (&old, b"build-one")] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, body).unwrap();
+    }
+    let own = fingerprint(&exe).unwrap();
+    assert_eq!(
+        fingerprint(&old).unwrap(),
+        own,
+        "same size: fingerprints agree"
+    );
+    let scan = home
+        .join(".clud/state/helper-bin")
+        .join(crate::shim_registry::file_name(crate::multicall::CMD_SCAN));
+    crate::toolstore::install_owned(&home, &old, &scan).unwrap();
+
+    let before = inspect(&exe, &own, Some(&home), "");
+    let wrong: Vec<_> = before
+        .findings
+        .iter()
+        .filter(|f| matches!(f, Finding::WrongBuild { path, .. } if *path == scan))
+        .collect();
+    assert_eq!(wrong.len(), 1, "{before:?}");
+    let old_id = crate::toolstore::build_id(&home, &old).unwrap();
+    let new_id = crate::toolstore::build_id(&home, &exe).unwrap();
+    let message = wrong[0].to_string();
+    assert!(
+        message.contains(&old_id) && message.contains(&new_id),
+        "{message}"
+    );
+
+    repair(&exe, &before, Some(&home));
+    let after = inspect(&exe, &own, Some(&home), "");
+    assert!(
+        !after.findings.iter().any(|f| f.path() == scan),
+        "{after:?}"
+    );
+    assert_eq!(crate::toolstore::resolved_build(&home, &scan), Some(new_id));
+}
