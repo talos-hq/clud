@@ -420,13 +420,21 @@ repeats one. Measured over 24 h of local transcripts, 55% of the bytes that
 shell reads put into context came from file-sessions that read the **same
 file** four or more times, and 562 file-sessions per day read one file eight
 or more times. So `block_bad_cmd_hop.rs` counts hops per `(session, file)` for
-shell reads (`sed`, `cat`, `head`, `tail`, `nl`, `less`, `bat`, `tac`, `wc`,
+shell reads (`sed`, `cat`, `head`, `tail`, `nl`, `less`, `bat`, `tac`,
 `awk`, `xxd`) and denies hop `N + 1` on that file with a message naming
 `clud tool run code/outline.py`, so the next read can target one range.
 
 - Narrow on purpose: only files that exist and are at least 8 KiB, only known
   source extensions, and `grep`/`git`/`gh` are searches, never hops. A file's
   count expires after 15 minutes without a hop, so a later revisit is fine.
+- **Writes are not hops.** `sed -i` / `sed -ni` / `sed --in-place[=SUFFIX]`
+  rewrites the file in place, and a redirect ends a read segment, so
+  `cat > notes.md <<EOF` names a destination rather than a source. Without this
+  a fix loop that edits one file seven times would be denied with advice to
+  outline it. `wc` is not counted either: it returns a count, not content.
+- Targets resolve the way the shell resolves them — `~/x` against `$HOME`,
+  relative paths against the hook's working directory — so both spellings of
+  the same file share one hop count.
 - **Limit:** `N = 6`, per file. `CLUD_FILE_HOP_LIMIT=<n>` overrides it and `0`
   turns the guard off. `CLUD_ALLOW_FILE_HOPS=1` in a command allows one more
   slice deliberately (logged).

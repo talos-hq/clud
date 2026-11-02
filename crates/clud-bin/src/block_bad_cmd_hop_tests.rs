@@ -147,6 +147,75 @@ fn search_and_redirect_tokens_are_not_targets() {
 }
 
 #[test]
+fn in_place_edits_are_writes_not_reads() {
+    // `sed -i` replaces a file in place; it puts no file content in context, so
+    // counting it as a hop would deny the seventh *edit* of a fix loop with a
+    // message about outlining the file.
+    assert!(hop_targets("sed -i 's/foo/bar/' crates/a.rs").is_empty());
+    assert!(hop_targets("sed -i.bak -e 's/foo/bar/' crates/a.rs").is_empty());
+    assert!(hop_targets("sed -ibak 's/foo/bar/' crates/a.rs").is_empty());
+    assert!(hop_targets("sed -ni 's/foo/bar/p' crates/a.rs").is_empty());
+    assert!(hop_targets("sed --in-place=.orig 's/foo/bar/' crates/a.rs").is_empty());
+    // …while a plain `sed -n` slice of the same file is still a read.
+    assert_eq!(
+        hop_targets("sed -n 's/foo/bar/' crates/a.rs"),
+        vec!["crates/a.rs"]
+    );
+}
+
+#[test]
+fn heredoc_and_redirect_writes_are_not_reads() {
+    // `cat > file <<EOF` writes; the file is the *destination*, not a source.
+    assert!(hop_targets("cat > notes.md <<'EOF'").is_empty());
+    assert!(hop_targets("cat >> src/a.py <<EOF").is_empty());
+    assert!(hop_targets("cat <<'EOF' > docs/a.md").is_empty());
+    // A read that also redirects still reads its inputs.
+    assert_eq!(
+        hop_targets("cat a.rs > /tmp/out.rs"),
+        vec!["a.rs".to_string()]
+    );
+    assert_eq!(
+        hop_targets("awk '{print $1}' a.py > out.py"),
+        vec!["a.py".to_string()]
+    );
+}
+
+#[test]
+fn counting_lines_is_not_a_content_read() {
+    // `wc -l` emits a count per file, not file content; outlining would not
+    // answer it, so it must not consume hop budget.
+    assert!(hop_targets("wc -l crates/a.rs").is_empty());
+    assert!(hop_targets("wc -l src/*.rs | tail -1").is_empty());
+}
+
+#[test]
+fn a_tilde_path_resolves_against_home() {
+    assert_eq!(
+        expand_tilde("~/dev/nixos/system/a.nix", Some(Path::new("/home/u"))),
+        Some(PathBuf::from("/home/u/dev/nixos/system/a.nix"))
+    );
+    assert_eq!(expand_tilde("dev/a.nix", Some(Path::new("/home/u"))), None);
+    assert_eq!(expand_tilde("~/a.nix", None), None);
+}
+
+#[test]
+fn equivalent_spellings_share_one_count() {
+    let cwd = Path::new("/work");
+    assert_eq!(
+        resolve_target("a.rs", cwd, None),
+        resolve_target("./a.rs", cwd, None)
+    );
+    assert_eq!(
+        resolve_target("a.rs", cwd, None),
+        Some(PathBuf::from("/work/a.rs"))
+    );
+    assert_eq!(
+        resolve_target("/work/./a.rs", cwd, None),
+        Some(PathBuf::from("/work/a.rs"))
+    );
+}
+
+#[test]
 fn non_source_extensions_are_ignored() {
     assert!(hop_targets("cat build.log").is_empty());
     assert!(hop_targets("tail -5 /var/log/x.txt").is_empty());
