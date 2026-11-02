@@ -171,7 +171,7 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
     BundledTool {
         rel_path: "notify/bus.py",
         body: include_str!("../assets/tools/notify/bus.py"),
-        // Unix-socket broker + blocking subscriber for watch.py events; the
+        // TCP-loopback (token-gated) broker + blocking subscriber for watch.py events; the
         // audit log owns history, so a killed broker loses no record.
         kill_semantics: KillSemantics::Resumable,
         command_timeout: Duration::from_secs(24 * 60 * 60),

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib.util
+import json
 import socket
 import threading
 import time
@@ -12,14 +13,6 @@ from pathlib import Path
 import pytest
 
 TOOL = Path(__file__).resolve().parents[1] / "crates/clud-bin/assets/tools/notify/bus.py"
-
-TRANSPORTS = [
-    pytest.param(
-        "unix",
-        marks=pytest.mark.skipif(not hasattr(socket, "AF_UNIX"), reason="AF_UNIX only"),
-    ),
-    "tcp",
-]
 
 
 def _load():
@@ -32,22 +25,18 @@ def _load():
 bus = _load()
 
 
-@pytest.fixture(params=TRANSPORTS)
-def broker(request, tmp_path, monkeypatch):
-    monkeypatch.setenv("CLUD_WATCH_BUS", request.param)
-    # AF_UNIX paths are length-limited (macOS: 104 bytes); keep it short.
-    short = Path("/tmp") / f"bus-{id(tmp_path) % 100000}"
-    short.mkdir(exist_ok=True)
-    monkeypatch.setenv("CLUD_WATCH_DIR", str(short))
+@pytest.fixture
+def broker(tmp_path, monkeypatch):
+    monkeypatch.setenv("CLUD_WATCH_DIR", str(tmp_path))
     loop = asyncio.new_event_loop()
-    task = loop.create_task(bus.serve(bus.socket_path(), 8))
+    task = loop.create_task(bus.serve(8))
     thread = threading.Thread(target=loop.run_until_complete, args=(task,), daemon=True)
     thread.start()
     for _ in range(100):
-        if bus.socket_path().exists() or bus.addr_path().exists():
+        if bus.addr_path().exists():
             break
         time.sleep(0.02)
-    yield short
+    yield tmp_path
     loop.call_soon_threadsafe(task.cancel)
     thread.join(2)
 
@@ -65,9 +54,7 @@ def _event(seq, kind="session-sealed"):
     return {"seq": seq, "kind": kind, "subject": "s", "detail": "d", "ok": True}
 
 
-@pytest.mark.parametrize("transport", TRANSPORTS)
-def test_no_broker_exits_3(transport, tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("CLUD_WATCH_BUS", transport)
+def test_no_broker_exits_3(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("CLUD_WATCH_DIR", str(tmp_path))
     assert bus.subscribe("x") == 3
     assert "cannot connect" in capsys.readouterr().err
@@ -100,30 +87,26 @@ def test_fan_out_replay_and_gap(broker, capsys):
     assert "#9" in out
 
 
-def test_tcp_refuses_missing_or_wrong_token(tmp_path, monkeypatch, capsys):
-    monkeypatch.setenv("CLUD_WATCH_BUS", "tcp")
-    monkeypatch.setenv("CLUD_WATCH_DIR", str(tmp_path))
-    loop = asyncio.new_event_loop()
-    task = loop.create_task(bus.serve(bus.socket_path(), 8))
-    thread = threading.Thread(target=loop.run_until_complete, args=(task,), daemon=True)
-    thread.start()
-    for _ in range(100):
-        if bus.addr_path().exists():
-            break
-        time.sleep(0.02)
-    try:
-        assert bus.addr_path().stat().st_mode & 0o077 == 0
-        info = bus._read_addr()
-        assert info["host"] == "127.0.0.1"
-        for extra, why in (({}, "missing token"), ({"token": "nope"}, "wrong token")):
-            with socket.create_connection((info["host"], info["port"]), timeout=2) as sock:
-                bus._send(sock, {"op": "sub", "after": 0, **extra})
-                reply = sock.makefile("rb").readline()
-            assert why in reply.decode()
-        good = dict(info)
-        bus.addr_path().write_text(__import__("json").dumps({**good, "token": "bad"}))
-        assert bus.subscribe("t") == 3
-        assert "refused: wrong token" in capsys.readouterr().err
-    finally:
-        loop.call_soon_threadsafe(task.cancel)
-        thread.join(2)
+def test_refuses_missing_or_wrong_token(broker, capsys):
+    assert bus.addr_path().stat().st_mode & 0o077 == 0
+    info = bus._read_addr()
+    assert info["host"] == "127.0.0.1"
+    assert len(info["token"]) == 64
+    for extra, why in (({}, "missing token"), ({"token": "nope"}, "wrong token")):
+        with socket.create_connection((info["host"], info["port"]), timeout=2) as sock:
+            bus._send(sock, {"op": "sub", "after": 0, **extra})
+            reply = sock.makefile("rb").readline()
+        assert why in reply.decode()
+    bus.addr_path().write_text(json.dumps({**info, "token": "bad"}))
+    assert bus.subscribe("t") == 3
+    assert "refused: wrong token" in capsys.readouterr().err
+    assert bus.publish_event(_event(1)) is False  # refusal surfaced, not swallowed
+    assert "refused: wrong token" in capsys.readouterr().err
+
+
+def test_no_transport_switch_remains():
+    body = TOOL.read_text()
+    for gone in ("CLUD_WATCH_BUS", "AF_UNIX", "start_unix_server", "bus.sock"):
+        assert gone not in body
+    assert '"0.0.0.0"' not in body
+    assert 'host="::"' not in body
