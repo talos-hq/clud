@@ -1128,8 +1128,25 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    /// Hidden test seam for the Responses ingress. Without `--response` it
+    /// translates a Responses request into a Messages request; with it, the
+    /// reverse: an upstream Messages body into a Responses `response` object or
+    /// event stream.
     #[command(name = "__openai-responses-translate", hide = true)]
-    InternalOpenAiResponsesTranslate,
+    InternalOpenAiResponsesTranslate {
+        /// Translate an Anthropic Messages response, not an OpenAI request.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one `response.*` event per line.
+        #[arg(long, requires = "response")]
+        stream: bool,
+        /// Model to report when the response body carries none.
+        #[arg(long = "for-model")]
+        for_model: Option<String>,
+        /// Emit the exact HTTP body the route writes, not one JSON per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
     /// Hidden test seam for xAI's RFC 8628 device login: run discovery, request
     /// a device code, poll until authorized, and print progress as JSON lines.
     /// Never used by a launched session.

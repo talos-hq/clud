@@ -330,9 +330,12 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
                 clud::openai_ingress::run_translate_stdin()
             }
         }
-        args::Command::InternalOpenAiResponsesTranslate => {
-            clud::responses_ingress::run_translate_stdin()
-        }
+        args::Command::InternalOpenAiResponsesTranslate {
+            response,
+            stream,
+            for_model,
+            http,
+        } => clud::responses_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
         args::Command::InternalXaiDeviceLogin {
             discovery_url,
             device_endpoint,

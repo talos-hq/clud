@@ -72,7 +72,9 @@ clud serve --codex --claude
 Use `/v1/models` to discover the advertised Codex IDs (for example,
 `clud-claude-codex-sol`) and pass one as `model` to `/v1/messages`.
 Codex-only discovery does not contact Anthropic. This is an Anthropic-compatible
-frontend; `/v1/responses` and `/v1/chat/completions` are not exposed.
+frontend; the translated doors below (`/v1/chat/completions`, `/v1/responses`,
+the Gemini `:generateContent` prefix and the images API) are exposed only when
+the launch has a unified gateway, because the relay they share lives there.
 
 ## OpenAI Responses client bodies
 
@@ -80,9 +82,12 @@ frontend; `/v1/responses` and `/v1/chat/completions` are not exposed.
 (`POST /v1/responses`) request body into the Anthropic Messages body the routes
 above already serve, ported from CLIProxyAPI
 `internal/translator/claude/openai/responses/claude_openai-responses_request.go`.
-It is a translator and a hidden seam (`clud __openai-responses-translate`, stdin
-request in, Messages body out) — **no route exposes it yet**, so nothing changes
-for a running server. `instructions` plus every role=system/developer input item
+It is reachable on the loopback gateway and on `clud serve` as
+`POST /v1/responses`, behind the same `X-Clud-Gateway-Token` / client-token
+contract as every other door, when the launch has a unified gateway; without one
+the turn is refused `501` in the Responses error envelope. The hidden seam
+`clud __openai-responses-translate` reads a request from stdin and writes the
+Messages body. `instructions` plus every role=system/developer input item
 become top-level `system` blocks in source order; `message` items become
 user/assistant turns; `function_call`/`custom_tool_call` become `tool_use` and
 their `*_output` partners `tool_result`; a `reasoning` item with
@@ -102,6 +107,32 @@ orphan `tool_result`), and a `tool_use` with no result is closed with an
 `response_format` structured-output synthesis, tool-search discovery replay and
 the namespace/custom-tool name map are not ported yet; `cache_control` markers
 are not replayed.
+
+## OpenAI Responses answers
+
+The same module renders the other direction, ported from CLIProxyAPI
+`internal/translator/claude/openai/responses/claude_openai-responses_response.go`:
+`translate_responses_response` turns one buffered Messages body into a Responses
+`response` object, and `ResponsesStreamTranslator` turns the Messages SSE frames
+into `response.created` / `response.in_progress` / `response.output_item.*` /
+`response.content_part.*` / `response.output_text.delta` /
+`response.function_call_arguments.*` / `response.reasoning_summary_*` /
+`response.completed` events, each carrying a monotonic `sequence_number`.
+`thinking` becomes a `reasoning` item whose `encrypted_content` is the Claude
+signature — the request half reads it back — and `redacted_thinking` rides in
+`encrypted_content` behind upstream's `claude-redacted-thinking:` marker.
+`max_tokens` / `model_context_window_exceeded` end the response `incomplete`
+with `incomplete_details.reason = max_output_tokens`; a `refusal` stop reason is
+`incomplete` with `content_filter`, because Responses clients treat it as a
+retryable refusal rather than a finished answer; `pause_turn` stays `completed`,
+since the client continues it by replaying the assistant turn.
+
+Deliberate differences from upstream: a stream whose upstream body ends without
+`message_stop` is sealed as `response.failed` with code `server_error` rather
+than `response.completed` — a truncated answer is not a finished one; the
+`web_search_call` item is not synthesised, because clud refuses server tools at
+the door instead of injecting them; and the websocket verb upstream also serves
+at `/v1/responses` is not ported, since this bridge is plain HTTP/1.1.
 
 ## Images
 
