@@ -654,6 +654,11 @@ pub enum Command {
         /// Print the report as one JSON document.
         #[arg(long)]
         json: bool,
+        /// Repair what doctor finds: replace stale or missing aliases in
+        /// clud's own alias dirs with the running binary. Files outside
+        /// those dirs are never touched.
+        #[arg(long)]
+        fix: bool,
     },
     /// Inject a user message into a running daemon session: queued for the
     /// next turn boundary, or `--interrupt` to replace the running turn
@@ -2196,6 +2201,8 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--quiet-orphans",
         "--explain-orphans",
         "--json",
+        // `clud doctor --fix`.
+        "--fix",
         "--no-open",
         "--demo-gfx-sixel",
         "--help",
