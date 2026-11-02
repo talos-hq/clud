@@ -552,7 +552,12 @@ which test tier a change belongs in — lives in
   line could never deliver. `merge_hook_settings` concatenates per event rather
   than replacing, mirroring how the harness layers hooks, so clud's
   registration cannot displace the bridge's lifecycle hooks or a user's own
-  `--settings` document. Codex receives its PreToolUse command hook and trust
+  `--settings` document. `consolidate_scanner_hooks` folds plain managed
+  registrations into one invocation per event before launch; see
+  [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md).
+  `scanner_hook_migration.rs` consolidates existing plain scanner registrations
+  across normal Claude settings and lets the launch defer to inherited coverage.
+  Codex receives its PreToolUse command hook and trust
   state through launch `-c` values, without writing to user configuration.
   Phase 5 adds the `CwdChanged`
   backstop (`CWD_CHANGED_EVENT`, DD-064): `claude_settings_fragment` inserts
