@@ -141,3 +141,97 @@ def test_missing_telegram_credentials_is_a_loud_error(base) -> None:
     data = watch.load_state(base)
     assert watch.deliver(base, data, ("", "")) is True
     assert watch.read_events(base)[0]["subject"] == "config"
+
+
+def _session_daemon(monkeypatch, record):
+    monkeypatch.setattr(watch, "daemon_info", lambda: ("http://x", "t"))
+    monkeypatch.setattr(watch, "pty_running_ids", set)
+    monkeypatch.setattr(watch, "fetch_session", lambda *_: record)
+
+
+def _running(cursor=5):
+    return {
+        "state": "running",
+        "next_event_cursor": cursor,
+        "updated_at_ms": cursor,
+        "turns": [{"id": "t1", "state": "running"}],
+        "events": [{"data": {"text": "waiting for crates.io zccache 1.15.12"}}],
+    }
+
+
+def _advance_clock(monkeypatch, minutes):
+    now = watch.time.time() + minutes * 60
+    monkeypatch.setattr(watch.time, "time", lambda: now)
+
+
+def test_frozen_session_emits_exactly_one_stall(base, monkeypatch) -> None:
+    _session_daemon(monkeypatch, _running())
+    data = watch.load_state(base)
+    data["sessions"]["sess-s"] = {"label": "agent"}
+    watch.poll_sessions(base, data, 10)
+    assert watch.read_events(base) == []
+    _advance_clock(monkeypatch, 11)
+    for _ in range(3):
+        watch.poll_sessions(base, data, 10)
+    (event,) = watch.read_events(base)
+    assert event["kind"] == "session-stalled"
+    assert event["minutes_idle"] >= 10
+    assert "crates.io zccache" in event["detail"]
+
+
+def test_stall_fires_again_after_progress_resumes(base, monkeypatch) -> None:
+    record = _running()
+    _session_daemon(monkeypatch, record)
+    data = watch.load_state(base)
+    data["sessions"]["sess-s"] = {}
+    watch.poll_sessions(base, data, 10)
+    _advance_clock(monkeypatch, 11)
+    watch.poll_sessions(base, data, 10)
+    record.update(next_event_cursor=9, updated_at_ms=9)
+    watch.poll_sessions(base, data, 10)
+    assert len(watch.read_events(base)) == 1
+    _advance_clock(monkeypatch, 25)
+    watch.poll_sessions(base, data, 10)
+    events = watch.read_events(base)
+    assert [e["kind"] for e in events] == ["session-stalled"] * 2
+    assert events[0]["key"] != events[1]["key"]
+
+
+def _finished(state, disposition):
+    return {
+        "state": "terminated",
+        "turns": [{"id": "t1", "state": state, "disposition": disposition}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("state", "disposition", "kind", "phrase"),
+    [
+        ("killed", "terminal_kill", "session-terminated", "aborted"),
+        ("failed", "exit_1", "session-failed", "did not succeed"),
+        ("completed", "exit_0", "session-sealed", "completed successfully"),
+    ],
+)
+def test_terminal_outcomes_are_distinct(base, monkeypatch, state, disposition, kind, phrase):
+    _session_daemon(monkeypatch, _finished(state, disposition))
+    data = watch.load_state(base)
+    data["sessions"]["sess-k"] = {}
+    watch.poll_sessions(base, data)
+    (event,) = watch.read_events(base)
+    assert event["kind"] == kind
+    assert event["ok"] is (kind == "session-sealed")
+    assert event["disposition"] == disposition
+    assert phrase in event["detail"]
+    assert "sess-k" not in data["sessions"]
+
+
+def test_cursor_pages_over_new_kinds(base, capsys) -> None:
+    data = watch.load_state(base)
+    watch.emit(base, data, "session-stalled", "s", "d", "k1", minutes_idle=11.0)
+    watch.emit(base, data, "session-terminated", "s", "d", "k2", ok=False)
+    watch.emit(base, data, "session-sealed", "s", "d", "k3", ok=True)
+    assert watch.main(["since", "1", "--json"]) == 0
+    lines = [watch.json.loads(x) for x in capsys.readouterr().out.splitlines()]
+    assert [e.get("kind") for e in lines[:-1]] == ["session-terminated", "session-sealed"]
+    assert lines[0]["ok"] is False
+    assert lines[-1] == {"cursor": 3}

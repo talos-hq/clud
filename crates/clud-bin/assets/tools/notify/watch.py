@@ -29,7 +29,14 @@ Usage (all via `"$CLUD_EXE" tool run notify/watch.py -- …`):
 
 Event record (one JSON object per line in events.jsonl):
   seq, ts (UTC ISO), kind, subject, detail, key
-Kinds: session-sealed, pr-queued, pr-merged, pr-ejected, pr-failed,
+  session terminal events also carry `ok` (bool) and `disposition`;
+  branch on `ok`, never on `detail` prose. session-stalled carries
+  `minutes_idle`. Stall keys are `session-stalled:<id>:<progress mark>`,
+  so one stall episode fires once and a later stall after progress fires again.
+Kinds: session-sealed (ok:true), session-terminated (ok:false; killed or
+interrupted), session-failed (ok:false; nonzero exit or failed turn),
+session-stalled (running but no progress for --stall-after minutes),
+pr-queued, pr-merged, pr-ejected, pr-failed,
 pr-closed, checks-timed-out, error. `key` is the dedupe identity, e.g.
 `session-sealed:<id>:<turn>`, `pr-merged:<repo#n>:<sha>`; errors use
 `error:<source>:<subject>:<UTC hour>` so a persistent outage is reported
@@ -59,6 +66,9 @@ SEEN_LIMIT = 4096
 TAIL_CHARS = 1500
 TYPING_EVERY_S = 4.0
 DEFAULT_QUEUE_TIMEOUT_S = 3600
+DEFAULT_STALL_AFTER_MIN = 10.0
+ACTIVITY_CHARS = 300
+TERMINATED_STATES = {"killed", "interrupted", "terminated", "cancelled"}
 TELEGRAM_API = "https://api.telegram.org/bot{token}/{method}"
 
 PR_QUERY = """query($o:String!,$r:String!,$n:Int!){repository(owner:$o,name:$r){
@@ -114,7 +124,9 @@ def save_state(base: Path, data: dict) -> None:
     tmp.replace(base / "state.json")
 
 
-def emit(base: Path, data: dict, kind: str, subject: str, detail: str, key: str) -> dict | None:
+def emit(
+    base: Path, data: dict, kind: str, subject: str, detail: str, key: str, **extra: object
+) -> dict | None:
     """Append one event unless its key was already recorded. Returns it."""
     if key in data["seen"]:
         return None
@@ -126,6 +138,7 @@ def emit(base: Path, data: dict, kind: str, subject: str, detail: str, key: str)
         "subject": subject,
         "detail": detail,
         "key": key,
+        **extra,
     }
     with (base / "events.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, sort_keys=True) + "\n")
@@ -242,32 +255,82 @@ def session_verdict(record: dict) -> tuple[str, str, str] | None:
     return turn["id"], disposition, result_tail(record, turn["id"])
 
 
+def classify_outcome(turn_state: str, disposition: str) -> tuple[str, bool, str]:
+    """(kind, ok, plain verdict) for a finished turn. Only a clean exit is ok."""
+    if {turn_state, disposition} & TERMINATED_STATES or disposition.endswith("_kill"):
+        return "session-terminated", False, "KILLED — aborted, did not finish"
+    if disposition in ("exit_0", "completed") and turn_state in ("completed", "idle"):
+        return "session-sealed", True, "completed successfully"
+    return "session-failed", False, f"FAILED ({disposition}) — did not succeed"
+
+
+def last_activity(record: dict) -> str:
+    """A short tail of the newest textual event, for stall reports."""
+    for event in reversed(record.get("events", [])):
+        text = json.dumps(event.get("data") or {}, sort_keys=True)
+        if text not in ("{}", "null"):
+            return text if len(text) <= ACTIVITY_CHARS else "…" + text[-ACTIVITY_CHARS:]
+    return ""
+
+
+def progress_mark(record: dict) -> str:
+    """Changes whenever the daemon records new session activity."""
+    return f"{record.get('next_event_cursor', '')}:{record.get('updated_at_ms', '')}"
+
+
 def check_session(
     sid: str, watch: dict, api: tuple[str, str], pty_ids: set[str]
-) -> tuple[str, str, str]:
-    """('running'|'sealed'|'unknown', detail, key)."""
+) -> tuple[str, str, str, dict]:
+    """('running'|kind|'unknown', detail, key, extra fields)."""
+    name = watch.get("label") or sid
     record = fetch_session(api[0], api[1], sid)
     if record is not None:
         verdict = session_verdict(record)
         if verdict is None:
-            return "running", "", ""
+            return "running", last_activity(record), progress_mark(record), {}
         turn_id, disposition, tail = verdict
-        detail = f"{watch.get('label') or sid} sealed ({disposition})" + (
-            f"\n{tail}" if tail else ""
-        )
-        return "sealed", detail, f"session-sealed:{sid}:{turn_id}"
+        turns = record.get("turns") or [{}]
+        kind, ok, plain = classify_outcome(turns[-1].get("state", "?"), disposition)
+        detail = f"{name} {plain} [{disposition}]" + (f"\n{tail}" if tail else "")
+        extra = {"ok": ok, "disposition": disposition}
+        return kind, detail, f"{kind}:{sid}:{turn_id}", extra
     if sid in pty_ids:
-        return "running", "", ""
+        return "running", "", "", {}
     if watch.get("seen_running"):
+        detail = f"{name} pty session exited — outcome unknown, not confirmed successful"
         return (
-            "sealed",
-            f"{watch.get('label') or sid} sealed (pty session exited)",
-            f"session-sealed:{sid}:pty",
+            "session-failed",
+            detail,
+            f"session-failed:{sid}:pty",
+            {"ok": False, "disposition": "pty_exit"},
         )
-    return "unknown", "session id not found in the daemon or `clud list`", ""
+    return "unknown", "session id not found in the daemon or `clud list`", "", {}
 
 
-def poll_sessions(base: Path, data: dict) -> tuple[int, bool]:
+def note_progress(
+    base: Path, data: dict, sid: str, watch: dict, mark: str, activity: str, stall_after: float
+) -> None:
+    """Track the progress mark; emit one session-stalled per frozen episode."""
+    now = time.time()
+    if not mark:
+        return
+    if watch.get("progress_mark") != mark:
+        watch["progress_mark"], watch["progress_at"] = mark, now
+        return
+    idle_min = (now - watch.get("progress_at", now)) / 60.0
+    if idle_min < stall_after:
+        return
+    name = watch.get("label") or sid
+    detail = f"{name} STALLED — running but no progress for {idle_min:.0f} min" + (
+        f"\nlast activity: {activity}" if activity else ""
+    )
+    key = f"session-stalled:{sid}:{mark}"
+    emit(base, data, "session-stalled", sid, detail, key, minutes_idle=round(idle_min, 1))
+
+
+def poll_sessions(
+    base: Path, data: dict, stall_after: float = DEFAULT_STALL_AFTER_MIN
+) -> tuple[int, bool]:
     """Returns (number still running, whether an error was emitted)."""
     if not data["sessions"]:
         return 0, False
@@ -280,7 +343,7 @@ def poll_sessions(base: Path, data: dict) -> tuple[int, bool]:
     running, errored = 0, False
     for sid, watch in list(data["sessions"].items()):
         try:
-            status, detail, key = check_session(sid, watch, api, pty_ids)
+            status, detail, key, extra = check_session(sid, watch, api, pty_ids)
         except DaemonDownError as exc:
             emit_error(base, data, "daemon", sid, str(exc))
             errored = True
@@ -288,8 +351,9 @@ def poll_sessions(base: Path, data: dict) -> tuple[int, bool]:
         if status == "running":
             watch["seen_running"] = True
             running += 1
-        elif status == "sealed":
-            emit(base, data, "session-sealed", sid, detail, key)
+            note_progress(base, data, sid, watch, key, detail, stall_after)
+        elif status.startswith("session-"):
+            emit(base, data, status, sid, detail, key, **extra)
             del data["sessions"][sid]
         else:
             emit_error(base, data, "session", sid, detail)
@@ -481,7 +545,7 @@ def poll_once(args: argparse.Namespace) -> tuple[int, bool]:
     base = state_dir()
     with locked(base):
         data = load_state(base)
-        running, err_s = poll_sessions(base, data)
+        running, err_s = poll_sessions(base, data, args.stall_after)
         open_prs, err_p = poll_prs(base, data, args.queue_timeout)
         err_t = deliver(base, data, telegram_creds(args.telegram_env))
         save_state(base, data)
@@ -588,6 +652,12 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--queue-timeout", type=int, default=DEFAULT_QUEUE_TIMEOUT_S)
         p.add_argument("--interval", type=float, default=30.0)
         p.add_argument("--tail", type=int, default=20)
+        p.add_argument(
+            "--stall-after",
+            type=float,
+            default=DEFAULT_STALL_AFTER_MIN,
+            help="minutes without session progress before session-stalled",
+        )
         p.set_defaults(func=func)
     p = sub.add_parser("since")
     p.add_argument("cursor", type=int)
