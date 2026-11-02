@@ -391,6 +391,7 @@ mod tests {
                 backend: ApiSessionBackend::Claude,
                 cwd: temp.path().to_path_buf(),
                 name: None,
+                origin: crate::session_origin::SessionOrigin::Test,
                 resolved_settings: ResolvedApiSessionSettings {
                     model: None,
                     safe: true,

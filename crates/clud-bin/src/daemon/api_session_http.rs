@@ -97,6 +97,9 @@ struct CreateDto {
     model: Option<String>,
     #[serde(default)]
     safe: bool,
+    /// The creating client declares its own origin; absent means `unknown`.
+    #[serde(default)]
+    origin: crate::session_origin::SessionOrigin,
 }
 #[derive(Deserialize)]
 struct TurnDto {
@@ -357,6 +360,7 @@ pub(super) fn handle(
             backend: body.backend,
             cwd: body.cwd,
             name: body.name,
+            origin: body.origin,
             resolved_settings: ResolvedApiSessionSettings {
                 model: body.model,
                 safe: body.safe,
@@ -559,6 +563,7 @@ mod tests {
                 backend,
                 cwd: temp.path().to_path_buf(),
                 name: Some("api-test".to_string()),
+                origin: crate::session_origin::SessionOrigin::Test,
                 resolved_settings: ResolvedApiSessionSettings {
                     model: Some("test-model".to_string()),
                     safe: true,
@@ -568,6 +573,25 @@ mod tests {
                 },
             })
             .unwrap()
+    }
+
+    #[test]
+    fn create_body_carries_the_declared_origin_verbatim() {
+        use crate::session_origin::SessionOrigin;
+        for origin in SessionOrigin::ALL {
+            let body = format!(
+                r#"{{"backend":"claude","cwd":"/","origin":"{}"}}"#,
+                origin.as_str()
+            );
+            let dto: CreateDto = serde_json::from_str(&body).unwrap();
+            assert_eq!(dto.origin, origin);
+        }
+        let absent: CreateDto = serde_json::from_str(r#"{"backend":"claude","cwd":"/"}"#).unwrap();
+        assert_eq!(absent.origin, SessionOrigin::Unknown);
+        assert!(serde_json::from_str::<CreateDto>(
+            r#"{"backend":"claude","cwd":"/","origin":"bogus"}"#
+        )
+        .is_err());
     }
 
     #[test]

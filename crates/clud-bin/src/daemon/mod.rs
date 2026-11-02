@@ -2,6 +2,8 @@ mod activity;
 mod api_session_http;
 pub mod api_session_inject;
 pub mod api_session_lifecycle;
+#[cfg(test)]
+mod api_session_origin_tests;
 pub mod api_sessions;
 pub mod api_turn_controller;
 mod attach;

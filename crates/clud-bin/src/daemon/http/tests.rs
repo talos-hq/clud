@@ -160,6 +160,8 @@ fn api_create_list_get_and_auth_boundary_are_request_level_contracts() {
     assert_status(&status, "201");
     let record: serde_json::Value = serde_json::from_str(&body).unwrap();
     let id = record["id"].as_str().unwrap();
+    // A client that does not declare an origin is recorded as `unknown`.
+    assert_eq!(record["origin"], "unknown");
     assert!(record["cwd"]
         .as_str()
         .unwrap()
@@ -402,6 +404,7 @@ fn dashboard_state_surfaces_api_sessions_as_nonattachable_rows() {
             backend: ApiSessionBackend::Codex,
             cwd: temp.path().to_path_buf(),
             name: Some("dashboard-api".to_string()),
+            origin: crate::session_origin::SessionOrigin::Test,
             resolved_settings: ResolvedApiSessionSettings {
                 model: None,
                 safe: false,

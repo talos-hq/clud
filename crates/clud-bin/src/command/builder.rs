@@ -936,7 +936,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Attach { .. })
         | Some(Command::Kill { .. })
         | Some(Command::Slay)
-        | Some(Command::List)
+        | Some(Command::List { .. })
         | Some(Command::Claim { .. })
         | Some(Command::Top { .. })
         | Some(Command::Logs { .. })
