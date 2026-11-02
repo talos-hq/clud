@@ -37,9 +37,15 @@ Subscriber exit contract (one process = one wake-up):
 Re-arm: relaunch `subscribe --name NAME` right after it exits; the cursor
 file makes the relaunch resume exactly after what it printed.
 
-Portability: Linux and macOS. Windows CPython has no AF_UNIX socket
-support in asyncio, so the broker is unsupported there; `subscribe` exits
-3 with a message saying so.
+Transport (one implementation, two thin endpoints). POSIX uses the Unix
+socket above. Where AF_UNIX is unavailable (Windows asyncio) the bus uses
+TCP on 127.0.0.1 only: the broker binds an ephemeral port and atomically
+writes {"host","port","token"} to $CLUD_WATCH_DIR/bus.addr (mode 0600).
+A loopback port is reachable by every local user, so each request's one
+handshake line must carry that random per-broker token; a missing or
+wrong token gets `{"error": ...}` and the connection is closed before any
+event is sent. CLUD_WATCH_BUS=unix|tcp forces either transport. The
+choice is logged once on stderr as `bus: transport=unix|tcp`.
 """
 
 from __future__ import annotations
@@ -49,6 +55,7 @@ import asyncio
 import contextlib
 import json
 import os
+import secrets
 import socket
 import sys
 from collections import deque
@@ -69,6 +76,66 @@ def socket_path() -> Path:
     return state_dir() / "bus.sock"
 
 
+def addr_path() -> Path:
+    return state_dir() / "bus.addr"
+
+
+_LOGGED = False
+
+
+def transport() -> str:
+    """unix where AF_UNIX exists, else tcp; CLUD_WATCH_BUS=unix|tcp forces it."""
+    global _LOGGED
+    forced = os.environ.get("CLUD_WATCH_BUS", "").strip().lower()
+    if forced and forced not in ("unix", "tcp"):
+        raise SystemExit(f"bus: CLUD_WATCH_BUS must be unix or tcp, not {forced!r}")
+    choice = forced or ("unix" if hasattr(socket, "AF_UNIX") else "tcp")
+    if choice == "unix" and not hasattr(socket, "AF_UNIX"):
+        raise SystemExit("bus: CLUD_WATCH_BUS=unix but AF_UNIX is unavailable here")
+    if not _LOGGED:
+        _LOGGED = True
+        print(f"bus: transport={choice}", file=sys.stderr)
+    return choice
+
+
+def endpoint() -> str:
+    return str(socket_path()) if transport() == "unix" else str(addr_path())
+
+
+def _write_private(path: Path, text: str) -> None:
+    """Owner-only file, replaced atomically."""
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        fh.write(text)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def _read_addr() -> dict:
+    info = json.loads(addr_path().read_text())
+    return {"host": str(info["host"]), "port": int(info["port"]), "token": str(info["token"])}
+
+
+def connect(timeout: float | None) -> tuple[socket.socket, str | None]:
+    """Open a client connection on the selected transport; (sock, token)."""
+    if transport() == "unix":
+        sock = socket.socket(socket.AF_UNIX)
+        sock.settimeout(timeout)
+        try:
+            sock.connect(str(socket_path()))
+        except OSError:
+            sock.close()
+            raise
+        return sock, None
+    try:
+        info = _read_addr()
+    except (OSError, ValueError, KeyError) as exc:
+        raise ConnectionRefusedError(f"no broker address at {addr_path()}: {exc}") from exc
+    sock = socket.create_connection((info["host"], info["port"]), timeout=timeout)
+    return sock, info["token"]
+
+
 def _send(sock: socket.socket, message: dict) -> None:
     sock.sendall((json.dumps(message, sort_keys=True) + "\n").encode())
 
@@ -77,7 +144,8 @@ def _send(sock: socket.socket, message: dict) -> None:
 
 
 class Broker:
-    def __init__(self, buffer: int) -> None:
+    def __init__(self, buffer: int, token: str | None = None) -> None:
+        self.token = token
         self.recent: deque[dict] = deque(maxlen=buffer)
         self.subscribers: set[asyncio.StreamWriter] = set()
 
@@ -85,6 +153,15 @@ class Broker:
         try:
             line = await reader.readline()
             request = json.loads(line or b"{}")
+            if self.token is not None and not secrets.compare_digest(
+                str(request.get("token", "")), self.token
+            ):
+                why = "missing token" if "token" not in request else "wrong token"
+                print(f"bus: refused connection: {why}", file=sys.stderr)
+                writer.write((json.dumps({"error": f"refused: {why}"}) + "\n").encode())
+                await writer.drain()
+                writer.close()
+                return
             if request.get("op") == "pub":
                 await self.publish(request["event"])
             elif request.get("op") == "sub":
@@ -120,6 +197,9 @@ class Broker:
 
 
 async def serve(path: Path, buffer: int) -> None:
+    if transport() == "tcp":
+        await serve_tcp(buffer)
+        return
     if path.exists():
         try:  # refuse to steal a live broker's socket
             with socket.socket(socket.AF_UNIX) as probe:
@@ -135,20 +215,45 @@ async def serve(path: Path, buffer: int) -> None:
         await server.serve_forever()
 
 
+async def serve_tcp(buffer: int) -> None:
+    path = addr_path()
+    with contextlib.suppress(OSError, ValueError, KeyError):
+        info = _read_addr()
+        with socket.create_connection((info["host"], info["port"]), timeout=1):
+            raise SystemExit(f"bus: broker already running at {path}")
+    token = secrets.token_hex(32)
+    broker = Broker(buffer, token)
+    server = await asyncio.start_server(broker.handle, host="127.0.0.1", port=0)
+    port = server.sockets[0].getsockname()[1]
+    _write_private(path, json.dumps({"host": "127.0.0.1", "port": port, "token": token}))
+    print(f"bus: listening on 127.0.0.1:{port} (address in {path})", flush=True)
+    try:
+        async with server:
+            await server.serve_forever()
+    finally:
+        with contextlib.suppress(OSError):
+            if _read_addr()["port"] == port:
+                path.unlink()
+
+
 # --------------------------------------------------------------- publisher
+
+
+def _request(op: dict, timeout: float | None) -> tuple[socket.socket, str | None]:
+    sock, token = connect(timeout)
+    if token is not None:
+        op = {**op, "token": token}
+    _send(sock, op)
+    return sock, token
 
 
 def publish_event(event: dict) -> bool:
     """Deliver one event to the broker. False (no raise) if none is running."""
-    if not hasattr(socket, "AF_UNIX"):
-        return False
     try:
-        with socket.socket(socket.AF_UNIX) as sock:
-            sock.settimeout(CONNECT_TIMEOUT_S)
-            sock.connect(str(socket_path()))
-            _send(sock, {"op": "pub", "event": event})
+        sock, _ = _request({"op": "pub", "event": event}, CONNECT_TIMEOUT_S)
+        sock.close()
         return True
-    except OSError:
+    except (OSError, SystemExit):
         return False
 
 
@@ -173,25 +278,24 @@ def _read_cursor(name: str) -> int:
 
 
 def subscribe(name: str) -> int:
-    if not hasattr(socket, "AF_UNIX"):
-        print("bus: AF_UNIX sockets are unavailable on this platform", file=sys.stderr)
-        return 3
-    path = socket_path()
     cursor = _read_cursor(name)
-    sock = socket.socket(socket.AF_UNIX)
     try:
-        sock.connect(str(path))
+        sock, _ = _request({"op": "sub", "after": cursor}, CONNECT_TIMEOUT_S)
     except OSError as exc:
-        print(f"bus: cannot connect to broker at {path}: {exc}", file=sys.stderr)
+        print(f"bus: cannot connect to broker at {endpoint()}: {exc}", file=sys.stderr)
         print("bus: start it with: bus.py broker", file=sys.stderr)
         return 3
     with sock:
-        _send(sock, {"op": "sub", "after": cursor})
+        sock.settimeout(None)
         line = sock.makefile("rb").readline()  # blocks; no timeout, no polling
     if not line:
         print("bus: broker closed the connection before any event", file=sys.stderr)
         return 4
-    events = json.loads(line)["events"]
+    reply = json.loads(line)
+    if "error" in reply:
+        print(f"bus: broker {reply['error']}", file=sys.stderr)
+        return 3
+    events = reply["events"]
     first = int(events[0].get("seq", 0))
     if cursor and first > cursor + 1:
         print(f"gap: missed seq {cursor + 1}..{first - 1}; recover with: watch.py since {cursor}")
@@ -220,9 +324,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seq", type=int, default=0)
     args = ap.parse_args(argv)
     if args.cmd == "broker":
-        if not hasattr(socket, "AF_UNIX"):
-            print("bus: unsupported on this platform (no AF_UNIX)", file=sys.stderr)
-            return 3
         with contextlib.suppress(KeyboardInterrupt):
             asyncio.run(serve(socket_path(), args.buffer))
         return 0
@@ -230,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
         return subscribe(args.name)
     event = {"seq": args.seq, "kind": args.kind, "subject": args.subject, "detail": args.detail}
     if not publish_event(event):
-        print(f"bus: no broker at {socket_path()}; event not delivered", file=sys.stderr)
+        print(f"bus: no broker at {endpoint()}; event not delivered", file=sys.stderr)
         return 3
     return 0
 
