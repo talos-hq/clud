@@ -19,3 +19,18 @@ pub fn configure(options: &mut eframe::NativeOptions) {
 pub fn graphics_available() -> bool {
     true
 }
+
+/// Why no external helper produced a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExternalFailure {
+    Cancelled,
+    Unavailable,
+}
+
+/// No external prompt helpers exist on Windows.
+pub fn external_prompt(
+    _title: &str,
+    _label: &str,
+) -> Result<zeroize::Zeroizing<String>, ExternalFailure> {
+    Err(ExternalFailure::Unavailable)
+}
