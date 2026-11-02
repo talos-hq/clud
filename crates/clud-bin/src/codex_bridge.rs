@@ -7954,13 +7954,13 @@ Connection: close
         bridge.shutdown().unwrap();
 
         let text = std::fs::read_to_string(log_path).unwrap();
-        // Serialized field order is serde_json's (sorted): model, then reason.
+        // Serialized field order is insertion order (preserve_order): reason, then model.
         assert!(
-            text.contains(r#""model":"gpt-6-nonexistent","reason":"unknown_model""#),
+            text.contains(r#""reason":"unknown_model","model":"gpt-6-nonexistent""#),
             "{text}"
         );
         assert!(
-            text.contains(r#""model":"clud-claude-kimi-k3","reason":"model_not_served_here""#),
+            text.contains(r#""reason":"model_not_served_here","model":"clud-claude-kimi-k3""#),
             "{text}"
         );
         // The model field comes from a 32 MiB-capped body: one oversized value
@@ -8006,7 +8006,7 @@ Connection: close
 
         let text = std::fs::read_to_string(&log_path).unwrap();
         assert!(
-            text.contains(r#""model":"gpt-6-sol","reason":"model_not_allowed""#),
+            text.contains(r#""reason":"model_not_allowed","model":"gpt-6-sol""#),
             "{text}"
         );
         assert!(!text.contains(&bearer), "{text}");
@@ -8117,7 +8117,7 @@ Connection: close
 
         let text = std::fs::read_to_string(&log_path).unwrap();
         assert!(
-            text.contains(r#""model":"deepseek-flash","reason":"model_not_allowed""#),
+            text.contains(r#""reason":"model_not_allowed","model":"deepseek-flash""#),
             "{text}"
         );
     }
