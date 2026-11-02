@@ -899,7 +899,8 @@ async def session_inject(
     and delivered when the current turn ends. With `interrupt=true`, the running
     turn is interrupted and the message starts right away. It is never a system
     override. Every call returns `{accepted, state, seq}`. `state` is
-    `queued`, `delivered` (with `turn_id`) or `failed` (with `error`). The
+    `queued`, `delivered` (with `turn_id`), `failed` (with `error`) or
+    `superseded` (a newer directive replaced it before delivery). The
     injection is recorded on the session (`injections[]` in its record) with
     who sent it and when.
 
