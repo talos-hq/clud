@@ -1121,6 +1121,7 @@ fn handle_connection(
         log,
         fallback_root,
         cache_health,
+        sessionless_standalone: standalone_root.is_some(),
     };
     route_request(&mut stream, &connection, parsed, &conversation_key);
 }
@@ -1133,6 +1134,22 @@ struct ConnectionContext<'a> {
     log: Option<&'a SharedBridgeLog>,
     fallback_root: &'a str,
     cache_health: &'a SharedCacheHealth,
+    /// A standalone request without a session header (#2554).
+    sessionless_standalone: bool,
+}
+
+impl ConnectionContext<'_> {
+    /// The prefix-stable key a sessionless standalone turn uses instead of
+    /// its per-request one (#2554); `None` keeps the header-derived key.
+    fn turn_key(
+        &self,
+        request: &serde_json::Value,
+        parsed: &ParsedRequest,
+    ) -> Option<ConversationKey> {
+        self.sessionless_standalone.then(|| {
+            sessionless_conversation_key(request, parsed.agent_id.as_deref(), self.fallback_root)
+        })
+    }
 }
 
 /// Read the request headers and admit the request: size and credential
@@ -1425,6 +1442,8 @@ fn route_messages(
         }
     };
     record_request_effort(&config.status_usage, &json, parsed.agent_id.is_some());
+    let derived = connection.turn_key(&json, parsed);
+    let conversation_key = derived.as_ref().unwrap_or(conversation_key);
     let streaming = json.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
     if matches!(config.gateway_mode, GatewayMode::Unified(_)) {
         serve_unified_messages(
@@ -1489,6 +1508,8 @@ fn route_chat_completions(
         return;
     };
     let model = model.to_string();
+    let derived = connection.turn_key(&request, parsed);
+    let conversation_key = derived.as_ref().unwrap_or(conversation_key);
     let streaming = request.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
     if !matches!(config.gateway_mode, GatewayMode::Unified(_)) {
         record_rejection(log, 501, "chat_completions_unsupported");
@@ -2177,6 +2198,53 @@ fn conversation_key_from_headers(
         Some(session_id) => ConversationKey::from_headers(Some(session_id), agent_id),
         None => ConversationKey::bridge_fallback(fallback_root, agent_id),
     }
+}
+
+/// #2554: the conversation key for a standalone client that sent no session
+/// header. Each such request gets its own history store, but its upstream
+/// prompt-cache key must stay the same across requests that share a prompt
+/// prefix, or the provider's cache routing changes on every call. The key is
+/// the client's own `prompt_cache_key` or `user` when it sends one, otherwise
+/// a digest of the stable prefix: model, system or instructions, tools and the
+/// first message. It stays beneath this listener's random root, so it never
+/// matches another launch.
+fn sessionless_conversation_key(
+    request: &serde_json::Value,
+    agent_id: Option<&str>,
+    fallback_root: &str,
+) -> ConversationKey {
+    let client_key = ["prompt_cache_key", "user"].iter().find_map(|field| {
+        request
+            .get(*field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+    });
+    let identity = match client_key {
+        Some(key) => format!("client:{key}"),
+        None => {
+            let first = ["messages", "input"].iter().find_map(|field| {
+                request
+                    .get(*field)
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|items| items.first())
+            });
+            let prefix = serde_json::json!([
+                request.get("model"),
+                request.get("system"),
+                request.get("instructions"),
+                request.get("tools"),
+                first,
+            ]);
+            format!("prefix:{prefix}")
+        }
+    };
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(identity.as_bytes());
+    let short: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    conversation_key_from_headers(None, agent_id, &format!("{fallback_root}-p{short}"))
 }
 
 fn serve_context_compact(
@@ -5738,6 +5806,43 @@ mod tests {
     use std::thread;
     use std::time::Duration;
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    /// #2554: sessionless standalone requests that share a prompt prefix get
+    /// one conversation key (and so one upstream prompt-cache key); unrelated
+    /// prefixes and a client-supplied key stay distinct.
+    #[test]
+    fn sessionless_requests_sharing_a_prefix_share_one_cache_key() {
+        let turn = |system: &str, messages: serde_json::Value| serde_json::json!({"model": "m", "system": system, "tools": [{"name": "Bash"}], "messages": messages});
+        let first = turn(
+            "sys",
+            serde_json::json!([{"role": "user", "content": "u1"}]),
+        );
+        let later = turn(
+            "sys",
+            serde_json::json!([
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u2"}
+            ]),
+        );
+        let other = turn(
+            "other system",
+            serde_json::json!([{"role": "user", "content": "u1"}]),
+        );
+        let key =
+            |request: &serde_json::Value| sessionless_conversation_key(request, None, "root").id;
+
+        assert_eq!(key(&first), key(&later));
+        assert_ne!(key(&first), key(&other));
+        assert!(key(&first).starts_with("bridge-root-p"));
+
+        let mut pinned = other.clone();
+        pinned["prompt_cache_key"] = serde_json::json!("client-key");
+        let mut pinned_too = first.clone();
+        pinned_too["prompt_cache_key"] = serde_json::json!("client-key");
+        assert_eq!(key(&pinned), key(&pinned_too));
+        assert_ne!(key(&pinned), key(&first));
+    }
 
     /// #2552: the cache heartbeat must replay what the upstream received,
     /// never the pre-redaction body.
@@ -11554,6 +11659,32 @@ Connection: close
                 );
             }
         }
+    }
+
+    /// #2554: a standalone client without a session header used to get a new
+    /// upstream prompt-cache key on every request.
+    #[test]
+    fn standalone_sessionless_turns_with_one_prefix_share_a_cache_key() {
+        let upstream = FakeResponses::start();
+        let bridge =
+            BridgeHandle::start(bridged_config(&upstream).with_standalone_client_auth()).unwrap();
+        for _ in 0..2 {
+            let response = request(
+                bridge.socket_addr(),
+                &authorized("POST", "/v1/messages", bridge.bearer_token(), PROBE_BODY),
+            );
+            assert_eq!(status(&response), 200, "{response}");
+        }
+        let keys = upstream
+            .requests()
+            .iter()
+            .map(|request| {
+                let body: serde_json::Value = serde_json::from_str(captured_body(request)).unwrap();
+                body["prompt_cache_key"].as_str().unwrap().to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0], keys[1]);
     }
 
     #[test]

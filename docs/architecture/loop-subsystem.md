@@ -218,10 +218,12 @@ re-enters cold. The unified gateway keeps it warm out of band
   touched.
 - When a conversation has been idle for `ttl - 15 s` (285 s by default) with
   no request in flight, a background thread replays that body with one
-  appended user turn, `just respond with ok`, `max_tokens` 8, no streaming
-  and no thinking. System, tools and prior messages are byte-for-byte the
-  recorded ones, so the cached prefix is what gets read. The reply is
-  discarded.
+  appended user turn, `just respond with ok`, and no streaming. `thinking` is
+  kept as recorded, because providers cache the message prefix under the
+  thinking parameters (#2553). `max_tokens` is the thinking budget plus 8.
+  System, tools and prior messages are the bytes the upstream received,
+  after redaction (#2552), so the cached prefix is what gets read. The reply
+  is discarded.
 - **Resume contract.** The heartbeat never enters the conversation: Claude
   Code, the loop, its markers, its iteration counters and `info.json` never
   see it, so the next real turn continues exactly where it stopped. A real
