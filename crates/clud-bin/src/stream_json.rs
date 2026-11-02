@@ -156,6 +156,123 @@ fn render_result(value: &Value) -> Option<String> {
     Some(parts.join(" · "))
 }
 
+/// Aggregate view of one iteration's stream-json events, rendered as an
+/// ASCII panel after the iteration ends.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct IterationSummary {
+    pub model: Option<String>,
+    pub tool_counts: Vec<(String, u32)>,
+    pub text_blocks: u32,
+    pub turns: Option<u64>,
+    pub duration_ms: Option<u64>,
+    pub cost_usd: Option<f64>,
+    pub is_error: bool,
+    pub final_text: Option<String>,
+}
+
+impl IterationSummary {
+    /// Fold one raw stream-json line into the summary. Non-JSON lines and
+    /// unknown events are ignored.
+    pub fn observe(&mut self, line: &str) {
+        let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
+            return;
+        };
+        match value.get("type").and_then(Value::as_str) {
+            Some("system") => {
+                if let Some(m) = value.get("model").and_then(Value::as_str) {
+                    self.model = Some(m.to_string());
+                }
+            }
+            Some("assistant") => self.observe_assistant(&value),
+            Some("result") => {
+                self.turns = value.get("num_turns").and_then(Value::as_u64);
+                self.duration_ms = value.get("duration_ms").and_then(Value::as_u64);
+                self.cost_usd = value.get("total_cost_usd").and_then(Value::as_f64);
+                self.is_error = value
+                    .get("is_error")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                if let Some(r) = value.get("result").and_then(Value::as_str) {
+                    self.final_text = first_nonempty_line(r);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn observe_assistant(&mut self, value: &Value) {
+        let Some(items) = value.pointer("/message/content").and_then(Value::as_array) else {
+            return;
+        };
+        for item in items {
+            match item.get("type").and_then(Value::as_str) {
+                Some("text") => self.text_blocks += 1,
+                Some("tool_use") => {
+                    let name = item.get("name").and_then(Value::as_str).unwrap_or("?");
+                    match self.tool_counts.iter_mut().find(|(n, _)| n == name) {
+                        Some((_, c)) => *c += 1,
+                        None => self.tool_counts.push((name.to_string(), 1)),
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Build a summary from a whole captured stdout buffer.
+    pub fn from_output(raw: &str) -> Self {
+        let mut s = Self::default();
+        for line in raw.lines() {
+            s.observe(line);
+        }
+        s
+    }
+
+    /// Render a fixed-width ASCII panel (pure; no ANSI escapes).
+    pub fn render_panel(&self, iteration: u32) -> String {
+        const W: usize = 56;
+        let mut rows: Vec<String> = Vec::new();
+        let status = if self.is_error { "ERROR" } else { "ok" };
+        rows.push(format!("iteration {iteration}  status: {status}"));
+        if let Some(m) = &self.model {
+            rows.push(format!("model: {m}"));
+        }
+        let mut stats = Vec::new();
+        if let Some(t) = self.turns {
+            stats.push(format!("{t} turns"));
+        }
+        if let Some(ms) = self.duration_ms {
+            stats.push(format!("{:.1}s", ms as f64 / 1000.0));
+        }
+        if let Some(c) = self.cost_usd {
+            stats.push(format!("${c:.2}"));
+        }
+        if !stats.is_empty() {
+            rows.push(stats.join(" | "));
+        }
+        if !self.tool_counts.is_empty() {
+            let tools: Vec<String> = self
+                .tool_counts
+                .iter()
+                .map(|(n, c)| format!("{n} x{c}"))
+                .collect();
+            rows.push(format!("tools: {}", tools.join(", ")));
+        }
+        if let Some(t) = &self.final_text {
+            rows.push(format!("result: {t}"));
+        }
+        let border = format!("+{}+", "-".repeat(W + 2));
+        let mut out = border.clone();
+        for row in rows {
+            out.push('\n');
+            out.push_str(&format!("| {:<W$} |", truncate(&row, W)));
+        }
+        out.push('\n');
+        out.push_str(&border);
+        out
+    }
+}
+
 /// Build a short summary string from a tool's `input` object. Empty string
 /// means "no informative argument" — the caller falls back to printing just
 /// the tool name.
@@ -383,5 +500,45 @@ mod tests {
     fn assistant_event_with_no_content_is_skipped() {
         let line = r#"{"type":"assistant","message":{"content":[]}}"#;
         assert!(render_line(line).is_none());
+    }
+
+    #[test]
+    fn iteration_summary_aggregates_events() {
+        let raw = concat!(
+            r#"{"type":"system","subtype":"init","model":"claude-opus-5-5"}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"hi"},{"type":"tool_use","name":"Bash","input":{}}]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{}},{"type":"tool_use","name":"Read","input":{}}]}}"#,
+            "\n",
+            "not json\n",
+            r#"{"type":"result","num_turns":3,"duration_ms":4200,"total_cost_usd":0.12,"is_error":false,"result":"All done\nmore"}"#,
+            "\n",
+        );
+        let s = IterationSummary::from_output(raw);
+        assert_eq!(s.model.as_deref(), Some("claude-opus-5-5"));
+        assert_eq!(s.tool_counts, vec![("Bash".into(), 2), ("Read".into(), 1)]);
+        assert_eq!(s.text_blocks, 1);
+        assert_eq!(s.turns, Some(3));
+        assert_eq!(s.final_text.as_deref(), Some("All done"));
+        let panel = s.render_panel(2);
+        assert!(panel.contains("iteration 2  status: ok"), "{panel}");
+        assert!(panel.contains("tools: Bash x2, Read x1"), "{panel}");
+        assert!(panel.contains("3 turns | 4.2s | $0.12"), "{panel}");
+        let widths: Vec<usize> = panel.lines().map(|l| l.chars().count()).collect();
+        assert!(
+            widths.windows(2).all(|w| w[0] == w[1]),
+            "ragged panel: {panel}"
+        );
+    }
+
+    #[test]
+    fn iteration_summary_flags_error_and_empty_output() {
+        let s = IterationSummary::from_output(r#"{"type":"result","is_error":true}"#);
+        assert!(s.render_panel(1).contains("status: ERROR"));
+        assert_eq!(
+            IterationSummary::from_output(""),
+            IterationSummary::default()
+        );
     }
 }

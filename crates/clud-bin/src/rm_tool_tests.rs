@@ -949,3 +949,27 @@ fn only_a_component_named_exactly_venv_is_exempt() {
 #[cfg(test)]
 #[path = "rm_tool_home_files_tests.rs"]
 mod home_files_tests;
+
+/// A root whose `.git` is not a valid repository, nested inside a real repo:
+/// git walks up to the outer repo, and its worktree list must not widen the
+/// roots to that repo. This held only when the test's temp dir happened to
+/// sit outside every checkout, so the fixture now builds the outer repo.
+#[test]
+fn bogus_git_marker_does_not_widen_roots_to_the_enclosing_repo() {
+    let tmp = tempfile::tempdir().unwrap();
+    let outer = crate::path_norm::canonicalize_plain(tmp.path()).unwrap();
+    git(&outer, &["init", "--quiet"]);
+    let inner = outer.join("inner");
+    let neighbour = outer.join("neighbour");
+    std::fs::create_dir_all(inner.join(".git")).unwrap();
+    std::fs::create_dir_all(&neighbour).unwrap();
+    std::fs::write(neighbour.join("victim.rs"), "keep").unwrap();
+    let mut roots = Roots::fixed(vec![inner], true);
+    let refused = resolve(
+        neighbour.join("victim.rs").to_str().unwrap(),
+        &outer,
+        None,
+        &mut roots,
+    );
+    assert!(refused.is_err(), "{refused:?}");
+}

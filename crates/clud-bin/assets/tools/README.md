@@ -95,3 +95,14 @@ queue, or performs a normal squash merge when no queue applies. It requires
 `--repo OWNER/REPO` and `--match-head-commit` with the full head SHA; it never
 uses admin bypass. A successful enqueue is not a merged PR: follow it with
 `github/pr_merge_watch.py`. See [CI merge queue](../../../../docs/architecture/ci.md#merge-queue-2048-decided).
+
+To get woken when detached work finishes, use `notify/watch.py`. One process
+watches N clud sessions and M PRs (`add-session ID`, `add-pr OWNER/REPO#N`) and
+appends each transition to `~/.clud/state/watch/events.jsonl`. Transitions are
+session sealed (ok:true) vs terminated/failed (ok:false), stalled (no progress for `--stall-after` min, default 10), PR queued, merged, ejected, failed, closed, checks timed out,
+and errors. Each event has a dedupe `key`, so running the watcher twice records
+an event once. Read events back with `since N` (a cursor). `tick` polls and then
+prints the last events; its output changes only when a new event lands, so a
+Hermes `monitor_script` cron can hash it and start an agent turn only then.
+An unreachable daemon, a GitHub failure or missing Telegram credentials each
+record an `error` event, at most one per source and subject each hour.

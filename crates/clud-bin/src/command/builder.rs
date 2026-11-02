@@ -172,6 +172,25 @@ fn is_codex_claude_bridge(target: ResolvedLaunchTarget) -> bool {
         && matches!(target.effective_harness, Backend::Claude)
 }
 
+/// Claude launches get clud's MCP bridge so the agent can spawn Codex
+/// sub-agents. The Codex->Claude bridge is excluded: it already runs on Codex
+/// and allows exactly one Claude process.
+fn claude_mcp_bridge_arg(backend: Backend, target: ResolvedLaunchTarget) -> Option<String> {
+    if backend != Backend::Claude || is_codex_claude_bridge(target) {
+        return None;
+    }
+    super::mcp_config::claude_mcp_config_arg(&super::mcp_config::current_exe_dir()?)
+}
+
+/// The [`super::mcp_config::bridge_missing_notice`] for a Claude launch that
+/// would otherwise register the bridge.
+pub fn mcp_bridge_missing_notice(backend: Backend, target: ResolvedLaunchTarget) -> Option<String> {
+    if backend != Backend::Claude || is_codex_claude_bridge(target) {
+        return None;
+    }
+    super::mcp_config::bridge_missing_notice(&super::mcp_config::current_exe_dir()?)
+}
+
 pub fn bridge_suppresses_plan_mode(args: &Args, target: ResolvedLaunchTarget) -> bool {
     !args.allow_plan_mode && is_non_claude_claude_harness_bridge(target)
 }
@@ -392,6 +411,22 @@ fn land_instructions(args: &Args) -> &'static str {
 /// agent tries them: a refused call still costs a full round trip (#2354).
 pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refused call is a wasted round trip): never wait with a while/until/sleep loop, `watch` or `tail -f`, in Bash or Monitor; use run_in_background and its completion notification, or a tool with its own deadline (pr_merge_watch, clud ci). Prefer `(cd DIR && CMD)` or absolute paths over a bare `cd`. Run one GitHub mutation (push, PR create, merge, issue or API write) per call.";
 
+/// Bounded diagnostics for the two reads agents repeat most: whole GitHub
+/// threads and whole noisy test logs. Both bundled tools keep the complete
+/// data in a private artifact and print a byte-capped view, so the same
+/// guidance applies to every backend and to both loop and one-shot runs
+/// (#2233). Before this it reached only `--codex loop`, so a Claude agent
+/// looking at a busy issue fell back to `gh issue view --json body,comments`
+/// and paid for every comment body in raw JSON (#2413).
+pub(super) const BOUNDED_DIAGNOSTIC_ROUTING: &str = "For large GitHub issue discussions, use `clud tool run github/issue_context.py -- --repo OWNER/REPO --issue N`; for a pull request with many reviews or review comments, use `clud tool run github/pr_context.py -- --repo OWNER/REPO --pr N` instead of `gh pr view --json reviews,comments` or `gh issue view --json body,comments`; follow each snapshot's continuation and refresh explicitly. If unavailable, use a bounded read and preserve access to the full issue. For noisy local test runs, use `clud tool run diagnostics/test_report.py -- -- <test command>` to keep a bounded report and private full-output artifact; inspect the artifact with its continuation. If unavailable, retain a bounded failure-focused fallback and preserve the command status.";
+
+/// Read-hunting is the probe's largest remaining context cost: agents `cat` or
+/// `sed -n`-slice a file they have not mapped, miss the symbol, and slice again.
+/// `code/outline.py` and `code/ast_grep.py` already ship in BUNDLED_TOOLS but
+/// only the `/grind` agent docs mention them, so plain `clud -p` and `clud loop`
+/// never learn they exist (#2233).
+pub(super) const BOUNDED_READ_ROUTING: &str = "Before reading a source file you have not mapped, outline it with `clud tool run code/outline.py -- <file>` (every definition and heading with its line range; ~2.7 KB for a 2,100-line Python file) and then read only that range in one call with `clud tool run code/slice.py <file> --lines A-B [--lines C-D]` (line-numbered, merged overlaps, byte-capped, with a footer naming the line to continue from); never re-read a range you already have. Use `clud tool run code/ast_grep.py --` for a structural search. Do not `cat` a large file whole, and do not hunt one symbol through repeated `sed -n` slices or offset reads: each miss is a round trip that every later request re-sends. Read a file whole only when it is small or every line matters.";
+
 fn append_instructions(target: &mut String, text: &str) {
     if !text.is_empty() {
         if !target.is_empty() {
@@ -487,9 +522,18 @@ fn build_launch_plan_for_target_at(
         (String::new(), args.passthrough.clone())
     };
     let land = land_instructions(args);
+    // Routing toward the bounded diagnostics tools is an agent-mode
+    // instruction: a human in an interactive session keeps the shorter
+    // prompt and decides for themselves.
+    let agent_mode = has_noninteractive_prompt(args, backend)
+        || matches!(args.command, Some(Command::Grind { .. }));
     if backend == Backend::Claude {
         append_instructions(&mut deletion_instructions, land);
         append_instructions(&mut deletion_instructions, TOOL_CALL_RULES);
+        if agent_mode {
+            append_instructions(&mut deletion_instructions, BOUNDED_DIAGNOSTIC_ROUTING);
+            append_instructions(&mut deletion_instructions, BOUNDED_READ_ROUTING);
+        }
     }
     let codex_passthrough_instructions = (backend == Backend::Codex)
         .then(|| take_codex_developer_instructions(&mut passthrough))
@@ -590,6 +634,14 @@ fn build_launch_plan_for_target_at(
         deletion_instructions.push_str(do_procedure(args.do_rendered_prompt.as_deref()));
     }
 
+    let mcp_bridge = claude_mcp_bridge_arg(backend, target);
+    if mcp_bridge.is_some() {
+        append_instructions(
+            &mut deletion_instructions,
+            super::mcp_config::BOARD_DIRECTIVE,
+        );
+    }
+
     if matches!(backend, Backend::Claude) && !deletion_instructions.is_empty() {
         cmd.push("--append-system-prompt".into());
         cmd.push(deletion_instructions);
@@ -626,6 +678,10 @@ fn build_launch_plan_for_target_at(
         }
         append_instructions(&mut instructions, land);
         append_instructions(&mut instructions, TOOL_CALL_RULES);
+        if agent_mode {
+            append_instructions(&mut instructions, BOUNDED_DIAGNOSTIC_ROUTING);
+            append_instructions(&mut instructions, BOUNDED_READ_ROUTING);
+        }
         if !instructions.is_empty() || has_user_instructions {
             cmd.extend([
                 "-c".into(),
@@ -682,6 +738,7 @@ fn build_launch_plan_for_target_at(
     if !disallowed.is_empty() {
         cmd.push(format!("--disallowedTools={}", disallowed.join(",")));
     }
+    cmd.extend(mcp_bridge);
 
     // A Claude-harness gateway must receive its catalog discovery id, not the
     // provider wire id. Claude Code sees and classifies this value before the
@@ -763,6 +820,7 @@ fn build_launch_plan_for_target_at(
             no_done,
             done,
             repeat,
+            ..
         }) => {
             iterations = *loop_count;
             let git_root = git_root_from(cwd);
@@ -790,17 +848,15 @@ fn build_launch_plan_for_target_at(
                     // model writes to the exact path clud is polling, not
                     // some invented alternative like `~/.loop/LOOP.md`.
                     format!(
-                        "{}{}",
+                        "{}{}{}",
                         prompt_text,
-                        done_marker_contract(&markers.done, &markers.blocked)
+                        done_marker_contract(&markers.done, &markers.blocked),
+                        crate::loop_spec::next_message_contract(
+                            &crate::loop_artifacts::next_message_path(&git_root)
+                        )
                     )
                 } else {
                     prompt_text
-                };
-                let final_prompt = if matches!(backend, Backend::Codex) {
-                    format!("{final_prompt}\n\nFor large GitHub issue discussions, use `clud tool run github/issue_context.py -- --repo OWNER/REPO --issue N`; for a pull request with many reviews or review comments, use `clud tool run github/pr_context.py -- --repo OWNER/REPO --pr N` instead of `gh pr view --json reviews,comments`; follow each snapshot's continuation and refresh explicitly. If unavailable, use a bounded read and preserve access to the full issue. For noisy local test runs, use `clud tool run diagnostics/test_report.py -- -- <test command>` to keep a bounded report and private full-output artifact; inspect the artifact with its continuation. If unavailable, retain a bounded failure-focused fallback and preserve the command status.")
-                } else {
-                    final_prompt
                 };
                 push_prompt(&mut cmd, backend, final_prompt);
             }
@@ -834,8 +890,9 @@ fn build_launch_plan_for_target_at(
             // follow-up input, so both Claude and Codex seed an interactive
             // session. `main` resolves the optional target before plan building.
             if seed_interactive_builtin && target.is_some() {
-                let prompt = match (backend, target.as_deref()) {
-                    (Backend::Claude, Some(target)) => build_claude_do_goal(
+                let prompt = match (backend, target.as_deref(), args.do_goal.as_deref()) {
+                    (Backend::Claude, Some(_), Some(goal)) => format!("/goal {goal}"),
+                    (Backend::Claude, Some(target), None) => build_claude_do_goal(
                         target,
                         args.do_rendered_prompt
                             .as_deref()
@@ -848,6 +905,9 @@ fn build_launch_plan_for_target_at(
         }
         Some(Command::Wasm { .. }) => {
             unreachable!("wasm execution is handled directly in main")
+        }
+        Some(Command::Workflow { .. }) => {
+            unreachable!("workflow execution is handled directly in main")
         }
         Some(Command::DoPrompt { .. }) => {
             unreachable!("do-prompt is handled directly in main")
@@ -900,7 +960,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Attach { .. })
         | Some(Command::Kill { .. })
         | Some(Command::Slay)
-        | Some(Command::List)
+        | Some(Command::List { .. })
         | Some(Command::Claim { .. })
         | Some(Command::Top { .. })
         | Some(Command::Logs { .. })
@@ -916,9 +976,13 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Settings { .. })
         | Some(Command::Extern { .. })
         | Some(Command::Daemon { .. })
+        | Some(Command::Inject { .. })
         | Some(Command::InternalStartCmd)
         | Some(Command::InternalOpenAiChatTranslate { .. })
         | Some(Command::InternalApplyPayloadRules { .. })
+        | Some(Command::InternalOpenAiResponsesTranslate)
+        | Some(Command::InternalKimiDeviceLogin { .. })
+        | Some(Command::InternalXaiDeviceLogin { .. })
         | Some(Command::InternalDaemon { .. })
         | Some(Command::Statusline { .. })
         | Some(Command::Session { .. })

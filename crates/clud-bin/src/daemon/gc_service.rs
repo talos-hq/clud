@@ -1215,6 +1215,7 @@ fn spawn_repo_worktree_probe(
             refresh_worktree_size_cache(wt_root.as_deref());
             // #2101: warn about, then trash, oversized unmerged worktrees.
             worktree_schedule_exec::run(wt_root.as_deref(), &rows, &live_cwds, &procs, mode, &tx);
+            worktree_schedule_exec::tidy_root_logs(wt_root.as_deref(), mode);
             // Release the probe slot only after all filesystem work is done.
             let _ = tx.send(RegistryMsg::RepoWorktreeVerdicts(rows));
         });

@@ -16,8 +16,8 @@ from pathlib import Path
 import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
-DYLINT_VERSION = "6.0.3"
-DYLINT_NIGHTLY = "nightly-2026-05-28"
+DYLINT_VERSION = "6.2.0"
+DYLINT_NIGHTLY = "nightly-2026-08-15"
 #: Every Dylint lint crate. Each carries its own nightly pin, lockfile and
 #: linker config, so each must satisfy the same lockstep.
 LINT_DIRS = sorted(p.parent for p in (ROOT / "dylints").glob("*/Cargo.toml"))
@@ -46,16 +46,16 @@ def test_dylint_stack_versions_stay_in_lockstep() -> None:
         assert (lint_dir / "rust-toolchain").exists(), lint_dir
         lint_manifest = _toml(lint_dir / "Cargo.toml")
         toolchain = _toml(lint_dir / "rust-toolchain")
-        assert lint_manifest["dependencies"]["dylint_linting"] == DYLINT_VERSION, lint_dir
+        assert lint_manifest["dependencies"]["dylint_linting"] == f"={DYLINT_VERSION}", lint_dir
         assert toolchain["toolchain"]["channel"] == DYLINT_NIGHTLY, lint_dir
     workflow = _workflow_text()
 
     assert "env -u RUSTUP_TOOLCHAIN soldr dylint prepare" in workflow
     assert "env -u RUSTUP_TOOLCHAIN soldr dylint --all -- --workspace --all-targets" in workflow
     assert 'SOLDR_FORCE_MANAGED_CARGO_SUBCOMMANDS: "1"' in workflow
-    assert "SOLDR_DYLINT_TOOLCHAIN: nightly-2026-05-28" in workflow
+    assert "SOLDR_DYLINT_TOOLCHAIN: nightly-2026-08-15" in workflow
     assert "dylint: true" in workflow
-    assert "soldr rustup component add --toolchain nightly-2026-05-28 rustfmt" in workflow
+    assert "soldr rustup component add --toolchain nightly-2026-08-15 rustfmt" in workflow
     assert "soldr --no-cache cargo fmt" in workflow
     # Every nightly the workflow names must be the one the lint crate pins;
     # a stray second date means the driver and the lints disagree.
@@ -65,7 +65,7 @@ def test_dylint_stack_versions_stay_in_lockstep() -> None:
     # the lockstep is how you get a green suite that hands people a
     # mismatched cargo-dylint — the tool/library skew #911 was about.
     readme = (ROOT / "dylints" / "README.md").read_text(encoding="utf-8")
-    assert f"Soldr 0.9.23's verified {DYLINT_VERSION}" in readme
+    assert f"Soldr's verified {DYLINT_VERSION}" in readme
     assert set(re.findall(r"nightly-\d{4}-\d{2}-\d{2}", readme)) == {DYLINT_NIGHTLY}
 
 
@@ -73,7 +73,7 @@ def test_full_local_lint_runs_the_custom_dylint() -> None:
     script = (ROOT / "lint").read_text(encoding="utf-8")
     assert "-m ci.lint" in script
     assert "env -u RUSTUP_TOOLCHAIN soldr dylint prepare" in script
-    assert "export SOLDR_DYLINT_TOOLCHAIN=nightly-2026-05-28" in script
+    assert "export SOLDR_DYLINT_TOOLCHAIN=nightly-2026-08-15" in script
     assert "env -u RUSTUP_TOOLCHAIN soldr dylint --all -- --workspace --all-targets" in script
     assert "--static-only" in script
 

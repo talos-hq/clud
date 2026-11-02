@@ -46,6 +46,7 @@ from pathlib import Path
 from typing import Any
 
 from tests import process
+from tests.metered_consent import consent_for
 from tests.shim_env import session_env
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -456,6 +457,8 @@ class Harness:
             argv += list(extra_args or [])
             argv.append(prompt)
             env = self.env({"ANTHROPIC_BASE_URL": base_url, **(extra_env or {})})
+            # Launches that pick a metered provider consent to it explicitly.
+            env = consent_for(env, argv)
             cwd = cwd if cwd is not None else self.repo if self.repo.is_dir() else self.root
             result = process.run(
                 argv, cwd=str(cwd), capture_output=True, text=True, env=env, timeout=timeout
@@ -590,7 +593,12 @@ class Harness:
             cwd = self.repo if self.repo.is_dir() else self.root
             try:
                 result = process.run(
-                    argv, cwd=str(cwd), capture_output=True, text=True, env=env, timeout=timeout
+                    argv,
+                    cwd=str(cwd),
+                    capture_output=True,
+                    text=True,
+                    env=consent_for(env, argv),
+                    timeout=timeout,
                 )
             finally:
                 self.stop_daemon(env)
@@ -657,7 +665,9 @@ class Harness:
             ]
             child = None
             try:
-                child = PseudoTerminalProcess(argv, cwd=self.repo, env=env, cols=160, rows=40)
+                child = PseudoTerminalProcess(
+                    argv, cwd=self.repo, env=consent_for(env, argv), cols=160, rows=40
+                )
                 child.expect("Launch setup scope", timeout=30)
                 child.write("\r")  # The default highlighted choice is session-only.
                 child.expect(finished, timeout=timeout)

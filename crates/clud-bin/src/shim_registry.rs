@@ -35,6 +35,13 @@ pub const SESSION_DIR_KEY: &str = "CLUD_RM_SHIM_DIR";
 pub const PYTHON_TARGET_KEY: &str = "CLUD_PYTHON_SHIM_TARGET";
 /// Real `gh` the launching clud resolved before PATH was rewritten.
 pub const GH_TARGET_KEY: &str = "CLUD_GH_SHIM_TARGET";
+/// ghd's variable naming the real gh (forge-ci/ghd#24). The session exports
+/// it so a direct `ghd gh` never relays back into the `gh` alias.
+pub const GHD_REAL_GH_KEY: &str = "GHD_REAL_GH";
+/// `ghd` when the session's `gh.backend` routes gh through ghd (#2352), else
+/// `gh`. The bundled watchers send plain REST reads under `ghd` so ghd can
+/// share them across concurrent watchers (#2368).
+pub const GH_BACKEND_KEY: &str = "CLUD_GH_BACKEND";
 /// Real `git` the launching clud resolved before PATH was rewritten (#1486).
 pub const GIT_TARGET_KEY: &str = "CLUD_GIT_SHIM_TARGET";
 /// `1` when the `gh` alias has a target; read by the command guard.

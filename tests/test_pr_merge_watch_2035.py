@@ -47,11 +47,12 @@ def _queue(watcher, state="OPEN", entry="QUEUED", *, auto=False, reason=None, re
     )
 
 
-def _follow(watcher, monkeypatch, states, jobs=None, required=None) -> int:
+def _follow(watcher, monkeypatch, states, jobs=None, required=None, log="") -> int:
     seq = iter(states)
     monkeypatch.setattr(watcher, "fetch_queue_state", lambda _r, _p: next(seq))
-    monkeypatch.setattr(watcher, "fetch_merge_group_jobs", lambda _r, _s: jobs or [])
+    monkeypatch.setattr(watcher, "fetch_merge_group_jobs", lambda _r, _s, _since=None: jobs or [])
     monkeypatch.setattr(watcher, "fetch_required_check_names", lambda _r, _b: required)
+    monkeypatch.setattr(watcher, "fetch_failure_log_explained", lambda _r, _run, _job: (log, ""))
     with pytest.raises(SystemExit) as exit_info:
         watcher.follow_merge(1847, "obs-rust/obs-studio", None)
     return exit_info.value.code
@@ -79,6 +80,15 @@ def test_a_required_merge_group_failure_ejects_at_once_and_names_the_job(
     out = capsys.readouterr().out
     assert "CI / build: failure https://x/job/9" in out
     assert "advisory" not in out
+
+
+def test_an_ejection_names_the_first_error_line(watcher, monkeypatch, capsys) -> None:
+    # #2481: one verdict carries the cause; no follow-up log read is needed.
+    jobs = [({"name": "CI", "id": 7}, [{"name": "build", "id": 9, "conclusion": "failure"}])]
+    log = "setup ok\nerror: insufficient free disk for the nextest archive\n"
+    code = _follow(watcher, monkeypatch, [_queue(watcher)], jobs, log=log)
+    assert code == watcher.EXIT_EJECTED
+    assert "first error: error: insufficient free disk" in capsys.readouterr().out
 
 
 def test_a_cancelled_merge_group_job_is_a_queue_rebuild_not_a_verdict(

@@ -38,6 +38,7 @@ pub(crate) mod uv_cache_fixture;
 pub mod uv_cache_repair;
 pub mod worktree_registrations;
 pub mod worktree_root;
+pub mod worktree_root_logs;
 pub mod worktree_schedule;
 pub mod worktree_size_cache;
 pub mod worktree_top;

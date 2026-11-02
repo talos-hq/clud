@@ -85,7 +85,12 @@ PYTEST_FAIL = re.compile(r"^FAILED\s+(\S+)(?:\s+-\s+.*)?$")
 PYTEST_VERBOSE_FAIL = re.compile(r"^(\S+::\S+)\s+FAILED(?:\s|$)")
 GO_FAIL = re.compile(r"^--- FAIL:\s+(\S+)")
 PANIC = re.compile(r"^thread .* panicked at")
-WARNING = re.compile(r"^(?:warning(?:\[.*?\])?:|WARN(?:ING)?\b|.*DeprecationWarning:)", re.I)
+# The last alternative is pytest's source-prefixed warnings-summary entry,
+# `path.py:9: UserWarning: text`, for any `*Warning` category (#2297).
+WARNING = re.compile(
+    r"^(?:warning(?:\[.*?\])?:|WARN(?:ING)?\b|.*DeprecationWarning:|\s*\S.*?:\d+:\s+\w*Warning:)",
+    re.I,
+)
 ERROR = re.compile(
     r"^(?:FAIL(?:ED)?\b|error(?:\[[^]]+\])?:|##\[error\]|thread .* panicked at|AssertionError\b|"
     r"E\s+\S|Traceback \(most recent call last\):|\s*File \".*\", line \d+|\s*-->\s+\S)"

@@ -304,6 +304,34 @@ mod key_tests {
         );
     }
 
+    /// Providers cache the rendered prompt prefix, and tool schemas and
+    /// `tool_use.input` objects are rendered as JSON text. Redacting one
+    /// secret late in a conversation must therefore not reorder the keys of
+    /// everything before it: that turn would re-send the whole history
+    /// uncached (#2225).
+    #[test]
+    fn redaction_rewrites_only_the_secret_and_keeps_key_order() {
+        let secret = "FAKE_VAULT_KEY_KEY_ORDER_FIXTURE";
+        let mut session = Session::with_key([7; 32], vec![secret.into()]);
+        let body = format!(
+            concat!(
+                r#"{{"model":"m","tools":[{{"name":"Bash","input_schema":"#,
+                r#"{{"type":"object","properties":{{"command":{{"type":"string"}},"#,
+                r#""description":{{"type":"string"}}}},"required":["command"]}}}}],"#,
+                r#""messages":[{{"role":"assistant","content":[{{"type":"tool_use","#,
+                r#""id":"t1","name":"Bash","input":{{"command":"ls","description":"d"}}}}]}},"#,
+                r#"{{"role":"user","content":"{}"}}]}}"#
+            ),
+            secret
+        );
+        let redacted = session.redact_body(body.as_bytes()).unwrap().into_owned();
+        let token = session.redact_text(secret).into_owned();
+        assert_eq!(
+            String::from_utf8(redacted).unwrap(),
+            body.replace(secret, &token)
+        );
+    }
+
     #[test]
     fn object_key_collisions_fail_closed_in_both_directions() {
         let secret = "FAKE_VAULT_KEY_COLLISION_FIXTURE";

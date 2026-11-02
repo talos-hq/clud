@@ -129,6 +129,37 @@ fn last_resumes_the_newest_session_natively_without_a_picker() {
     assert_eq!(args.provider, Some(ModelProvider::Claude));
 }
 
+/// RED -> GREEN anchor for #2405: `clud -c 0` forwarded `0` as the prompt.
+/// `-c N` now resumes the Nth newest session without the picker; 0 is the
+/// last save spot.
+#[test]
+fn continue_index_resumes_the_nth_newest_session_without_a_picker() {
+    let fx = fixture(false);
+    simple(&fx, "old", "2026-01-01T00:00:00Z", Route::Claude);
+    simple(&fx, "new", "2026-02-01T00:00:00Z", Route::Claude);
+    for (argv, want) in [
+        (vec!["clud", "-c", "0"], "new"),
+        (vec!["clud", "--continue", "1"], "old"),
+        (vec!["clud", "--continue=0"], "new"),
+    ] {
+        let mut args = parse(&argv);
+        assert!(
+            args.passthrough.is_empty(),
+            "{argv:?}: {:?}",
+            args.passthrough
+        );
+        assert!(applies(&args, None), "{argv:?}");
+        prepare(&mut args, &fx.env, never_pick).unwrap().unwrap();
+        assert_eq!(args.resume, Some(Some(want.into())), "{argv:?}");
+        assert!(!args.continue_session && args.continue_index.is_none());
+    }
+    let mut args = parse(&["clud", "-c", "5"]);
+    let err = prepare(&mut args, &fx.env, never_pick).unwrap_err();
+    assert!(err.contains("no session 5"), "{err}");
+    let args = parse(&["clud", "-c", "fix the bug"]);
+    assert_eq!(args.continue_index, None);
+}
+
 #[test]
 fn the_picker_lists_only_this_cwds_sessions_newest_first() {
     let fx = fixture(true);

@@ -593,6 +593,60 @@ Clud's available remedy is to detect and report, not to constrain the picker.
 Full rationale:
 [DD-054](../DESIGN_DECISIONS.md#dd-054-the-model-picker-belongs-to-the-harness-and-discovery-only-adds-rows).
 
+## Metered access needs two overrides
+
+clud is subscription-first. With nothing set it launches the Claude
+subscription; `CLUD_SUBSCRIPTION_PROVIDER` (`claude`, alias `native`, or
+`codex`) changes that default and may never name a metered provider. The
+policy lives in `crates/clud-bin/src/metered_policy.rs` and reuses
+`failover::CostOwner::for_provider` to decide what is metered (DeepSeek, Kimi,
+OpenRouter, and the Codex bridge's `OPENAI_API_KEY`).
+
+| Environment | Result |
+| --- | --- |
+| nothing set | Claude subscription, no warning |
+| `CLUD_SUBSCRIPTION_PROVIDER=codex` | Codex subscription, no warning |
+| `CLUD_PROVIDER=claude\|native\|codex` | that subscription, no warning |
+| `CLUD_PROVIDER=<metered>` + `CLUD_ALLOW_METERED=1` + `CLUD_METERED_PROVIDER=<same>` | metered route, loud warning |
+| `CLUD_ALLOW_METERED=1` + `CLUD_METERED_PROVIDER=<p>[,<q>…]`, no `CLUD_PROVIDER` | subscription default; consent applies when the CLI or a unified gateway selects a listed provider |
+| a metered provider from a CLI flag, `--model`, saved setting or credential fallback without consent | error |
+| `CLUD_PROVIDER=<metered>` missing either override | error |
+| `CLUD_ALLOW_METERED=1` without `CLUD_METERED_PROVIDER` (or the reverse) | error |
+| overrides with `CLUD_PROVIDER=claude` or `CLUD_METERED_PROVIDER=claude` | error (contradiction) |
+| `CLUD_METERED_PROVIDER` differs from `CLUD_PROVIDER` | error |
+| `CLUD_SUBSCRIPTION_PROVIDER=<metered>` | error |
+| a CLI provider that differs from `CLUD_PROVIDER` | error |
+
+Errors exit 2 in `resolve_launch`, before settings, launch records, the daemon
+or any child exist. A metered route prints this to stderr and stores it in the
+launch record's `metered_warning` (`~/.clud/state/launches/`):
+
+```text
+[clud] WARNING: METERED PROVIDER IN USE: <provider>
+[clud] WARNING: this launch uses pay-per-token API billing, not your subscription.
+[clud] WARNING: enabled by CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=<provider>.
+[clud] WARNING: unset both (and CLUD_PROVIDER) to return to your subscription.
+```
+
+Subscription routes never print it, so the warning keeps its meaning. The
+Codex bridge never falls back from a missing ChatGPT login to
+`OPENAI_API_KEY` unless both overrides name `codex`; otherwise the error names
+`clud auth login codex`.
+
+The same consent gates every other way a metered provider can be reached:
+the CLI flags (`--openrouter`, `--deepseek`, `--kimi`, `--provider`), a
+qualified `--model`, a saved provider setting and the DeepSeek-only credential
+fallback all resolve first and are then refused (exit 2) unless the consent
+names that provider. `--failover-allow-metered` additionally needs the
+environment consent; a unified gateway admits a metered key only for a
+consented provider; `clud serve --openrouter` refuses without consent. For a
+unified session, `CLUD_METERED_PROVIDER` may list several providers
+(`openrouter,deepseek`), which prints one warning per provider; with
+`CLUD_PROVIDER` set it must name exactly that provider.
+
+What clud cannot control: the Claude harness itself may use an inherited
+`ANTHROPIC_API_KEY`, and the native Codex CLI may use its own API-key login.
+
 ## Tests
 
 Focused guardrails cover provider inference and conflicts, modifier

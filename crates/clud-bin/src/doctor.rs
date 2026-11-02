@@ -337,8 +337,59 @@ fn print_report(own: &str, exe: &Path, aliases: &DirReport, coverage: &[Coverage
     println!("a normal `clud` launch refreshes clud's own aliases and removes retired ones");
 }
 
-/// `clud doctor`: print the report; exit 1 when an alias is wrong.
-pub fn run(as_json: bool) -> i32 {
+/// The dirs under `home` that hold only clud's aliases.
+fn owned_alias_dirs(home: &Path) -> [PathBuf; 3] {
+    [
+        home.join(crate::shim_registry::INTERPRETER_SUBDIR),
+        home.join(crate::shim_registry::SESSION_SUBDIR),
+        home.join(".clud/state/helper-bin"),
+    ]
+}
+
+/// `clud doctor --fix`: replace each stale or missing alias with the running
+/// `exe`. A foreign scanner is replaced only inside one of clud's own alias
+/// dirs; anywhere else it belongs to the user and is left alone. Retired
+/// aliases are left to the launch, which already removes them. Returns one
+/// line per action.
+pub fn repair(exe: &Path, report: &DirReport, home: Option<&Path>) -> Vec<String> {
+    let owned = home.map(owned_alias_dirs).unwrap_or_default();
+    let in_owned_dir = |path: &Path| {
+        path.parent()
+            .is_some_and(|dir| owned.iter().any(|own| same_dir(dir, own)))
+    };
+    let mut actions = Vec::new();
+    for finding in &report.findings {
+        let path = finding.path();
+        let replace = match finding {
+            Finding::Stale { .. } | Finding::Missing { .. } => true,
+            Finding::ForeignScanner { .. } => in_owned_dir(path),
+            Finding::Retired { .. } => continue,
+        };
+        if !replace {
+            actions.push(format!(
+                "left alone: {} is not in a clud alias dir; remove it or reorder PATH yourself",
+                path.display()
+            ));
+            continue;
+        }
+        actions.push(match crate::alias_link::install_alias(exe, path) {
+            Ok(_) => format!("fixed: {} now runs {}", path.display(), exe.display()),
+            Err(error) => format!("could not fix {}: {error}", path.display()),
+        });
+    }
+    actions
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
+/// `clud doctor`: print the report; exit 1 when an alias is wrong. With
+/// `fix`, repair first and report what remains.
+pub fn run(as_json: bool, fix: bool) -> i32 {
     let Ok(exe) = std::env::current_exe() else {
         eprintln!("clud doctor: cannot resolve the running executable");
         return 2;
@@ -349,7 +400,13 @@ pub fn run(as_json: bool) -> i32 {
     };
     let home = crate::home::user_home();
     let path_env = std::env::var("PATH").unwrap_or_default();
-    let aliases = inspect(&exe, &own, home.as_deref(), &path_env);
+    let mut aliases = inspect(&exe, &own, home.as_deref(), &path_env);
+    if fix && !aliases.findings.is_empty() {
+        for action in repair(&exe, &aliases, home.as_deref()) {
+            eprintln!("{action}");
+        }
+        aliases = inspect(&exe, &own, home.as_deref(), &path_env);
+    }
     let repo = std::env::current_dir()
         .ok()
         .and_then(|cwd| crate::block_bad_cmd::nearest_repo_root_public(&cwd));

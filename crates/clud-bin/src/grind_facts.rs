@@ -184,7 +184,7 @@ pub fn lookup_in_for(dir: &Path, session_id: Option<&str>, cwd: &Path, now: Syst
     narrow(lookup_in(dir, session_id, now), cwd)
 }
 
-fn narrow(found: Lookup, cwd: &Path) -> Lookup {
+pub fn narrow(found: Lookup, cwd: &Path) -> Lookup {
     match found {
         Lookup::Found(facts) if facts.get("repos").is_some() => match select_repo(facts, cwd) {
             Ok(entry) => Lookup::Found(entry),

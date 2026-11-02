@@ -23,6 +23,9 @@ enum Kind {
     Mutation,
     /// `gh api` with a non-GET method: one REST call per invocation.
     ApiWrite,
+    /// Issue metadata write: a small independent REST call with no PR URL or
+    /// CI to bury.
+    IssueWrite,
     Watch,
 }
 
@@ -52,10 +55,14 @@ fn classify(words: &[String]) -> Option<Kind> {
     let positionals = super::gh_positionals(&words[1..]);
     match positionals.as_slice() {
         ["pr", "create", ..] => Some(Kind::PrCreate),
-        ["pr", "edit" | "merge" | "close" | "ready" | "review", ..]
-        | ["issue", "create" | "edit" | "close", ..]
+        ["pr", "merge" | "close" | "ready" | "review", ..]
         | ["release", "create", ..]
         | ["workflow", "run", ..] => Some(Kind::Mutation),
+        ["issue", "create" | "edit" | "close" | "reopen" | "comment", ..]
+        // `gh pr edit` rewrites PR metadata (body, title, labels) only: no PR
+        // URL or CI to bury, so it batches like an issue write. The grind
+        // lander's landing record chains it after two comments.
+        | ["pr", "edit", ..] => Some(Kind::IssueWrite),
         ["api", ..] if gh_api_writes(words) => Some(Kind::ApiWrite),
         _ => None,
     }
@@ -92,6 +99,16 @@ fn push_then_create(found: &[(&Invocation, Kind)], command_text: &str) -> bool {
         .is_some_and(|gap| command_text[after..after + gap].trim() == "&&")
 }
 
+/// #2354: a batch made only of `gh api` writes and `gh issue` metadata writes
+/// (including loops over them). Each write is an independent small REST call
+/// with no PR URL or CI to bury, so splitting the batch only costs round trips.
+fn metadata_batch(found: &[(&Invocation, Kind)]) -> bool {
+    !found.is_empty()
+        && found
+            .iter()
+            .all(|(_, kind)| matches!(kind, Kind::ApiWrite | Kind::IssueWrite))
+}
+
 pub(super) fn mutation_chain_reason(
     script: &Script,
     command_text: &str,
@@ -105,23 +122,7 @@ pub(super) fn mutation_chain_reason(
             classify(&peel_wrappers(&rule_words(invocation)).words).map(|kind| (invocation, kind))
         })
         .collect();
-    // #2354: a loop whose only mutation is one `gh api` write repeats the same
-    // REST call per item (e.g. linking several sub-issues). Each iteration is
-    // a small independent write with no PR URL or watch to bury, so splitting
-    // it into N tool calls only wastes round trips.
-    // The AST unrolls a `for` over literal items, one invocation per item, so
-    // the iterations of one call differ only in the word the item fills.
-    let single_api_loop = found.first().is_some_and(|(first, _)| {
-        let first = first.argv();
-        found.iter().all(|(invocation, kind)| {
-            let argv = invocation.argv();
-            *kind == Kind::ApiWrite
-                && invocation.loop_kind.is_some()
-                && argv.len() == first.len()
-                && argv.iter().zip(&first).filter(|(a, b)| a != b).count() <= 1
-        })
-    });
-    let mutations = if single_api_loop {
+    let mutations = if metadata_batch(&found) {
         1
     } else {
         found
@@ -147,6 +148,6 @@ pub(super) fn mutation_chain_reason(
         return None;
     }
     Some(format!(
-        "[{MUTATION_CHAIN_RULE_ID}] Do not chain GitHub mutations with each other or with a CI watch in one command (zackees/clud#1979): a failed push or PR create gets buried under the watch output, the PR URL is lost, and retrying the watch repeats the mutation. Run the mutation (`git push ...` or `gh pr create ...`) alone, without piping it through tail/grep, and read its exit status and PR URL. Then run `clud tool run github/pr_merge_watch.py <PR>` as a separate command, preferably with run_in_background. `git push ... && gh pr create ...` is the one allowed pair. To intentionally bypass this rule for this one command, set the real environment variable {BAD_CMD_OVERRIDE_ENV}=\"{MUTATION_CHAIN_RULE_ID}:<your reason>\" for this tool call and re-run the exact same command unchanged."
+        "[{MUTATION_CHAIN_RULE_ID}] Do not chain GitHub mutations with each other or with a CI watch in one command (zackees/clud#1979): a failed push or PR create gets buried under the watch output, the PR URL is lost, and retrying the watch repeats the mutation. Run the mutation (`git push ...` or `gh pr create ...`) alone, without piping it through tail/grep, and read its exit status and PR URL. Then run `clud tool run github/pr_merge_watch.py <PR>` as a separate command, preferably with run_in_background. Two shapes are allowed: `git push ... && gh pr create ...` (unpiped, in that order), and a batch made only of `gh api` writes and `gh issue create|edit|close|reopen|comment` / `gh pr edit` metadata writes, loops over them included (#2423); neither may be combined with a watch. To intentionally bypass this rule for this one command, set the real environment variable {BAD_CMD_OVERRIDE_ENV}=\"{MUTATION_CHAIN_RULE_ID}:<your reason>\" for this tool call and re-run the exact same command unchanged."
     ))
 }

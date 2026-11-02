@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from tests import process
+from tests.metered_consent import consent_for
 
 pytestmark = pytest.mark.integration
 
@@ -23,7 +24,7 @@ def test_serve_without_claude_credentials_never_launches_a_harness(
     env.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
     result = process.run(
         [str(clud_binary), "serve", "--claude", *extra],
-        env=env,
+        env=consent_for(env, extra),
         capture_output=True,
         text=True,
         timeout=15,
@@ -49,7 +50,7 @@ def test_serve_missing_openrouter_credential_is_actionable(
     env.pop("OPENROUTER_API_KEY", None)
     result = process.run(
         [str(clud_binary), "serve", "--claude", "--openrouter"],
-        env=env,
+        env=consent_for(env, ["--openrouter"]),
         capture_output=True,
         text=True,
         timeout=15,
@@ -168,11 +169,15 @@ def api_upstreams():
 
     claude = Provider("claude")
     openrouter = Provider("openrouter")
+    deepseek = Provider("deepseek")
+    kimi = Provider("kimi")
     try:
-        yield claude, openrouter
+        yield claude, openrouter, deepseek, kimi
     finally:
         claude.close()
         openrouter.close()
+        deepseek.close()
+        kimi.close()
 
 
 def test_serve_http_routes_streams_and_isolates_credentials(
@@ -183,7 +188,7 @@ def test_serve_http_routes_streams_and_isolates_credentials(
     import signal
     from urllib.parse import urlsplit
 
-    claude, openrouter = api_upstreams
+    claude, openrouter, _, _ = api_upstreams
     vault = tmp_path / "vault"
     vault.mkdir()
     (vault / "clud_openrouter--api_key_v1.secret").write_text(
@@ -212,7 +217,7 @@ def test_serve_http_routes_streams_and_isolates_credentials(
     )
     child = process.Popen(
         [str(clud_binary), "serve", "--claude", "--openrouter", "--port", "0"],
-        env=env,
+        env=consent_for(env, ["--openrouter"]),
         stdout=process.PIPE,
         stderr=process.PIPE,
         text=True,
@@ -353,7 +358,7 @@ def test_serve_answers_openai_chat_completions(
     import signal
     from urllib.parse import urlsplit
 
-    claude, openrouter = api_upstreams
+    claude, openrouter, _, _ = api_upstreams
     client_token = "local-client-token-0123456789abcdef"
     vault = tmp_path / "vault"
     vault.mkdir()
@@ -550,6 +555,123 @@ def test_serve_codex_missing_credentials_is_actionable(
     assert "ANTHROPIC_API_KEY" not in result.stderr
 
 
+def test_serve_anthropic_compat_providers_route_by_model(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path, api_upstreams
+) -> None:
+    """`--deepseek` and `--kimi` put the registry's other direct routes on the
+    served endpoint, each reached with its own vault key.
+
+    CLIProxyAPI's server answers every configured upstream from one listener;
+    clud's serve surface previously offered Claude, Codex and OpenRouter only,
+    so DeepSeek and Kimi keys were usable in a launch but not from the durable
+    endpoint.
+    """
+    import http.client
+    import json
+    import signal
+    from urllib.parse import urlsplit
+
+    claude, openrouter, deepseek, kimi = api_upstreams
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "clud_deepseek--api_key_v1.secret").write_text(
+        "deepseek-upstream-canary", encoding="utf-8"
+    )
+    (vault / "clud_kimi--api_key_v1.secret").write_text("kimi-upstream-canary", encoding="utf-8")
+    client_token = "local-client-token-0123456789abcdef"
+    env = mock_env.copy()
+    env.update(
+        {
+            "CLUD_INTEGRATION_TESTS": "1",
+            "CLUD_TEST_SECRET_STORE_DIR": str(vault),
+            "CLUD_SERVE_CLIENT_TOKEN": client_token,
+            "CLUD_TEST_GATEWAY_PLAINTEXT_TLS": "1",
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
+            "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": claude.url.replace("http://", "https://"),
+            "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": claude.url.replace("http://", "https://"),
+            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": deepseek.url.replace(
+                "http://", "https://"
+            ),
+            "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": openrouter.url.replace(
+                "http://", "https://"
+            ),
+            "CLUD_TEST_UNIFIED_KIMI_UPSTREAM_URL": kimi.url.replace("http://", "https://"),
+        }
+    )
+    env.pop("ANTHROPIC_API_KEY", None)
+    child = process.Popen(
+        [str(clud_binary), "serve", "--deepseek", "--kimi", "--port", "0"],
+        env=env,
+        stdout=process.PIPE,
+        stderr=process.PIPE,
+        text=True,
+        creationflags=process.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        line = child.next_stdout(timeout=60)
+        assert isinstance(line, str), (line, child.poll())
+        assert "listening at " in line, (line, child.poll())
+        for secret in (client_token, "deepseek-upstream-canary", "kimi-upstream-canary"):
+            assert secret not in line
+        address = urlsplit(line.strip().split("listening at ", 1)[1])
+        assert address.hostname == "127.0.0.1"
+
+        def call(method: str, path: str, body: dict | None):
+            connection = http.client.HTTPConnection(address.hostname, address.port, timeout=15)
+            headers = {"x-api-key": client_token, "anthropic-version": "2023-06-01"}
+            if body is not None:
+                headers["content-type"] = "application/json"
+            connection.request(
+                method, path, body=None if body is None else json.dumps(body), headers=headers
+            )
+            response = connection.getresponse()
+            data = response.read()
+            connection.close()
+            return response.status, data
+
+        status, models = call("GET", "/v1/models", None)
+        assert status == 200
+        ids = {row["id"] for row in json.loads(models)["data"]}
+        assert {"clud-claude-kimi-k3", "clud-claude-deepseek-flash"} <= ids
+        assert not claude.requests
+
+        def turn(model: str) -> str:
+            status, body = call(
+                "POST",
+                "/v1/messages",
+                {
+                    "model": model,
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 64,
+                },
+            )
+            assert status == 200, body
+            return json.loads(body)["content"][0]["text"]
+
+        assert turn("clud-claude-kimi-k3") == "kimi"
+        assert turn("clud-claude-deepseek-flash") == "deepseek"
+        kimi_paths = [path for path, _, _ in kimi.requests]
+        deepseek_paths = [path for path, _, _ in deepseek.requests]
+        assert kimi_paths
+        assert deepseek_paths
+        assert all(path.endswith("/v1/messages") for path in kimi_paths)
+        assert all(path.endswith("/v1/messages") for path in deepseek_paths)
+        # Each upstream saw only its own key: the routes never share a secret.
+        assert all(
+            header.get("Authorization") == "Bearer kimi-upstream-canary"
+            for _, header, _ in kimi.requests
+        )
+        assert all(
+            header.get("Authorization") == "Bearer deepseek-upstream-canary"
+            for _, header, _ in deepseek.requests
+        )
+        assert not openrouter.requests
+    finally:
+        child.send_signal(signal.SIGINT)
+        child.wait(timeout=15)
+
+
 def test_serve_applies_payload_rules_to_the_upstream_body(
     clud_binary: Path, mock_env: dict[str, str], tmp_path: Path, api_upstreams
 ) -> None:
@@ -564,7 +686,7 @@ def test_serve_applies_payload_rules_to_the_upstream_body(
     import json
     from urllib.parse import urlsplit
 
-    claude, openrouter = api_upstreams
+    claude, openrouter, deepseek, kimi = api_upstreams
     rules = tmp_path / "payload-rules.json"
     rules.write_text(
         json.dumps(
@@ -603,15 +725,20 @@ def test_serve_applies_payload_rules_to_the_upstream_body(
             "ANTHROPIC_API_KEY": "claude-upstream-canary",
             "CLUD_TEST_GATEWAY_PLAINTEXT_TLS": "1",
             "CLUD_PAYLOAD_RULES": str(rules),
+            # OpenRouter is pay-per-token: serving it needs the explicit consent
+            # pair main added after this branch was cut (metered_policy.rs).
+            "CLUD_ALLOW_METERED": "1",
+            "CLUD_METERED_PROVIDER": "openrouter",
             "NO_PROXY": "127.0.0.1,localhost",
             "no_proxy": "127.0.0.1,localhost",
             "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": claude.url.replace("http://", "https://"),
             "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": claude.url.replace("http://", "https://"),
             # The unified seam is all-or-nothing: one missing URL sends the
             # launch at the real providers.
-            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": openrouter.url.replace(
+            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": deepseek.url.replace(
                 "http://", "https://"
             ),
+            "CLUD_TEST_UNIFIED_KIMI_UPSTREAM_URL": kimi.url.replace("http://", "https://"),
             "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": openrouter.url.replace(
                 "http://", "https://"
             ),
@@ -688,7 +815,7 @@ def test_serve_applies_payload_rules_to_the_translated_chat_body(
     import json
     from urllib.parse import urlsplit
 
-    claude, openrouter = api_upstreams
+    claude, openrouter, deepseek, kimi = api_upstreams
     rules = tmp_path / "payload-rules.json"
     rules.write_text(
         json.dumps(
@@ -728,9 +855,10 @@ def test_serve_applies_payload_rules_to_the_translated_chat_body(
             "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": claude.url.replace("http://", "https://"),
             # The unified seam is all-or-nothing: one missing URL sends the
             # launch at the real providers.
-            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": openrouter.url.replace(
+            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": deepseek.url.replace(
                 "http://", "https://"
             ),
+            "CLUD_TEST_UNIFIED_KIMI_UPSTREAM_URL": kimi.url.replace("http://", "https://"),
             "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": openrouter.url.replace(
                 "http://", "https://"
             ),

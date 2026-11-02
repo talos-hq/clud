@@ -53,6 +53,66 @@ def test_pass_chatter_is_suppressed_but_warnings_and_failures_are_not(report):
     assert "anomal" in summary.lower()
 
 
+PYTEST_WARNING = "test_example.py:9: UserWarning: legacy knob is deprecated\n"
+
+
+def test_pytest_source_prefixed_warning_kept_beside_failure(report):
+    raw = "".join(f"tests/test_x.py::test_{i} PASSED\n" for i in range(100))
+    raw += "FAILED tests/test_x.py::test_bad - AssertionError: boom\n"
+    raw += "=== warnings summary ===\n" + PYTEST_WARNING
+    raw += "=== 1 failed, 100 passed, 1 warning in 0.12s ===\n"
+    summary = report.summarize(io.BytesIO(raw.encode()), exit_code=1)
+    data = report.json.loads(summary)
+    assert data["verdict"] == "failed"
+    assert data["exit_code"] == 1
+    assert "legacy knob is deprecated" in data["warnings"][0]
+    assert {"name": "tests/test_x.py::test_bad", "count": 1} in data["failure_groups"]
+    assert "PASSED" not in summary
+
+
+def test_pytest_warning_only_success_passes_and_keeps_warning(report):
+    raw = "".join(f"tests/test_x.py::test_{i} PASSED\n" for i in range(3))
+    raw += "=== warnings summary ===\n" + PYTEST_WARNING
+    raw += "=== 3 passed, 1 warning in 0.01s ===\n"
+    data = report.json.loads(report.summarize(io.BytesIO(raw.encode()), exit_code=0))
+    assert data["verdict"] == "passed"
+    assert any("legacy knob is deprecated" in w for w in data["warnings"])
+    assert data["diagnostics"] == []
+
+
+def test_pytest_warning_categories_indent_and_unicode_paths(report):
+    raw = (
+        "  /tmp/pkg/mod.py:12: RuntimeWarning: coroutine never awaited\n"
+        "src/ünïcode/test_ü.py:3: FutureWarning: changed\n"
+    )
+    data = report.json.loads(report.summarize(io.BytesIO(raw.encode()), exit_code=1))
+    assert any("coroutine never awaited" in w for w in data["warnings"])
+    unicode_entry = "src/ünïcode/test_ü.py:3: FutureWarning"
+    assert any(unicode_entry in w for w in data["warnings"])
+
+
+def test_long_pytest_warning_is_truncated_within_limit(report):
+    raw = "tests/test_long.py:7: UserWarning: " + "x" * 600 + "\n"
+    summary = report.summarize(io.BytesIO(raw.encode()), exit_code=1, limit=512)
+    data = report.json.loads(summary)
+    assert len(summary.encode()) + 1 <= 512
+    assert data["warnings"][0].startswith("tests/test_long.py:7: UserWarning")
+    assert data["input_truncated"]
+
+
+def test_pytest_warning_cap_counts_omitted_accurately(report):
+    total = report.MAX_DIAGNOSTICS + 5
+    raw = "".join(f"tests/t.py:{i}: UserWarning: w{i}\n" for i in range(total))
+    data = report.json.loads(report.summarize(io.BytesIO(raw.encode()), exit_code=1))
+    assert len(data["warnings"]) + data["omitted"]["warnings"] == total
+
+
+def test_pytest_warning_count_in_summary_is_not_a_warning(report):
+    raw = b"=== 5 passed, 2 warnings in 0.1s ===\n"
+    data = report.json.loads(report.summarize(io.BytesIO(raw), exit_code=0))
+    assert data["warnings"] == []
+
+
 def test_unfamiliar_output_is_explicitly_unknown(report):
     summary = report.summarize(io.BytesIO(b"strange non-test output\n"), exit_code=1)
     data = report.json.loads(summary)

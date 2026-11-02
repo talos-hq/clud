@@ -19,7 +19,8 @@ def _function(source: str, name: str) -> str:
 
 def test_lander_status_enum_has_tool_misuse_and_a_default_cap_of_three() -> None:
     source = _workflow()
-    assert "enum: ['merged', 'needs_fix', 'gave_up', 'tool_misuse']" in source
+    enum = "enum: ['merged', 'enqueued', 'needs_fix', 'base_red', 'gave_up', 'tool_misuse']"
+    assert enum in source
     assert "const MAX_AGENT_ERRORS = Math.max(0, Math.floor(args.agentErrors ?? 3))" in source
 
 

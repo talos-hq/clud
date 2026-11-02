@@ -354,15 +354,19 @@ agent's context, and hand-polling repeats near-identical output.
 - To **wait** on CI, use `clud tool run github/pr_merge_watch.py -- <PR>`
   (background or bounded, never a hand-written loop; DD-168). Its output is
   already compact.
-- For a **one-off** read, ask only for what is unresolved:
+- For a **one-off** read, print one summary line of counts, then only what is
+  unresolved:
 
   ```bash
-  gh pr checks N --json name,state --jq '[.[]|select(.state!="SUCCESS" and .state!="SKIPPED")]'
-  gh run view ID --json status,conclusion,jobs --jq '[.jobs[]|select(.conclusion!="success" and .conclusion!="skipped")|.name]'
+  gh pr checks N --json name,state --jq '(group_by(.state)|map("\(.[0].state // "pending")=\(length)")|join(" ")), [.[]|select(.state!="SUCCESS" and .state!="SKIPPED")|.name]'
+  gh run view ID --json jobs --jq '(.jobs|group_by(.conclusion)|map("\(.[0].conclusion|if .=="" or .==null then "pending" else . end)=\(length)")|join(" ")), [.jobs[]|select(.conclusion!="success" and .conclusion!="skipped")|.name]'
   ```
 
-  An empty list means nothing is unresolved. Drop the filter only when you
-  need the full job list.
+  The first line is the per-state count (for example
+  `SUCCESS=14 SKIPPED=6 FAILURE=1`), so you can still see which jobs ran
+  without listing the passing ones. The second line lists only the
+  unresolved job names. An empty list means nothing is unresolved. Drop the
+  filter only when you need the full job list.
 - Do not repeat an identical read; a status that has not changed is not new
   information.
 
@@ -510,6 +514,13 @@ admins can bypass the queue. So:
 - The label picks the PR's lanes. Every mode, `ci-windows` included, requires
   the routine Linux x64 lanes on the head SHA before `CI OK` is green
   (#1652); macOS runs only under `ci-full`.
+- A PR's superseded run (opened and labeled events firing together,
+  #2273) is cancelled by the ref's concurrency group. `CI OK` keeps
+  `always()`, because a skipped required check counts as success. When a
+  need was cancelled and a newer run of the workflow exists on the same head
+  SHA, `CI OK` passes without verifying, so no stale failure blocks the
+  replacement run's verdict at `enqueuePullRequest`. A hand-cancelled run
+  with no replacement, or a failed, skipped or missing lane, fails the gate.
 - A `merge_group` run selects the `minimal` tier, the same lanes as a `main`
   push (#2125). Full native coverage stays on the nightly run, `ci-full`
   labels and release validation; a full queue tier would make every merge
@@ -1135,6 +1146,25 @@ pip installs each `.data/scripts/*` entry with the Unix mode in its zip
   `verify_installed_scripts` (exec bits via `os.access`, `clud --version`, hook
   smokes). Both publish jobs `need` it.
 
+### Authenticode signing of Windows release wheels
+
+Release builds of the two `*-pc-windows-msvc` triples are Authenticode-signed
+through Azure Artifact Signing (talos-hq org secrets `AZURE_*`, OIDC via
+`azure/login`, no client secret). `_build-target.yml` runs
+`python -m ci.sign_windows_release sign --dist-dir dist/` right after
+"Build wheel" when `auto-release.yml` passes `sign-windows: true`: a pinned
+jsign jar signs every PE in the wheel that has no signature yet (`clud.exe`,
+`clud-webterm.exe`, the bundled Kitty terminal binaries), keeps
+vendor-signed ones (Microsoft `conpty.dll`, `OpenConsole.exe`), and the wheel
+is rewritten through `ci/wheel_rewrite.py`. PyPI, the standalone `.exe`
+assets (extracted from these wheels) and `SHA256SUMS` therefore all carry
+signed bytes. A structural post-check fails the step on any unsigned PE.
+`windows-signature-smoke` then requires `Get-AuthenticodeSignature` = `Valid`
+for every PE on native Windows x64/ARM64 and runs `clud.exe --version`; both
+publish jobs `need` it. Azure trusts the OIDC subject only for
+`refs/heads/main` and tags, so a release must be a tag push or a dispatch from
+`main`.
+
 ## Deduplicated checks
 
 | Check | Before | After |
@@ -1170,7 +1200,7 @@ checked target, so the host pass never reaches `cfg(windows)` or
 `cfg(target_os = "macos")` modules. The job therefore adds check-only passes
 with `--target x86_64-pc-windows-msvc` and `--target aarch64-apple-darwin`.
 `soldr dylint prepare --target` installs the pinned nightly's `rust-std` for
-each target; Soldr's verified 6.0.3 tools and nightly driver stay prebuilt, so
+each target; Soldr's verified 6.2.0 tools and nightly driver stay prebuilt, so
 no pass builds a toolchain. Dylint lints only workspace crates, but each pass
 must first type-check every dependency with that nightly, which the stable
 build caches cannot supply. zccache caches those check units per target in the

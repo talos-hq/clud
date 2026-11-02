@@ -407,7 +407,11 @@ shim. ghd serves what it parses natively and relays the rest to that gh.
 This broker is not consulted, because ghd keeps its own cache. The backend
 is read from the call's cwd on every call, so a running session follows
 the setting without a restart. With no ghd on PATH, dispatch prints one
-line and exits 127; there is no silent fallback to gh.
+line and exits 127; there is no silent fallback to gh. The contract is
+pinned by the `shim_main::dispatch` test
+`gh_backend_ghd_routes_to_ghd_and_fails_closed_without_it` (routing and the
+missing-ghd refusal) and by `ghd_argv_prefixes_gh_and_preserves_every_arg`
+(the `ghd gh ARGS` argv and the `GHD_REAL_GH` name).
 
 ## Code
 

@@ -163,7 +163,7 @@ def build_site(
 def main() -> None:
     import argparse
 
-    from installer.catalog import ONLINE_URL, fetch, published_releases
+    from installer.catalog import INSTALL_CATALOG_URLS, fetch, fetch_first, published_releases
 
     parser = argparse.ArgumentParser()
     parser.add_argument("destination", type=Path)
@@ -180,7 +180,7 @@ def main() -> None:
         ]
     previous_catalog = None
     try:
-        previous_catalog = json.loads(fetch(ONLINE_URL))
+        previous_catalog = json.loads(fetch_first(INSTALL_CATALOG_URLS))
         print("Found the previous published catalog; unchanged assets will reuse its verification.")
     except (OSError, ValueError):
         print("No previous published catalog is available; verifying release assets from scratch.")

@@ -211,7 +211,7 @@ pub fn render_cpu_rgba(
         let fitted = fit_text(font, text, px, w as f32 - left - CELL_W_PX as f32);
         canvas.text(font, &fitted, px, left, h as f32 / 2.0, TEXT);
     }
-    for pixel in canvas.pixels.chunks_exact_mut(4) {
+    for pixel in canvas.pixels.as_chunks_mut::<4>().0 {
         pixel[3] = ((u16::from(pixel[3]) * u16::from(opacity.min(100)) + 50) / 100) as u8;
     }
     canvas.pixels
@@ -468,9 +468,20 @@ mod tests {
         let at_ninety = render_cpu_rgba("cpu 287 %", Severity::Warn, 30, 2, 90);
         let at_fifty = render_cpu_rgba("cpu 287 %", Severity::Warn, 30, 2, 50);
         assert_eq!(at_ninety.len(), at_fifty.len());
-        let max_alpha = |rgba: &[u8]| rgba.chunks_exact(4).map(|pixel| pixel[3]).max().unwrap();
+        let max_alpha = |rgba: &[u8]| {
+            rgba.as_chunks::<4>()
+                .0
+                .iter()
+                .map(|pixel| pixel[3])
+                .max()
+                .unwrap()
+        };
         assert_eq!(max_alpha(&at_ninety), 230);
         assert_eq!(max_alpha(&at_fifty), 128);
-        assert!(at_ninety.chunks_exact(4).any(|pixel| pixel[3] > 0));
+        assert!(at_ninety
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .any(|pixel| pixel[3] > 0));
     }
 }

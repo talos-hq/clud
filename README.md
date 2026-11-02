@@ -74,11 +74,9 @@ Hermes Agent can discover clud through its stdio MCP server: run durable agent
 sessions or start a local Claude/Codex model API. Gateway discovery tools are
 available in clud 2.8.41 and later.
 
-Install the MCP extra with the Python interpreter that will run the server:
-
-```bash
-python -m pip install --upgrade 'clud[mcp]'
-```
+The MCP SDK is a base dependency, so any clud install can run the server
+(`uv tool install clud`, or `python -m pip install --upgrade clud`). The
+`clud[mcp]` extra still resolves but adds nothing.
 
 Add this entry under `mcp_servers` in `~/.hermes/config.yaml`, using
 [Hermes's MCP configuration format](https://hermes-agent.nousresearch.com/docs/user-guide/features/mcp):

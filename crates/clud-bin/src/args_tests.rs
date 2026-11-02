@@ -6,6 +6,12 @@ fn serve_grammar_is_dispatched_without_backend_passthrough() {
     for arguments in [
         vec!["clud", "serve", "--claude"],
         vec!["clud", "serve", "--claude", "--openrouter"],
+        vec!["clud", "serve", "--claude", "--deepseek"],
+        vec!["clud", "serve", "--claude", "--kimi"],
+        vec!["clud", "serve", "--openrouter"],
+        vec!["clud", "serve", "--deepseek"],
+        vec!["clud", "serve", "--kimi"],
+        vec!["clud", "serve", "--deepseek", "--kimi"],
     ] {
         let raw: Vec<String> = arguments.iter().map(|value| (*value).to_string()).collect();
         let (known, unknown) = split_known_unknown(&raw).expect("known serve grammar");
@@ -14,14 +20,27 @@ fn serve_grammar_is_dispatched_without_backend_passthrough() {
             "{arguments:?} must not reach the harness"
         );
         let args = Args::try_parse_from(known).expect("serve arguments must parse");
-        assert!(
-            matches!(args.command, Some(Command::Serve { claude: true, codex: false, openrouter, port: 8317 })
-            if openrouter == (arguments.len() == 4)),
-            "serve must dispatch the selected routes"
-        );
+        let Some(Command::Serve {
+            claude,
+            codex,
+            openrouter,
+            deepseek,
+            kimi,
+            port,
+        }) = args.command
+        else {
+            panic!("{arguments:?} must dispatch serve");
+        };
+        let requested = |flag: &str| arguments.contains(&flag);
+        assert_eq!(port, 8317);
+        assert!(!codex, "{arguments:?} must not enable Codex");
+        assert_eq!(claude, requested("--claude"), "{arguments:?}");
+        assert_eq!(openrouter, requested("--openrouter"), "{arguments:?}");
+        assert_eq!(deepseek, requested("--deepseek"), "{arguments:?}");
+        assert_eq!(kimi, requested("--kimi"), "{arguments:?}");
         assert!(!args.claude && !args.openrouter, "serve flags are local");
     }
-    assert!(Args::try_parse_from(["clud", "serve", "--openrouter"]).is_err());
+    assert!(Args::try_parse_from(["clud", "serve"]).is_err());
 }
 
 #[test]
@@ -420,15 +439,65 @@ fn deepseek_harness_accepts_model_only_when_clud_routes_the_model() {
 }
 
 #[test]
+fn inject_is_a_dispatched_subcommand_not_backend_passthrough() {
+    let args = parse(&[
+        "clud",
+        "inject",
+        "sess-abc",
+        "use the v2 API",
+        "--interrupt",
+        "--detach",
+        "--ticket",
+        "T-9",
+        "--timeout",
+        "30",
+        "--json",
+    ]);
+    match args.command {
+        Some(Command::Inject {
+            session,
+            message,
+            interrupt: true,
+            detach: true,
+            ticket: Some(ticket),
+            timeout: 30,
+            json: true,
+            ..
+        }) => {
+            assert_eq!(session, "sess-abc");
+            assert_eq!(message, "use the v2 API");
+            assert_eq!(ticket, "T-9");
+        }
+        other => panic!("unexpected parse: {other:?}"),
+    }
+    assert!(args.passthrough.is_empty());
+}
+
+#[test]
 fn doctor_is_a_dispatched_subcommand() {
     let args = parse(&["clud", "doctor"]);
     assert!(matches!(
         args.command,
-        Some(Command::Doctor { json: false })
+        Some(Command::Doctor {
+            json: false,
+            fix: false
+        })
     ));
     assert!(args.passthrough.is_empty());
     let args = parse(&["clud", "doctor", "--json"]);
-    assert!(matches!(args.command, Some(Command::Doctor { json: true })));
+    assert!(matches!(
+        args.command,
+        Some(Command::Doctor {
+            json: true,
+            fix: false
+        })
+    ));
+    assert!(args.passthrough.is_empty());
+    let args = parse(&["clud", "doctor", "--fix"]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Doctor { fix: true, .. })
+    ));
     assert!(args.passthrough.is_empty());
 }
 
@@ -701,6 +770,7 @@ fn test_loop_subcommand() {
             no_done,
             ref done,
             ref repeat,
+            ..
         }) => {
             assert_eq!(task.as_deref(), Some("do the task"));
             assert_eq!(loop_count, 50);
@@ -1277,7 +1347,58 @@ fn test_transcript_flag() {
 #[test]
 fn test_list_subcommand() {
     let args = parse(&["clud", "list"]);
-    assert!(matches!(args.command, Some(Command::List)));
+    assert!(matches!(args.command, Some(Command::List { .. })));
+}
+
+#[test]
+fn test_list_origin_filter_and_json_parse_for_every_origin() {
+    use crate::session_origin::SessionOrigin;
+    for origin in SessionOrigin::ALL {
+        let args = parse(&["clud", "list", "--json", "--origin", origin.as_str()]);
+        assert!(matches!(
+            args.command,
+            Some(Command::List { json: true, origin: Some(o) }) if o == origin
+        ));
+    }
+}
+
+#[test]
+fn test_list_invalid_origin_is_a_parse_error_naming_valid_values() {
+    let err = Args::try_parse_from(["clud", "list", "--origin", "bogus"]).unwrap_err();
+    let text = err.to_string();
+    for valid in ["cli", "mcp", "daemon", "test", "unknown"] {
+        assert!(text.contains(valid), "{valid} missing from: {text}");
+    }
+}
+
+#[test]
+fn test_session_new_parses() {
+    let args = parse(&[
+        "clud",
+        "session",
+        "new",
+        "--backend",
+        "codex",
+        "--name",
+        "x",
+    ]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Session {
+            action: crate::args::SessionAction::New { ref backend, .. },
+        }) if backend == "codex"
+    ));
+}
+
+#[test]
+fn test_session_show_parses() {
+    let args = parse(&["clud", "session", "show", "sess-1", "--json"]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Session {
+            action: crate::args::SessionAction::Show { ref id, json: true },
+        }) if id == "sess-1"
+    ));
 }
 
 #[test]
@@ -1856,4 +1977,98 @@ fn ci_is_a_dispatched_subcommand_with_its_flags() {
         other => panic!("expected ci, got {other:?}"),
     }
     assert!(args.passthrough.is_empty());
+}
+
+#[test]
+fn test_loop_message_flag_with_and_without_task() {
+    let args = parse(&["clud", "loop", "--message", "hi there"]);
+    match args.command {
+        Some(Command::Loop {
+            ref task,
+            ref message,
+            ..
+        }) => {
+            assert!(task.is_none());
+            assert_eq!(message.as_deref(), Some("hi there"));
+        }
+        _ => panic!("expected Loop subcommand"),
+    }
+    let args = parse(&["clud", "loop", "--message", "m", "do it"]);
+    match args.command {
+        Some(Command::Loop {
+            ref task,
+            ref message,
+            ..
+        }) => {
+            assert_eq!(task.as_deref(), Some("do it"));
+            assert_eq!(message.as_deref(), Some("m"));
+        }
+        _ => panic!("expected Loop subcommand"),
+    }
+}
+
+#[test]
+fn test_workflow_subcommand_with_args() {
+    let args = parse(&[
+        "clud",
+        "workflow",
+        "review.js",
+        "--args",
+        r#"{"mode":"fast"}"#,
+    ]);
+    match args.command {
+        Some(Command::Workflow {
+            ref script,
+            ref args_json,
+            ..
+        }) => {
+            assert_eq!(script, "review.js");
+            assert_eq!(args_json.as_deref(), Some(r#"{"mode":"fast"}"#));
+        }
+        other => panic!("expected Workflow subcommand, got {other:?}"),
+    }
+}
+
+#[test]
+fn test_workflow_reuse_flag() {
+    let args = parse(&["clud", "workflow", "w.js", "--reuse"]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Workflow { resume: true, .. })
+    ));
+}
+
+fn strings(list: &[&str]) -> Vec<String> {
+    list.iter().map(|value| (*value).to_string()).collect()
+}
+
+#[test]
+fn a_global_flag_after_the_subcommand_names_the_fix() {
+    // #2521: `clud do --model x …` used to end in a bare `Usage:` dump.
+    let message = misplaced_global_flag(&strings(&["clud", "do", "--model", "opus-5.5", "fix it"]))
+        .expect("misplaced flag is reported");
+    assert!(
+        message.contains("global flags go before the subcommand"),
+        "{message}"
+    );
+    assert!(
+        message.contains("clud --model opus-5.5 do 'fix it'"),
+        "{message}"
+    );
+    let message = misplaced_global_flag(&strings(&["clud", "grind", "--safe"])).unwrap();
+    assert!(message.contains("clud --safe grind"), "{message}");
+}
+
+#[test]
+fn correctly_placed_or_escaped_flags_pass() {
+    for argv in [
+        &["clud", "--model", "opus", "do", "fix it"][..],
+        &["clud", "do", "fix it"],
+        &["clud", "do", "--", "--model"],
+        &["clud", "--model", "opus"],
+        &["clud", "-p", "do --model x"],
+        &["clud", "claim", "release", "--yes", "/repo"],
+    ] {
+        assert_eq!(misplaced_global_flag(&strings(argv)), None, "{argv:?}");
+    }
 }

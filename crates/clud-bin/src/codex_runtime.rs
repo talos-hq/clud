@@ -4,7 +4,6 @@ pub const FALLBACK_SOL: &str = "gpt-6-sol";
 pub const FALLBACK_LUNA: &str = "gpt-6-luna";
 pub const FALLBACK_TERRA: &str = "gpt-5.6-terra";
 const BUNDLED_MODELS: &str = include_str!("../assets/codex-models.json");
-pub const MANIFEST_URL: &str = "https://talos-hq.github.io/clud/models/manifest.json";
 const CACHE_PATH: &str = ".clud/cache/models/manifest.json";
 const LAST_GOOD_PATH: &str = ".clud/cache/models/last-good.json";
 const CACHE_INTERVAL: Duration = Duration::from_secs(15 * 60);
@@ -77,6 +76,19 @@ fn fetch_manifest(url: &str) -> Result<Manifest, String> {
         .read_to_end(&mut bytes)
         .map_err(|error| error.to_string())?;
     Manifest::parse(&bytes)
+}
+
+/// The first manifest in `urls` that fetches and parses: the canonical domain,
+/// then the GitHub release fallback (#2449).
+fn fetch_first_manifest(urls: &[&str]) -> Result<Manifest, String> {
+    let mut errors = Vec::new();
+    for url in urls {
+        match fetch_manifest(url) {
+            Ok(manifest) => return Ok(manifest),
+            Err(error) => errors.push(format!("{url}: {error}")),
+        }
+    }
+    Err(errors.join("; "))
 }
 
 fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
@@ -642,8 +654,11 @@ fn load_choice() -> Choice {
         if let Some(path) = path.as_deref() {
             record_attempt(path);
         }
-        let url = url_override.unwrap_or_else(|| MANIFEST_URL.to_string());
-        manifest_or_cached(fetch_manifest(&url), cached.as_ref())
+        let result = match url_override.as_deref() {
+            Some(url) => fetch_manifest(url),
+            None => fetch_first_manifest(crate::published_urls::MODEL_MANIFEST),
+        };
+        manifest_or_cached(result, cached.as_ref())
     };
     let available = match local_low_effort_models() {
         Ok(models) => models,

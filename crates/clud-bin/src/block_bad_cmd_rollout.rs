@@ -402,8 +402,8 @@ pub fn ensure_helper_on_session_path() {
     let path_env = std::env::var("PATH").unwrap_or_default();
     if let Some(found) = crate::shim_resolve::which(&native_helper_name(), &path_env) {
         if let InstallProbe::HelperPresent { path } = probe_current_install() {
-            let owned = refresh_owned_helper(&found, &path, crate::home::user_home().as_deref());
-            if let Some(warning) = foreign_helper_warning(&found, &path, owned) {
+            let home = crate::home::user_home();
+            if let Some(warning) = refresh_found_helper(&found, &path, home.as_deref()) {
                 eprintln!("{warning}");
             }
         }
@@ -520,6 +520,28 @@ fn expose_helper_at(home: &Path, clud: &Path) -> io::Result<PathBuf> {
         }
     }
     Ok(dir)
+}
+
+/// The launch step when PATH already finds a `clud-cmd-scan`: refresh it if
+/// clud owns it, and refresh the helper-only directory too. That directory
+/// is not what PATH found, so without the second step its aliases outlive
+/// every upgrade while another `clud-cmd-scan` is first on PATH. Returns the
+/// foreign-helper warning, if any.
+fn refresh_found_helper(found: &Path, clud: &Path, home: Option<&Path>) -> Option<String> {
+    let owned = refresh_owned_helper(found, clud, home);
+    if let Some(home) = home {
+        refresh_helper_bin(home, clud);
+    }
+    foreign_helper_warning(found, clud, owned)
+}
+
+/// Bring an existing helper-only directory up to `clud`. Nothing is created:
+/// a directory clud never populated stays absent. The per-entry check is the
+/// same metadata freshness test [`expose_helper_at`] pays on every launch.
+fn refresh_helper_bin(home: &Path, clud: &Path) {
+    if home.join(HELPER_BIN_SUBDIR).is_dir() {
+        let _ = expose_helper_at(home, clud);
+    }
 }
 
 fn path_with_appended(path_env: &str, dir: &Path) -> Option<String> {
@@ -882,6 +904,67 @@ mod tests {
         let alias = tmp.path().join("install").join(native_helper_name());
         crate::alias_link::install_alias(&clud, &alias).unwrap();
         assert_eq!(foreign_helper_warning(&alias, &clud, false), None);
+    }
+
+    /// #2514-style regression: a foreign `clud-cmd-scan` first on PATH made
+    /// the launch skip helper-bin, so its aliases stayed on the old build.
+    #[test]
+    fn a_stale_helper_bin_is_refreshed_while_a_foreign_helper_is_first_on_path() {
+        let tmp = tempdir().unwrap();
+        let clud = tmp
+            .path()
+            .join("install")
+            .join(crate::shim_registry::file_name("clud"));
+        write(&clud, "clud-v2-current");
+        let home = tmp.path().join("home");
+        let decoy = home.join(HELPER_BIN_SUBDIR).join(native_helper_name());
+        write(&decoy, "clud-v1");
+        let foreign = tmp.path().join("venv").join(native_helper_name());
+        write(&foreign, "clud-v0");
+
+        let warning = refresh_found_helper(&foreign, &clud, Some(&home));
+
+        assert!(
+            warning.is_some(),
+            "the foreign helper is still warned about"
+        );
+        assert!(
+            crate::alias_link::is_fresh(&clud.canonicalize().unwrap(), &decoy),
+            "helper-bin entry was not refreshed"
+        );
+        assert_eq!(fs::read_to_string(&decoy).unwrap(), "clud-v2-current");
+        assert_eq!(fs::read_to_string(&foreign).unwrap(), "clud-v0");
+    }
+
+    #[test]
+    fn an_up_to_date_helper_bin_entry_is_left_untouched() {
+        let tmp = tempdir().unwrap();
+        let clud = tmp.path().join("install").join("clud");
+        write(&clud, "clud-v2");
+        let home = tmp.path().join("home");
+        let dir = expose_helper_at(&home, &clud).unwrap();
+        let entry = dir.join(native_helper_name());
+        let before = fs::symlink_metadata(&entry).unwrap();
+        let foreign = tmp.path().join("venv").join(native_helper_name());
+        write(&foreign, "clud-v0");
+
+        refresh_found_helper(&foreign, &clud, Some(&home));
+
+        let after = fs::symlink_metadata(&entry).unwrap();
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        assert!(same_file::is_same_file(&clud, &entry).unwrap() || before.len() == after.len());
+    }
+
+    #[test]
+    fn a_missing_helper_bin_is_not_created_by_the_refresh() {
+        let tmp = tempdir().unwrap();
+        let clud = tmp.path().join("install").join("clud");
+        write(&clud, "clud-v2");
+        let home = tmp.path().join("home");
+        let foreign = tmp.path().join("venv").join(native_helper_name());
+        write(&foreign, "clud-v0");
+        refresh_found_helper(&foreign, &clud, Some(&home));
+        assert!(!home.join(HELPER_BIN_SUBDIR).exists());
     }
 
     #[test]

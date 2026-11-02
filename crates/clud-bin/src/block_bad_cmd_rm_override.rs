@@ -895,6 +895,7 @@ fn read_only_invocation(invocation: &Invocation) -> bool {
     (READ_ONLY.contains(&name.as_str()) && !less_writes_log(invocation))
         || program == "["
         || forge_read(&name, words)
+        || git_read(&name, words)
         || numeric_sed_read(&name, words)
         || controlled_settings_command(invocation)
 }
@@ -973,13 +974,55 @@ fn executable_digest(path: &Path) -> std::io::Result<[u8; 32]> {
     Ok(digest.finalize().into())
 }
 
+/// `gh issue|pr` verbs that only talk to the forge (#2454): their text
+/// operands (`--comment`, `--body`, `--title`) are data, never a local write.
 fn forge_read(program: &str, words: &[Value]) -> bool {
     program == "gh"
-        && words.get(1).and_then(Value::as_literal) == Some("issue")
+        && matches!(
+            words.get(1).and_then(Value::as_literal),
+            Some("issue" | "pr")
+        )
         && matches!(
             words.get(2).and_then(Value::as_literal),
-            Some("list" | "view")
+            Some("list" | "view" | "comment" | "create" | "edit" | "close" | "reopen")
         )
+}
+
+/// Git subcommands that read history or the index (#2454). A path operand
+/// (`git log -- <file>`) names what to read; `--output` is the one way these
+/// write a file, so it disqualifies.
+const GIT_READS: &[&str] = &[
+    "log",
+    "show",
+    "diff",
+    "blame",
+    "status",
+    "grep",
+    "ls-files",
+    "rev-parse",
+    "describe",
+];
+
+fn git_read(program: &str, words: &[Value]) -> bool {
+    if program != "git" {
+        return false;
+    }
+    let mut rest = words.iter().skip(1).map(Value::as_literal);
+    let subcommand = loop {
+        match rest.next() {
+            Some(Some("-C" | "-c")) => {
+                rest.next();
+            }
+            Some(Some(word)) if word.starts_with('-') => {}
+            Some(word) => break word,
+            None => return false,
+        }
+    };
+    subcommand.is_some_and(|sub| GIT_READS.contains(&sub))
+        && words
+            .iter()
+            .filter_map(Value::as_literal)
+            .all(|word| !word.starts_with("--output"))
 }
 
 fn numeric_sed_read(program: &str, words: &[Value]) -> bool {
@@ -1719,6 +1762,11 @@ mod tests {
             "gh issue list --repo zackees/clud --search 'safe_rm.extra_roots ~/.clud/settings.json'",
             "cat > issue-draft.md <<'EOF'\nDocument ~/.clud/settings.json and safe_rm.extra_roots.\nEOF",
             "sed -n '1,175p' crates/clud-bin/src/rm_tool_extra_roots.rs",
+            // #2454: history reads and forge comment text are not writes.
+            "git -C ~/dev/x log -1 --format='%h %cr' -- ~/.clud/settings.json",
+            "git diff HEAD~1 -- ~/.clud/settings.json",
+            "gh issue reopen 2454 --repo zackees/clud --comment 'refused ~/.clud/settings.json'",
+            "gh pr comment 9 --body 'edit ~/.clud/settings.json by hand'",
             // The repo layer is never read for the override.
             "jq '.bash.block_cd=false' .clud/settings.json > t && mv t .clud/settings.json",
         ] {
@@ -1742,6 +1790,9 @@ mod tests {
             format!("tee ~/.clud/{n} <<'EOF'\nx\nEOF"),
             format!("cat <<EOF > ~/.clud/{n}\nx\nEOF"),
             format!("touch ~/.clud/{n}"),
+            format!("git log --output=~/.clud/{n}"),
+            format!("git show HEAD:x > ~/.clud/{n}"),
+            format!("git checkout -- ~/.clud/{n}"),
             format!("mkdir -p ~/.clud && touch ~/.clud/{n}"),
             format!("less -o ~/.clud/{n} /tmp/x"),
             format!("less -O ~/.clud/{n} /tmp/x"),

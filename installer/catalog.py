@@ -19,7 +19,19 @@ SCHEMA = "https://zackees.github.io/manifest.json/v1/manifest.schema.json"
 ONLINE_URL = "https://talos-hq.github.io/clud/install/manifest.json"
 # Catalogs published before the move to talos-hq (#2126) still name the old
 # Pages host; accept it until the next publish rewrites the field.
-ACCEPTED_ONLINE_URLS = (ONLINE_URL, "https://zackees.github.io/clud/install/manifest.json")
+# The canonical custom domain; github.io 301-redirects to it (#2449).
+DOMAIN_ONLINE_URL = "https://talosbot.ai/clud/install/manifest.json"
+ACCEPTED_ONLINE_URLS = (
+    ONLINE_URL,
+    "https://zackees.github.io/clud/install/manifest.json",
+    DOMAIN_ONLINE_URL,
+)
+# Fetch order: the domain, then the newest release's catalog on GitHub, so a
+# lost domain degrades instead of breaking. Mirrors published_urls.rs.
+INSTALL_CATALOG_URLS = (
+    "https://talosbot.ai/clud/install/manifest.json",
+    "https://github.com/talos-hq/clud/releases/latest/download/installer-candidate-manifest.json",
+)
 REPO_API = "https://api.github.com/repos/talos-hq/clud/releases"
 TARGETS = {
     "win_amd64": ("windows", "x86_64", "clud.exe"),
@@ -383,6 +395,17 @@ def fetch(url: str) -> bytes:
     )
     with urlopen(request, timeout=60) as response:
         return response.read()
+
+
+def fetch_first(urls: tuple[str, ...], fetch_bytes=fetch) -> bytes:
+    """The first of `urls` that answers; raises the last error otherwise."""
+    error: Exception | None = None
+    for url in urls:
+        try:
+            return fetch_bytes(url)
+        except OSError as exc:
+            error = exc
+    raise OSError(f"every published URL failed: {urls}") from error
 
 
 def published_releases(fetch_bytes=fetch) -> list[dict]:

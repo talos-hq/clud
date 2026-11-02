@@ -199,6 +199,20 @@ mod tests {
         }
     }
 
+    /// Issue #1676: the bounded reader is only worth shipping with routing.
+    #[test]
+    fn worker_routes_reads_through_the_bounded_slice_tool() {
+        let worker = BUNDLED_CLAUDE_FILES
+            .iter()
+            .find(|f| f.rel_path == "agents/grind-worker.md")
+            .expect("grind-worker.md must stay bundled");
+        assert!(
+            worker.body.contains("code/slice.py"),
+            "grind-worker must name the bounded reader it is told to use"
+        );
+        assert!(worker.body.contains("code/outline.py"));
+    }
+
     #[test]
     fn bundled_includes_the_grind_roles_and_workflow() {
         let paths: Vec<_> = BUNDLED_CLAUDE_FILES.iter().map(|f| f.rel_path).collect();

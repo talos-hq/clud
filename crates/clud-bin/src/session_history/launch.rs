@@ -148,6 +148,28 @@ pub fn candidates(state_dir: &Path, cwd: &str) -> Vec<Candidate> {
         .collect()
 }
 
+/// The session to resume: the `n`th newest for `clud -c N`/`--last`
+/// (#2405), otherwise the picker's choice.
+fn choose(
+    candidates: &[Candidate],
+    direct_index: Option<usize>,
+    pick: impl FnOnce(Vec<Candidate>) -> std::io::Result<PickOutcome>,
+) -> Result<(String, RecoveryChoice), String> {
+    if let Some(n) = direct_index {
+        let chosen = candidates.get(n).ok_or_else(|| {
+            format!(
+                "no session {n} here: only {} earlier Claude session(s) found (0 is the newest)",
+                candidates.len()
+            )
+        })?;
+        return Ok((chosen.entry.session_id.clone(), RecoveryChoice::Full));
+    }
+    match pick(candidates.to_vec()).map_err(|e| format!("session picker failed: {e}"))? {
+        PickOutcome::Selected { session_id, choice } => Ok((session_id, choice)),
+        PickOutcome::Cancelled => Err("cancelled".to_string()),
+    }
+}
+
 /// Pick, decide, and rewrite `args`. Returns a one-line note to print, or
 /// `None` when the launch should keep Claude's native `--continue`.
 pub fn prepare(
@@ -156,7 +178,8 @@ pub fn prepare(
     pick: impl FnOnce(Vec<Candidate>) -> std::io::Result<PickOutcome>,
 ) -> Result<Option<String>, String> {
     // Scripts: a non-TTY `clud -c` keeps Claude's native continue (#922).
-    if !env.interactive && !args.last {
+    let direct = args.last || args.continue_index.is_some();
+    if !env.interactive && !direct {
         return Ok(None);
     }
     if let Err(error) = import::import_once(&env.state_dir, &env.claude_dir, &env.cwd) {
@@ -165,20 +188,14 @@ pub fn prepare(
     let cwd = canonical_cwd(&env.cwd);
     let candidates = candidates(&env.state_dir, &cwd);
     if candidates.is_empty() {
-        if args.last {
+        if direct {
             return Err("no earlier Claude sessions were found for this directory".to_string());
         }
         return Ok(None);
     }
 
-    let (session_id, choice) = if args.last {
-        (candidates[0].entry.session_id.clone(), RecoveryChoice::Full)
-    } else {
-        match pick(candidates.clone()).map_err(|e| format!("session picker failed: {e}"))? {
-            PickOutcome::Selected { session_id, choice } => (session_id, choice),
-            PickOutcome::Cancelled => return Err("cancelled".to_string()),
-        }
-    };
+    let direct_index = direct.then(|| args.continue_index.unwrap_or(0));
+    let (session_id, choice) = choose(&candidates, direct_index, pick)?;
     let candidate = candidates
         .iter()
         .find(|c| c.entry.session_id == session_id)
@@ -212,6 +229,7 @@ pub fn prepare(
     }
     args.continue_session = false;
     args.last = false;
+    args.continue_index = None;
     let title = candidate
         .entry
         .title

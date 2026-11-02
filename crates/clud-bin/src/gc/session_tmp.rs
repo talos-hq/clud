@@ -110,6 +110,68 @@ pub struct SweepReport {
     /// commit does not make it. What it does is end the silence: today a
     /// session at 48 GB produces no signal anywhere.
     pub oversized: Vec<(PathBuf, u64)>,
+    /// Subtrees skipped as unremovable this pass: owned by another user (a
+    /// Docker bind mount's `root` output) or refused with `PermissionDenied`.
+    /// Marked on the first hit so the pass finishes the rest (#2486).
+    pub foreign_owned: Vec<PathBuf>,
+}
+
+/// File (under `~/.clud/state`) holding the last completed pass's
+/// [`SweepReport::foreign_owned`] list, read by `clud gc` (#2486).
+pub const FOREIGN_OWNED_FILE: &str = "session-tmp-foreign-owned.json";
+
+/// Persist the unremovable list next to the sweep state. An empty list
+/// removes the file, so a cleaned-up tree stops being reported.
+pub fn write_foreign_owned(state_dir: &Path, paths: &[PathBuf]) -> std::io::Result<()> {
+    let file = state_dir.join(FOREIGN_OWNED_FILE);
+    if paths.is_empty() {
+        return match std::fs::remove_file(&file) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err),
+            _ => Ok(()),
+        };
+    }
+    std::fs::create_dir_all(state_dir)?;
+    let list: Vec<String> = paths.iter().map(|p| p.display().to_string()).collect();
+    let body = serde_json::to_vec_pretty(&list).map_err(std::io::Error::other)?;
+    std::fs::write(file, body)
+}
+
+/// Read the list [`write_foreign_owned`] stored; missing or torn reads empty.
+pub fn read_foreign_owned(state_dir: &Path) -> Vec<PathBuf> {
+    std::fs::read(state_dir.join(FOREIGN_OWNED_FILE))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Vec<String>>(&bytes).ok())
+        .map(|list| list.into_iter().map(PathBuf::from).collect())
+        .unwrap_or_default()
+}
+
+/// `clud gc` lines for unremovable subtrees, each with the command that
+/// removes it: `sudo rm -rf`, or a throwaway root container when sudo is
+/// unavailable (Docker made the files, so Docker can delete them).
+pub fn foreign_owned_lines(paths: &[PathBuf]) -> Vec<String> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = vec![format!(
+        "warning: ~/.clud/tmp: {} path(s) owned by another user (likely Docker) cannot be swept; remove them with:",
+        paths.len()
+    )];
+    for path in paths {
+        let quoted = shell_quote(&path.display().to_string());
+        lines.push(format!("  sudo rm -rf {quoted}"));
+        if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
+            lines.push(format!(
+                "    or: docker run --rm -v {}:/x alpine rm -rf {}",
+                shell_quote(&parent.display().to_string()),
+                shell_quote(&format!("/x/{}", name.to_string_lossy())),
+            ));
+        }
+    }
+    lines
+}
+
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 /// Size at which a still-live session directory is worth mentioning.
@@ -363,6 +425,7 @@ fn report_from_tick(tick: session_tmp_continuation::TickReport, dry_run: bool) -
         persistent_failure: tick.persistent_failure,
         abandoned: tick.abandoned,
         oversized: tick.oversized,
+        foreign_owned: tick.foreign_owned,
     }
 }
 
@@ -850,6 +913,29 @@ mod tests {
 
         let mut budget = SUBTREE_SCAN_BUDGET;
         assert_eq!(subtree_size(&dir, &mut budget), Some(3072));
+    }
+
+    #[test]
+    fn foreign_owned_list_round_trips_and_clears() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = vec![PathBuf::from("/home/u/.clud/tmp/s/zc")];
+        write_foreign_owned(temp.path(), &paths).unwrap();
+        assert_eq!(read_foreign_owned(temp.path()), paths);
+        write_foreign_owned(temp.path(), &[]).unwrap();
+        assert!(read_foreign_owned(temp.path()).is_empty());
+        assert!(!temp.path().join(FOREIGN_OWNED_FILE).exists());
+    }
+
+    #[test]
+    fn foreign_owned_lines_give_sudo_and_docker_commands() {
+        let lines = foreign_owned_lines(&[PathBuf::from("/t/s/it's")]);
+        assert!(lines[0].contains("1 path(s)"));
+        assert_eq!(lines[1], "  sudo rm -rf '/t/s/it'\\''s'");
+        assert_eq!(
+            lines[2],
+            "    or: docker run --rm -v '/t/s':/x alpine rm -rf '/x/it'\\''s'"
+        );
+        assert!(foreign_owned_lines(&[]).is_empty());
     }
 
     #[test]

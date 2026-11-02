@@ -517,7 +517,7 @@ fn tool_choice(choice: Option<&Value>) -> Option<Value> {
 
 /// Anthropic tool names are `[a-zA-Z0-9_-]{1,64}`. Clients such as MCP
 /// servers routinely hand over names with dots or spaces.
-fn sanitize_tool_name(name: &str) -> String {
+pub(crate) fn sanitize_tool_name(name: &str) -> String {
     let mut sanitized: String = name
         .chars()
         .map(|character| {

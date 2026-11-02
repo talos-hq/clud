@@ -93,6 +93,7 @@ fn main() {
     // claude subscription key.
     let mut stream_json_script: Option<PathBuf> = None;
     let mut stream_delay_ms: u64 = 0;
+    let mut stream_echo_argv = false;
     let mut filtered_args: Vec<String> = Vec::new();
     let mut skip_next = false;
     for (i, arg) in args.iter().enumerate().skip(1) {
@@ -301,6 +302,10 @@ fn main() {
             skip_next = true;
             continue;
         }
+        if arg == "--mock-stream-echo-argv" {
+            stream_echo_argv = true;
+            continue;
+        }
         if arg == "--mock-stream-delay-ms" {
             if let Some(ms) = args.get(i + 1) {
                 stream_delay_ms = ms.parse().unwrap_or(0);
@@ -343,6 +348,17 @@ fn main() {
     // between each so the parent's drain loop sees them incrementally,
     // exactly like real claude would emit them. Then exit immediately
     // so the test's wait completes without the usual JSON-report tail.
+    // `clud workflow` integration (#2471): every `agent()` call is a
+    // separate `clud -p <prompt>` child, so per-call `--mock-*` flags are
+    // impossible. `MOCK_AGENT_WORKFLOW_RESPONSES` names a JSON object whose
+    // keys are prompt substrings and whose values are `{result,
+    // structured_output, is_error}`; the first key contained in the `-p`
+    // prompt selects the scripted stream-json reply. Each call is also
+    // appended to `<file>.calls` so tests can assert on concurrency inputs.
+    if let Ok(path) = std::env::var("MOCK_AGENT_WORKFLOW_RESPONSES") {
+        emit_workflow_response(&path, &args);
+    }
+
     if let Some(path) = stream_json_script.as_ref() {
         if let Ok(text) = std::fs::read_to_string(path) {
             for line in text.lines() {
@@ -353,6 +369,12 @@ fn main() {
                     std::thread::sleep(Duration::from_millis(stream_delay_ms));
                 }
             }
+        }
+        if stream_echo_argv {
+            // Lets a test see which user message this turn was given.
+            let line = serde_json::json!({"type": "mock.argv", "argv": filtered_args});
+            let _ = writeln!(io::stdout(), "{line}");
+            let _ = io::stdout().flush();
         }
         std::process::exit(exit_code);
     }
@@ -1179,4 +1201,63 @@ fn run_bash_nounset_probe(report_path: &Path) {
         }),
     };
     let _ = std::fs::write(report_path, serde_json::to_string_pretty(&report).unwrap());
+}
+
+/// Reply to a headless `-p` call from the `MOCK_AGENT_WORKFLOW_RESPONSES`
+/// table and exit. Does nothing when no `-p`/`--print` prompt is present.
+fn emit_workflow_response(table_path: &str, args: &[String]) {
+    let Some(prompt) = args
+        .iter()
+        .position(|a| a == "-p" || a == "--print")
+        .and_then(|i| args.get(i + 1))
+    else {
+        return;
+    };
+    let table: serde_json::Value = std::fs::read_to_string(table_path)
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let reply = table
+        .as_object()
+        .and_then(|m| m.iter().find(|(k, _)| prompt.contains(k.as_str())))
+        .map(|(_, v)| v.clone())
+        .unwrap_or_else(|| serde_json::json!({"result": format!("echo: {prompt}")}));
+    if let Ok(mut calls) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{table_path}.calls"))
+    {
+        let schema = args
+            .iter()
+            .position(|a| a == "--json-schema")
+            .and_then(|i| args.get(i + 1))
+            .cloned();
+        let _ = writeln!(
+            calls,
+            "{}",
+            serde_json::json!({"prompt": prompt, "schema": schema})
+        );
+    }
+    let mut result = serde_json::json!({
+        "type": "result",
+        "subtype": "success",
+        "num_turns": 1,
+        "duration_ms": 5,
+        "total_cost_usd": 0.01,
+        "is_error": reply.get("is_error").cloned().unwrap_or(serde_json::json!(false)),
+        "result": reply.get("result").cloned().unwrap_or(serde_json::json!("")),
+    });
+    if let Some(structured) = reply.get("structured_output") {
+        result["structured_output"] = structured.clone();
+    }
+    let out = io::stdout();
+    let mut out = out.lock();
+    let _ = writeln!(
+        out,
+        "{}",
+        serde_json::json!({"type": "system", "subtype": "init", "model": "mock"})
+    );
+    let _ = writeln!(out, "{result}");
+    let _ = out.flush();
+    std::process::exit(0);
 }

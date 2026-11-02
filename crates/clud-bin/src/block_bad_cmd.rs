@@ -553,6 +553,44 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: count shell read-hops per file, not per command. An agent that
+    // has sliced one file N times is hunting without a map; the N+1-th slice
+    // is denied with a pointer to `code/outline.py`. Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_hop::opts_out(&payload.command) {
+            append_log(&format!(
+                "FILE-HOP-GUARD-OVERRIDE: {} in command: file-hop guard bypassed                  for tool_name={:?}",
+                block_bad_cmd_hop::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_hop::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            append_log(&format!("FILE-HOP-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
+    // #2233: a Read of a file whose bytes are unchanged since the same read in
+    // this session returns nothing new, and every later request pays for it
+    // again. Refused with the bounded alternatives named; fails open.
+    if event == PRE_TOOL_USE_EVENT {
+        if let Some(reason) = block_bad_cmd_reread::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            append_log(&format!("REREAD-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
+
     // #1988/#2122: classify the call; an advisory note rides on the final
     // allow, and the one escalation deny is returned here.
     let verify_note = if event == PRE_TOOL_USE_EVENT {
@@ -840,21 +878,35 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
     // command that is independently forbidden still reports the stronger
     // reason.
     let mut cd_substitution: Option<(String, String)> = None;
+    // #2354: a substitute rewrites the input, so it needs the call to
+    // carry no other rewrite and not be a gate check.
+    let may_substitute = deletion_rewrite.is_none()
+        && evaluation.rewritten_command.is_none()
+        && payload.agent_type.as_deref() != Some(block_bad_cmd_grind_caps::GATE)
+        // Codex may ignore `updatedInput` and run the original `cd`
+        // (fail open), so it keeps the deny until that is verified.
+        && !is_codex_session();
     if evaluation.reason.is_none() {
-        // #2354: a substitute rewrites the input, so it needs the call to
-        // carry no other rewrite and not be a gate check.
-        let may_substitute = deletion_rewrite.is_none()
-            && evaluation.rewritten_command.is_none()
-            && payload.agent_type.as_deref() != Some(block_bad_cmd_grind_caps::GATE)
-            // Codex may ignore `updatedInput` and run the original `cd`
-            // (fail open), so it keeps the deny until that is verified.
-            && !is_codex_session();
         match block_cd_denial(&payload, &config, may_substitute) {
             Some(CdVerdict::Deny(reason)) => evaluation.reason = Some(reason),
             Some(CdVerdict::Substitute { command, notice }) => {
                 cd_substitution = Some((command, notice));
             }
             None => {}
+        }
+    }
+    // #2460: with gh.backend = ghd, the real gh by path is rewritten to the
+    // shim so ghd cannot be bypassed. A cd rewrite already in hand wins.
+    if evaluation.reason.is_none()
+        && cd_substitution.is_none()
+        && may_substitute
+        && config.gh.backend == crate::repo_clud_config::GhBackend::Ghd
+    {
+        let dialect = shell_dialect_for_payload(&payload);
+        if let Some(command) = block_bad_cmd_gh_route::ghd_substitute(&payload.command, dialect) {
+            append_log("gh_route_substituted backend=ghd");
+            let notice = block_bad_cmd_gh_route::ghd_substitution_notice().to_string();
+            cd_substitution = Some((command, notice));
         }
     }
 
@@ -3873,6 +3925,8 @@ mod block_bad_cmd_rm_redirect;
 
 #[path = "block_bad_cmd_cd.rs"]
 mod block_bad_cmd_cd;
+#[path = "block_bad_cmd_gh_route.rs"]
+mod block_bad_cmd_gh_route;
 use block_bad_cmd_cd::{
     cd_denial_reason, command_may_change_directory, nearest_repo_root, resolve_policy, CdPolicy,
     BLOCK_CD_RULE_ID,
@@ -3897,6 +3951,11 @@ mod block_bad_cmd_stale_upstream;
 
 #[path = "block_bad_cmd_repeat.rs"]
 mod block_bad_cmd_repeat;
+
+#[path = "block_bad_cmd_hop.rs"]
+mod block_bad_cmd_hop;
+#[path = "block_bad_cmd_reread.rs"]
+mod block_bad_cmd_reread;
 
 #[path = "block_bad_cmd_verify_ratio.rs"]
 mod block_bad_cmd_verify_ratio;
@@ -4101,6 +4160,7 @@ mod tests {
         ];
         for tool in candidates {
             let ruled = block_bad_cmd_gate::gates_tool(tool)
+                || block_bad_cmd_reread::applies_to(tool)
                 || tool == "EnterPlanMode"
                 || creates_agents(tool)
                 || tool == block_bad_cmd_loop_stop::SCHEDULE_WAKEUP

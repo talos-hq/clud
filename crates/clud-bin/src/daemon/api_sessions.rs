@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::process_identity::ProcessIdentity;
+use crate::session_origin::SessionOrigin;
 
 use super::io_helpers::{new_session_id, read_json_file, write_json_file};
 use super::paths::{
@@ -48,6 +49,21 @@ pub enum ApiSessionState {
 }
 
 impl ApiSessionState {
+    pub const ALL: [Self; 6] = [
+        Self::Starting,
+        Self::Running,
+        Self::Interrupting,
+        Self::Idle,
+        Self::Failed,
+        Self::Terminated,
+    ];
+
+    /// GC may delete only finished sessions. `Idle` is held deliberately: it
+    /// is a resumable conversation, and the instance cap, not GC, bounds it.
+    pub fn is_reapable(self) -> bool {
+        matches!(self, Self::Terminated | Self::Failed)
+    }
+
     pub fn accepts_turns(self) -> bool {
         matches!(self, Self::Starting | Self::Idle | Self::Failed)
     }
@@ -87,6 +103,8 @@ pub struct CreateApiSession {
     pub backend: ApiSessionBackend,
     pub cwd: PathBuf,
     pub name: Option<String>,
+    /// Set by the entry point creating the session; never inferred later.
+    pub origin: SessionOrigin,
     pub resolved_settings: ResolvedApiSessionSettings,
 }
 
@@ -145,6 +163,9 @@ pub struct ApiSessionRecord {
     pub cwd: PathBuf,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// Records written before this field existed load as `Unknown`.
+    #[serde(default)]
+    pub origin: SessionOrigin,
     pub resolved_settings: ResolvedApiSessionSettings,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider_session_id: Option<String>,
@@ -165,6 +186,9 @@ pub struct ApiSessionRecord {
     pub next_event_cursor: u64,
     #[serde(default)]
     pub idempotency: VecDeque<IdempotencyRecord>,
+    /// Operator injections, oldest first (see `docs/architecture/session-inject.md`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub injections: Vec<super::api_session_inject::ApiInjectionRecord>,
 }
 
 impl ApiSessionRecord {
@@ -266,6 +290,7 @@ impl ApiSessionStore {
             backend: request.backend,
             cwd,
             name: request.name,
+            origin: request.origin,
             resolved_settings: request.resolved_settings,
             provider_session_id: None,
             state: ApiSessionState::Starting,
@@ -278,6 +303,7 @@ impl ApiSessionStore {
             events: VecDeque::new(),
             next_event_cursor: 1,
             idempotency: VecDeque::new(),
+            injections: Vec::new(),
         };
         self.write(&record)?;
         Ok(record)
@@ -663,6 +689,25 @@ impl ApiSessionStore {
         Ok(recovered)
     }
 
+    /// Deletes finished (`Terminated` / `Failed`) records and returns their
+    /// ids. Idle and active sessions are never touched.
+    pub fn gc(&self) -> Result<Vec<String>, ApiSessionStoreError> {
+        let mut reaped = Vec::new();
+        for record in self.list()? {
+            if !record.state.is_reapable() {
+                continue;
+            }
+            let _lock = self.lock_session(&record.id)?;
+            // Re-read under the lock: a concurrent turn may have revived it.
+            if !self.read(&record.id)?.state.is_reapable() {
+                continue;
+            }
+            fs::remove_file(api_session_path(&self.state_dir, &record.id))?;
+            reaped.push(record.id);
+        }
+        Ok(reaped)
+    }
+
     /// Moves unreadable state out of the active directory. A corrupt record is
     /// never overwritten, preserving evidence for manual recovery.
     pub fn quarantine_corrupt(
@@ -681,7 +726,7 @@ impl ApiSessionStore {
         }
     }
 
-    fn mutate<T>(
+    pub(super) fn mutate<T>(
         &self,
         session_id: &str,
         action: impl FnOnce(&mut ApiSessionRecord) -> Result<T, ApiSessionStoreError>,
@@ -802,6 +847,7 @@ mod tests {
             backend: ApiSessionBackend::Claude,
             cwd: cwd.to_path_buf(),
             name: Some("work".to_string()),
+            origin: SessionOrigin::Test,
             resolved_settings: ResolvedApiSessionSettings {
                 model: Some("test".to_string()),
                 safe: true,

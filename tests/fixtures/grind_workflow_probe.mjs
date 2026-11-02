@@ -16,7 +16,22 @@ const execute = new AsyncFunction(
 );
 const prompts = [];
 const agent = async (prompt, options) => {
-  prompts.push({ prompt, role: options.agentType, label: options.label });
+  prompts.push({ prompt, role: options.agentType, label: options.label, model: options.model });
+  // Scripted replies (#2467): `script` maps a label prefix to a list of
+  // replies, consumed in order; the longest matching prefix wins.
+  const keys = Object.keys(config.script || {})
+    .filter(key => options.label.startsWith(key)).sort((a, b) => b.length - a.length);
+  if (keys.length && config.script[keys[0]].length) {
+    const reply = config.script[keys[0]].shift();
+    if (reply && reply.throw) throw new Error(reply.throw);
+    if (reply && reply.delay_ms !== undefined) {
+      await new Promise(resolve => setTimeout(resolve, reply.delay_ms));
+      prompts.push({ done: options.label });
+      return reply.value;
+    }
+    prompts.push({ done: options.label });
+    return reply;
+  }
   if (options.label === 'classify') {
     if (config.classify) return config.classify;
     return {

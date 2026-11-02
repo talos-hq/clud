@@ -843,6 +843,7 @@ mod tests {
             use_soldr: false,
             install: true,
             version: None,
+            porcelain: false,
         });
         activate_with_config(&cfg);
         assert_eq!(
