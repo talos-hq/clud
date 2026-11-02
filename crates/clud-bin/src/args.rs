@@ -1130,6 +1130,27 @@ pub enum Command {
     },
     #[command(name = "__openai-responses-translate", hide = true)]
     InternalOpenAiResponsesTranslate,
+    /// Hidden test seam for xAI's RFC 8628 device login: run discovery, request
+    /// a device code, poll until authorized, and print progress as JSON lines.
+    /// Never used by a launched session.
+    #[command(name = "__xai-device-login", hide = true)]
+    InternalXaiDeviceLogin {
+        /// Discovery document URL (defaults to xAI's).
+        #[arg(long = "discovery-url")]
+        discovery_url: Option<String>,
+        /// Device authorization endpoint, skipping discovery.
+        #[arg(long = "device-endpoint", requires = "token_endpoint")]
+        device_endpoint: Option<String>,
+        /// Token endpoint, skipping discovery.
+        #[arg(long = "token-endpoint", requires = "device_endpoint")]
+        token_endpoint: Option<String>,
+        /// Minimum poll interval in milliseconds.
+        #[arg(long = "interval-ms")]
+        interval_ms: Option<u64>,
+        /// Bound on the whole polling wait, in milliseconds.
+        #[arg(long = "max-poll-ms")]
+        max_poll_ms: Option<u64>,
+    },
     /// Hidden test seam for Kimi Code's RFC 8628 device login: request a device
     /// code, poll until authorized, and print progress as JSON lines. With
     /// `--refresh-stored` it renews the login already in the OS vault instead.
@@ -1752,6 +1773,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__openai-chat-translate",
     "__openai-responses-translate",
     "__kimi-device-login",
+    "__xai-device-login",
 ];
 
 /// Quote `token` for a copy-pasteable shell example.
