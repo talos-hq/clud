@@ -425,7 +425,7 @@ pub(super) const BOUNDED_DIAGNOSTIC_ROUTING: &str = "For large GitHub issue disc
 /// `code/outline.py` and `code/ast_grep.py` already ship in BUNDLED_TOOLS but
 /// only the `/grind` agent docs mention them, so plain `clud -p` and `clud loop`
 /// never learn they exist (#2233).
-pub(super) const BOUNDED_READ_ROUTING: &str = "Before reading a source file you have not mapped, outline it with `clud tool run code/outline.py -- <file>` (every definition and heading with its line range; ~2.7 KB for a 2,100-line Python file) and then read only that range in one call; use `clud tool run code/ast_grep.py --` for a structural search. Do not `cat` a large file whole, and do not hunt one symbol through repeated `sed -n` slices or offset reads: each miss is a round trip that every later request re-sends. Read a file whole only when it is small or every line matters.";
+pub(super) const BOUNDED_READ_ROUTING: &str = "Before reading a source file you have not mapped, outline it with `clud tool run code/outline.py -- <file>` (every definition and heading with its line range; ~2.7 KB for a 2,100-line Python file) and then read only that range in one call with `clud tool run code/slice.py <file> --lines A-B [--lines C-D]` (line-numbered, merged overlaps, byte-capped, with a footer naming the line to continue from); never re-read a range you already have. Use `clud tool run code/ast_grep.py --` for a structural search. Do not `cat` a large file whole, and do not hunt one symbol through repeated `sed -n` slices or offset reads: each miss is a round trip that every later request re-sends. Read a file whole only when it is small or every line matters.";
 
 fn append_instructions(target: &mut String, text: &str) {
     if !text.is_empty() {
