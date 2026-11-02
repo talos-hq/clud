@@ -32,6 +32,7 @@ mod rp_broker;
 mod runtime_config;
 mod server;
 mod session_flags;
+pub mod session_new_client;
 mod session_state_sweep;
 mod session_tmp_sweep;
 mod sessions;

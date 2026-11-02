@@ -1357,6 +1357,25 @@ fn test_list_invalid_origin_is_a_parse_error_naming_valid_values() {
 }
 
 #[test]
+fn test_session_new_parses() {
+    let args = parse(&[
+        "clud",
+        "session",
+        "new",
+        "--backend",
+        "codex",
+        "--name",
+        "x",
+    ]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Session {
+            action: crate::args::SessionAction::New { ref backend, .. },
+        }) if backend == "codex"
+    ));
+}
+
+#[test]
 fn test_session_show_parses() {
     let args = parse(&["clud", "session", "show", "sess-1", "--json"]);
     assert!(matches!(

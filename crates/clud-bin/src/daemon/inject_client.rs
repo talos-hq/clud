@@ -50,13 +50,13 @@ pub fn request_body(options: &InjectOptions) -> Value {
     })
 }
 
-fn agent() -> ureq::Agent {
+pub(super) fn agent() -> ureq::Agent {
     ureq::AgentBuilder::new()
         .timeout(Duration::from_secs(30))
         .build()
 }
 
-fn call(request: ureq::Request, body: Option<&Value>) -> Result<(u16, Value), String> {
+pub(super) fn call(request: ureq::Request, body: Option<&Value>) -> Result<(u16, Value), String> {
     let response = match body {
         Some(body) => request
             .set("Content-Type", "application/json")

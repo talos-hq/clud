@@ -97,10 +97,16 @@ struct CreateDto {
     model: Option<String>,
     #[serde(default)]
     safe: bool,
-    /// The creating client declares its own origin; absent means `unknown`.
-    #[serde(default)]
+    /// The creating client declares its own origin. A request that does not
+    /// is created by the daemon's own API entry point: `daemon`. `unknown` is
+    /// reserved for records written before origins existed.
+    #[serde(default = "daemon_origin")]
     origin: crate::session_origin::SessionOrigin,
 }
+fn daemon_origin() -> crate::session_origin::SessionOrigin {
+    crate::session_origin::SessionOrigin::Daemon
+}
+
 #[derive(Deserialize)]
 struct TurnDto {
     message: String,
@@ -587,7 +593,7 @@ mod tests {
             assert_eq!(dto.origin, origin);
         }
         let absent: CreateDto = serde_json::from_str(r#"{"backend":"claude","cwd":"/"}"#).unwrap();
-        assert_eq!(absent.origin, SessionOrigin::Unknown);
+        assert_eq!(absent.origin, SessionOrigin::Daemon);
         assert!(serde_json::from_str::<CreateDto>(
             r#"{"backend":"claude","cwd":"/","origin":"bogus"}"#
         )

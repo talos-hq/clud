@@ -1578,6 +1578,28 @@ pub enum SessionAction {
         #[arg(long = "session")]
         session: Option<String>,
     },
+    /// Create a durable API session from the CLI (recorded as `origin: cli`)
+    /// and print its id.
+    New {
+        /// Harness backend: `claude` or `codex`.
+        #[arg(long = "backend", default_value = "claude")]
+        backend: String,
+        /// Working directory; defaults to the current directory.
+        #[arg(long = "cwd")]
+        cwd: Option<std::path::PathBuf>,
+        /// Display name.
+        #[arg(long = "name")]
+        name: Option<String>,
+        /// Model to pin.
+        #[arg(long = "model")]
+        model: Option<String>,
+        /// Run the session without the permission bypass.
+        #[arg(long = "safe")]
+        safe: bool,
+        /// Print the created record as JSON.
+        #[arg(long = "json")]
+        json: bool,
+    },
     /// Print one API session's state, origin, backend and model.
     Show {
         /// API session id (`sess-...`).

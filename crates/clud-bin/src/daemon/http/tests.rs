@@ -160,8 +160,35 @@ fn api_create_list_get_and_auth_boundary_are_request_level_contracts() {
     assert_status(&status, "201");
     let record: serde_json::Value = serde_json::from_str(&body).unwrap();
     let id = record["id"].as_str().unwrap();
-    // A client that does not declare an origin is recorded as `unknown`.
-    assert_eq!(record["origin"], "unknown");
+    // An undeclared create through the daemon's API entry point is `daemon`.
+    assert_eq!(record["origin"], "daemon");
+    assert_eq!(
+        crate::daemon::api_sessions::ApiSessionStore::new(dir.path())
+            .get(record["id"].as_str().unwrap())
+            .unwrap()
+            .origin,
+        crate::session_origin::SessionOrigin::Daemon
+    );
+    // The CLI entry point (`clud session new`) records `cli` on the stored record.
+    let cli = crate::daemon::session_new_client::create(
+        port,
+        "api-canary",
+        &crate::daemon::session_new_client::NewSessionRequest {
+            backend: "claude".to_string(),
+            cwd: dir.path().to_path_buf(),
+            name: None,
+            model: None,
+            safe: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        crate::daemon::api_sessions::ApiSessionStore::new(dir.path())
+            .get(cli["id"].as_str().unwrap())
+            .unwrap()
+            .origin,
+        crate::session_origin::SessionOrigin::Cli
+    );
     assert!(record["cwd"]
         .as_str()
         .unwrap()
