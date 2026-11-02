@@ -1113,6 +1113,8 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    #[command(name = "__openai-responses-translate", hide = true)]
+    InternalOpenAiResponsesTranslate,
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
         #[arg(long = "state-dir")]
@@ -1678,6 +1680,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__worker",
     "__start-cmd",
     "__openai-chat-translate",
+    "__openai-responses-translate",
 ];
 
 /// Quote `token` for a copy-pasteable shell example.

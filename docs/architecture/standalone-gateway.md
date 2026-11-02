@@ -66,6 +66,35 @@ Use `/v1/models` to discover the advertised Codex IDs (for example,
 Codex-only discovery does not contact Anthropic. This is an Anthropic-compatible
 frontend; `/v1/responses` and `/v1/chat/completions` are not exposed.
 
+## OpenAI Responses client bodies
+
+`crates/clud-bin/src/responses_ingress.rs` translates one OpenAI Responses
+(`POST /v1/responses`) request body into the Anthropic Messages body the routes
+above already serve, ported from CLIProxyAPI
+`internal/translator/claude/openai/responses/claude_openai-responses_request.go`.
+It is a translator and a hidden seam (`clud __openai-responses-translate`, stdin
+request in, Messages body out) — **no route exposes it yet**, so nothing changes
+for a running server. `instructions` plus every role=system/developer input item
+become top-level `system` blocks in source order; `message` items become
+user/assistant turns; `function_call`/`custom_tool_call` become `tool_use` and
+their `*_output` partners `tool_result`; a `reasoning` item with
+`encrypted_content` becomes a `thinking` block, and one without a signature keeps
+its text as an assistant text block because a Claude `thinking` block without a
+signature is invalid.
+
+Deliberate differences from upstream: a builtin server tool (`web_search`,
+`file_search`, `code_interpreter`, `image_generation`, `computer_use*`,
+`local_shell`, `mcp`, `tool_search`) is refused by name (`UnsupportedPart`)
+instead of silently dropped, because clud has no counterpart and removing a
+capability quietly makes the model answer worse; an unknown input item type is
+skipped with one stderr line (upstream logs and drops it); a `function_call_output`
+that never paired with a call is carried as plain user text (Claude rejects an
+orphan `tool_result`), and a `tool_use` with no result is closed with an
+`is_error` result so an interrupted turn can be replayed; `text.format` /
+`response_format` structured-output synthesis, tool-search discovery replay and
+the namespace/custom-tool name map are not ported yet; `cache_control` markers
+are not replayed.
+
 ## MCP bridge inside `clud --claude`
 
 Every Claude launch (except the Codex->Claude bridge) registers this same
