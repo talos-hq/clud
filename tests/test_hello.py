@@ -2021,6 +2021,24 @@ def test_dry_run_loop() -> None:
     assert data["loop_markers"]["blocked_path"].replace("\\", "/").endswith(".clud/loop/BLOCKED")
 
 
+@pytest.mark.parametrize("backend", ["--claude", "--codex"])
+def test_loop_cumulative_completion_contract(backend: str) -> None:
+    task = (
+        "once the pr lands in the merge queue you are done for the iteration. "
+        "loop terminates after 50 issues have been fixed"
+    )
+    result = _run(backend, "--dry-run", "loop", "--loop-count", "50", task)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    prompt = data["command"][-1]
+    assert prompt.startswith(task)
+    assert data["iterations"] == 50
+    assert "DONE terminates the entire loop" in prompt
+    assert "Persist cumulative progress" in prompt
+    assert "only if the original task explicitly" in prompt
+    assert "write DONE\nwith the PR URL as soon as" not in prompt
+
+
 def test_dry_run_loop_no_done() -> None:
     result = _run("--dry-run", "loop", "--no-done", "do stuff")
     assert result.returncode == 0

@@ -962,12 +962,19 @@ mod tests {
     }
 
     #[test]
-    fn done_contract_treats_merge_queue_enqueue_as_complete() {
+    fn done_contract_preserves_cumulative_goal() {
         let text = done_marker_contract(Path::new("/r/DONE"), Path::new("/r/BLOCKED"));
-        assert!(
-            text.contains("accepted into the merge queue counts as complete"),
-            "{text}"
-        );
-        assert!(text.contains("Do not wait for"), "{text}");
+        assert!(text.contains("DONE terminates the entire loop"), "{text}");
+        assert!(text.contains("50 issues"), "{text}");
+        assert!(text.contains("Persist cumulative progress"), "{text}");
+        assert!(!text.contains("write DONE\nwith the PR URL as soon as"), "{text}");
+    }
+
+    #[test]
+    fn done_contract_defers_item_completion_to_task() {
+        let text = done_marker_contract(Path::new("/r/DONE"), Path::new("/r/BLOCKED"));
+        assert!(text.contains("only if the original task explicitly"), "{text}");
+        assert!(text.contains("single-item task"), "{text}");
+        assert!(text.contains("iteration budget is a maximum"), "{text}");
     }
 }
