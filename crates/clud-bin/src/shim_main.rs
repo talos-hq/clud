@@ -267,7 +267,9 @@ pub(crate) mod gh_shim {
                 "pr" if command.is_empty() => command.push(word),
                 "checks" if command == ["pr"] => command.push(word),
                 "--watch" => watch_seen = true,
-                "--fail-fast" => {}
+                // #2444: the watcher's default scope is already the
+                // branch-required checks, which is what `--required` asks for.
+                "--fail-fast" | "--required" => {}
                 "--repo" | "-R" | "--interval" | "-i" => {
                     i += 1;
                     let Some(value) = words.get(i).copied() else {
@@ -334,14 +336,20 @@ pub(crate) mod gh_shim {
     /// `real_gh`, which is passed explicitly so the relay never resolves
     /// back to this shim.
     fn via_ghd(ghd: &Path, real_gh: &Path, args: &[OsString], recorder: &Recorder) -> i32 {
-        let mut ghd_args = vec![OsString::from("gh")];
-        ghd_args.extend(args.iter().cloned());
+        let ghd_args = ghd_argv(args);
         let env = [(GHD_REAL_GH, real_gh.as_os_str())];
         super::run_child("gh", ghd, &ghd_args, recorder, &env)
     }
 
-    /// ghd's variable naming the real gh (forge-ci/ghd#24).
-    pub(crate) const GHD_REAL_GH: &str = "GHD_REAL_GH";
+    /// The argv ghd receives: the `gh` subcommand word, then the caller's
+    /// arguments verbatim.
+    pub(super) fn ghd_argv(args: &[OsString]) -> Vec<OsString> {
+        let mut ghd_args = vec![OsString::from("gh")];
+        ghd_args.extend(args.iter().cloned());
+        ghd_args
+    }
+
+    pub(crate) use crate::shim_registry::GHD_REAL_GH_KEY as GHD_REAL_GH;
 }
 
 /// The central contract (#1546): dispatch alone reads session keys, and no
@@ -420,4 +428,27 @@ fn session_contract_is_owned_by_dispatch() {
         !handlers.contains("file_name()"),
         "no argv[0] if-chain outside the registry lookup"
     );
+}
+
+/// #2352: the `ghd gh ARGS` argv and the relay variable name are the contract
+/// with ghd; pin them so a change cannot silently break the relay.
+#[cfg(test)]
+#[test]
+fn ghd_argv_prefixes_gh_and_preserves_every_arg() {
+    fn argv(words: &[&str]) -> Vec<OsString> {
+        let args: Vec<OsString> = words.iter().map(OsString::from).collect();
+        gh_shim::ghd_argv(&args)
+    }
+    let expected = |words: &[&str]| -> Vec<OsString> { words.iter().map(OsString::from).collect() };
+
+    assert_eq!(
+        argv(&["pr", "view", "12", "--json", "state"]),
+        expected(&["gh", "pr", "view", "12", "--json", "state"])
+    );
+    assert_eq!(argv(&[]), expected(&["gh"]));
+    assert_eq!(
+        argv(&["issue", "comment", "--body", "two words", "--", "-x"]),
+        expected(&["gh", "issue", "comment", "--body", "two words", "--", "-x"])
+    );
+    assert_eq!(gh_shim::GHD_REAL_GH, "GHD_REAL_GH");
 }

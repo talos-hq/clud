@@ -101,6 +101,7 @@ fn run(mut args: args::Args) {
     let foreground_client_lease = start_early_daemon(&args);
     let foreground_checkout_presence =
         start_checkout_presence(&args, foreground_client_lease.is_some(), &interrupted);
+    compact_do_goal(&mut args, launch.target);
 
     // #569: the persistent daemon deliberately starts before this foreground
     // process joins the Windows tracking job, so it can outlive the CLI.
@@ -344,6 +345,39 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
                 clud::gemini_ingress::run_translate_stdin(model.as_deref())
             }
         }
+        args::Command::InternalOpenAiResponsesTranslate => {
+            clud::responses_ingress::run_translate_stdin()
+        }
+        args::Command::InternalXaiDeviceLogin {
+            discovery_url,
+            device_endpoint,
+            token_endpoint,
+            interval_ms,
+            max_poll_ms,
+        } => clud::xai_auth::run_seam(&clud::xai_auth::SeamArgs {
+            discovery_url: discovery_url.as_deref(),
+            device_endpoint: device_endpoint.as_deref(),
+            token_endpoint: token_endpoint.as_deref(),
+            interval_ms: *interval_ms,
+            max_poll_ms: *max_poll_ms,
+        }),
+        // Hidden test seam for Kimi Code's device-authorization login: no
+        // session, backend, or daemon, and it never prints a token.
+        args::Command::InternalKimiDeviceLogin {
+            domain,
+            device_endpoint,
+            token_endpoint,
+            interval_ms,
+            max_poll_ms,
+            refresh_stored,
+        } => clud::kimi_auth::run_seam(&clud::kimi_auth::SeamArgs {
+            domain: domain.as_deref(),
+            device_endpoint: device_endpoint.as_deref(),
+            token_endpoint: token_endpoint.as_deref(),
+            interval_ms: *interval_ms,
+            max_poll_ms: *max_poll_ms,
+            refresh_stored: *refresh_stored,
+        }),
         args::Command::DoPrompt { target } => command::do_prompt::run(target),
         args::Command::GrindScripts => command::grind_scripts::run(),
         args::Command::GrindFacts { args } => clud::grind_facts::run_cli(args),
@@ -370,8 +404,10 @@ fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
             claude,
             codex,
             openrouter,
+            deepseek,
+            kimi,
             port,
-        } => clud::serve_gateway::run(*port, *claude, *codex, *openrouter),
+        } => clud::serve_gateway::run(*port, *claude, *codex, *openrouter, *deepseek, *kimi),
         args::Command::CodexUpdate => {
             if !args.passthrough.is_empty() {
                 eprintln!("codex-update accepts no passthrough arguments");
@@ -716,6 +752,39 @@ fn resolve_do_target(args: &mut args::Args) {
     }
 }
 
+/// Fit a long Claude `/do` goal into the cap (#2522). Runs only after the
+/// checkout claim succeeded, so a refused launch never spends a model call or
+/// writes a record, and never for `--dry-run`, whose plan uses the
+/// deterministic constraint-preserving goal instead.
+fn compact_do_goal(args: &mut args::Args, launch_target: backend::ResolvedLaunchTarget) {
+    if args.dry_run || launch_target.effective_harness != backend::Backend::Claude {
+        return;
+    }
+    let Some(args::Command::Do {
+        target: Some(target),
+    }) = &args.command
+    else {
+        return;
+    };
+    match command::goal_compact::prepare_for_launch(target) {
+        Ok(Some(prepared)) => {
+            if let Some(rendered) = args.do_rendered_prompt.as_mut() {
+                rendered.push_str("\n\n## Exercised goal (compacted, #2522)\n\n");
+                rendered.push_str(&prepared.condition);
+            }
+            if let Some(path) = &prepared.record {
+                std::env::set_var(command::goal_compact::GOAL_RECORD_ENV, path);
+            }
+            args.do_goal = Some(prepared.condition);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("[clud] error: {error}");
+            std::process::exit(2);
+        }
+    }
+}
+
 /// The routed launch target plus the saved global preferences that later
 /// setup prompts compare it against.
 #[derive(Clone, Copy)]
@@ -728,6 +797,9 @@ struct LaunchResolution {
 /// invalid combination before anything is bootstrapped. Writes the resolved
 /// model selection into `args`.
 fn resolve_launch(args: &mut args::Args) -> LaunchResolution {
+    // Subscription-first policy: refuse a contradictory environment before
+    // any setting, session, record or child exists.
+    let env_policy = resolve_env_policy(args);
     let mut preferences_error = None;
     // Resolve saved routing policy before the picker: installed executables
     // do not imply that their providers are authorized.
@@ -777,7 +849,17 @@ fn resolve_launch(args: &mut args::Args) -> LaunchResolution {
         &launch_preferences,
         auto_selected_harness,
         deepseek_credential_fallback,
+        &env_policy,
     );
+    if let Err(error) = clud::metered_policy::enforce_resolved(
+        &env_policy,
+        launch_target.model_provider,
+        args.failover_allow_metered,
+    ) {
+        eprintln!("[clud] error: {error}");
+        std::process::exit(2);
+    }
+    announce_metered_route(&env_policy, launch_target);
     if launch_target.model_provider == backend::ModelProvider::OpenRouter {
         if let Some(error) = preferences_error {
             eprintln!("[clud] cannot resolve saved OpenRouter privacy policy: {error}");
@@ -874,11 +956,72 @@ fn pick_installed_harness(args: &args::Args) -> Option<backend::Backend> {
     selected
 }
 
+fn resolve_env_policy(args: &args::Args) -> clud::metered_policy::EnvPolicy {
+    use clud::metered_policy;
+    let policy = match metered_policy::resolve(&metered_policy::EnvSnapshot::from_process()) {
+        Ok(policy) => policy,
+        Err(error) => {
+            eprintln!("[clud] error: {error}");
+            std::process::exit(2);
+        }
+    };
+    let cli = args.explicit_model_provider().or_else(|| {
+        args.model
+            .as_deref()
+            .and_then(clud::provider_catalog::infer_provider)
+    });
+    if let Err(error) = metered_policy::reconcile_cli(&policy, cli) {
+        eprintln!("[clud] error: {error}");
+        std::process::exit(2);
+    }
+    if args.verbose && policy.subscription_default_applied {
+        verbose_log::log(
+            "[clud] provider: CLUD_SUBSCRIPTION_PROVIDER unset; defaulting to the Claude subscription",
+        );
+    }
+    policy
+}
+
+/// The loud metered warning, printed only on a legitimately enabled metered
+/// route and recorded on the launch record.
+fn announce_metered_route(
+    policy: &clud::metered_policy::EnvPolicy,
+    launch_target: backend::ResolvedLaunchTarget,
+) {
+    let provider = launch_target.model_provider;
+    if launch_target.routing_mode == backend::RoutingMode::Unified && !policy.consented.is_empty() {
+        // A unified gateway may route any consented metered provider.
+        let warning = policy
+            .consented
+            .iter()
+            .map(|consented| clud::metered_policy::metered_warning(*consented))
+            .collect::<Vec<_>>()
+            .join("\n");
+        eprintln!("{warning}");
+        launch_log::set_metered_warning(warning);
+        return;
+    }
+    if !policy.allows(provider) {
+        return;
+    }
+    // Native Codex bills the ChatGPT login; only the Claude-harness bridge
+    // can reach OPENAI_API_KEY.
+    if launch_target.model_provider == backend::ModelProvider::Codex
+        && launch_target.effective_harness != backend::Backend::Claude
+    {
+        return;
+    }
+    let warning = clud::metered_policy::metered_warning(provider);
+    eprintln!("{warning}");
+    launch_log::set_metered_warning(warning);
+}
+
 fn resolve_launch_target<'a>(
     args: &args::Args,
     launch_preferences: &'a clud_settings::LaunchPreferencesSnapshot,
     auto_selected_harness: Option<backend::Backend>,
     deepseek_credential_fallback: bool,
+    env_policy: &clud::metered_policy::EnvPolicy,
 ) -> (
     backend::ResolvedLaunchTarget,
     Option<&'a clud_settings::ProviderProfile>,
@@ -890,7 +1033,13 @@ fn resolve_launch_target<'a>(
     let cli_provider = args
         .explicit_model_provider()
         .or_else(|| auto_selected_harness.map(backend::Backend::as_model_provider))
+        .or(env_policy.selected)
         .or(deepseek_credential_fallback.then_some(backend::ModelProvider::DeepSeek));
+    // CLUD_SUBSCRIPTION_PROVIDER replaces the built-in Claude default.
+    let global_provider = global_launch_preferences.model_provider.or((env_policy
+        .subscription_default
+        != backend::ModelProvider::Claude)
+        .then_some(env_policy.subscription_default));
     let cli_harness = args
         .harness
         .or_else(|| auto_selected_harness.map(backend::HarnessSelection::for_backend));
@@ -900,7 +1049,7 @@ fn resolve_launch_target<'a>(
         .and_then(clud::provider_catalog::infer_provider);
     let direct_provider = cli_provider
         .or(model_inferred_provider)
-        .or(global_launch_preferences.model_provider)
+        .or(global_provider)
         .unwrap_or(backend::ModelProvider::Claude);
     let explicit_provider_intent =
         args.explicit_model_provider().is_some() || model_inferred_provider.is_some();
@@ -914,7 +1063,7 @@ fn resolve_launch_target<'a>(
         args.routing_mode(),
         cli_provider.or(model_inferred_provider),
         cli_harness,
-        global_launch_preferences.model_provider,
+        global_provider,
         profile_harness.or(global_launch_preferences.harness),
     ) {
         Ok(target) => target,
@@ -1197,9 +1346,48 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
         }
     }
 
+    if let Some(args::Command::Workflow {
+        script,
+        args_json,
+        resume,
+    }) = &args.command
+    {
+        std::process::exit(clud::workflow::cli::run(
+            std::path::Path::new(script),
+            args_json.as_deref(),
+            args.dry_run,
+            *resume,
+        ));
+    }
+
     if let Some(args::Command::Wasm { module, invoke }) = &args.command {
         std::process::exit(run_wasm(args.dry_run, module, invoke));
     }
+
+    if let Some(args::Command::Loop {
+        task,
+        message: Some(message),
+        ..
+    }) = args.command.as_ref().filter(|_| !args.dry_run)
+    {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let git_root = clud::loop_spec::git_root_from(&cwd);
+        match clud::loop_artifacts::queue_message(&git_root, message) {
+            Ok(path) => eprintln!(
+                "[clud] queued message for next iteration: {}",
+                path.display()
+            ),
+            Err(e) => {
+                eprintln!("[clud] failed to queue loop message: {e}");
+                std::process::exit(1);
+            }
+        }
+        if task.is_none() {
+            std::process::exit(0);
+        }
+    }
+
+    apply_loop_config(args);
 
     if let Some(args::Command::Loop {
         repeat,
@@ -1218,6 +1406,72 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
     resolve_grind_target(args);
     store_inline_api_key(args);
     preflight_provider_credentials(args, launch_target);
+}
+
+/// Overlay `loop.json` (explicit `--config` or `<git-root>/loop.json`)
+/// under the CLI flags, queue a file-supplied message, and record the
+/// resolved config under `.clud/loop/loop.json` (#2471). Invalid configs
+/// exit 2 with the typed error.
+fn apply_loop_config(args: &mut args::Args) {
+    use clud::loop_config::LoopConfig;
+    let Some(args::Command::Loop {
+        task,
+        loop_count,
+        refresh,
+        no_done,
+        done,
+        repeat,
+        message,
+        config,
+    }) = &mut args.command
+    else {
+        return;
+    };
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let git_root = clud::loop_spec::git_root_from(&cwd);
+    let explicit = config.as_deref().map(|p| cwd.join(p));
+    let file = match LoopConfig::discover(&git_root, explicit.as_deref()) {
+        Ok(Some((path, cfg))) => {
+            eprintln!("[clud] using loop config {}", path.display());
+            cfg
+        }
+        Ok(None) => LoopConfig {
+            schema_version: clud::loop_config::SCHEMA_VERSION,
+            ..LoopConfig::default()
+        },
+        Err(e) => {
+            eprintln!("[clud] {e}");
+            std::process::exit(2);
+        }
+    };
+    let argv: Vec<String> = std::env::args().collect();
+    let cli = LoopConfig::from_cli(
+        &argv,
+        task.as_deref(),
+        *loop_count,
+        done.as_deref(),
+        *no_done,
+        repeat.as_deref(),
+        *refresh,
+        message.as_deref(),
+    );
+    let resolved = file.overridden_by(&cli);
+    if message.is_none() {
+        if let Some(text) = resolved.message.as_deref() {
+            if !args.dry_run {
+                let _ = clud::loop_artifacts::queue_message(&git_root, text);
+            }
+        }
+    }
+    *task = resolved.task.clone();
+    *loop_count = resolved.loop_count.unwrap_or(*loop_count);
+    *done = resolved.done.clone();
+    *no_done = resolved.no_done.unwrap_or(false);
+    *repeat = resolved.repeat.clone();
+    *refresh = resolved.refresh.unwrap_or(false);
+    if !args.dry_run {
+        let _ = resolved.write_resolved(&git_root);
+    }
 }
 
 fn run_wasm(dry_run: bool, module: &str, invoke: &str) -> i32 {
@@ -1855,6 +2109,13 @@ fn print_dry_run_and_exit(
 }
 
 fn emit_launch_notices(args: &args::Args, launch_target: backend::ResolvedLaunchTarget) {
+    if io::stderr().is_terminal() {
+        if let Some(notice) =
+            command::mcp_bridge_missing_notice(launch_target.effective_harness, launch_target)
+        {
+            eprintln!("{notice}");
+        }
+    }
     if let Some(notice) =
         backend::saved_harness_override_notice(launch_target, io::stderr().is_terminal(), false)
     {
@@ -2008,7 +2269,60 @@ fn launch_and_clean_up(
         ctrl_c_track::InvocationKind::Direct
     };
     flush_ctrl_c_exit_event(kind, exit_code);
-    exit_code
+    let was_loop = loop_session.is_some();
+    let was_interrupted = interrupted.load(std::sync::atomic::Ordering::SeqCst);
+    offer_loop_restart(args, plan, exit_code, was_loop && !was_interrupted)
+}
+
+/// #2471: after an interactive `clud loop` ends, offer to restart it. A
+/// restart archives the run, clears the markers and re-runs the same argv;
+/// its exit code becomes ours. Any other case returns `exit_code` as is.
+fn offer_loop_restart(
+    args: &args::Args,
+    plan: &command::LaunchPlan,
+    exit_code: i32,
+    eligible: bool,
+) -> i32 {
+    use clud::loop_restart::{archive_run, should_offer, Choice, RestartPrompt};
+    if !eligible
+        || !should_offer(
+            io::stdin().is_terminal(),
+            io::stderr().is_terminal(),
+            args.dry_run,
+        )
+    {
+        return exit_code;
+    }
+    let summary = runner::summarize_loop_outcome(exit_code).0;
+    let mut prompt = RestartPrompt::new(summary);
+    match clud::selector::run(&mut io::stderr(), &mut prompt) {
+        Ok(Choice::Restart) => {}
+        _ => return exit_code,
+    }
+    let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let git_root = loop_spec::git_root_from(&cwd);
+    let (done, blocked) = plan.loop_markers.as_ref().map_or_else(
+        || {
+            let d = loop_spec::loop_dir(&git_root);
+            (d.join("DONE"), d.join("BLOCKED"))
+        },
+        |m| (m.done_path.clone().into(), m.blocked_path.clone().into()),
+    );
+    match archive_run(&git_root, &done, &blocked) {
+        Ok(history) => eprintln!("[clud] archived previous run to {}", history.display()),
+        Err(e) => {
+            eprintln!("[clud] cannot archive previous loop run: {e}");
+            return exit_code;
+        }
+    }
+    let argv: Vec<String> = std::env::args().collect();
+    match clud::subprocess::ManagedSubprocess::start_inheriting_env(argv, Some(cwd), false, None) {
+        Ok(child) => child.wait(None).unwrap_or(exit_code),
+        Err(e) => {
+            eprintln!("[clud] cannot restart loop: {e}");
+            exit_code
+        }
+    }
 }
 
 /// Issue #79 / #65 / #66: register `clud` as the IDropTarget for

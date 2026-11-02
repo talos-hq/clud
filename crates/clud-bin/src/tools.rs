@@ -169,6 +169,26 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         quiet_ok: true,
     },
     BundledTool {
+        rel_path: "notify/bus.py",
+        body: include_str!("../assets/tools/notify/bus.py"),
+        // TCP-loopback (token-gated) broker + blocking subscriber for watch.py events; the
+        // audit log owns history, so a killed broker loses no record.
+        kill_semantics: KillSemantics::Resumable,
+        command_timeout: Duration::from_secs(24 * 60 * 60),
+        progress_timeout: None,
+        quiet_ok: true,
+    },
+    BundledTool {
+        rel_path: "notify/watch.py",
+        body: include_str!("../assets/tools/notify/watch.py"),
+        // Session/PR event watcher with a durable JSONL log; the daemon and
+        // GitHub own the watched state, so a kill loses no work.
+        kill_semantics: KillSemantics::Resumable,
+        command_timeout: Duration::from_secs(24 * 60 * 60),
+        progress_timeout: None,
+        quiet_ok: true,
+    },
+    BundledTool {
         rel_path: "github/is_meta_issue.py",
         body: include_str!("../assets/tools/github/is_meta_issue.py"),
         // Read-only GitHub query (#1404): classifies an issue as meta or
@@ -746,6 +766,29 @@ mod tests {
         assert!(tool.body.contains("managed-by: clud"));
         assert!(!tool.body.contains("import subprocess"));
         assert_eq!(tool.kill_semantics, KillSemantics::Resumable);
+    }
+
+    /// The notify/watch.py session+PR event watcher ships in the bundle.
+    #[test]
+    fn bundled_includes_notify_watch() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|t| t.rel_path == "notify/watch.py")
+            .expect("BUNDLED_TOOLS must include notify/watch.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
+        assert_eq!(tool.kill_semantics, KillSemantics::Resumable);
+    }
+
+    /// notify/bus.py ships beside watch.py, which imports it.
+    #[test]
+    fn bundled_includes_notify_bus() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|t| t.rel_path == "notify/bus.py")
+            .expect("BUNDLED_TOOLS must include notify/bus.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
     }
 
     /// Issue #1404: the is_meta_issue.py tool ships in the bundle.

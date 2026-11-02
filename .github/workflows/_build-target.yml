@@ -183,6 +183,8 @@ jobs:
           strategy: ${{ inputs.strategy }}
           profile: ${{ inputs.profile }}
           soldr-token: ${{ secrets.GITHUB_TOKEN }}
+          s3-access-key: ${{ secrets.SOLDR_S3_CACHE_ACCESS_KEY }}
+          s3-secret-key: ${{ secrets.SOLDR_S3_CACHE_SECRET_KEY }}
           save-cache: ${{ inputs.save-cache }}
           cook: ${{ inputs.compile }}
 

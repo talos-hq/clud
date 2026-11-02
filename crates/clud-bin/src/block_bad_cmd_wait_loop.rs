@@ -17,7 +17,7 @@ use crate::shell_ast::{Invocation, Script};
 pub(super) const WAIT_LOOP_RULE_ID: &str = "hand-written-wait";
 
 /// The replacement every refusal names verbatim.
-pub(super) const WAIT_REPLACEMENT: &str = "Never poll. Select declared execution capabilities, not a tool name (a normalized Bash call may be Codex). If exec_command exposes a persistent process session plus write_stdin, start once and use write_stdin with empty input and bounded waits on the same session until exit. A live session or observation timeout is incomplete, not success. If run_in_background and a completion notification are exposed, use them. With bounded foreground execution only, use a waiter deadline below the tool cap. If capabilities are unclear, verify a harmless local process or report the missing capability; never invent tools. This refusal alone is not a goal blocker. Use a waiting tool with its own deadline: `clud ci`, `bosn ci run --wait`, or `pr_merge_watch`.";
+pub(super) const WAIT_REPLACEMENT: &str = "Never poll. Choose by declared capabilities, not the tool name: an exec_command session via write_stdin (empty input, same session, until exit); run_in_background plus its completion notification; or a bounded foreground waiter with its own deadline (`clud ci`, `bosn ci run --wait`, `pr_merge_watch`). If unsure, probe a harmless local process.";
 
 /// Longest `sleep` allowed outside a loop and not chained to a status poll.
 const MAX_STANDALONE_SLEEP_SECS: f64 = 60.0;
@@ -299,6 +299,6 @@ pub(super) fn hand_written_wait_reason(
         String::new()
     };
     Some(format!(
-        "[{WAIT_LOOP_RULE_ID}] Refused {what}. Hand-written waits check a stand-in (a process list, a word in output, a status string) instead of the real completion event and never give up; such loops have run for 7 hours (zackees/clud#1880). {WAIT_REPLACEMENT}{pr_hint} To intentionally bypass this rule for this one command, set the real environment variable {BAD_CMD_OVERRIDE_ENV}=\"{WAIT_LOOP_RULE_ID}:<your reason for needing the raw command>\" for this tool call (not text prepended to the command itself) and re-run the exact same command unchanged."
+        "[{WAIT_LOOP_RULE_ID}] Refused {what} (#1880). {WAIT_REPLACEMENT}{pr_hint} Override: real env {BAD_CMD_OVERRIDE_ENV}=\"{WAIT_LOOP_RULE_ID}:<reason>\"."
     ))
 }

@@ -50,24 +50,25 @@ def test_public_windows_lookup_accepts_mixed_path_separators() -> None:
 def test_prior_discovery_version_ignores_binaries_that_cannot_reach_the_catalog() -> None:
     catalog = {
         "releases": [
-            {"version": "2.8.29"},
             {"version": "2.8.31"},
-            {"version": "2.8.34"},
             {"version": "2.8.36"},
+            {"version": "2.8.47"},
+            {"version": "2.8.48"},
         ]
     }
-    assert prior_discovery_version(catalog, "2.8.37") == "2.8.36"
-    # The first release that knows the new catalog URL has nothing it can reach
-    # behind it, so discovery is unprovable rather than broken.
-    assert prior_discovery_version(catalog, "2.8.36") is None
-    assert prior_discovery_version(catalog, "2.8.31") is None
+    assert prior_discovery_version(catalog, "2.8.49") == "2.8.48"
+    # The first release that fetches the catalog's domain has nothing it can
+    # reach behind it (2.8.47 hits the github.io redirect), so discovery is
+    # unprovable rather than broken.
+    assert prior_discovery_version(catalog, "2.8.48") is None
+    assert prior_discovery_version(catalog, "2.8.47") is None
 
 
 def test_older_installer_discovery_records_an_unreachable_prior(tmp_path: Path) -> None:
     # A skipped test produces no evidence row, and the acceptance aggregate then
     # rejects the whole release with "missing public host evidence". Record the
     # gap in the row instead so every host still reports.
-    catalog = {"releases": [{"version": "2.8.31"}]}
+    catalog = {"releases": [{"version": "2.8.47"}]}
     evidence = assert_older_installer_discovery(
         catalog,
         "linux",
@@ -80,7 +81,7 @@ def test_older_installer_discovery_records_an_unreachable_prior(tmp_path: Path) 
     )
     assert evidence == {
         "unavailable": "no catalog-aware prior release",
-        "catalog_move_version": "2.8.35",
+        "catalog_move_version": "2.8.48",
         "legacy_host": LEGACY_ONLINE_HOST,
     }
 
@@ -196,11 +197,15 @@ def assert_public_latest_install(
     assert installed.stdout.strip() == f"clud {version}".encode()
 
 
-# The public catalog moved from zackees.github.io/clud to talos-hq.github.io/clud
-# in 2.8.35 (#2217). A binary released before that hardcodes the retired host,
-# answers `catalog fetch failed: ... 404`, and exits, so it can never discover a
-# newer release -- not because discovery broke, but because its URL did.
-CATALOG_MOVE_VERSION = "2.8.35"
+# The oldest public release whose installer can still fetch today's catalog.
+# 2.8.35 moved the catalog from zackees.github.io to talos-hq.github.io (#2217);
+# then the org's Pages custom domain made every talos-hq.github.io URL
+# 301-redirect to talosbot.ai, and the installer refuses redirects, so 2.8.35
+# through 2.8.47 answer `expected value at line 1 column 1` and exit (#2433).
+# 2.8.48 fetches the domain first with a GitHub release fallback (#2449). An
+# older binary cannot discover a newer release -- not because discovery broke,
+# but because its URL did.
+CATALOG_MOVE_VERSION = "2.8.48"
 LEGACY_ONLINE_HOST = next(
     url for url in ACCEPTED_ONLINE_URLS if url != ONLINE_URL
 ).split("/")[2]

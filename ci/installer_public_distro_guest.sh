@@ -35,7 +35,7 @@ if [ "$mode" = candidate ]; then
   channel=candidate
   candidate_env="CLUD_INSTALLER_CANDIDATE_TAG=$tag"
 elif [ "$mode" = released ]; then
-  catalog_url=https://talos-hq.github.io/clud/install/manifest.json
+  catalog_url=https://talosbot.ai/clud/install/manifest.json
   channel=latest-stable
   candidate_env=
 else

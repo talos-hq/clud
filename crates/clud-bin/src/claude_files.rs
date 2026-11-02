@@ -100,6 +100,11 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
         procedure: Some("grind-land"),
     },
     BundledClaudeFile {
+        rel_path: "agents/grind-chaperone.md",
+        body: include_str!("../assets/agents/grind-chaperone.md"),
+        procedure: None,
+    },
+    BundledClaudeFile {
         rel_path: "workflows/grind-run.js",
         body: include_str!("../assets/workflows/grind-run.js"),
         procedure: None,
@@ -211,6 +216,7 @@ mod tests {
             "reviewer",
             "integrator",
             "lander",
+            "chaperone",
         ] {
             let path = format!("agents/grind-{role}.md");
             assert!(paths.contains(&path.as_str()), "missing {path}");

@@ -361,6 +361,7 @@ def test_rest_reads_outside_a_broker_are_conditional(watcher, monkeypatch) -> No
 
     monkeypatch.setattr(watcher, "gh", fake_gh)
     monkeypatch.delenv("CLUD_GH_READ_BROKER", raising=False)
+    monkeypatch.delenv("CLUD_GH_BACKEND", raising=False)
     assert watcher.gh_json("api", "repos/o/r/pulls/1") == {"n": 1}
     assert watcher.gh_json("api", "repos/o/r/pulls/1") == {"n": 1}
     assert calls[0] == ("api", "-i", "repos/o/r/pulls/1")
@@ -377,6 +378,44 @@ def test_rest_reads_in_a_broker_session_go_through_the_broker(watcher, monkeypat
     assert watcher.gh_json("api", "repos/o/r/pulls/1/reviews?per_page=100") == []
     # A plain read: the shim brokers it (an `-i` or `-H` read it would not).
     assert calls == [("api", "repos/o/r/pulls/1/reviews?per_page=100")]
+
+
+def test_rest_reads_routed_through_ghd_are_plain(watcher, monkeypatch) -> None:
+    """#2368: ghd shares a plain read across watchers; no per-process ETag."""
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        watcher, "gh", lambda *args, **kwargs: calls.append(args) or watcher.GhResult(0, "{}", "")
+    )
+    monkeypatch.setenv("CLUD_GH_READ_BROKER", "0")
+    monkeypatch.setenv("CLUD_GH_BACKEND", "ghd")
+    monkeypatch.setenv("CLUD_GH_SHIM_TARGET", "/usr/bin/gh")
+    assert watcher.gh_json("api", "repos/o/r/pulls/1") == {}
+    assert watcher.gh_json("api", "repos/o/r/pulls/1") == {}
+    assert calls == [("api", "repos/o/r/pulls/1")] * 2
+
+
+def test_gh_backend_without_ghd_keeps_the_etag_path(watcher, monkeypatch) -> None:
+    calls: list[tuple[str, ...]] = []
+    monkeypatch.setattr(
+        watcher,
+        "gh",
+        lambda *args, **kwargs: calls.append(args)
+        or watcher.GhResult(0, 'HTTP/2.0 200 OK\r\n\r\n{"n":1}', ""),
+    )
+    monkeypatch.setenv("CLUD_GH_READ_BROKER", "0")
+    monkeypatch.setenv("CLUD_GH_SHIM_TARGET", "/usr/bin/gh")
+    for backend in ("gh", None):
+        if backend is None:
+            monkeypatch.delenv("CLUD_GH_BACKEND", raising=False)
+        else:
+            monkeypatch.setenv("CLUD_GH_BACKEND", backend)
+        calls.clear()
+        assert watcher.gh_json("api", "repos/o/r/pulls/2") == {"n": 1}
+        assert calls[0][:2] == ("api", "-i")
+    # ghd named but no gh alias in the session: nothing routes through ghd.
+    monkeypatch.setenv("CLUD_GH_BACKEND", "ghd")
+    monkeypatch.delenv("CLUD_GH_SHIM_TARGET")
+    assert not watcher.ghd_reads()
 
 
 def test_no_broker_wait_polls_at_the_interval(watcher, tmp_path, monkeypatch) -> None:

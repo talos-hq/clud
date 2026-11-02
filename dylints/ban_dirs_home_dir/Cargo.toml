@@ -9,7 +9,7 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-dylint_linting = "6.0.3"
+dylint_linting = "=6.2.0"
 
 [package.metadata.rust-analyzer]
 rustc_private = true

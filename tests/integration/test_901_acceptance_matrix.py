@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 
 from tests import process
+from tests.metered_consent import consent_unified
 
 from .test_mock_agents import _FakeAnthropicServer, _FakeResponsesServer, _run
 
@@ -82,6 +83,7 @@ def _env(mock_env: dict[str, str], vault: Path, upstreams=None) -> dict[str, str
         env["CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL"] = anthropic["claude"].base_url
         env["CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL"] = anthropic["deepseek"].base_url
         env["CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL"] = anthropic["openrouter"].base_url
+        env = consent_unified(env)
     return env
 
 

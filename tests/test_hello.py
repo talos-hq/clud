@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from tests import process
+from tests.metered_consent import consent_for
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -181,6 +182,8 @@ def _run(
         env = _isolated_clud_env(source, home, state_dir)
         if env_overrides:
             env.update(env_overrides)
+        # Existing launch tests opt into metered routes explicitly (#2529).
+        env = consent_for(env, args)
         return process.run(
             [str(launch), *args],
             capture_output=True,

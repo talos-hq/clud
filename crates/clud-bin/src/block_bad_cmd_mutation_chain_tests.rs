@@ -20,14 +20,24 @@ fn a_mutation_chained_with_a_watch_or_another_mutation_is_refused() {
         "git commit -q --allow-empty -m retry && git push -q 2>&1|tail -1; timeout 1700 clud tool run github/pr_merge_watch.py 4812 2>&1 | tail -3",
         "for r in bouf design; do gh pr merge 1 -R o/$r --squash --admin --delete-branch 2>&1|tail -1; done",
         "git push origin HEAD && gh pr create --fill && gh pr merge --auto --squash",
-        "gh api -X POST repos/o/r/issues/1/labels -f labels[]=x && gh api --method DELETE repos/o/r/issues/1/labels/y",
         "git push && \"$CLUD_EXE\" tool run github/run_watch.py 99",
         "for n in 1 2; do gh api -X POST repos/o/r/issues/9/sub_issues -F sub_issue_id=$n; done; gh pr merge 3",
-        "for n in 1 2; do gh api -X POST repos/o/r/issues/$n/labels -f labels[]=x; gh issue close $n; done",
+        "gh issue comment 9 --body x; gh pr merge 3",
+        "gh api -X POST repos/o/r/issues/1/labels -f labels[]=x && git push",
+        "gh issue close 4; clud tool run github/pr_merge_watch.py 5",
+        // `gh pr edit` batches only with metadata writes, never a merge or watch.
+        "gh pr edit 1 --body x && gh pr merge 1 --squash",
+        "gh pr edit 1 --add-label x; clud tool run github/pr_merge_watch.py 1",
     ] {
         let reason = reason(command).unwrap_or_else(|| panic!("{command} should be refused"));
         assert!(reason.contains("[mutation-chain]"), "{command}: {reason}");
         assert!(reason.contains("pr_merge_watch"), "{command}: {reason}");
+        // #2429: name every allowed shape, so agents stop splitting batches
+        // the rule admits.
+        assert!(reason.contains("gh pr create ...` (unpiped"), "{reason}");
+        assert!(reason.contains("`gh api` writes"), "{reason}");
+        assert!(reason.contains("metadata writes"), "{reason}");
+        assert!(!reason.contains("one allowed pair"), "{reason}");
     }
 }
 
@@ -45,6 +55,13 @@ fn read_only_chains_single_mutations_and_push_then_create_are_allowed() {
         "clud tool run github/pr_merge_watch.py 12 --repo o/r --timeout 3500",
         // #2354: one idempotent `gh api` write repeated by a loop.
         "for n in 2368 2372; do gh api -X POST repos/o/r/issues/2315/sub_issues -F sub_issue_id=$n; done",
+        // #2354: batches of independent issue-metadata writes.
+        "gh api -X POST repos/o/r/issues/1/labels -f labels[]=x && gh api --method DELETE repos/o/r/issues/1/labels/y",
+        "for n in 1 2; do gh api -X POST repos/o/r/issues/$n/labels -f labels[]=x; gh issue close $n; done",
+        "for n in 11 12 13; do gh api -X POST repos/o/r/issues/9/sub_issues -F sub_issue_id=$n; done; gh issue comment 9 --body done",
+        "gh issue edit 3 --add-label x && gh issue close 4",
+        // The grind lander's landing record: two comments and a PR body edit.
+        "gh issue comment 102 --body 'Landed' && gh issue comment 100 --body 'm' && gh pr edit 99 --body 'Closes #102'",
     ] {
         assert_eq!(reason(command), None, "{command}");
     }

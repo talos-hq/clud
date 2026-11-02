@@ -995,6 +995,7 @@ mod tests {
         for (name, source) in [
             ("harness_picker.rs", include_str!("harness_picker.rs")),
             ("launch_setup.rs", include_str!("launch_setup.rs")),
+            ("loop_restart.rs", include_str!("loop_restart.rs")),
             (
                 "foreground_runtime.rs",
                 include_str!("foreground_runtime.rs"),

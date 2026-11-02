@@ -413,6 +413,52 @@ retry stays denied.
   `0` turns the guard off (the rollback switch). Evidence and tradeoff:
   [DD-140](../DESIGN_DECISIONS.md#dd-140-the-repeated-call-guard-denies-call-201-of-an-identical-streak-and-fails-open).
 
+### Per-file shell read-hop guard (#2233)
+
+The repeated-call guard above only sees an *identical* call; a hunt never
+repeats one. Measured over 24 h of local transcripts, 55% of the bytes that
+shell reads put into context came from file-sessions that read the **same
+file** four or more times, and 562 file-sessions per day read one file eight
+or more times. So `block_bad_cmd_hop.rs` counts hops per `(session, file)` for
+shell reads (`sed`, `cat`, `head`, `tail`, `nl`, `less`, `bat`, `tac`, `wc`,
+`awk`, `xxd`) and denies hop `N + 1` on that file with a message naming
+`clud tool run code/outline.py`, so the next read can target one range.
+
+- Narrow on purpose: only files that exist and are at least 8 KiB, only known
+  source extensions, and `grep`/`git`/`gh` are searches, never hops. A file's
+  count expires after 15 minutes without a hop, so a later revisit is fine.
+- **Limit:** `N = 6`, per file. `CLUD_FILE_HOP_LIMIT=<n>` overrides it and `0`
+  turns the guard off. `CLUD_ALLOW_FILE_HOPS=1` in a command allows one more
+  slice deliberately (logged).
+- **State:** `<clud state dir>/file-hop-guard/<hash>.json`, one file per
+  session, at most 32 files per session, 2 days / 500 files retained. Fail
+  open on every state error.
+
+### Unchanged-re-read guard (#2233)
+
+A `Read` that repeats a call already made in this session — same path, same
+`offset`/`limit` — returns bytes the model already holds, and every later
+request in the session pays for them again. The hook keys the call on its
+canonical `tool_input` (so a different range is a different read) and
+fingerprints the file as `(len, mtime)`:
+
+- **Unchanged fingerprint** (byte-identical copy already read): denied, with
+  a message naming the bounded alternatives — one range via `offset`+`limit`,
+  or `clud tool run code/outline.py` to map an unfamiliar file first.
+- **Changed fingerprint** (any edit, checkout or rewrite): allowed and
+  re-recorded, so read-after-edit verification is never refused.
+- **Files under 8 KiB** are never refused: a small re-read costs less than
+  the friction of refusing it.
+
+State is one small JSON ledger per session under
+`<state dir>/reread-guard/`, capped at 256 entries and pruned like the repeat
+guard's. **Fails open** on a missing session id, an unreadable state dir, or a
+file that cannot be `stat`ed. `CLUD_REREAD_GUARD=0` turns it off.
+
+Evidence (24 h probe, 2026-10-31): 308 of 1,035 `Read` calls repeated a
+call already made in the same session, re-supplying 1,029,780 bytes, led by
+one 2,142-line file read 23 times.
+
 ### Verification-to-edit ratio note (#1988)
 
 `block_bad_cmd_verify_ratio.rs` classifies each PreToolUse call as an edit

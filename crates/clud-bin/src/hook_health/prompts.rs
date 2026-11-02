@@ -243,6 +243,7 @@ fn backend_prompt_launch_plan(
         dry_run: false,
         do_meta: false,
         do_rendered_prompt: None,
+        do_goal: None,
         detach: false,
         detachable: false,
         session_name: None,

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/talos-hq/clud/blob/main/crates/clud-bin/assets/loop.schema.json",
+  "title": "clud loop.json",
+  "description": "Configuration for a `clud loop` run. CLI flags override these values.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "task": { "type": "string", "description": "Prompt text, path to a local file, or a GitHub issue/PR URL." },
+    "loop_count": { "type": "integer", "minimum": 1, "description": "Iteration budget." },
+    "done": { "type": "string", "description": "Custom DONE marker path." },
+    "no_done": { "type": "boolean", "description": "Disable the DONE/BLOCKED marker contract." },
+    "repeat": { "type": "string", "description": "Re-run interval such as 30s, 5m, 1h." },
+    "refresh": { "type": "boolean", "description": "Force re-fetch of a cached GitHub issue/PR body." },
+    "message": { "type": "string", "description": "Message queued for the first iteration." }
+  }
+}

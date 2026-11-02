@@ -75,11 +75,29 @@ pub(super) enum Redirect {
 }
 
 /// A rewrite must not launder a shell assignment that changes the deletion
-/// roots, role or program resolution used by the rewritten command.
+/// roots, role or program resolution used by the rewritten command. Only a
+/// script that actually runs a deletion (`rm` & co or `safe-rm`) is judged;
+/// `PATH=/x cargo build` or `git grep "PATH="` deletes nothing and is left alone.
 pub(super) fn changes_deletion_environment(command: &str) -> bool {
     let script = parse_command(command, ShellDialect::Posix, None);
-    script.assigned.iter().any(|name| protected_env_name(name))
-        || script.invocations.iter().any(changes_environment_of)
+    runs_deletion(&script)
+        && (script.assigned.iter().any(|name| protected_env_name(name))
+            || script.invocations.iter().any(changes_environment_of))
+}
+
+/// Whether the script runs a removal or `safe-rm` anywhere, including after
+/// `find -exec` or `xargs`.
+fn runs_deletion(script: &Script) -> bool {
+    find_removal(script).is_some()
+        || script.invocations.iter().any(|invocation| {
+            let words = strip_runners(rule_words(invocation));
+            words
+                .iter()
+                .any(|word| is_tool_word(word) || is_tool_word(&program_name(word)))
+                || words
+                    .windows(2)
+                    .any(|pair| is_clud_word(&pair[0]) && TOOLS.contains(&pair[1].as_str()))
+        })
 }
 
 /// `NAME=x cmd`, `env NAME=x cmd`, `env -u NAME cmd`, `env --unset=NAME`.

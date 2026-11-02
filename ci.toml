@@ -120,7 +120,7 @@ workflows         = { "ci.yml" = ["pull_request", "push:main", "merge_group", "s
 # top-level `actions: write`, so the grant does not reach the `static` job,
 # which checks out untrusted pull-request heads.
 permissions        = { "actions: write" = ["cache-maint", "cancel-superseded", "queue-cache-janitor"] }
-actions           = ["actions/checkout", "actions/upload-artifact", "actions/download-artifact", "zackees/setup-soldr", "astral-sh/setup-uv"]
+actions           = ["actions/checkout", "actions/upload-artifact", "actions/download-artifact", "forge-ci/setup-soldr", "astral-sh/setup-uv"]
 # The unversioned interpreter only: ci/banned_python3.py bans the
 # version-suffixed spelling in every tracked file (including this one), and
 # clud's workflows invoke the unversioned form throughout.

@@ -40,4 +40,25 @@ mod tests {
         assert!(check("safe-rm TEMP", "").is_ok());
         assert!(check("command -v safe-rm; printenv CLUD_RM_ROOTS", "").is_ok());
     }
+
+    #[test]
+    fn non_deleting_commands_may_set_path_and_tmpdir() {
+        for command in [
+            "git grep -n -l -E \"PATH=|TMPDIR\" -- 'crates/**/*.rs'",
+            "PATH=/usr/bin cargo build",
+            "TMPDIR=/tmp/x pytest",
+            "export PATH=$PATH:/opt/bin; git status",
+            "env -u TMPDIR ls",
+            "unset TEMP; echo hi",
+        ] {
+            assert!(check(command, "").is_ok(), "{command}");
+        }
+        for command in [
+            "PATH=/usr/bin clud safe-rm x",
+            "TMPDIR=/srv find . -name x -exec safe-rm {} +",
+            "PATH=/x rm -rf build",
+        ] {
+            assert!(check(command, "").is_err(), "{command}");
+        }
+    }
 }

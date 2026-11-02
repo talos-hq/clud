@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 
 from tests import process
+from tests.metered_consent import consent_for
 
 
 def test_saved_openrouter_zdr_survives_fresh_processes_and_directories(tmp_path: Path) -> None:
@@ -44,7 +45,7 @@ def test_saved_openrouter_zdr_survives_fresh_processes_and_directories(tmp_path:
         result = process.run(
             [binary, "--dry-run", *route, "-p", "hello"],
             cwd=cwd,
-            env=env,
+            env=consent_for(env, route),
             capture_output=True,
             text=True,
             timeout=30,
@@ -86,7 +87,7 @@ def _invoke(
     binary, env, settings = world
     return process.run(
         [binary, *args],
-        env=env,
+        env=consent_for(env, args),
         cwd=settings.parent.parent.parent,
         capture_output=True,
         text=True,

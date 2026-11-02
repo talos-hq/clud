@@ -172,6 +172,15 @@ pub(super) fn run_daemon(state_dir: &Path, interrupted: &AtomicBool) -> i32 {
             activity.clone(),
         ),
     );
+    // GC finished API sessions before reconcile, so a turn interrupted by
+    // this restart stays resumable. Idle sessions are never reaped.
+    if let Err(error) = super::api_sessions::ApiSessionStore::new(state_dir).gc() {
+        daemon_events::log_event(
+            state_dir,
+            "api_session_gc_failed",
+            [("error", json!(error.to_string()))],
+        );
+    }
     if let Err(error) =
         super::api_sessions::ApiSessionStore::new(state_dir).reconcile_after_restart()
     {
@@ -1914,6 +1923,7 @@ mod tests {
                 backend: super::super::api_sessions::ApiSessionBackend::Claude,
                 cwd: temp.path().to_path_buf(),
                 name: None,
+                origin: crate::session_origin::SessionOrigin::Test,
                 resolved_settings: super::super::api_sessions::ResolvedApiSessionSettings {
                     model: None,
                     safe: false,

@@ -177,6 +177,14 @@ fn run_sweep_at_with_quantum(
         candidate_quantum,
     )?;
     write_sentinel(sentinel_path, now)?;
+    if report.pending == 0 {
+        // #2486: publish the finished pass's unremovable list for `clud gc`.
+        if let Some(state_dir) = sentinel_path.parent() {
+            if let Err(err) = session_tmp::write_foreign_owned(state_dir, &report.foreign_owned) {
+                eprintln!("[clud] session-tmp: could not record unremovable paths: {err}");
+            }
+        }
+    }
     log_report(&report, sentinel_path.parent());
     Ok(report)
 }
@@ -242,6 +250,7 @@ fn log_report(report: &session_tmp::SweepReport, state_dir: Option<&Path>) {
                 ("retry_count", json!(report.retry_count)),
                 ("persistent_failure", json!(report.persistent_failure)),
                 ("abandoned", json!(report.abandoned)),
+                ("foreign_owned", json!(report.foreign_owned.len())),
                 (
                     "last_error_path",
                     json!(report
