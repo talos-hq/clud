@@ -565,10 +565,37 @@ This is why the invocation carries an `explicit` flag rather than just an event
 name: a bare call and a compiled `--event PreToolUse` call name the same event
 but play different roles.
 
+Before writing launch-scoped Claude settings, clud consolidates its plain
+scanner registrations into one explicit `--event <E>` command per event.
+Safety checks and declared hooks then run in the same process. Legacy
+`clud-block-bad-cmd` and Python guard lines in a supplied `--settings` document
+are folded into that command too. Matchers are combined; unrelated handlers
+and handlers with custom options are preserved.
+
+The startup hook migration also folds existing plain scanner registrations
+across normal Claude user/project settings into one explicit catch-all per
+event, preferring an existing user registration (`CLAUDE_CONFIG_DIR` when set).
+Project registrations and arbitrary project hooks stay in the project and
+retain their trust boundary. Project scanners suppress generated launch
+coverage only when workspace trust has already been verified; unknown or
+untrusted project settings never replace launch safety. The migration preserves unrelated
+hooks, settings and customized handlers, and adds no registration where none
+existed. The generated launch fragment defers to those inherited canonical
+registrations. Explicit `--setting-sources` overrides retain launch coverage
+because they can exclude the settings file holding the inherited scanner.
+
+At startup clud also installs the scanner alias beside the public `clud`
+launcher on PATH. This includes a uv tool's public symlink directory. An
+existing scanner beside another installation is left alone; a missing one
+is installed even for an absolute-path development launch. Login shells can rebuild
+PATH and discard the session helper directory; the public alias keeps the
+portable scanner command available in that case. No interpreter or other
+tool aliases are installed in the public directory by this step.
+
 ## Delivery: compiled into CLI args, not written to files
 
-clud never writes hook lines into a user's config. It **compiles** its hook set
-into each frontend's native surface and passes it at launch:
+clud **compiles** its hook set into each frontend's native surface and passes
+it at launch. The migration above only consolidates existing scanner wiring:
 
 - **Claude** takes `--settings <file-or-json>`, an *additional* source that
   merges with the settings files rather than replacing them, with hook entries
