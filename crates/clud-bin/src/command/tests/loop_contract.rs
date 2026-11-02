@@ -205,6 +205,10 @@ fn assert_routes_bounded_reads(text: &str, what: &str) {
         "{what} missing ast_grep routing: {text}"
     );
     assert!(
+        text.contains("code/slice.py"),
+        "{what} missing slice routing: {text}"
+    );
+    assert!(
         text.contains("sed -n") && text.contains("`cat` a large file whole"),
         "{what} lost the negative read guidance: {text}"
     );
@@ -243,9 +247,11 @@ fn test_interactive_session_keeps_the_short_prompt() {
     assert!(!appended.contains("github/issue_context.py"));
     assert!(!appended.contains("diagnostics/test_report.py"));
     assert!(!appended.contains("code/outline.py"));
+    assert!(!appended.contains("code/slice.py"));
     let codex = codex_instructions(&plan(&["clud", "--codex"]));
     assert!(!codex.contains("code/outline.py"));
     assert!(!codex.contains("diagnostics/test_report.py"));
+    assert!(!codex.contains("code/slice.py"));
 }
 
 #[test]
