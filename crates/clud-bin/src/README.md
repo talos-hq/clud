@@ -420,6 +420,7 @@ which test tier a change belongs in — lives in
   five-second `reap-health.json` flight-recorder checkpoint for watchdog-reset
   forensics. It records host scans and adaptive-backoff deferrals without
   synchronous per-event logging.
+- `session_origin.rs` - `SessionOrigin` (`cli|mcp|daemon|test|unknown`), the one provenance field on API session records; see [session-origin.md](../../../docs/architecture/session-origin.md).
 - `session_registry.rs` - `redb`-backed registry of live `clud` PIDs that caps
   concurrent siblings; `Drop` removes the row, startup GCs dead rows. Exit-time
   removal is bounded by `SHUTDOWN_BUDGET` (#1660) so a held lock cannot stall exit.

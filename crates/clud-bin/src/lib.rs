@@ -143,6 +143,7 @@ pub mod server_settings;
 pub mod session;
 pub mod session_history;
 pub mod session_index;
+pub mod session_origin;
 pub mod session_registry;
 pub mod settings_tui;
 pub mod shell;

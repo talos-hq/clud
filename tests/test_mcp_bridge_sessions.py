@@ -258,6 +258,13 @@ def test_session_start_returns_handle_immediately_without_waiting(bridge, wired,
     assert turn_posts[0][2].get("idempotency-key")
 
 
+def test_session_start_declares_mcp_origin_at_creation(bridge, wired, tmp_path):
+    _run(bridge.session_start("hello", _FakeCtx(), cwd=str(tmp_path), wait_seconds=0))
+    creates = [r for r in wired.requests if r[0] == "POST" and r[1] == "/v1/sessions"]
+    assert len(creates) == 1
+    assert creates[0][3]["origin"] == "mcp"
+
+
 def test_session_start_with_wait_returns_the_sealed_answer(bridge, wired, tmp_path):
     wired.events = [_event(1, "turn-1", "the answer")]
     payload = _result(

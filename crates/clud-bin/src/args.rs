@@ -855,7 +855,15 @@ pub enum Command {
     },
     /// Kill all active background sessions.
     Slay,
-    List,
+    /// List background, API and live sessions.
+    List {
+        /// Emit API sessions as a JSON array (each row carries `origin`).
+        #[arg(long = "json")]
+        json: bool,
+        /// Show only API sessions created by this entry point.
+        #[arg(long = "origin", value_enum)]
+        origin: Option<crate::session_origin::SessionOrigin>,
+    },
     /// Inspect or manage a live checkout claim.
     Claim {
         #[command(subcommand)]
@@ -1544,6 +1552,14 @@ pub enum SessionAction {
         /// Claude Code session id; defaults to `CLAUDE_CODE_SESSION_ID`.
         #[arg(long = "session")]
         session: Option<String>,
+    },
+    /// Print one API session's state, origin, backend and model.
+    Show {
+        /// API session id (`sess-...`).
+        id: String,
+        /// Emit the stored record as JSON.
+        #[arg(long = "json")]
+        json: bool,
     },
 }
 

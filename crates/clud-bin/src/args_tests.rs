@@ -1332,7 +1332,39 @@ fn test_transcript_flag() {
 #[test]
 fn test_list_subcommand() {
     let args = parse(&["clud", "list"]);
-    assert!(matches!(args.command, Some(Command::List)));
+    assert!(matches!(args.command, Some(Command::List { .. })));
+}
+
+#[test]
+fn test_list_origin_filter_and_json_parse_for_every_origin() {
+    use crate::session_origin::SessionOrigin;
+    for origin in SessionOrigin::ALL {
+        let args = parse(&["clud", "list", "--json", "--origin", origin.as_str()]);
+        assert!(matches!(
+            args.command,
+            Some(Command::List { json: true, origin: Some(o) }) if o == origin
+        ));
+    }
+}
+
+#[test]
+fn test_list_invalid_origin_is_a_parse_error_naming_valid_values() {
+    let err = Args::try_parse_from(["clud", "list", "--origin", "bogus"]).unwrap_err();
+    let text = err.to_string();
+    for valid in ["cli", "mcp", "daemon", "test", "unknown"] {
+        assert!(text.contains(valid), "{valid} missing from: {text}");
+    }
+}
+
+#[test]
+fn test_session_show_parses() {
+    let args = parse(&["clud", "session", "show", "sess-1", "--json"]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Session {
+            action: crate::args::SessionAction::Show { ref id, json: true },
+        }) if id == "sess-1"
+    ));
 }
 
 #[test]

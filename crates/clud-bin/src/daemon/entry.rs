@@ -706,7 +706,7 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
                 eprintln!("[clud] auto-attaching to only session: {}", sessions[0].id);
                 Some(run_attach(&sessions[0].id, &state_dir, interrupted))
             } else {
-                Some(run_list(&state_dir))
+                Some(run_list(&state_dir, false, None))
             }
         }
         Some(Command::Kill { session_id, all }) => {
@@ -717,9 +717,15 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             let state_dir = state_dir(args);
             Some(run_kill(&state_dir, None, true))
         }
-        Some(Command::List) => {
+        Some(Command::List { json, origin }) => {
             let state_dir = state_dir(args);
-            Some(run_list(&state_dir))
+            Some(run_list(&state_dir, *json, *origin))
+        }
+        Some(Command::Session {
+            action: crate::args::SessionAction::Show { id, json },
+        }) => {
+            let state_dir = state_dir(args);
+            Some(super::commands::run_session_show(&state_dir, id, *json))
         }
         Some(Command::Top {
             json,

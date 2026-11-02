@@ -514,7 +514,13 @@ async def _start_turn(
 
     session_id = resume_session_id
     if not session_id:
-        body: dict = {"backend": backend, "cwd": workdir, "safe": bool(safe)}
+        body: dict = {
+            "backend": backend,
+            "cwd": workdir,
+            "safe": bool(safe),
+            # SessionOrigin: this entry point declares itself at creation.
+            "origin": "mcp",
+        }
         if name:
             body["name"] = name
         if model:
