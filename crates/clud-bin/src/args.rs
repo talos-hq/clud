@@ -1128,6 +1128,25 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    /// Hidden test seam for the legacy completions ingress. Without
+    /// `--response` it translates a `/v1/completions` request into a Messages
+    /// request; with it, the reverse: an upstream Messages body into a
+    /// `text_completion` body or chunk stream.
+    #[command(name = "__openai-completions-translate", hide = true)]
+    InternalOpenAiCompletionsTranslate {
+        /// Translate an Anthropic Messages response, not an OpenAI request.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one chunk per line.
+        #[arg(long, requires = "response")]
+        stream: bool,
+        /// Model to report when the response body carries none.
+        #[arg(long = "for-model")]
+        for_model: Option<String>,
+        /// Emit the exact HTTP body the route writes, not one JSON per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
     /// Hidden test seam for the Responses ingress. Without `--response` it
     /// translates a Responses request into a Messages request; with it, the
     /// reverse: an upstream Messages body into a Responses `response` object or
@@ -1788,6 +1807,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__worker",
     "__start-cmd",
     "__openai-chat-translate",
+    "__openai-completions-translate",
     "__openai-responses-translate",
     "__kimi-device-login",
     "__xai-device-login",

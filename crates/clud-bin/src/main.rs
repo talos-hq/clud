@@ -330,6 +330,12 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
                 clud::openai_ingress::run_translate_stdin()
             }
         }
+        args::Command::InternalOpenAiCompletionsTranslate {
+            response,
+            stream,
+            for_model,
+            http,
+        } => clud::completions_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
         args::Command::InternalOpenAiResponsesTranslate {
             response,
             stream,

@@ -72,7 +72,8 @@ clud serve --codex --claude
 Use `/v1/models` to discover the advertised Codex IDs (for example,
 `clud-claude-codex-sol`) and pass one as `model` to `/v1/messages`.
 Codex-only discovery does not contact Anthropic. This is an Anthropic-compatible
-frontend; the translated doors below (`/v1/chat/completions`, `/v1/responses`,
+frontend; the translated doors below (`/v1/chat/completions`, `/v1/completions`,
+`/v1/responses`,
 the Gemini `:generateContent` prefix and the images API) are exposed only when
 the launch has a unified gateway, because the relay they share lives there.
 
@@ -133,6 +134,32 @@ than `response.completed` — a truncated answer is not a finished one; the
 `web_search_call` item is not synthesised, because clud refuses server tools at
 the door instead of injecting them; and the websocket verb upstream also serves
 at `/v1/responses` is not ported, since this bridge is plain HTTP/1.1.
+
+## Legacy text completions
+
+`crates/clud-bin/src/completions_ingress.rs` serves OpenAI's older
+`POST /v1/completions` contract, ported from CLIProxyAPI
+`sdk/api/handlers/openai/openai_handlers.go` (`Completions`,
+`convertCompletionsRequestToChatCompletions`,
+`convertChatCompletionsResponseToCompletions`), which upstream exposes at
+`internal/api/server_routes.go:74`. Upstream implements it as a thin adapter
+over its chat-completions handler; clud does the same: the one-`prompt` body is
+rewritten into the single-user-turn chat request and handed to
+`openai_ingress::translate_chat_request`, and the Messages answer is rendered
+back as `text_completion` (buffered) or `text_completion` chunks plus
+`data: [DONE]` (streamed). Model resolution, routing, failover and effort
+suffixes are unchanged. The hidden seam is
+`clud __openai-completions-translate [--response [--stream]] [--for-model M]`.
+
+Deliberate differences from upstream, all refusals by name rather than a
+silently different answer: an empty prompt is refused (`MissingPrompt`) instead
+of being served with upstream's invented `"Complete this:"` prefix; a token-id
+prompt array is refused (`prompt:token_ids`) instead of collapsing to the empty
+string gjson returns for an array; `prompt` as an array of strings is joined with
+newlines; and `n > 1`, `echo: true`, `suffix`, `best_of`, `logprobs: true` and
+`top_logprobs` are refused (`UnsupportedField`) because Anthropic Messages
+returns one choice, cannot echo a prompt and reports no token
+log-probabilities.
 
 ## Images
 

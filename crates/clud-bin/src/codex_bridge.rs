@@ -1277,6 +1277,9 @@ fn route_request(
         ("POST", "/v1/responses") => {
             route_responses(stream, connection, &mut parsed, conversation_key);
         }
+        ("POST", "/v1/completions") => {
+            route_completions(stream, connection, &mut parsed, conversation_key);
+        }
         ("POST", "/v1/images/generations") => {
             route_images_generations(stream, connection, &mut parsed, conversation_key);
         }
@@ -1621,6 +1624,89 @@ fn refuse_responses(stream: &mut TcpStream, status: u16, message: &str) {
     let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
+/// `POST /v1/completions`: OpenAI's legacy text-completions door.
+///
+/// Upstream capability: CLIProxyAPI serves it at
+/// `internal/api/server_routes.go:74` (`v1.POST("/completions")`) as a thin
+/// adapter over its chat-completions handler
+/// (`sdk/api/handlers/openai/openai_handlers.go:203`
+/// `convertCompletionsRequestToChatCompletions`, and :268 for the answer).
+/// clud had no such door at all, so an OpenAI SDK configured with
+/// `client.completions` saw a 404. This route rewrites the one-prompt body into
+/// the Messages request the ladder already serves and answers in
+/// `text_completion` shape on the way back.
+///
+/// `n`, `echo`, `suffix`, `best_of`, `logprobs` and a token-id prompt are
+/// refused by name rather than answered differently; see
+/// [`crate::completions_ingress`].
+fn route_completions(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    config.turn_requests.fetch_add(1, Ordering::Release);
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    let request: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => {
+            record_rejection(log, 400, "invalid_json");
+            refuse_completions(stream, 400, "request body is not valid JSON");
+            return;
+        }
+    };
+    let Some(model) = request.get("model").and_then(serde_json::Value::as_str) else {
+        record_rejection(log, 400, "missing_model");
+        refuse_completions(stream, 400, "request is missing a model");
+        return;
+    };
+    let model = model.to_string();
+    let streaming = request.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
+    if !matches!(config.gateway_mode, GatewayMode::Unified(_)) {
+        record_rejection(log, 501, "completions_unsupported");
+        refuse_completions(
+            stream,
+            501,
+            "POST /v1/completions needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    }
+    let translated = match crate::completions_ingress::translate_completions_request(&body) {
+        Ok(translated) => translated,
+        Err(error) => {
+            record_rejection(log, 400, "untranslatable_request");
+            refuse_completions(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let translated = serde_json::to_vec(&translated).unwrap_or_default();
+    serve_unified_messages(
+        stream,
+        config,
+        connection.shutdown,
+        connection.conversations,
+        &translated,
+        streaming,
+        conversation_key,
+        &parsed.headers,
+        log,
+        connection.cache_health,
+        Some(ChatTranslation {
+            model: &model,
+            dialect: ClientDialect::Completions,
+        }),
+    );
+}
+
+/// Answer a refused `/v1/completions` turn in the OpenAI error envelope.
+fn refuse_completions(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::completions_ingress::render_completions_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
 /// `POST /v1/images/generations` -- OpenAI's images API on the Codex lane.
 ///
 /// Upstream capability: CLIProxyAPI answers `/v1/images/generations` from the
@@ -1905,6 +1991,8 @@ enum ClientDialect {
     Chat,
     /// `POST /v1/responses` -- a `response` object / `response.*` event stream.
     Responses,
+    /// `POST /v1/completions` -- OpenAI's legacy `text_completion` / chunk stream.
+    Completions,
 }
 
 /// The client shape a translated turn is answered in.
@@ -3665,6 +3753,15 @@ fn relay_translated_chat(
             crate::responses_ingress::render_response_body(chat.model, &restored)
                 .map(|payload| (200, "application/json", payload))
         }
+        ClientDialect::Completions if chat_stream => Ok((
+            200,
+            "text/event-stream",
+            crate::completions_ingress::render_completions_stream(chat.model, &restored),
+        )),
+        ClientDialect::Completions => {
+            crate::completions_ingress::render_completions_body(chat.model, &restored)
+                .map(|payload| (200, "application/json", payload))
+        }
     };
     let (out_status, out_type, payload) = match translated {
         Ok(translated) => translated,
@@ -3801,6 +3898,10 @@ fn write_client_error(
         ClientDialect::Chat => write_chat_error(stream, status, message, idle_timeout),
         ClientDialect::Responses => {
             let payload = crate::responses_ingress::render_response_error(status, message);
+            write_translated_error(stream, status, &payload, idle_timeout)
+        }
+        ClientDialect::Completions => {
+            let payload = crate::completions_ingress::render_completions_error(status, message);
             write_translated_error(stream, status, &payload, idle_timeout)
         }
     }
@@ -7223,6 +7324,96 @@ Connection: close
             "{}",
             sent[0]
         );
+        bridge.shutdown().unwrap();
+    }
+
+    fn completions_request(bridge: &BridgeHandle, body: &str, session: &str) -> String {
+        request(
+            bridge.socket_addr(),
+            &authorized_with_headers(
+                "POST",
+                "/v1/completions",
+                bridge.bearer_token(),
+                body,
+                &[
+                    (UNIFIED_GATEWAY_TOKEN_HEADER, bridge.bearer_token()),
+                    ("x-claude-code-session-id", session),
+                    ("content-type", "application/json"),
+                ],
+            ),
+        )
+    }
+
+    /// `POST /v1/completions` is the legacy OpenAI door: one prompt in, one
+    /// `text_completion` out, over the same Messages ladder.
+    #[test]
+    fn completions_answers_in_the_text_completion_shape() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","prompt":"say hi","max_tokens":16}"#;
+        let response = completions_request(&bridge, body, "completions-session");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(
+            response.contains("\"object\":\"text_completion\""),
+            "{response}"
+        );
+        assert!(
+            response.contains("\"text\":\"hello from messages\""),
+            "{response}"
+        );
+        assert!(
+            response.contains("\"finish_reason\":\"stop\""),
+            "{response}"
+        );
+        // The prompt reached the upstream as a Messages user turn.
+        let sent = anthropic.requests();
+        assert_eq!(sent.len(), 1, "{}", sent.len());
+        assert!(sent[0].contains("\"role\":\"user\""), "{}", sent[0]);
+        assert!(sent[0].contains("say hi"), "{}", sent[0]);
+        assert!(!sent[0].contains("\"prompt\""), "{}", sent[0]);
+        bridge.shutdown().unwrap();
+    }
+
+    /// A `stream: true` completions client receives `text_completion` chunks
+    /// terminated by `[DONE]`, not chat chunks.
+    #[test]
+    fn completions_streams_text_completion_chunks() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_stream()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","prompt":"say hi","stream":true}"#;
+        let response = completions_request(&bridge, body, "completions-stream-session");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(
+            response.contains("\"object\":\"text_completion\""),
+            "{response}"
+        );
+        assert!(!response.contains("chat.completion.chunk"), "{response}");
+        assert!(response.contains("hello "), "{response}");
+        assert!(response.contains("data: [DONE]"), "{response}");
+        bridge.shutdown().unwrap();
+    }
+
+    /// A knob the gateway cannot honour is refused locally, in the OpenAI error
+    /// envelope, without spending an upstream turn.
+    #[test]
+    fn completions_refuses_multiple_choices_before_the_ladder() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","prompt":"say hi","n":3}"#;
+        let response = completions_request(&bridge, body, "completions-refusal-session");
+        assert_eq!(status(&response), 400, "{response}");
+        assert!(response.contains("\"error\""), "{response}");
+        assert!(response.contains("`n`"), "{response}");
+        assert!(anthropic.requests().is_empty(), "no upstream turn is spent");
         bridge.shutdown().unwrap();
     }
 

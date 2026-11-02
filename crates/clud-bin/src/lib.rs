@@ -58,6 +58,7 @@ pub mod codex_sse;
 pub mod codex_translate;
 pub mod codex_upstream;
 pub mod command;
+pub mod completions_ingress;
 pub mod config;
 /// The Windows native terminal-input adapter (`platform/windows/console_input.rs`);
 /// an empty module on Unix, where stdin is a byte stream.
