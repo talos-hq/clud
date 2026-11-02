@@ -3052,8 +3052,9 @@ fn serve_unified_anthropic_proxy(
     });
     if let Some(beats) = heartbeat {
         let succeeded = matches!(outcome, ProxyOutcome::Committed { status } if status < 400);
-        let target =
-            succeeded.then(|| heartbeat_target(base_url, path, body, headers, injected_api_key));
+        let target = succeeded
+            .then(|| heartbeat_replay(base_url, path, body, headers, injected_api_key, redaction))
+            .flatten();
         beats.finish(&conversation_key.id, target, Instant::now());
     }
     if let Err(error) = routed {
@@ -3068,6 +3069,22 @@ fn serve_unified_anthropic_proxy(
 
 /// #2046: what the cache heartbeat replays: the request exactly as this hop
 /// sent it upstream (forwarded headers, injected credential, same body).
+/// #2552: the heartbeat replays the bytes the upstream actually received.
+/// Redaction tokens are stable for the session, so this matches the real
+/// prefix; replaying the raw body would warm the wrong prefix and send the
+/// secrets upstream. A body that cannot be redacted gets no heartbeat.
+fn heartbeat_replay(
+    base_url: &str,
+    path: &str,
+    body: &[u8],
+    headers: &[(String, String)],
+    injected_api_key: Option<&str>,
+    redaction: Option<&SharedSession>,
+) -> Option<crate::cache_heartbeat::Target> {
+    let sent = redact_request(body, redaction).ok()?;
+    Some(heartbeat_target(base_url, path, &sent, headers, injected_api_key))
+}
+
 fn heartbeat_target(
     base_url: &str,
     path: &str,
@@ -5715,6 +5732,33 @@ mod tests {
     use std::thread;
     use std::time::Duration;
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    /// #2552: the cache heartbeat must replay what the upstream received,
+    /// never the pre-redaction body.
+    #[test]
+    fn heartbeat_replays_the_redacted_body_the_upstream_received() {
+        let secret = "FAKE_HEARTBEAT_VAULT_KEY_FIXTURE_2552";
+        let session: SharedSession = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::secret_redaction::reversible::Session::new(vec![secret.into()]).unwrap(),
+        ));
+        let body = format!(
+            r#"{{"model":"m","messages":[{{"role":"user","content":"key {secret}"}}]}}"#
+        );
+        let sent = redact_request(body.as_bytes(), Some(&session)).unwrap().into_owned();
+
+        let target = heartbeat_replay(
+            "http://up.invalid",
+            "/v1/messages",
+            body.as_bytes(),
+            &[],
+            None,
+            Some(&session),
+        )
+        .expect("a redactable body gets a heartbeat");
+
+        assert!(!String::from_utf8_lossy(&target.body).contains(secret));
+        assert_eq!(target.body, sent);
+    }
 
     #[test]
     fn unified_gateway_injects_the_complete_openrouter_privacy_policy() {
