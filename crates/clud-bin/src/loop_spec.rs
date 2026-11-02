@@ -981,13 +981,19 @@ mod tests {
         assert!(text.contains("50 issues"), "{text}");
         assert!(text.contains("Persist cumulative progress"), "{text}");
         let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
-        assert!(!normalized.contains("write DONE with the PR URL as soon as"), "{text}");
+        assert!(
+            !normalized.contains("write DONE with the PR URL as soon as"),
+            "{text}"
+        );
     }
 
     #[test]
     fn done_contract_defers_item_completion_to_task() {
         let text = done_marker_contract(Path::new("/r/DONE"), Path::new("/r/BLOCKED"));
-        assert!(text.contains("only if the original task explicitly"), "{text}");
+        assert!(
+            text.contains("only if the original task explicitly"),
+            "{text}"
+        );
         assert!(text.contains("single-item task"), "{text}");
         assert!(text.contains("iteration budget is a maximum"), "{text}");
     }
