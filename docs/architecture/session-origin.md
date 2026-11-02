@@ -8,11 +8,18 @@ Every durable API session (`ApiSessionRecord`, see
 ## Set once, at creation
 
 The entry point that creates the session sets `CreateApiSession::origin`;
-nothing infers it later from argv or environment. Over HTTP the creating
-client declares it in the `POST /v1/sessions` body (`"origin": "mcp"`);
-the MCP server's `session_start` always sends `mcp`. A body without the
-field, and every record written before the field existed, reads as
-`unknown` (`#[serde(default)]`). No migration rewrites old records, and
+nothing infers it later from argv or environment.
+
+| Entry point | Origin |
+| --- | --- |
+| `clud session new` (`daemon/session_new_client.rs`) | `cli` |
+| MCP server `session_start` (`src/clud/mcp_server.py`) | `mcp` |
+| daemon HTTP API, `POST /v1/sessions` without a declared origin | `daemon` |
+| test harnesses (`CreateApiSession` in tests) | `test` |
+| records written before this field existed | `unknown` |
+
+Clients declare their origin in the create body (`"origin": "mcp"`).
+Legacy records load as `unknown` via `#[serde(default)]`. No migration rewrites old records, and
 there is no side table, tag list or environment variable.
 
 ## Surface

@@ -722,6 +722,32 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             Some(run_list(&state_dir, *json, *origin))
         }
         Some(Command::Session {
+            action:
+                crate::args::SessionAction::New {
+                    backend,
+                    cwd,
+                    name,
+                    model,
+                    safe,
+                    json,
+                },
+        }) => {
+            let state_dir = state_dir(args);
+            let cwd = cwd
+                .clone()
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_default();
+            let cwd = std::path::absolute(&cwd).unwrap_or(cwd);
+            let request = super::session_new_client::NewSessionRequest {
+                backend: backend.clone(),
+                cwd,
+                name: name.clone(),
+                model: model.clone(),
+                safe: *safe,
+            };
+            Some(super::session_new_client::run(&state_dir, &request, *json))
+        }
+        Some(Command::Session {
             action: crate::args::SessionAction::Show { id, json },
         }) => {
             let state_dir = state_dir(args);
