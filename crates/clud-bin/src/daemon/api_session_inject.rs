@@ -30,6 +30,10 @@ pub enum InjectionState {
     Queued,
     Delivered,
     Failed,
+    /// Terminal: a later directive replaced this one before it reached the
+    /// agent, so it is never delivered (#2523). `superseded_by_seq` names
+    /// the replacement; the entry stays in history.
+    Superseded,
 }
 
 impl InjectionState {
@@ -38,6 +42,7 @@ impl InjectionState {
             Self::Queued => "queued",
             Self::Delivered => "delivered",
             Self::Failed => "failed",
+            Self::Superseded => "superseded",
         }
     }
 }
@@ -197,6 +202,7 @@ impl ApiSessionStore {
         mutated?;
         let (entry, duplicate) = result?;
         if !duplicate {
+            self.announce_superseded(session_id, entry.seq);
             let _ = self.append_event(
                 session_id,
                 None,
@@ -206,6 +212,24 @@ impl ApiSessionStore {
             );
         }
         Ok((entry, duplicate))
+    }
+
+    /// Log `injection_superseded` for every entry that `seq` replaced while
+    /// it was still queued, so the replacement is observable in the stream.
+    fn announce_superseded(&self, session_id: &str, seq: u64) {
+        let Ok(record) = self.get(session_id) else {
+            return;
+        };
+        for entry in record.injections.iter().filter(|entry| {
+            entry.state == InjectionState::Superseded && entry.superseded_by_seq == Some(seq)
+        }) {
+            let _ = self.append_event(
+                session_id,
+                None,
+                "injection_superseded".to_string(),
+                serde_json::json!({"seq": entry.seq, "superseded_by_seq": seq}),
+            );
+        }
     }
 
     /// Seal one injection as delivered (with its turn) or failed.
@@ -236,6 +260,7 @@ impl ApiSessionStore {
         })?;
         let kind = match entry.state {
             InjectionState::Delivered => "injection_delivered",
+            InjectionState::Superseded => "injection_superseded",
             _ => "injection_failed",
         };
         let _ = self.append_event(
@@ -279,6 +304,11 @@ pub(super) fn record_injection_in(
         for earlier in record.injections.iter_mut() {
             if earlier.kind == InjectionKind::Directive && earlier.superseded_by_seq.is_none() {
                 earlier.superseded_by_seq = Some(seq);
+                // Same mutation as the new entry: no window in which a
+                // drain can pick the stale directive after it was replaced.
+                if earlier.state == InjectionState::Queued {
+                    earlier.state = InjectionState::Superseded;
+                }
             }
         }
     }
@@ -583,11 +613,16 @@ mod tests {
         let (store, record) = session(&temp, None);
         store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
         let lifecycle = ApiSessionLifecycle::new(store.clone());
+        // Notes: two directives would supersede (see the test below).
+        let note = |id: &str, message: &str| InjectRequest {
+            kind: InjectionKind::Note,
+            ..request(id, message)
+        };
         let a = lifecycle
-            .inject(&record.id, request("a", "first"), no_plan)
+            .inject(&record.id, note("a", "first"), no_plan)
             .unwrap();
         let b = lifecycle
-            .inject(&record.id, request("b", "second"), no_plan)
+            .inject(&record.id, note("b", "second"), no_plan)
             .unwrap();
         assert_eq!(
             (a.state, a.seq, a.accepted),
@@ -740,5 +775,57 @@ mod tests {
         record_injection_in(&mut record, &request("new", "use v2")).unwrap();
         assert_eq!(record.injections[0].superseded_by_seq, Some(2));
         assert_eq!(current_directive(&record).unwrap().seq, 2);
+    }
+
+    #[test]
+    fn superseded_queued_directive_is_never_delivered_to_the_turn() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
+        let lifecycle = ApiSessionLifecycle::new(store.clone());
+        let stale = lifecycle
+            .inject(&record.id, request("d-1", "use v1"), no_plan)
+            .unwrap();
+        assert_eq!(stale.state, InjectionState::Queued);
+        lifecycle
+            .inject(&record.id, request("d-2", "use v2"), no_plan)
+            .unwrap();
+        let stored = store.get(&record.id).unwrap();
+        let first = &stored.injections[0];
+        assert_eq!(first.state, InjectionState::Superseded);
+        assert_eq!(first.superseded_by_seq, Some(2));
+        assert_eq!(first.message, "use v1", "history stays readable");
+        assert_eq!(first.turn_id, None);
+        // The drain's choice: the replacement, never the stale directive.
+        assert_eq!(next_queued(&stored).unwrap().client_msg_id, "d-2");
+        let events = store.events_after(&record.id, 0, 1000).unwrap();
+        assert!(events
+            .iter()
+            .any(|event| event.kind == "injection_superseded"
+                && event.data["seq"] == 1
+                && event.data["superseded_by_seq"] == 2));
+        // A late settle cannot resurrect it as delivered.
+        let late = store
+            .settle_injection(&record.id, 1, Ok("turn-2".to_string()))
+            .unwrap();
+        assert_eq!(late.state, InjectionState::Superseded);
+    }
+
+    #[test]
+    fn queued_note_is_unaffected_by_a_later_directive() {
+        let temp = TempDir::new().unwrap();
+        let (store, record) = session(&temp, None);
+        store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
+        let lifecycle = ApiSessionLifecycle::new(store.clone());
+        let mut note = request("n-1", "fyi: CI is slow");
+        note.kind = InjectionKind::Note;
+        lifecycle.inject(&record.id, note, no_plan).unwrap();
+        lifecycle
+            .inject(&record.id, request("d-1", "use v2"), no_plan)
+            .unwrap();
+        let stored = store.get(&record.id).unwrap();
+        assert_eq!(stored.injections[0].state, InjectionState::Queued);
+        assert_eq!(stored.injections[0].superseded_by_seq, None);
+        assert_eq!(next_queued(&stored).unwrap().client_msg_id, "n-1");
     }
 }

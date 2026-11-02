@@ -63,6 +63,7 @@ attempted. The result is always `{accepted, state, seq}`:
 | `queued` | recorded; waits for the running turn to seal |
 | `delivered` | a turn carrying the message was started; `turn_id` names it |
 | `failed` | delivery was attempted and could not start a turn; `error` says why (it is never left queued forever without a reason) |
+| `superseded` | a `directive` replaced by a newer directive while still `queued`; it is never delivered and `superseded_by_seq` names the replacement (#2523) |
 
 * Session `terminated` (sealed): rejected, `409 session_sealed`, not recorded.
 * Unsupported harness: rejected, `422 harness_not_supported`, with the harness named.
@@ -85,7 +86,7 @@ entry has `seq`, `client_msg_id`, `message`, `from` (who injected:
 (optional issue/ticket reference), `interrupt`, `state`,
 `submitted_at_ms`, `delivered_at_ms`, `turn_id` and `error`. The event log
 also gets `injection_queued` / `injection_delivered` / `injection_failed`
-events, so a later reader can see exactly when and how the run was steered.
+/ `injection_superseded` events, so a later reader can see exactly when and how the run was steered.
 
 Since #2523 each entry also has `kind` (`directive`, the default, or
 `note`), `message_sha256` (hex sha256 of `message`, so a reader can prove
@@ -95,9 +96,14 @@ Recording a new directive marks every earlier un-superseded directive with
 the new seq; they stay in `injections[]` as history. A `note` never
 supersedes. There is no second store. Entries written before #2523 have no
 `kind`/hash and read as un-superseded directives, so the newest one is
-current until the next directive marks them. Supersession is bookkeeping,
-not cancellation: an earlier directive that is still `queued` is still
-delivered in `seq` order (nothing is silently dropped, section 3).
+current until the next directive marks them. A directive superseded while
+still `queued` moves to the terminal `superseded` state in the same record
+mutation that adds its replacement, so the drain (which only picks `queued`
+entries) can never hand the agent a directive the operator already
+replaced; an `injection_superseded` event records the replacement, so
+nothing is dropped silently (section 3). A directive already `delivered`
+keeps its state and only gains `superseded_by_seq`. Notes are never
+superseded and are delivered in `seq` order.
 
 ## 5. Surfaces
 
