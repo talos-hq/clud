@@ -150,5 +150,12 @@ def test_codex_tool_names_are_delivered_and_enforced(tmp_path: Path) -> None:
 def test_unrelated_tools_never_reach_the_scanner(tmp_path: Path) -> None:
     repo = _repo(tmp_path)
     matchers = _launch_matchers(tmp_path, repo)
-    for tool in ("Read", "Grep", "Glob", "WebFetch"):
+    for tool in ("Grep", "Glob", "WebFetch", "TodoWrite", "ToolSearch"):
         assert not _delivered(matchers, tool), tool
+
+
+def test_read_is_delivered_for_the_unchanged_reread_guard(tmp_path: Path) -> None:
+    """#2233: `Read` has a rule, so the matcher must route it to the scanner."""
+    repo = _repo(tmp_path)
+    matchers = _launch_matchers(tmp_path, repo)
+    assert _delivered(matchers, "Read")
