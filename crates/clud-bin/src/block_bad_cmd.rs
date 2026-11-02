@@ -553,6 +553,28 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: count shell read-hops per file, not per command. An agent that
+    // has sliced one file N times is hunting without a map; the N+1-th slice
+    // is denied with a pointer to `code/outline.py`. Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_hop::opts_out(&payload.command) {
+            append_log(&format!(
+                "FILE-HOP-GUARD-OVERRIDE: {} in command: file-hop guard bypassed                  for tool_name={:?}",
+                block_bad_cmd_hop::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_hop::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            append_log(&format!("FILE-HOP-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
     // #1988/#2122: classify the call; an advisory note rides on the final
     // allow, and the one escalation deny is returned here.
     let verify_note = if event == PRE_TOOL_USE_EVENT {
@@ -3913,6 +3935,9 @@ mod block_bad_cmd_stale_upstream;
 
 #[path = "block_bad_cmd_repeat.rs"]
 mod block_bad_cmd_repeat;
+
+#[path = "block_bad_cmd_hop.rs"]
+mod block_bad_cmd_hop;
 
 #[path = "block_bad_cmd_verify_ratio.rs"]
 mod block_bad_cmd_verify_ratio;
