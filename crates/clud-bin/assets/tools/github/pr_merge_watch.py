@@ -75,6 +75,13 @@ at green on the PR's own checks and only reports that the merge is pending.
 position and state changes and a persistent UNMERGEABLE entry distinctly. It
 only observes the queue and never cancels workflow runs.
 
+`--enqueue-when-ready` (opt-in) closes the gap on a repo whose merge queue is
+not fed by auto-merge: once the PR is CLEAN, non-draft and every required
+check on its head is green, the follower calls `enqueuePullRequest` (pinned
+to that head, never `jump`), prints the position, and keeps watching. An
+existing entry is never re-submitted; a dropped entry is re-enqueued only if
+the PR is still ready, at most `--max-enqueues` times. A merge prints mergedAt.
+
 The tool runner allows requested waits up to 86400 seconds and reserves 60
 seconds for the watcher to exit and finish cancellation. It rejects longer
 requests. The watcher still clamps to the wrapper cap if necessary.
@@ -4094,6 +4101,8 @@ class MergeFollow:
     last_queue: tuple[int | None, str] | None = None
     unmergeable_polls: int = 0
     removal_candidate: tuple[datetime, str] | None = None
+    enqueues: int = 0
+    refused: str | None = None
 
 
 def _queue_verdict(q: QueueState, seen: MergeFollow) -> tuple[int, str] | None:
@@ -4137,6 +4146,157 @@ def _merge_group_verdict(repo: str, q: QueueState, seen: MergeFollow) -> tuple[i
     return EXIT_EJECTED, f"required merge-group check failed: {failed}{cause}"
 
 
+
+# ---- enqueueing a ready PR (--enqueue-when-ready) ----
+
+# A repository without auto-merge never enqueues a green PR on its own, so a
+# watch-only waiter times out with queued=False. `--enqueue-when-ready` makes
+# the waiter submit it: once, without `jump`, and only when GitHub itself says
+# the PR is CLEAN and every required check on the head commit is green.
+ENQUEUE_WHEN_READY = False
+MAX_ENQUEUES = 3
+
+READY_QUERY = """
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      id state isDraft mergeStateStatus headRefOid
+      mergeQueueEntry { position state }
+      commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts(first: 100) {
+        pageInfo { hasNextPage }
+        nodes {
+          ... on CheckRun { name status conclusion isRequired(pullRequestNumber: $number) }
+          ... on StatusContext { context state isRequired(pullRequestNumber: $number) }
+        }
+      } } } } }
+    }
+  }
+}
+"""
+ENQUEUE_MUTATION = """
+mutation($id: ID!, $sha: GitObjectID!) {
+  enqueuePullRequest(input: {pullRequestId: $id, expectedHeadOid: $sha}) {
+    mergeQueueEntry { position state }
+  }
+}
+"""
+_GREEN_CONCLUSIONS = {"SUCCESS", "NEUTRAL", "SKIPPED"}
+
+
+@dataclass
+class Readiness:
+    ready: bool
+    reason: str
+    pr_id: str = ""
+    head_sha: str = ""
+    queued_position: int | None = None
+
+
+def _required_check_problem(contexts: dict) -> str | None:
+    if (contexts.get("pageInfo") or {}).get("hasNextPage"):
+        return "check list truncated; required checks not all readable"
+    for node in contexts.get("nodes") or []:
+        if not isinstance(node, dict) or not node.get("isRequired"):
+            continue
+        if "context" in node:
+            if node.get("state") != "SUCCESS":
+                return f"required status {node.get('context')} is {node.get('state')}"
+            continue
+        if node.get("status") != "COMPLETED":
+            return f"required check {node.get('name')} is pending ({node.get('status')})"
+        if node.get("conclusion") not in _GREEN_CONCLUSIONS:
+            return f"required check {node.get('name')} is {node.get('conclusion')}"
+    return None
+
+
+def judge_readiness(data: object) -> Readiness:
+    """Whether a PR may be enqueued now, from one READY_QUERY response."""
+    try:
+        pr = data["data"]["repository"]["pullRequest"]  # type: ignore[index]
+        commit = pr["commits"]["nodes"][-1]["commit"]
+    except (KeyError, TypeError, IndexError):
+        return Readiness(False, "PR state unreadable")
+    entry = pr.get("mergeQueueEntry")
+    if entry:
+        return Readiness(False, "already queued", queued_position=entry.get("position"))
+    if pr.get("state") != "OPEN":
+        return Readiness(False, f"PR is {pr.get('state')}")
+    if pr.get("isDraft"):
+        return Readiness(False, "draft")
+    status = pr.get("mergeStateStatus")
+    if status != "CLEAN":
+        return Readiness(False, f"mergeStateStatus={status}")
+    head = pr.get("headRefOid")
+    if not head or commit.get("oid") != head:
+        return Readiness(False, "head commit checks unreadable")
+    problem = _required_check_problem((commit.get("statusCheckRollup") or {}).get("contexts") or {})
+    if problem:
+        return Readiness(False, problem)
+    return Readiness(True, "ready", pr_id=str(pr.get("id") or ""), head_sha=str(head))
+
+
+def fetch_readiness(repo: str, pr: int) -> Readiness:
+    owner, _, name = repo.partition("/")
+    data = gh_json(
+        "api", "graphql", "-f", f"query={READY_QUERY}",
+        "-F", f"owner={owner}", "-F", f"name={name}", "-F", f"number={pr}",
+    )
+    return judge_readiness(data)
+
+
+def enqueue_pr(pr_id: str, head_sha: str) -> int | None:
+    """Submit to the merge queue (no jump), pinned to the judged head; the position."""
+    data = gh_json(
+        "api", "graphql", "-f", f"query={ENQUEUE_MUTATION}",
+        "-F", f"id={pr_id}", "-F", f"sha={head_sha}",
+    )
+    try:
+        entry = data["data"]["enqueuePullRequest"]["mergeQueueEntry"]  # type: ignore[index]
+    except (KeyError, TypeError):
+        return None
+    return entry.get("position") if isinstance(entry, dict) else None
+
+
+def maybe_enqueue(repo: str, pr: int, seen: MergeFollow) -> bool:
+    """Enqueue a ready, unqueued PR at most MAX_ENQUEUES times; True when submitted."""
+    if seen.enqueues >= MAX_ENQUEUES:
+        if seen.refused != "cap":
+            print(f"ENQUEUE-CAP  #{pr} dropped {seen.enqueues} times; not re-enqueueing")
+            seen.refused = "cap"
+        return False
+    ready = fetch_readiness(repo, pr)
+    if not ready.ready:
+        if ready.queued_position is None and ready.reason != seen.refused:
+            print(f"NOT-READY  #{pr} not enqueued: {ready.reason}")
+            seen.refused = ready.reason
+        return False
+    position = enqueue_pr(ready.pr_id, ready.head_sha)
+    if position is None:
+        print(f"ENQUEUE-FAILED  #{pr} enqueuePullRequest returned no entry")
+        return False
+    seen.enqueues += 1
+    seen.refused = None
+    again = " (re-enqueue after drop)" if seen.enqueues > 1 else ""
+    print(f"ENQUEUED-BY-WATCH  #{pr} position={position} head={ready.head_sha[:12]}{again}")
+    return True
+
+
+def _enqueue_step(repo: str, pr: int, q: QueueState, seen: MergeFollow) -> bool:
+    """With --enqueue-when-ready, submit an open, unqueued PR; True when it was."""
+    if not (ENQUEUE_WHEN_READY and q.state == "OPEN" and q.entry_state is None):
+        return False
+    if not maybe_enqueue(repo, pr, seen):
+        return False
+    seen.enqueued = True
+    seen.removal_candidate = None
+    return True
+
+
+def fetch_merged_at(repo: str, pr: int) -> str | None:
+    data = gh_json("pr", "view", str(pr), "--repo", repo, "--json", "mergedAt")
+    return data.get("mergedAt") if isinstance(data, dict) else None
+
+
 _UNTIL_MERGED_LABELS = {
     EXIT_GREEN: "MERGED",
     EXIT_PR_CLOSED: "PR-STATE CLOSED",
@@ -4146,7 +4306,8 @@ _UNTIL_MERGED_LABELS = {
 }
 
 
-def _poll_queue(repo: str, pr: int, seen: MergeFollow, log: WatchLog | None) -> tuple[int, str] | None:
+def _read_queue(repo: str, pr: int, seen: MergeFollow, log: WatchLog | None) -> QueueState | None:
+    """One queue read; None on an unreadable poll (exits after too many)."""
     q = fetch_queue_state(repo, pr)
     if q is None:
         seen.api_failures += 1
@@ -4157,6 +4318,13 @@ def _poll_queue(repo: str, pr: int, seen: MergeFollow, log: WatchLog | None) -> 
         return None
     seen.api_failures = 0
     seen.polls += 1
+    return q
+
+
+def _poll_queue(repo: str, pr: int, seen: MergeFollow, log: WatchLog | None) -> tuple[int, str] | None:
+    q = _read_queue(repo, pr, seen, log)
+    if q is None or _enqueue_step(repo, pr, q, seen):
+        return None
     verdict = _queue_verdict(q, seen)
     if verdict is None and EXPLICIT_MERGE_WAIT:
         seen.unmergeable_polls = seen.unmergeable_polls + 1 if q.entry_state == "UNMERGEABLE" else 0
@@ -4194,6 +4362,8 @@ def follow_merge(pr: int, repo: str | None, log: WatchLog | None) -> int:
         if verdict is not None:
             code, why = verdict
             print(f"{_UNTIL_MERGED_LABELS[code]}  #{pr} {why}")
+            if code == EXIT_GREEN and repo:
+                print(f"MERGED-AT  #{pr} {fetch_merged_at(repo, pr) or 'unknown'}")
             _finish_exit(code, why.split(":")[0], log)
         wait_interval = min(interval, max(0.0, deadline - started))
         _sleep_remaining_interval(started, wait_interval)
@@ -4291,6 +4461,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_false",
         help="stop at green on the PR's own checks; do not follow a merge queue or "
         "auto-merge to the merge itself (#2035)",
+    )
+    p.add_argument(
+        "--enqueue-when-ready",
+        action="store_true",
+        help="submit the PR to the merge queue (enqueuePullRequest, never jump) once it is "
+        "CLEAN, non-draft and every required check is green; re-enqueue a dropped entry at "
+        "most --max-enqueues times. Default off: the watch only observes",
+    )
+    p.add_argument(
+        "--max-enqueues", type=int, default=3,
+        help="cap on enqueuePullRequest calls per watch with --enqueue-when-ready (default 3)",
     )
     p.add_argument(
         "--no-checks-grace",
@@ -4428,7 +4609,7 @@ def _print_triggers(repo: str | None, base: str) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    global FOLLOW, MERGE_WAIT, EXPLICIT_MERGE_WAIT, QUIET
+    global FOLLOW, MERGE_WAIT, EXPLICIT_MERGE_WAIT, QUIET, ENQUEUE_WHEN_READY, MAX_ENQUEUES
     ns = parse_args(argv if argv is not None else sys.argv[1:])
     QUIET = ns.quiet
     if ns.triggers_for_base is not None:
@@ -4456,6 +4637,8 @@ def main(argv: list[str] | None = None) -> int:
         FOLLOW = (ns.interval, time.monotonic() + ns.timeout)
         MERGE_WAIT = ns.merge_wait
         EXPLICIT_MERGE_WAIT = ns.until == "merged"
+        ENQUEUE_WHEN_READY = ns.enqueue_when_ready
+        MAX_ENQUEUES = ns.max_enqueues
         if EXPLICIT_MERGE_WAIT:
             return follow_merge(pr_number, repo, log)
         code = watch(
