@@ -547,11 +547,24 @@ equivalent. Writing the marker file is still strongly preferred.\n\
 Do not write DONE prematurely — only after you are confident the work is \
 complete. Otherwise, continue working — you will be re-invoked.\n\
 \n\
-If the work lands through a pull request and the base branch uses a merge \
-queue, a PR accepted into the merge queue counts as complete: write DONE \
-with the PR URL as soon as the enqueue succeeds and stop. Do not wait for \
-the merge itself; the queue (or a chaperone) owns it from there, and the \
-loop moves on to the next item.\n"
+DONE terminates the entire loop, not just the current iteration. The original \
+task's explicit completion conditions take precedence over this generic \
+contract. Completing one item or one iteration is progress, not permission \
+to write DONE for a multi-item task.\n\
+\n\
+For example, if the task says to stop after 50 issues are fixed, continue \
+until all 50 issues satisfy the task's completion criteria. Persist cumulative progress \
+and evidence (issue identifiers and PR URLs/status) in the task's working \
+files, read that progress on each invocation, and verify the full target \
+before writing DONE. Do not count the same item twice. The iteration budget is a maximum \
+number of invocations, not proof that any number of issues is complete.\n\
+\n\
+A PR accepted into a merge queue completes an individual item only if the original task explicitly \
+uses enqueue as that item's completion criterion. Otherwise follow the \
+task's required verification or merge criterion. For a single-item task, \
+write DONE once that item's requested criterion is satisfied. For a \
+multi-item task, record the item's progress, finish the iteration without \
+DONE, and continue with the remaining items on the next invocation.\n"
     )
 }
 
@@ -967,7 +980,8 @@ mod tests {
         assert!(text.contains("DONE terminates the entire loop"), "{text}");
         assert!(text.contains("50 issues"), "{text}");
         assert!(text.contains("Persist cumulative progress"), "{text}");
-        assert!(!text.contains("write DONE\nwith the PR URL as soon as"), "{text}");
+        let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(!normalized.contains("write DONE with the PR URL as soon as"), "{text}");
     }
 
     #[test]

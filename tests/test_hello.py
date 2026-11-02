@@ -2036,7 +2036,7 @@ def test_loop_cumulative_completion_contract(backend: str) -> None:
     assert "DONE terminates the entire loop" in prompt
     assert "Persist cumulative progress" in prompt
     assert "only if the original task explicitly" in prompt
-    assert "write DONE\nwith the PR URL as soon as" not in prompt
+    assert "write DONE with the PR URL as soon as" not in " ".join(prompt.split())
 
 
 def test_dry_run_loop_no_done() -> None:
