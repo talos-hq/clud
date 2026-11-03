@@ -280,7 +280,11 @@ CLI surface and backend resolution:
 - `claude_temp_home_install.rs` - fallback for Claude Code's native installer
   when the home volume is too small or not writable (a live USB such as the
   Arch ISO): `backend_bootstrap.rs` reruns the installer once with `HOME` in
-  the RAM-backed temp dir and links the binary to `~/.local/bin/claude`.
+  the RAM-backed temp dir and links the binary to `~/.local/bin/claude`;
+  `discover` finds such an install when that link is missing.
+- `temp_home_logs.rs` - low-space mode: when Claude Code runs from a temp
+  install home, redirects clud's and Claude Code's log dirs there and purges
+  the oldest files, on write events only, once they pass 64 MiB.
 - `backend.rs` - concrete `Backend`, independent `ModelProvider` /
   `HarnessSelection` resolution, provider `RoutingMode`, process `LaunchMode`,
   PATH lookup, and backend-path resolution. See

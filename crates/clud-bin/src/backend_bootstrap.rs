@@ -385,6 +385,12 @@ pub trait BackendBootstrapHost {
     fn run_backend_installer(&mut self, spec: &BackendInstallSpec) -> Result<(), String>;
     fn native_backend_path(&self, spec: &BackendInstallSpec) -> Option<PathBuf>;
     fn verify_backend(&mut self, backend: Backend, path: &Path) -> Result<(), String>;
+    /// A binary left by clud's temp-home install fallback, consulted only
+    /// after `PATH` and the native location miss.
+    fn temp_install_path(&self, spec: &BackendInstallSpec) -> Option<PathBuf> {
+        let _ = spec;
+        None
+    }
 }
 
 pub struct ProductionBackendBootstrapHost;
@@ -408,6 +414,12 @@ impl BackendBootstrapHost for ProductionBackendBootstrapHost {
 
     fn verify_backend(&mut self, backend: Backend, path: &Path) -> Result<(), String> {
         verify_backend(backend, path)
+    }
+
+    fn temp_install_path(&self, spec: &BackendInstallSpec) -> Option<PathBuf> {
+        (spec.backend == Backend::Claude)
+            .then(crate::claude_temp_home_install::discover)
+            .flatten()
     }
 }
 
@@ -434,7 +446,9 @@ where
     if let Some(path) = host.find_backend(backend) {
         return Some(path);
     }
-    host.native_backend_path(spec).filter(|path| path.is_file())
+    host.native_backend_path(spec)
+        .filter(|path| path.is_file())
+        .or_else(|| host.temp_install_path(spec))
 }
 
 pub fn resolve_backend_path<R, W, H>(
@@ -1218,6 +1232,7 @@ mod tests {
         installer_creates: Option<PathBuf>,
         verified: Vec<(Backend, PathBuf)>,
         verify_result: Result<(), String>,
+        temp_install: Option<PathBuf>,
     }
 
     impl Default for MockHost {
@@ -1232,6 +1247,7 @@ mod tests {
                 installer_creates: None,
                 verified: Vec::new(),
                 verify_result: Ok(()),
+                temp_install: None,
             }
         }
     }
@@ -1265,6 +1281,48 @@ mod tests {
             self.verified.push((backend, path.to_path_buf()));
             self.verify_result.clone()
         }
+
+        fn temp_install_path(&self, _spec: &BackendInstallSpec) -> Option<PathBuf> {
+            self.temp_install.clone()
+        }
+    }
+
+    /// The temp-home fallback's binary is used, without a prompt, when
+    /// `PATH` and `~/.local/bin/claude` both miss.
+    #[test]
+    fn temp_install_is_used_when_path_and_native_location_miss() {
+        let temp = PathBuf::from("/tmp/clud-claude-home-x/.local/bin/claude");
+        let mut host = MockHost {
+            native_path: Some(PathBuf::from("/nonexistent/.local/bin/claude")),
+            temp_install: Some(temp.clone()),
+            ..Default::default()
+        };
+        let (path, err) = resolve_with(Backend::Claude, false, false, "", &mut host).expect("path");
+        assert_eq!(path, temp.to_string_lossy());
+        assert!(err.is_empty(), "no prompt: {err}");
+        assert!(host.installer_runs.is_empty());
+    }
+
+    /// After a reboot wipes tmpfs, the link dangles and no temp home is
+    /// left, so clud asks to install again.
+    #[test]
+    fn reboot_wiped_temp_install_prompts_to_install_again() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let link = home.path().join("claude");
+        if !crate::platform::host::WINDOWS {
+            crate::platform::alias_link::symlink(Path::new("/nonexistent/claude"), &link)
+                .expect("dangling link");
+        }
+        let mut host = MockHost {
+            native_path: Some(link),
+            installer_result: Err("declined in test".to_string()),
+            ..Default::default()
+        };
+        let err = resolve_with(Backend::Claude, false, true, "n\n", &mut host).unwrap_err();
+        assert!(matches!(
+            err,
+            BackendBootstrapError::BackendInstallDeclined { .. }
+        ));
     }
 
     fn resolve_with(

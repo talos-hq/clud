@@ -1951,7 +1951,12 @@ fn resolve_backend_executable(args: &args::Args, backend: backend::Backend) -> S
         &mut err,
         &mut bootstrap_host,
     ) {
-        Ok(path) => path,
+        Ok(path) => {
+            if !args.dry_run && backend == backend::Backend::Claude {
+                clud::temp_home_logs::activate_if_temp_install(std::path::Path::new(&path));
+            }
+            path
+        }
         Err(error) => {
             let _ = writeln!(err, "{error}");
             std::process::exit(error.exit_code());
