@@ -1297,6 +1297,12 @@ fn route_request(
         ("POST", "/v1/images/edits") => {
             route_images_edits(stream, connection, &mut parsed, conversation_key);
         }
+        // The Codex CLI's own base (`chatgpt_base_url`) exposes the same search
+        // door under `/backend-api/codex`; upstream registers both aliases
+        // (`internal/api/server_routes.go:90` and `:127`).
+        ("POST", "/v1/alpha/search" | "/backend-api/codex/alpha/search") => {
+            route_alpha_search(stream, connection, &mut parsed, conversation_key);
+        }
         _ => {
             if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
                 eprintln!(
@@ -1822,6 +1828,96 @@ fn images_failure(error: &UpstreamError) -> (u16, &'static str) {
 /// Answer a refused images turn in the OpenAI error envelope its client parses.
 fn refuse_images(stream: &mut TcpStream, status: u16, message: &str) {
     let envelope = crate::images_ingress::render_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
+/// `POST /v1/alpha/search` -- Codex's standalone web-search door.
+///
+/// Upstream capability: CLIProxyAPI forwards this body unchanged (minus the two
+/// prompt-cache fields) to `chatgpt.com/backend-api/codex/alpha/search` and
+/// relays the answer with its own status and content type
+/// (`codexAlphaSearch`, `internal/api/server_routes.go:360`; routes at `:90`
+/// and the `chatgpt_base_url` alias at `:127`). clud served no search door at
+/// all, so a current Codex client's standalone search fell through to 404.
+///
+/// This is deliberately a passthrough, not a translation: the payload is
+/// already in Codex search format and must not pass through a protocol
+/// translator. Only the Codex lane can run a search -- Claude, DeepSeek, Kimi
+/// and OpenRouter have no such endpoint -- so a launch without `--codex`
+/// refuses by name instead of pretending to answer.
+fn route_alpha_search(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    let Some(body) = read_request_body(stream, connection, parsed, "alpha_search_body") else {
+        return;
+    };
+    let codex_available = match &config.gateway_mode {
+        GatewayMode::Codex => true,
+        GatewayMode::Unified(unified) => unified.codex_available,
+    };
+    if !codex_available {
+        record_rejection(log, 501, "alpha_search_route_missing");
+        refuse_search(
+            stream,
+            501,
+            "POST /v1/alpha/search needs the Codex route; start the gateway with --codex",
+        );
+        return;
+    }
+    let prepared = crate::alpha_search_ingress::prepare_search(&body);
+    let client = match codex_upstream_client(config, log, conversation_key, codex_redactor(config))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            let (status, message) = search_failure(&error);
+            record_rejection(log, status, "alpha_search_credentials");
+            refuse_search(stream, status, message);
+            return;
+        }
+    };
+    match client.alpha_search(&prepared, connection.shutdown) {
+        // The upstream's own envelope and content type are the client
+        // contract, on success and on failure alike.
+        Ok(reply) => {
+            let content_type = reply.content_type.as_deref().unwrap_or("application/json");
+            let _ = write_response(stream, reply.status, content_type, &reply.body, false);
+        }
+        Err(UpstreamError::Cancelled) => {}
+        Err(error) => {
+            let (status, message) = search_failure(&error);
+            record_rejection(log, status, "alpha_search_upstream_failure");
+            refuse_search(stream, status, message);
+        }
+    }
+}
+
+/// How a search failure is answered. `UpstreamError` is shared with the images
+/// doors, so this maps the same classes to search wording instead of reusing
+/// messages that talk about an image the caller never asked for.
+fn search_failure(error: &UpstreamError) -> (u16, &'static str) {
+    match error {
+        UpstreamError::Credentials(_) => (
+            503,
+            "Codex credentials are unavailable; run `clud auth login codex`",
+        ),
+        UpstreamError::Timeout => (
+            504,
+            "the Codex upstream timed out before returning a search answer",
+        ),
+        _ => (
+            502,
+            "the Codex upstream failed before returning a search answer",
+        ),
+    }
+}
+
+/// Answer a refused search turn in the envelope the Codex search client parses.
+fn refuse_search(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::alpha_search_ingress::render_search_error(message);
     let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
