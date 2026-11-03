@@ -259,7 +259,7 @@ pub(super) fn hunt_ranges(command: &str) -> Vec<Range> {
 pub(super) fn detect(command: &str, cwd: &Path) -> Option<Hunt> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let mut ranges = Vec::new();
-    for range in hunt_ranges(command) {
+    for range in spike::ranges(command, cwd)? {
         let path = resolve(&range.path, cwd, home.as_deref())?;
         if !std::fs::metadata(&path).is_ok_and(|meta| meta.is_file() && meta.len() >= MIN_BYTES) {
             return None;
@@ -269,7 +269,7 @@ pub(super) fn detect(command: &str, cwd: &Path) -> Option<Hunt> {
             ..range
         });
     }
-    if ranges.len() < 2 {
+    if ranges.len() < 2 && !spike::has_extra_idiom(command) {
         return None;
     }
     let hunt = Hunt { ranges };
@@ -464,3 +464,15 @@ pub(super) fn deny_message(hunt: &Hunt, count: u32, limit: u32) -> String {
 #[cfg(test)]
 #[path = "block_bad_cmd_hunt_tests.rs"]
 mod tests;
+
+// Throwaway spike; deliberately limited literal command grammar.
+#[path = "block_bad_cmd_hunt_spike.rs"]
+mod spike;
+
+pub(super) fn spike_note(
+    event: &str,
+    raw: &Value,
+    payload: &super::HookPayloadView,
+) -> Option<String> {
+    spike::note(event, raw, payload)
+}

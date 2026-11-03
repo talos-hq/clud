@@ -1117,6 +1117,12 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         println!("{}", with_hook_notice(output, event, &payload));
         return 0;
     }
+    // Spike: use the existing post-output context channel; never deny a finished call.
+    if let Some(note) = block_bad_cmd_hunt::spike_note(event, raw_payload, &payload) {
+        let output = block_bad_cmd_hook_notice::merge(Value::Null, event, &note);
+        println!("{}", with_hook_notice(output, event, &payload));
+        return 0;
+    }
     if print_hook_notice(event, &payload) {
         append_log("allowed with project-hook failure notice");
         return 0;
