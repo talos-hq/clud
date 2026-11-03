@@ -839,12 +839,13 @@ fn resolve_launch(args: &mut args::Args) -> LaunchResolution {
     if let Err(error) = clud::metered_policy::enforce_resolved(
         &env_policy,
         launch_target.model_provider,
+        args.explicit_model_provider(),
         args.failover_allow_metered,
     ) {
         eprintln!("[clud] error: {error}");
         std::process::exit(2);
     }
-    announce_metered_route(&env_policy, launch_target);
+    announce_metered_route(&env_policy, launch_target, args.explicit_model_provider());
     if launch_target.model_provider == backend::ModelProvider::OpenRouter {
         if let Some(error) = preferences_error {
             eprintln!("[clud] cannot resolve saved OpenRouter privacy policy: {error}");
@@ -972,6 +973,7 @@ fn resolve_env_policy(args: &args::Args) -> clud::metered_policy::EnvPolicy {
 fn announce_metered_route(
     policy: &clud::metered_policy::EnvPolicy,
     launch_target: backend::ResolvedLaunchTarget,
+    explicit_cli: Option<backend::ModelProvider>,
 ) {
     let provider = launch_target.model_provider;
     if launch_target.routing_mode == backend::RoutingMode::Unified && !policy.consented.is_empty() {
@@ -987,6 +989,11 @@ fn announce_metered_route(
         return;
     }
     if !policy.allows(provider) {
+        if clud::metered_policy::explicitly_selected_metered(provider, explicit_cli) {
+            let warning = clud::metered_policy::explicit_metered_warning(provider);
+            eprintln!("{warning}");
+            launch_log::set_metered_warning(warning);
+        }
         return;
     }
     // Native Codex bills the ChatGPT login; only the Claude-harness bridge

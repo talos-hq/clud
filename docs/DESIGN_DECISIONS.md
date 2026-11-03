@@ -7504,3 +7504,25 @@ global authentication would change another tool's behavior and expose state
 across launches. The acceptance test uses the real OpenCode binary, a served
 mock provider, and a complete file-read tool cycle; see
 [OpenCode](architecture/opencode.md).
+
+## DD-199: naming a metered provider on the command line is consent
+
+**Context:** #2529 and #2533 made clud subscription-first: every route to a
+pay-per-token provider needed `CLUD_ALLOW_METERED=1` and a matching
+`CLUD_METERED_PROVIDER`. The motivation was to stop clud from quietly moving a
+user off their Claude or Codex subscription onto API billing. #2533 also
+gated `--openrouter`, `--deepseek`, `--kimi` and `--provider`, so a user who
+typed `clud --openrouter <key>` was refused.
+
+**Decision:** a metered provider the user names on the command line is
+consented: it launches with the loud warning and no environment overrides.
+`clud serve --openrouter` is the same. The two overrides remain required for
+every implicit route: a provider inferred from a qualified `--model`, a saved
+provider setting, the DeepSeek-only credential fallback, unified-gateway vault
+keys, `--failover-allow-metered`, and the Codex bridge's `OPENAI_API_KEY`
+fallback.
+
+**Why:** the harm being prevented is a surprise bill from a route the user did
+not choose. Typing the provider's flag is that choice; requiring two
+environment variables on top of it only broke deliberate use.
+
