@@ -590,6 +590,27 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: an image read is retained forever, so N views of one screenshot
+    // path cost N frames on every later request. Past half the limit the call
+    // gets an advisory note; past the limit one refusal, then the retry runs.
+    let mut image_note: Option<String> = None;
+    if event == PRE_TOOL_USE_EVENT {
+        match block_bad_cmd_imgview::outcome(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            block_bad_cmd_imgview::Outcome::Deny(reason) => {
+                append_log(&format!("IMAGE-VIEW-BLOCKED: {reason}"));
+                println!("{}", deny_json(&reason));
+                eprintln!("{reason}");
+                return 2;
+            }
+            block_bad_cmd_imgview::Outcome::Note(note) => image_note = Some(note),
+            block_bad_cmd_imgview::Outcome::Allow => {}
+        }
+    }
 
     // #1988/#2122: classify the call; an advisory note rides on the final
     // allow, and the one escalation deny is returned here.
@@ -1080,8 +1101,8 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
-    if let Some(note) = verify_note {
-        append_log("allowed with verify-ratio note");
+    if let Some(note) = merge_notes(verify_note, image_note) {
+        append_log("allowed with an advisory note");
         let output = block_bad_cmd_verify_ratio::context_json(&note);
         println!("{}", with_hook_notice(output, event, &payload));
         return 0;
@@ -2015,6 +2036,14 @@ pub fn decision_from_payload(
     match forbidden_reason(&payload.command, Some(&payload.cwd), bad_commands) {
         Some(reason) => Decision::Deny { reason },
         None => Decision::Allow,
+    }
+}
+
+/// Join the advisory notes that ride one PreToolUse allow (#1988, #2233).
+fn merge_notes(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+        (a, b) => a.or(b),
     }
 }
 
@@ -3956,6 +3985,9 @@ mod block_bad_cmd_repeat;
 mod block_bad_cmd_hop;
 #[path = "block_bad_cmd_reread.rs"]
 mod block_bad_cmd_reread;
+
+#[path = "block_bad_cmd_imgview.rs"]
+mod block_bad_cmd_imgview;
 
 #[path = "block_bad_cmd_verify_ratio.rs"]
 mod block_bad_cmd_verify_ratio;

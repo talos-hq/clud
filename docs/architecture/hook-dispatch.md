@@ -467,6 +467,36 @@ Evidence (24 h probe, 2026-10-31): 308 of 1,035 `Read` calls repeated a
 call already made in the same session, re-supplying 1,029,780 bytes, led by
 one 2,142-line file read 23 times.
 
+### Image-view budget (#2233)
+
+A screenshot is not retained like text: every frame an agent opens stays in the
+conversation for the rest of the session and is re-sent on every later request,
+so a UI loop that overwrites and re-opens one scratchpad screenshot pays for
+every frame it ever looked at, forever.
+
+Evidence (24 h probe, 2026-11-03): image `Read`s were 162 calls but **19.9% of
+all context exposure** (182 MB of the 916 MB re-sent) while every text `Read`
+together was 2.7%. One session opened the same `scratchpad/cur.png` 46 times —
+45 distinct frames, ~190 KB of base64 each.
+
+- **Counting:** views per `(session, image path)`, resolved the way the harness
+  resolves them (`~/` against `$HOME`, relative against the tool's cwd, so both
+  spellings share one count). Only `Read`/`read_file`/`readfile` on an existing
+  image file of at least 8 KiB (`png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`,
+  `tif`, `tiff`, `heic`). A shell `cat x.png` and text files are not counted.
+- **Past half the limit** the allow carries an `additionalContext` note with the
+  frame number, the per-frame payload and the cheaper capture — clip or scale
+  the capture, or crop the region that changed — and the read runs.
+- **Past the limit** the read is refused **once** per file per session, naming
+  the retained payload and the same cheaper capture; repeating the read runs it.
+  A `Read` has no command text to hang a per-call override on, and a permanent
+  wall would have no escape at all, so the refusal is a single decision point.
+- **Limit:** `N = 12` views per file. `CLUD_IMAGE_READ_LIMIT=<n>` overrides it
+  and `0` turns the guard off.
+- **State:** `<clud state dir>/image-view-guard/<hash>.json`, one file per
+  session, at most 16 paths per session, 2 days / 200 files retained; a path's
+  count expires after 60 minutes without a view. Fails open on every state error.
+
 ### Verification-to-edit ratio note (#1988)
 
 `block_bad_cmd_verify_ratio.rs` classifies each PreToolUse call as an edit
