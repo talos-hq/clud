@@ -20,6 +20,26 @@ pub struct TempHomeInstall {
     pub link: PathBuf,
 }
 
+/// Yellow warning printed when the fallback engages.
+pub fn engaged_warning(real_home: &Path, temp_home: &Path) -> String {
+    format!(
+        "\x1b[33m[clud] WARNING: Claude Code could not be installed in {} (out of space or not writable); \
+         falling back to a temporary install home at {}\x1b[0m",
+        real_home.display(),
+        temp_home.display()
+    )
+}
+
+/// Yellow warning printed after the fallback install succeeded.
+pub fn installed_warning(done: &TempHomeInstall) -> String {
+    format!(
+        "\x1b[33m[clud] WARNING: Claude Code is installed in temporary storage at {} (linked from {}); \
+         it uses RAM on a tmpfs and is lost on reboot\x1b[0m",
+        done.binary.display(),
+        done.link.display()
+    )
+}
+
 /// Create a private (0700, randomly named) home under the system temp dir.
 /// It is kept on purpose: the installed binary lives there.
 pub fn create_temp_home() -> Result<PathBuf, String> {
@@ -74,6 +94,29 @@ pub fn finish(temp_home: &Path, real_home: &Path) -> Result<TempHomeInstall, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fallback_warnings_are_yellow_and_name_the_paths() {
+        let engaged = engaged_warning(Path::new("/root"), Path::new("/tmp/h"));
+        let installed = installed_warning(&TempHomeInstall {
+            temp_home: PathBuf::from("/tmp/h"),
+            binary: PathBuf::from("/tmp/h/.local/bin/claude"),
+            link: PathBuf::from("/root/.local/bin/claude"),
+        });
+        for (warning, paths) in [
+            (&engaged, ["/root", "/tmp/h"]),
+            (
+                &installed,
+                ["/tmp/h/.local/bin/claude", "/root/.local/bin/claude"],
+            ),
+        ] {
+            assert!(warning.starts_with("\x1b[33m") && warning.ends_with("\x1b[0m"));
+            assert!(warning.contains("WARNING"));
+            for path in paths {
+                assert!(warning.contains(path), "{warning}");
+            }
+        }
+    }
 
     #[test]
     fn installer_env_replaces_only_home() {
