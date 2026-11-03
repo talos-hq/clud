@@ -769,35 +769,17 @@ pub fn run_plan_subprocess(
     crate::toast::launch::publish_demo_toast(&banner_sink);
     let mut cpu_banner = cpu_banner::BannerWatcher::spawn(cpu_banner_cfg, banner_sink);
 
-    let statusline = toast_cfg
-        .claude_statusline
-        .then(|| {
-            status_writer
-                .as_deref()
-                .and_then(crate::toast::launch::injection_for)
-        })
-        .flatten();
-    let (runtime, _) = match crate::foreground_runtime::ForegroundRuntime::start_with_statusline(
-        plan,
-        child_env_for_backend(plan.backend),
-        statusline.as_ref(),
-        status_writer.as_ref(),
-    ) {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            // #998: this is one of the failures clud names itself, and until
-            // now the launch record kept only the bare exit code. Same text
-            // the user just saw, so record and terminal agree.
-            crate::launch_log::record_failure_reason(format_args!(
-                "failed to start provider bridge: {error}"
-            ));
-            eprintln!("[clud] failed to start provider bridge: {error}");
-            if verbose {
-                verbose_log::log("[clud] provider bridge startup failed");
+    let runtime =
+        match runner_execution::start_subprocess_runtime(plan, toast_cfg, status_writer.as_ref()) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                crate::launch_log::record_failure_reason(format_args!(
+                    "failed to start provider bridge: {error}"
+                ));
+                eprintln!("[clud] failed to start provider bridge: {error}");
+                return 1;
             }
-            return 1;
-        }
-    };
+        };
     let mut last_exit = 0i32;
     let trace_enabled = stage_trace::stderr_enabled(verbose);
 

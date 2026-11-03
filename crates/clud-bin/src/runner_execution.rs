@@ -843,3 +843,26 @@ mod tests {
         }
     }
 }
+
+pub(super) fn start_subprocess_runtime(
+    plan: &command::LaunchPlan,
+    toast_cfg: crate::toast::ToastLaunchCfg,
+    writer: Option<&std::sync::Arc<crate::toast::statusline::StatusStateWriter>>,
+) -> Result<ForegroundRuntime, String> {
+    let injection = if toast_cfg.claude_statusline {
+        writer
+            .map(std::sync::Arc::as_ref)
+            .and_then(crate::toast::launch::injection_for)
+    } else {
+        None
+    };
+    ForegroundRuntime::start_with_statusline(
+        plan,
+        child_env_for_backend(plan.backend),
+        injection.as_ref(),
+        writer,
+    )
+    .map(|(runtime, _)| runtime)
+    .map_err(|error| error.to_string())
+}
+
