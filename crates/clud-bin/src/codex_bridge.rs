@@ -4380,19 +4380,24 @@ fn serve_messages(
 /// The key for a Claude Code side call, or `None` for a conversation turn.
 ///
 /// Claude Code's main and subagent turns send their tool list; its side calls
-/// (session titles, summaries) send `"tools": []`, under the main session
+/// (session titles, summaries) send `"tools": []` without thinking or context
+/// management controls, under the main session
 /// header and with no agent id. Such a call is keyed beneath the main conversation by a
 /// digest of its system prompt, so repeated side calls of one kind share a
 /// stable cache key without touching the main one.
 fn side_call_key(body: &[u8], main: &ConversationKey) -> Option<ConversationKey> {
     let request: serde_json::Value = serde_json::from_slice(body).ok()?;
     // Captured from Claude Code 2.1.316: the side call sends `"tools": []`,
-    // explicitly empty. A turn that omits `tools` stays a conversation turn.
+    // explicitly empty, without main-turn controls. `--tools ""` main turns
+    // still send thinking or context management and must keep canonical history.
     let explicitly_tool_less = request
         .get("tools")
         .and_then(serde_json::Value::as_array)
         .is_some_and(Vec::is_empty);
-    if !explicitly_tool_less {
+    if !explicitly_tool_less
+        || request.get("thinking").is_some()
+        || request.get("context_management").is_some()
+    {
         return None;
     }
     let system = request
@@ -11743,6 +11748,51 @@ Connection: close
             body["prompt_cache_key"].as_str().unwrap().to_string()
         };
         assert_ne!(key(&requests[0]), key(&requests[1]));
+    }
+
+    /// #2561: disabling tools must preserve canonical history and cache identity.
+    #[test]
+    fn tool_less_main_turns_reuse_main_history() {
+        for controls in [
+            serde_json::json!({"thinking": {"type": "adaptive"}}),
+            serde_json::json!({"context_management": {"edits": []}}),
+            serde_json::json!({
+                "thinking": {"type": "adaptive"},
+                "context_management": {"edits": []}
+            }),
+        ] {
+            let upstream = FakeResponses::start();
+            let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+            let session = [("X-Claude-Code-Session-Id", "tool-less-main")];
+            for content in ["FIRST-MAIN-TURN", "SECOND-MAIN-TURN"] {
+                let mut body = serde_json::json!({
+                    "model": "claude-x", "system": "main agent", "tools": [],
+                    "messages": [{"role": "user", "content": content}], "stream": false
+                });
+                body.as_object_mut()
+                    .unwrap()
+                    .extend(controls.as_object().unwrap().clone());
+                let response = request(
+                    bridge.socket_addr(),
+                    &authorized_with_headers(
+                        "POST",
+                        "/v1/messages",
+                        bridge.bearer_token(),
+                        &body.to_string(),
+                        &session,
+                    ),
+                );
+                assert_eq!(status(&response), 200, "{response}");
+            }
+            let requests = upstream.requests();
+            assert_eq!(requests.len(), 2);
+            let second: serde_json::Value =
+                serde_json::from_str(captured_body(&requests[1])).unwrap();
+            assert!(second["input"].to_string().contains("FIRST-MAIN-TURN"));
+            assert!(second["input"].to_string().contains("SECOND-MAIN-TURN"));
+            let main = ConversationKey::from_headers(Some("tool-less-main"), None);
+            assert_eq!(second["prompt_cache_key"], main.id);
+        }
     }
 
     /// #2554: a standalone client without a session header used to get a new
