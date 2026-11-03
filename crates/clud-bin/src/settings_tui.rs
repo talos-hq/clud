@@ -698,6 +698,8 @@ mod tests {
         harness.cycle();
         assert_eq!(harness, SettingValue::Harness(HarnessSelection::DeepSeek));
         harness.cycle();
+        assert_eq!(harness, SettingValue::Harness(HarnessSelection::OpenCode));
+        harness.cycle();
         assert_eq!(harness, SettingValue::Harness(HarnessSelection::Default));
     }
 

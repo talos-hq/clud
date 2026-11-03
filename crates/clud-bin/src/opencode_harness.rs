@@ -103,7 +103,55 @@ fn normalize_base(base: &str) -> Result<String, &'static str> {
     })
 }
 
-fn configure(existing: Option<&str>, wire: &str, base: &str, key: &str) -> Result<String, String> {
+/// Fill gaps in canonical served metadata for the native defaults this
+/// adapter selects. Sources and review date are recorded in opencode.md.
+pub(crate) fn context_window(wire: &str) -> Option<u32> {
+    crate::server_settings::effective_context_window(wire).or_else(|| {
+        match wire.strip_suffix("[1m]").unwrap_or(wire) {
+            "claude-sonnet-5-5" | "claude-opus-5-5" | "claude-haiku-5-5" | "claude-fable-5-1" => {
+                Some(1_000_000)
+            }
+            "deepseek-flash" | "deepseek-v4-flash" | "deepseek-v4-pro" | "kimi-k3" => {
+                Some(1_048_576)
+            }
+            _ => None,
+        }
+    })
+}
+
+fn configure_limits(model: &mut Value, context: Option<u32>) -> Result<(), String> {
+    let limits = object_entry(model, "limit")?;
+    if limits.get("context").is_none() {
+        limits["context"] = json!(context.ok_or("unknown OpenCode model: supply positive limit.context and limit.output in OPENCODE_CONFIG_CONTENT")?);
+    }
+    if limits.get("output").is_none() {
+        if context.is_none() {
+            return Err(
+                "unknown OpenCode model: supply positive limit.output in OPENCODE_CONFIG_CONTENT"
+                    .into(),
+            );
+        }
+        // This is a request budget below the reviewed native maxima, not a
+        // claim that the provider's maximum output is only 32k.
+        limits["output"] = json!(32_000);
+    }
+    let context = limits["context"].as_u64().filter(|value| *value > 0);
+    let output = limits["output"].as_u64().filter(|value| *value > 0);
+    if !matches!((context, output), (Some(context), Some(output)) if output < context) {
+        return Err(
+            "OpenCode model limits must be positive integers with output below context".into(),
+        );
+    }
+    Ok(())
+}
+
+fn configure(
+    existing: Option<&str>,
+    wire: &str,
+    base: &str,
+    key: &str,
+    context: Option<u32>,
+) -> Result<String, String> {
     let mut config: Value = existing
         .map_or_else(|| Ok(json!({})), serde_json::from_str)
         .map_err(|_| "OPENCODE_CONFIG_CONTENT must contain valid JSON".to_string())?;
@@ -114,7 +162,9 @@ fn configure(existing: Option<&str>, wire: &str, base: &str, key: &str) -> Resul
     let options = object_entry(provider, "options")?;
     options["baseURL"] = json!(base);
     options["apiKey"] = json!(key);
-    object_entry(object_entry(provider, "models")?, wire)?["name"] = json!(wire);
+    let model = object_entry(object_entry(provider, "models")?, wire)?;
+    model["name"] = json!(wire);
+    configure_limits(model, context)?;
     config["model"] = json!(format!("clud/{wire}"));
     config["small_model"] = json!(format!("clud/{wire}"));
     config["enabled_providers"] = json!(["clud"]);
@@ -159,6 +209,7 @@ pub fn prepare_child(plan: &LaunchPlan, env: &mut Vec<(String, String)>) -> Resu
         wire,
         base,
         &key,
+        route.context.max_tokens,
     )?;
     env.retain(|(name, _)| !name.eq_ignore_ascii_case("OPENCODE_CONFIG_CONTENT"));
     env.push(("OPENCODE_CONFIG_CONTENT".into(), config));
@@ -243,6 +294,7 @@ mod tests {
             "deepseek-chat",
             "http://127.0.0.1:1234/anthropic/",
             "client-canary",
+            Some(1_048_576),
         )
         .unwrap();
         let value: Value = serde_json::from_str(&config).unwrap();
@@ -258,20 +310,64 @@ mod tests {
             "client-canary"
         );
         assert!(value["provider"]["other"].is_object());
+        assert_eq!(
+            value["provider"]["clud"]["models"]["deepseek-chat"]["limit"]["context"],
+            1_048_576
+        );
+        assert_eq!(
+            value["provider"]["clud"]["models"]["deepseek-chat"]["limit"]["output"],
+            32_000
+        );
+    }
+
+    #[test]
+    fn unknown_models_require_limits_and_explicit_limits_are_preserved() {
+        assert!(configure(None, "unknown", "https://api.example/v1", "secret", None).is_err());
+        let existing = r#"{"provider":{"clud":{"models":{"unknown":{"limit":{"context":16000,"output":4096}}}}}}"#;
+        let configured = configure(
+            Some(existing),
+            "unknown",
+            "https://api.example/v1",
+            "secret",
+            None,
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&configured).unwrap();
+        assert_eq!(
+            value["provider"]["clud"]["models"]["unknown"]["limit"]["context"],
+            16000
+        );
+        assert_eq!(
+            value["provider"]["clud"]["models"]["unknown"]["limit"]["output"],
+            4096
+        );
+        for limits in [
+            json!({"context":0,"output":1}),
+            json!({"context":16000,"output":0}),
+        ] {
+            let mut model = json!({"limit": limits});
+            assert!(configure_limits(&mut model, Some(1_000_000)).is_err());
+        }
     }
 
     #[test]
     fn malformed_config_and_credential_bearing_urls_fail_without_echoing_secrets() {
         for existing in ["[]", "{", r#"{"provider":null}"#] {
-            assert!(
-                configure(Some(existing), "model", "https://api.example/v1", "secret").is_err()
-            );
+            assert!(configure(
+                Some(existing),
+                "model",
+                "https://api.example/v1",
+                "secret",
+                None
+            )
+            .is_err());
         }
         let error = configure(
             None,
             "model",
             "https://user:secret@api.example/v1",
             "secret",
+            None,
         )
         .unwrap_err();
         assert!(!error.contains("secret"));

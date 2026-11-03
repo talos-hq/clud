@@ -527,7 +527,10 @@ mod tests {
     #[test]
     fn discovery_is_stably_ordered() {
         let installed = discover_installed_with(|backend| backend != Backend::Codex);
-        assert_eq!(installed, vec![Backend::Claude, Backend::DeepSeek]);
+        assert_eq!(
+            installed,
+            vec![Backend::Claude, Backend::DeepSeek, Backend::OpenCode]
+        );
     }
 
     #[test]

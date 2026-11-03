@@ -203,6 +203,8 @@ def _client_command(
             },
         }
     )
+    if launcher == "clud-clean":
+        env.pop("OPENCODE_CONFIG_CONTENT")
     prompt = "Read the requested file using the read tool and report the result."
     if launcher == "opencode":
         return [executable, "run", "--pure", "--auto", "--format", "json", prompt]
@@ -252,6 +254,7 @@ def _assert_tool_cycle(result, requests: list, model: str) -> None:
         ("clud", "--claude", 1),
         ("clud", "--deepseek", 1),
         ("clud", "--deepseek", 2),
+        ("clud-clean", "--claude", 1),
     ],
 )
 def test_real_opencode_completes_a_served_tool_cycle(
@@ -263,6 +266,8 @@ def test_real_opencode_completes_a_served_tool_cycle(
     upstream, requests = opencode_mock
     env = _environment(tmp_path, upstream)
     model = "claude-test" if provider == "--claude" else "deepseek-flash[1m]"
+    if launcher == "clud-clean":
+        model = "claude-sonnet-5-5"
     with ExitStack() as stack:
         base = stack.enter_context(_gateway(clud_binary, env, provider))
         if hops == 2:

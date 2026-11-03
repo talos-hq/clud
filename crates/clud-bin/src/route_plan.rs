@@ -1084,7 +1084,12 @@ fn opencode_native_plan(
         },
         allowlist: Vec::new(),
         discovery: DiscoveryPolicy::Off,
-        context: None,
+        context: crate::opencode_harness::wire_model(provider, selection).map(|wire| {
+            ContextPolicy {
+                max_tokens: crate::opencode_harness::context_window(wire),
+                ..context_policy(Some(wire))
+            }
+        }),
     }
 }
 

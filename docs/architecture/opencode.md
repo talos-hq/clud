@@ -116,7 +116,7 @@ It verifies a streamed tool request, an actual OpenCode file read, the canary
 in the follow-up tool result, final response delivery, model identity and
 client-token isolation. The existing `test_serve_gateway.py` suite also passed
 all 10 cases in 91.73 seconds. These establish client/gateway compatibility;
-they do not establish that `--harness opencode` exists yet.
+the expanded run below verifies the clud harness launch path as well.
 
 The integration upstream override is all-or-nothing: Codex, Anthropic,
 DeepSeek and OpenRouter override URLs must all be present. The acceptance
@@ -145,3 +145,45 @@ rejected `--harness opencode`, and GREEN on the feature binary. The focused
 Rust OpenCode tests and `bash lint --static-only` also passed. The broader
 Rust library regression suite and remaining lint/hosted checks are tracked
 separately from this acceptance evidence.
+
+## Model limits and compaction
+
+OpenCode custom providers do not inherit Models.dev limits. The route therefore
+supplies a positive context window, preferring clud's canonical served model
+metadata. The adapter fills missing native-default metadata from reviewed
+[Claude](https://platform.claude.com/docs/en/models/overview),
+[DeepSeek](https://api-docs.deepseek.com/quick_start/pricing/), and
+[Kimi K3](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart) specifications
+(2026-11-02): current Claude API IDs use 1,000,000 tokens; the reviewed
+DeepSeek and Kimi defaults use 1,048,576. The adapter strips the context suffix
+only for this metadata lookup; API model ID conventions remain unchanged.
+
+The default output request budget is 32,000 tokens, below these native models'
+published maxima. This is a request budget, not a statement of their maximum
+output capacity. Positive explicit inline `provider.clud.models.<wire>.limit`
+settings remain authoritative. Uncataloged models without reviewed metadata
+must supply both positive `context` and `output` limits, with output smaller
+than context. Zero/invalid limits fail before spawn instead of silently
+turning off OpenCode's automatic compaction. The acceptance suite includes a
+fresh-config real-client case that supplies no pre-populated model limits.
+
+
+After the compaction review fix, the combined recording-harness, real-client,
+and served-gateway regression run passed **23 tests in 93.61 seconds**.
+`bash lint --host-only` passed formatting, Clippy, repository guards and host
+Dylint. The one-primary-reviewer pre-push review is clean after fixing the
+model-limit metadata and architecture-table findings. A full serial Rust
+library regression run uses an isolated `CLUD_DATA_DB`; its result is recorded
+with PR validation rather than inferred from these integration checks.
+
+
+The full Rust library regression suite passed serially with an isolated GC
+database (539.53 seconds including compilation/lock waits):
+
+```sh
+CLUD_DATA_DB=/path/to/isolated/data.redb \
+SOLDR_PORCELAIN=1 soldr cargo test -p clud --lib -- --test-threads=1
+```
+
+This avoids contending with the developer daemon's database. No daemon tests
+were skipped or weakened.

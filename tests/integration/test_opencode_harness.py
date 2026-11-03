@@ -65,7 +65,18 @@ def opencode_env(tmp_path: Path):
             "CLUD_INTEGRATION_TESTS": "1",
             "CLUD_TEST_SECRET_STORE_DIR": str(vault),
             "CLUD_TEST_CREDENTIAL_PROBE_URL": "http://127.0.0.1:9/v1/key",
-            "OPENCODE_CONFIG_CONTENT": json.dumps({"permission": {"bash": "deny"}}),
+            "OPENCODE_CONFIG_CONTENT": json.dumps(
+                {
+                    "permission": {"bash": "deny"},
+                    "provider": {
+                        "clud": {
+                            "models": {
+                                "deepseek-chat": {"limit": {"context": 200000, "output": 4096}}
+                            }
+                        }
+                    },
+                }
+            ),
         }
     )
     return env
@@ -97,6 +108,9 @@ def test_safe_resume_launch_preserves_user_permissions(clud_binary: Path, openco
     assert options["apiKey"] == "claude-canary-7251"
     assert options["baseURL"] == "http://127.0.0.1:1234/v1"
     assert options["apiKey"] not in result.stdout + result.stderr
+    models = record["config"]["provider"]["clud"]["models"]
+    assert models["claude-sonnet-5-5"]["limit"]["context"] == 1_000_000
+    assert models["claude-sonnet-5-5"]["limit"]["output"] == 32_000
 
 
 def test_deepseek_model_and_vault_key_reach_only_child_config(
