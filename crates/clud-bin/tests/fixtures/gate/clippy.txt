@@ -1,0 +1,4 @@
+# t0=2026-11-03
+Checking fixture
+ --> src/lib.rs:2:1
+error: unneeded `return` statement

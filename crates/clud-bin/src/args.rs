@@ -976,6 +976,15 @@ pub enum Command {
         #[arg(long)]
         model: Option<String>,
     },
+    /// Run detected lint/test tools and emit one compact JSON result.
+    Gate {
+        #[arg(value_enum)]
+        lane: crate::gate::Lane,
+        #[arg(long, default_value = ".")]
+        repo: std::path::PathBuf,
+        #[arg(long)]
+        no_fast_fail: bool,
+    },
     /// Serve Claude or Codex and optional Anthropic-compatible provider models
     /// to local API clients.
     Serve {
@@ -2071,6 +2080,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "ab",
     "remote",
     "connect",
+    "gate",
     "serve",
     "do-prompt",
     "grind-scripts",
@@ -2534,6 +2544,7 @@ const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--runs",
     "--model-map",
     "--shell",
+    "--repo",
     "--install-version",
     "--prompt",
     "--message",
@@ -2593,6 +2604,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
     let value_flags: &[&str] = SPLITTER_VALUE_FLAGS;
     let short_value_flags: &[&str] = SPLITTER_SHORT_VALUE_FLAGS;
     let bool_flags: &[&str] = &[
+        "--no-fast-fail",
         // `clud workflow --reuse` (#2471).
         "--reuse",
         "--zdr",
