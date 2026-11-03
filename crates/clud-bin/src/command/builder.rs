@@ -985,6 +985,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::InternalOpenAiChatTranslate { .. })
         | Some(Command::InternalOpenAiResponsesTranslate)
         | Some(Command::InternalKimiDeviceLogin { .. })
+        | Some(Command::InternalMetaDeviceLogin { .. })
         | Some(Command::InternalXaiDeviceLogin { .. })
         | Some(Command::InternalDaemon { .. })
         | Some(Command::Statusline { .. })
