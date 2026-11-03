@@ -125,7 +125,18 @@ similar). The default paths are `<git-root>/.clud/loop/DONE` and
 BLOCKED path is derived via `blocked_path_from_done` (`DONE.md` →
 `BLOCKED.md`).
 
-A PR accepted into a merge queue counts as complete: the contract tells the agent to write DONE with the PR URL as soon as the enqueue succeeds rather than waiting for the merge, so the loop moves on to the next item (#2471).
+`DONE` terminates the entire loop; it never means just “this iteration is done”.
+The original task's explicit completion conditions govern when to write it.
+Queue acceptance satisfies an individual item's criterion only when the task
+explicitly says so. A multi-item task records cumulative progress and evidence
+in its working files, then ends the iteration without DONE so the next
+invocation continues. For “stop after 50 issues”, all 50 distinct issues must
+meet the requested criterion before DONE. The iteration count is a maximum
+invocation budget, not an issue counter or proof of completion (#2576).
+
+The runner trusts the agent's marker; it does not infer numerical targets or
+verify GitHub outcomes from arbitrary task prose. The prompt contract and its
+launch-plan regressions enforce this distinction at the instruction boundary.
 
 The contract also documents a token fallback for agents that cannot
 write files: a line that starts with `<<<CLUD_LOOP_DONE:` and ends with
