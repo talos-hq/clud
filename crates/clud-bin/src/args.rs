@@ -1869,6 +1869,7 @@ impl Args {
     pub fn parse_from_raw(raw: Vec<String>) -> Self {
         let (normalized, continue_index) = extract_continue_index(&raw);
         let normalized = normalize_bare_resume_before_subcommand(&normalized);
+        let normalized = split_unicode_space_glued_flags(&normalized);
         let normalized = normalize_known_option_dashes(&normalized);
         let normalized = match split_inline_key_assignments(&normalized) {
             Ok(normalized) => normalized,
@@ -2048,6 +2049,34 @@ fn normalize_bare_resume_before_subcommand(raw: &[String]) -> Vec<String> {
 /// is its value rather than a flag or subcommand.
 fn takes_next_value(arg: &str) -> bool {
     SPLITTER_VALUE_FLAGS.contains(&arg) || SPLITTER_SHORT_VALUE_FLAGS.contains(&arg)
+}
+
+/// A command copied from a chat or web page often carries non-breaking
+/// spaces. The shell does not split on them, so `--model<NBSP>x` reaches clud
+/// as one token and was rejected as an unknown flag. Before `--`, a flag token
+/// containing non-ASCII whitespace is split as if the spaces were real.
+fn split_unicode_space_glued_flags(raw: &[String]) -> Vec<String> {
+    let mut normalized = Vec::with_capacity(raw.len());
+    let mut in_clud_flags = true;
+    for (index, arg) in raw.iter().enumerate() {
+        if index > 0 && arg == "--" {
+            in_clud_flags = false;
+        }
+        let glued = in_clud_flags
+            && index > 0
+            && arg.starts_with('-')
+            && arg.chars().any(|c| c.is_whitespace() && !c.is_ascii());
+        if glued {
+            normalized.extend(
+                arg.split(char::is_whitespace)
+                    .filter(|part| !part.is_empty())
+                    .map(str::to_string),
+            );
+        } else {
+            normalized.push(arg.clone());
+        }
+    }
+    normalized
 }
 
 /// Provider flags that accept an inline API key.
