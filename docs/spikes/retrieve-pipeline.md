@@ -187,3 +187,176 @@ are added. The working tree contains no new runtime patch to test.
   Full artifact: `/home/niteris/.clud/tmp/tool-output/local-test-private/local-test-0tfGOd.log`.
 - `bash lint --host-only`: exit 0; formatting, Ruff, repository guards, host Clippy and Dylint completed. Existing dependency future-incompatibility warning for nix 0.28.0.
 - `git diff --cached --check`: passed before commit.
+
+
+## Round 3 — matched-scope ablation
+
+2026-11-03. Starting snapshot `6b9847a4` on `spike/retrieve-pipeline`.
+Subscription-only, one Codex model/session, deterministic local tools, no API,
+embeddings, LLM reranking, or agents. Retrieval only reads repository content;
+only the unbundled spike prototype, benchmark artifacts and this report change.
+
+Hypothesis: path/layout scoping plus definition-first ranking and a 1,536-byte
+output cap will achieve at least 9/10 exact-anchor recall@5 while reducing calls.
+At <=6/10 the pipeline would be rejected outright. **Observed 7/10: target not
+met, between the stated success and outright-rejection thresholds. Do not ship.**
+
+### Held-out set and method
+
+`code/retrieve_bench_heldout.json` freezes ten NEW questions and twelve source
+anchors (two two-anchor traces), with exact lines, text and
+SHA-256 hashes. None reuses a Round 1 ground truth. Anchors were inspected and
+saved before ranking edits. Categories include two documentation sections,
+`completion-trace` across loop_check/loop_spec, and `escape-trace` across
+bracketed_paste/escape_gate. A trace passes only if BOTH gold anchors appear in
+the first five emitted ranges. The config-conflict anchor is the actual
+validation branch, rather than the parse signature; marker-priority requires
+the DONE branch, rather than a read_markers_at declaration/call.
+
+Bare lexical first-five matching misses those last two exact anchors (and the
+escape trace); source windows recover the config and marker answers. These are
+lexical/context traps, not proof that a skilled rg user cannot answer them.
+`origin` is a straightforward default-variant lookup, not a lexical failure.
+
+Reproduce: `python code/retrieve_bench_heldout.py`. It verifies gold hashes and
+records commands, outputs, ranges, bytes, latency and repairs in the JSON.
+Both arms get the identical explicit file list. A uses the pre-registered
+lexical pattern and rg --sort path, then one batched source read with -5/+25
+windows around its first five hits. E2 receives the natural query plus repeated
+`--scope` arguments. A remains researcher-scripted, not an observed unaided
+model; it also receives a hand-selected search expression. This controls file
+scope, not query formulation. Total rg stdout counts toward A bytes, including
+hits after the five chosen for reading; sed represents read_file. Batched
+shell reads count as one model-facing call. Internal E2 rg passes are not
+model-facing calls. Follow-ups are separate, executed oracle-assisted source
+reads, one batched repair per failed task; these are optimistic costs.
+
+An exploratory A implementation ORed all query terms (135,593 bytes, 1/10),
+which is a weak baseline. The reported A uses the patterns already frozen in
+the task specification. A preliminary patterned run lacked stable multi-file
+ordering; the final run adds --sort path. No E2 ranking weights or gold anchors
+were changed in response to those scores. The final table is one warm run, not
+a latency distribution; both arms ran while local validation was active.
+
+Explicit matched hints are an optimistic scoping ablation, not evidence of
+end-to-end automatic scope discovery. Automatic inference is only smoke-tested.
+
+### Prototype changes
+
+Reuse the existing search/rank/render implementation: explicit --scope restricts
+all passes; without it, exact query-to-file-stem matches narrow the search roots,
+with broad fallback. Cache lexical definitions once per file. Definition matches
+rank above doc comments, then calls, then incidental matches; lexical term,
+heading and path weights break ties. Python comments no longer count as Markdown
+headings. Match-centered small ranges replace potentially huge function windows.
+
+Default output cap is 1,536 UTF-8 bytes, including provenance and footer. The
+renderer admits at most five ranked items, shortening source prefixes to fit,
+and reports omitted candidate counts plus omitted_lines when shortening an
+item. Every emitted item retains path/range, enclosing symbol, scoring reasons
+and line numbers. Continuations keep the original fingerprint/cursor policy.
+A shortened item advances the cursor: its omitted tail requires an explicit
+source read, not merely the next cursor. Candidate search work itself remains
+unbounded by the model-facing cap. These are lexical boundaries, not AST spans.
+
+### Per-task results
+
+Initial retrieval, A / E2. Recall is binary all-anchor coverage within five
+ranges; follow-ups are separately measured repairs.
+
+| Task | Bytes A / E2 | Calls A / E2 | Recall A / E2 | Follow-ups A / E2 | Seconds A / E2 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| classify | 4,683 / 1,372 | 2 / 1 | 1 / 1 | 0 / 0 | 0.0257 / 0.1609 |
+| short-form | 1,996 / 1,351 | 2 / 1 | 1 / 1 | 0 / 0 | 0.0191 / 0.1581 |
+| marker-priority | 2,501 / 1,336 | 2 / 1 | 1 / 1 | 0 / 0 | 0.0208 / 0.1989 |
+| config-conflict | 3,317 / 1,365 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0181 / 0.1951 |
+| config-overlay | 1,261 / 1,278 | 2 / 1 | 1 / 1 | 0 / 0 | 0.0158 / 0.1524 |
+| origin | 2,288 / 1,283 | 2 / 1 | 1 / 1 | 0 / 0 | 0.0151 / 0.1704 |
+| completion-trace | 4,473 / 1,434 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0373 / 0.2073 |
+| escape-trace | 6,280 / 1,422 | 2 / 1 | 0 / 0 | 1 / 1 | 0.0193 / 0.2040 |
+| ci-tiers | 1,986 / 1,339 | 2 / 1 | 1 / 1 | 0 / 0 | 0.0156 / 0.1503 |
+| ci-queue | 2,050 / 1,378 | 2 / 1 | 1 / 1 | 0 / 0 | 0.0127 / 0.1315 |
+
+Aggregate initial retrieval: **30,835 / 13,558 bytes**, **20 / 10 calls**,
+**9/10 / 7/10 recall@5**, **1 / 3 follow-ups**, **0.1997 / 1.7291 seconds**.
+E2 reduces bytes by 56.0% and calls by 50%, but loses two task hits against A
+and is 8.7x slower. Every E2 task is below 1,536 bytes (largest 1,434).
+The smaller cap is enforced; this does not establish optimal evidence packing.
+Oracle repairs add A/E2 555/1,560 bytes and 0.0152/0.0430 seconds. Including
+repairs, totals are 31,390/15,118 bytes and 21/13 calls (coverage repaired to
+10/10 for both). That does not change first-call recall.
+
+### Failure analysis and decision
+
+- `config-conflict`: parse/type declarations and module comments outrank the
+  actual done/no_done condition at line 86. Its candidate exists, but is omitted.
+  The parse signature alone does not answer the validation question.
+- `completion-trace`: the callee definition is returned, but unrelated marker
+  definitions displace the caller edge at loop_check:34. Returning the caller's
+  signature at line 24 does not count as returning its call at line 34.
+- `escape-trace`: the gate struct, normalizer struct, push signature and a test
+  definition outrank the self.gate.push call at bracketed_paste:129. A path-only
+  test penalty fails for inline Rust tests. A also misses this full trace.
+
+All three E2 gold locations exist in searched files and in the candidate pool;
+this is ranking/packing loss, not missing files. Absolute definition precedence
+helps symbol lookups but harms conditions and relationships. Tiny windows and
+prefix shortening amplify that effect. Seven successes do not justify adoption,
+and this small, deliberately scoped sample cannot establish general recall.
+
+**Decision: retain research artifacts only; revert adoption / do not ship.**
+There were no production-code edits to revert. Keep this local spike branch;
+no push, merge, main update, tag, new workflow or registry integration.
+
+**ONE next experiment:** freeze the same scopes, candidate pool and 1,536-byte
+cap, then ablate hit-centered evidence selection against absolute
+definition-first selection: prioritize exact query-identifier occurrences and
+retain the matching condition/call line instead of spending the pack on generic
+declarations. Measure all-anchor trace recall and repair bytes on another frozen
+held-out set. This isolates evidence selection without adding retrieval systems.
+
+### Validation after changes
+
+- `ruff check code/retrieve.py code/retrieve_bench_heldout.py`: passed.
+- Gold hashes checked by the runner; all outputs capped. Additional smoke checks:
+  40 budgets across ten tasks (256/512/1024/1536 bytes), ten continuations,
+  stale-handle rejection, Unicode oversized lines, and exact-stem scope inference:
+  PASS. No cap or continuation tests change runtime code.
+- `clud tool run diagnostics/test_report.py -- bash test --host`: exit 1.
+  Failure-focused tail (full artifact retained at
+  `/home/niteris/.clud/tmp/tool-output/local-test-private/local-test-v4LHyx.log`):
+
+```text
+failures:
+    daemon::server::tests::shutdown_and_signal_flag_finish_within_the_restart_timeout
+    process_scan::tests::a_repeated_ask_about_known_identities_is_served_from_cache
+    process_scan::tests::scan_is_callable_and_excludes_an_undeclared_self
+    voice::mode::tests::voice_config_can_enable_from_model_path_without_flag
+
+test result: FAILED. 5161 passed; 4 failed; 12 ignored; 0 measured; 16 filtered out; finished in 55.70s
+error: test failed, to rerun pass `-p clud --lib`
+```
+
+The daemon test logs a GC database lock and startup timeout; process_scan asserts
+that this process is not a declared daemon (the same assumptions failed in the
+previous round); voice asserts config.enabled. No production changes were made,
+and these diagnostics do not prove the cause of the voice failure. Python tests
+were not reached. The repository quick lane is **not green**. No exclusions or
+runtime patches were added to hide failures.
+
+- The lint report wrapper could not produce a complete safe report. The bounded
+  fallback reran `bash lint --host-only`: **exit 0**. Ruff and repository guards
+  passed; soldr reused passing fmt, Clippy and Dylint verdicts. Full log:
+  `/tmp/retrieve-round3-lint.log`. Final tail:
+
+```text
+info: component llvm-tools is up to date
+soldr: dylint ready on channel nightly-2026-08-15-x86_64-unknown-linux-gnu
+soldr: dylint skipped: inputs match a passing run
+```
+
+- Miss diagnostics: config condition rank 11; completion caller rank 26 (callee
+  rank 1); escape caller rank 21 (push rank 3). These ranks were inspected after
+  freezing results and did not drive another weight adjustment.
+- `git diff --check`: passed. Only spike artifacts changed from the starting
+  snapshot; no production code needed reverting.

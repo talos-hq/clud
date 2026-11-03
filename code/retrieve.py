@@ -53,7 +53,15 @@ def terms(query):
     return sorted(set(result) - STOP - {""})
 
 
-def search(query):
+def infer_scopes(files, words):
+    """Prefer exact layout stems; broad fallback preserves discovery."""
+    exact = [p for p in files if Path(p).stem.lower() in words]
+    if exact:
+        return sorted(exact)[:80]
+    return ["crates", "src", "docs", "ci"]
+
+
+def search(query, scopes=()):
     words = terms(query)
     files = run(["rg", "--files", "-g", "!code/**", "-g", "!docs/spikes/**"]).splitlines()
     hints = [p for p in files if any(w in Path(p).name.lower() for w in words if len(w) > 3)]
@@ -64,6 +72,7 @@ def search(query):
         "rg",
         "-n",
         "--no-heading",
+        "--with-filename",
         "-i",
         "-m",
         "40",
@@ -78,14 +87,15 @@ def search(query):
         "-g",
         "!docs/spikes/**",
     ]
-    passes = [[*common, "-e", "|".join(patterns), "crates", "src", "docs", "ci"]]
-    if hints:
+    roots = list(scopes) or infer_scopes(files, words)
+    passes = [[*common, "-e", "|".join(patterns), *roots]]
+    if hints and not scopes and len(roots) == 4 and roots[0] == "crates":
         passes.append([*common, "-e", "|".join(patterns), *hints[:80]])
-    passes.append([*common, "-F", "-e", query, "crates", "src", "docs", "ci"])
+    passes.append([*common, "-F", "-e", query, *roots])
     identifiers = re.findall(r"[A-Za-z_][A-Za-z_0-9]*", query)
     exact = "|".join(r"\b" + re.escape(x) + r"\b" for x in identifiers if x.lower() not in STOP)
     if exact:
-        passes.append([*common, "-e", exact, "crates", "src", "docs", "ci"])
+        passes.append([*common, "-e", exact, *roots])
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         outputs = list(pool.map(run, passes))
     hits = {}
@@ -103,9 +113,14 @@ def rank(hits, words):
     cache = {}
     for (path, line), text in hits.items():
         if path not in cache:
-            cache[path] = Path(path).read_text(errors="replace").splitlines()
-        lines = cache[path]
-        definitions = [(i + 1, DEF.match(s)) for i, s in enumerate(lines) if DEF.match(s)]
+            lines = Path(path).read_text(errors="replace").splitlines()
+            definitions = [
+                (i + 1, DEF.match(s))
+                for i, s in enumerate(lines)
+                if DEF.match(s) and (not s.lstrip().startswith("#") or path.endswith(".md"))
+            ]
+            cache[path] = lines, definitions
+        lines, definitions = cache[path]
         previous = [(n, m) for n, m in definitions if n <= line]
         start, match = previous[-1] if previous else (line, None)
         following = [n for n, _ in definitions if n > line]
@@ -118,12 +133,16 @@ def rank(hits, words):
         path_score = sum(w in path.lower() for w in words)
         heading = sum(w in symbol.lower() for w in words)
         definition = bool(DEF.match(text))
-        score = coverage * 4 + min(path_score, 4) * 2 + heading * 3 + definition * 7
+        doc_comment = text.lstrip().startswith(("///", "//!"))
+        call_site = bool(re.search(r"\w+\s*\(", text))
+        category = 3 if definition else 2 if doc_comment else 1 if call_site else 0
+        score = category * 100 + coverage * 4 + min(path_score, 4) * 2 + heading * 3
         score -= int("test" in path) * 5
         reason = (
             f"terms={coverage};path={path_score};heading={heading};"
-            f"definition={int(definition)};distance={line - start}"
+            f"kind={category};distance={line - start}"
         )
+        start, end = max(start, line - 1), min(end, line + 2)
         candidates.append(
             dict(
                 path=path,
@@ -151,7 +170,7 @@ def rank(hits, words):
         )
         if overlap:
             # Preserve rank; merge bounded windows, drop redundant wider windows.
-            if max(overlap["end"], item["end"]) - min(overlap["start"], item["start"]) <= 45:
+            if max(overlap["end"], item["end"]) - min(overlap["start"], item["start"]) <= 5:
                 overlap["start"] = min(overlap["start"], item["start"])
                 overlap["end"] = max(overlap["end"], item["end"])
         else:
@@ -188,13 +207,22 @@ def render(items, budget, handle):
             f"{n}| {item['lines'][n - 1]}\n" for n in range(item["start"], item["end"] + 1)
         )
         block = header + body
-        if len((output + block).encode()) > budget - 160:
+        while len((output + block).encode()) > budget - 160 and body:
+            body = "\n".join(body.split("\n")[:-2]) + "\n" if "\n" in body.rstrip("\n") else ""
+            shown = len(body.splitlines())
+            header = (
+                f"@ {item['path']}:{item['start']}-{item['start'] + shown - 1} "
+                f"[{item['symbol']}] {item['reason']};"
+                f"omitted_lines={item['end'] - item['start'] + 1 - shown}\n"
+            )
+            block = header + body
+        if not body or len((output + block).encode()) > budget - 160:
             break
         output += block
         index += 1
     footer = (
         f"TRUNCATED={index < len(items)} emitted={index - offset} "
-        f"remaining={len(items) - index} continue={fingerprint}:{index}\n"
+        f"omitted={len(items) - index} continue={fingerprint}:{index}\n"
     )
     if index == offset and index < len(items):
         footer += "Next item exceeds budget; retry with larger --max-bytes.\n"
@@ -204,12 +232,13 @@ def render(items, budget, handle):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("query")
-    parser.add_argument("--max-bytes", type=int, default=4096)
+    parser.add_argument("--max-bytes", type=int, default=1536)
+    parser.add_argument("--scope", action="append", default=[])
     parser.add_argument("--continue", dest="handle")
     args = parser.parse_args()
     if args.max_bytes < 256:
         parser.error("--max-bytes must be at least 256")
-    print(render(search(args.query), args.max_bytes, args.handle), end="")
+    print(render(search(args.query, args.scope), args.max_bytes, args.handle), end="")
 
 
 if __name__ == "__main__":

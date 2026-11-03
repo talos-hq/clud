@@ -1,0 +1,743 @@
+{
+  "schema": 2,
+  "source_commit": "6b9847a48ed337cf9feeb331c247b81a5f70d3ce",
+  "method": "Frozen new anchors before ranking edits; matched explicit scopes. A uses preselected lexical patterns and first-five rg hits expanded -5/+25, E2 uses the natural query. All-anchor binary recall for traces. A uses rg --sort path. Warm single-run timings; no ranking tuning after results.",
+  "tasks": [
+    {
+      "id": "classify",
+      "query": "loop_spec classify GitHub URL before file literal",
+      "scopes": [
+        "crates/clud-bin/src/loop_spec.rs"
+      ],
+      "pattern": "classify",
+      "kind": "implementation",
+      "ground_truth": [
+        {
+          "path": "crates/clud-bin/src/loop_spec.rs",
+          "line": 80,
+          "anchor": "pub fn classify(input: &str) -> TaskSpec {",
+          "sha256": "a1c469933b44a37275950e38d18436fecfa8a236523b9e42322b6514f8720ae5"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e classify crates/clud-bin/src/loop_spec.rs",
+          "sed -n 1,29p crates/clud-bin/src/loop_spec.rs; sed -n 70,105p crates/clud-bin/src/loop_spec.rs; sed -n 658,689p crates/clud-bin/src/loop_spec.rs"
+        ],
+        "bytes": 4683,
+        "calls": 2,
+        "seconds": 0.025692757044453174,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            1,
+            29
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            70,
+            105
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            658,
+            689
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "crates/clud-bin/src/loop_spec.rs:4://! - Classify the positional argument (GH URL, short-form `#42`, local file,\ncrates/clud-bin/src/loop_spec.rs:75:/// Classify a positional task argument. Input detection order:\ncrates/clud-bin/src/loop_spec.rs:80:pub fn classify(input: &str) -> TaskSpec {\ncrates/clud-bin/src/loop_spec.rs:663:    fn classify_issue_url() {\ncrates/clud-bin/src/loop_spec.rs:664:        match classify(\"https://github.com/acme/widgets/issues/42\") {\ncrates/clud-bin/src/loop_spec.rs:681:    fn classify_pr_url_trailing_slash() {\ncrates/clud-bin/src/loop_spec.rs:682:        match classify(\"https://github.com/acme/widgets/pull/7/\") {\ncrates/clud-bin/src/loop_spec.rs:692:    fn classify_short_form() {\ncrates/clud-bin/src/loop_spec.rs:693:        assert_eq!(classify(\"#42\"), TaskSpec::ShortForm(42));\ncrates/clud-bin/src/loop_spec.rs:694:        assert_eq!(classify(\"1\"), TaskSpec::ShortForm(1));\ncrates/clud-bin/src/loop_spec.rs:698:    fn classify_literal() {\ncrates/clud-bin/src/loop_spec.rs:699:        match classify(\"do the task\") {\ncrates/clud-bin/src/loop_spec.rs:706:    fn classify_file() {\ncrates/clud-bin/src/loop_spec.rs:710:        match classify(&path_str) {\ncrates/clud-bin/src/loop_spec.rs:717:    fn classify_rejects_wrong_host() {\ncrates/clud-bin/src/loop_spec.rs:718:        match classify(\"https://gitlab.com/acme/widgets/issues/1\") {\n//! Task-spec resolution and done-signal plumbing for `clud loop`.\n//!\n//! Responsibilities:\n//! - Classify the positional argument (GH URL, short-form `#42`, local file,\n//!   literal prompt).\n//! - Fetch a GH issue/PR body via `gh` (with `curl` fallback) and cache it\n//!   under `<git-root>/.clud/loop/`.\n//! - Locate the marker directory and detect DONE/BLOCKED terminal files.\n//!\n//! The actual iteration-control loop lives in `main.rs`; this module is\n//! side-effectful only at loop-start (fetching/caching) and loop-iter-end\n//! (marker polling).\n\nuse std::path::{Path, PathBuf};\nuse std::time::Duration;\n\nuse running_process::{NativeProcess, ProcessConfig, ReadStatus, StderrMode, StdinMode};\n\nuse crate::subprocess;\nuse crate::win_creation_flags::invisible_helper_creationflags;\n\n/// Display string for the marker directory (forward slashes for the\n/// user-facing prompt). Always join the segments via `Path::join` when\n/// constructing on-disk paths so the separators stay platform-native \u2014\n/// otherwise mixed separators (`.clud/loop\\DONE` on Windows) leak into\n/// the prompt text and confuse the agent.\npub const LOOP_DIR: &str = \".clud/loop\";\nconst LOOP_DIR_PARENT: &str = \".clud\";\nconst LOOP_DIR_LEAF: &str = \"loop\";\n            GhKind::Pr => \"pull\",\n        }\n    }\n}\n\n/// Classify a positional task argument. Input detection order:\n///   1. GH issue/PR URL\n///   2. Short-form `#42` or `42`\n///   3. Local file path\n///   4. Literal prompt\npub fn classify(input: &str) -> TaskSpec {\n    if let Some(parsed) = parse_gh_url(input) {\n        return parsed;\n    }\n    if let Some(n) = parse_short_form(input) {\n        return TaskSpec::ShortForm(n);\n    }\n    let path = Path::new(input);\n    if path.is_file() {\n        return TaskSpec::File(path.to_path_buf());\n    }\n    TaskSpec::Literal(input.to_string())\n}\n\nfn parse_gh_url(input: &str) -> Option<TaskSpec> {\n    // Keep dependency count minimal \u2014 manual parse instead of pulling regex.\n    let s = input.strip_suffix('/').unwrap_or(input);\n    let rest = s\n        .strip_prefix(\"https://github.com/\")\n        .or_else(|| s.strip_prefix(\"http://github.com/\"))?;\n    let mut parts = rest.splitn(4, '/');\n    let owner = parts.next()?.to_string();\n    let repo = parts.next()?.to_string();\n    let kind_seg = parts.next()?;\n    let number_seg = parts.next()?;\n    if owner.is_empty() || repo.is_empty() {\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn classify_issue_url() {\n        match classify(\"https://github.com/acme/widgets/issues/42\") {\n            TaskSpec::GhIssue {\n                owner,\n                repo,\n                kind,\n                number,\n            } => {\n                assert_eq!(owner, \"acme\");\n                assert_eq!(repo, \"widgets\");\n                assert_eq!(kind, GhKind::Issue);\n                assert_eq!(number, 42);\n            }\n            other => panic!(\"expected GhIssue, got {other:?}\"),\n        }\n    }\n\n    #[test]\n    fn classify_pr_url_trailing_slash() {\n        match classify(\"https://github.com/acme/widgets/pull/7/\") {\n            TaskSpec::GhIssue { kind, number, .. } => {\n                assert_eq!(kind, GhKind::Pr);\n                assert_eq!(number, 7);\n            }\n            other => panic!(\"expected GhIssue(Pr), got {other:?}\"),\n        }\n    }\n",
+        "lexical_first5_hit": true,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'loop_spec classify GitHub URL before file literal' --scope crates/clud-bin/src/loop_spec.rs",
+        "bytes": 1372,
+        "calls": 1,
+        "seconds": 0.16090757597703487,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            78,
+            83
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            94,
+            96
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            146,
+            151
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            38,
+            43
+          ]
+        ],
+        "evidence": "@ crates/clud-bin/src/loop_spec.rs:78-83 [classify] terms=2;path=3;heading=1;kind=3;distance=0\n78| ///   3. Local file path\n79| ///   4. Literal prompt\n80| pub fn classify(input: &str) -> TaskSpec {\n81|     if let Some(parsed) = parse_gh_url(input) {\n82|         return parsed;\n83|     }\n@ crates/clud-bin/src/loop_spec.rs:94-96 [parse_gh_url] terms=2;path=3;heading=1;kind=3;distance=0\n94| fn parse_gh_url(input: &str) -> Option<TaskSpec> {\n95|     // Keep dependency count minimal \u2014 manual parse instead of pulling regex.\n96|     let s = input.strip_suffix('/').unwrap_or(input);\n@ crates/clud-bin/src/loop_spec.rs:146-151 [loop_dir] terms=2;path=3;heading=1;kind=3;distance=0\n146| /// Joins segment-by-segment so the separators stay platform-native\n147| /// (`\\` on Windows, `/` elsewhere). Using `git_root.join(\".clud/loop\")`\n148| /// would leak a stray `/` into the middle of an otherwise-Windows path.\n149| pub fn loop_dir(git_root: &Path) -> PathBuf {\n150|     git_root.join(LOOP_DIR_PARENT).join(LOOP_DIR_LEAF)\n151| }\n@ crates/clud-bin/src/loop_spec.rs:38-43 [TaskSpec] terms=1;path=3;heading=1;kind=3;distance=0\n38| \n39| /// How to interpret the positional argument passed to `clud loop`.\n40| #[derive(Debug, Clone, PartialEq, Eq)]\n41| pub enum TaskSpec {\n42|     GhIssue {\n43|         owner: String,\nTRUNCATED=True emitted=4 omitted=31 continue=023a15e83fd7:4\n",
+        "recall_at_5": true,
+        "followups": 0
+      }
+    },
+    {
+      "id": "short-form",
+      "query": "loop_spec parse_short_form numeric hash issue",
+      "scopes": [
+        "crates/clud-bin/src/loop_spec.rs"
+      ],
+      "pattern": "parse_short_form",
+      "kind": "implementation",
+      "ground_truth": [
+        {
+          "path": "crates/clud-bin/src/loop_spec.rs",
+          "line": 122,
+          "anchor": "fn parse_short_form(input: &str) -> Option<u32> {",
+          "sha256": "a1c469933b44a37275950e38d18436fecfa8a236523b9e42322b6514f8720ae5"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e parse_short_form crates/clud-bin/src/loop_spec.rs",
+          "sed -n 79,109p crates/clud-bin/src/loop_spec.rs; sed -n 117,147p crates/clud-bin/src/loop_spec.rs"
+        ],
+        "bytes": 1996,
+        "calls": 2,
+        "seconds": 0.01914206496439874,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            79,
+            109
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            117,
+            147
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "crates/clud-bin/src/loop_spec.rs:84:    if let Some(n) = parse_short_form(input) {\ncrates/clud-bin/src/loop_spec.rs:122:fn parse_short_form(input: &str) -> Option<u32> {\n///   4. Literal prompt\npub fn classify(input: &str) -> TaskSpec {\n    if let Some(parsed) = parse_gh_url(input) {\n        return parsed;\n    }\n    if let Some(n) = parse_short_form(input) {\n        return TaskSpec::ShortForm(n);\n    }\n    let path = Path::new(input);\n    if path.is_file() {\n        return TaskSpec::File(path.to_path_buf());\n    }\n    TaskSpec::Literal(input.to_string())\n}\n\nfn parse_gh_url(input: &str) -> Option<TaskSpec> {\n    // Keep dependency count minimal \u2014 manual parse instead of pulling regex.\n    let s = input.strip_suffix('/').unwrap_or(input);\n    let rest = s\n        .strip_prefix(\"https://github.com/\")\n        .or_else(|| s.strip_prefix(\"http://github.com/\"))?;\n    let mut parts = rest.splitn(4, '/');\n    let owner = parts.next()?.to_string();\n    let repo = parts.next()?.to_string();\n    let kind_seg = parts.next()?;\n    let number_seg = parts.next()?;\n    if owner.is_empty() || repo.is_empty() {\n        return None;\n    }\n    let kind = match kind_seg {\n        \"issues\" => GhKind::Issue,\n        kind,\n        number,\n    })\n}\n\nfn parse_short_form(input: &str) -> Option<u32> {\n    let s = input.strip_prefix('#').unwrap_or(input);\n    if s.is_empty() {\n        return None;\n    }\n    s.parse().ok()\n}\n\n/// Find the git-root by walking upward from `start` looking for `.git`.\n/// Falls back to `start` if no git root is found.\npub fn git_root_from(start: &Path) -> PathBuf {\n    let mut cur = start.to_path_buf();\n    loop {\n        if cur.join(\".git\").exists() {\n            return cur;\n        }\n        if !cur.pop() {\n            return start.to_path_buf();\n        }\n    }\n}\n\n/// Resolve the `<git-root>/.clud/loop/` directory.\n///\n/// Joins segment-by-segment so the separators stay platform-native\n/// (`\\` on Windows, `/` elsewhere). Using `git_root.join(\".clud/loop\")`\n",
+        "lexical_first5_hit": true,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'loop_spec parse_short_form numeric hash issue' --scope crates/clud-bin/src/loop_spec.rs",
+        "bytes": 1351,
+        "calls": 1,
+        "seconds": 0.15810995502397418,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            122,
+            124
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            94,
+            97
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            38,
+            43
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            146,
+            151
+          ]
+        ],
+        "evidence": "@ crates/clud-bin/src/loop_spec.rs:122-124 [parse_short_form] terms=4;path=3;heading=4;kind=3;distance=0\n122| fn parse_short_form(input: &str) -> Option<u32> {\n123|     let s = input.strip_prefix('#').unwrap_or(input);\n124|     if s.is_empty() {\n@ crates/clud-bin/src/loop_spec.rs:94-97 [parse_gh_url] terms=2;path=3;heading=1;kind=3;distance=0\n94| fn parse_gh_url(input: &str) -> Option<TaskSpec> {\n95|     // Keep dependency count minimal \u2014 manual parse instead of pulling regex.\n96|     let s = input.strip_suffix('/').unwrap_or(input);\n97|     let rest = s\n@ crates/clud-bin/src/loop_spec.rs:38-43 [TaskSpec] terms=1;path=3;heading=1;kind=3;distance=0\n38| \n39| /// How to interpret the positional argument passed to `clud loop`.\n40| #[derive(Debug, Clone, PartialEq, Eq)]\n41| pub enum TaskSpec {\n42|     GhIssue {\n43|         owner: String,\n@ crates/clud-bin/src/loop_spec.rs:146-151 [loop_dir] terms=1;path=3;heading=1;kind=3;distance=0\n146| /// Joins segment-by-segment so the separators stay platform-native\n147| /// (`\\` on Windows, `/` elsewhere). Using `git_root.join(\".clud/loop\")`\n148| /// would leak a stray `/` into the middle of an otherwise-Windows path.\n149| pub fn loop_dir(git_root: &Path) -> PathBuf {\n150|     git_root.join(LOOP_DIR_PARENT).join(LOOP_DIR_LEAF)\n151| }\nTRUNCATED=True emitted=4 omitted=26 continue=a05f3fc0f757:4\n",
+        "recall_at_5": true,
+        "followups": 0
+      }
+    },
+    {
+      "id": "marker-priority",
+      "query": "loop_spec read_markers_at done before blocked",
+      "scopes": [
+        "crates/clud-bin/src/loop_spec.rs"
+      ],
+      "pattern": "read_markers_at",
+      "kind": "lexical-trap",
+      "ground_truth": [
+        {
+          "path": "crates/clud-bin/src/loop_spec.rs",
+          "line": 199,
+          "anchor": "    if paths.done.is_file() {",
+          "sha256": "a1c469933b44a37275950e38d18436fecfa8a236523b9e42322b6514f8720ae5"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e read_markers_at crates/clud-bin/src/loop_spec.rs",
+          "sed -n 190,223p crates/clud-bin/src/loop_spec.rs; sed -n 643,673p crates/clud-bin/src/loop_spec.rs"
+        ],
+        "bytes": 2501,
+        "calls": 2,
+        "seconds": 0.020830463035963476,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            190,
+            223
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            643,
+            673
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "crates/clud-bin/src/loop_spec.rs:195:    read_markers_at(&paths)\ncrates/clud-bin/src/loop_spec.rs:198:pub fn read_markers_at(paths: &MarkerPaths) -> MarkerState {\ncrates/clud-bin/src/loop_spec.rs:648:    match read_markers_at(paths) {\n\n/// Read the marker state from `<git-root>/.clud/loop/`. DONE wins if both\n/// exist (the agent's last word that the task resolved).\npub fn read_markers(git_root: &Path) -> MarkerState {\n    let paths = default_marker_paths(git_root);\n    read_markers_at(&paths)\n}\n\npub fn read_markers_at(paths: &MarkerPaths) -> MarkerState {\n    if paths.done.is_file() {\n        let body = std::fs::read_to_string(&paths.done).unwrap_or_default();\n        return MarkerState::Done(body.trim().to_string());\n    }\n    if paths.blocked.is_file() {\n        let body = std::fs::read_to_string(&paths.blocked).unwrap_or_default();\n        return MarkerState::Blocked(body.trim().to_string());\n    }\n    MarkerState::None\n}\n\n/// Remove stale DONE/BLOCKED markers so we start from a clean slate.\npub fn clear_markers(git_root: &Path) {\n    let paths = default_marker_paths(git_root);\n    clear_markers_at(&paths);\n}\n\npub fn clear_markers_at(paths: &MarkerPaths) {\n    let _ = std::fs::remove_file(&paths.done);\n    let _ = std::fs::remove_file(&paths.blocked);\n}\n\n/// Ensure the `.clud/loop/` dir exists under the given git root.\npub fn ensure_loop_dir(git_root: &Path) -> std::io::Result<PathBuf> {\n    let dir = loop_dir(git_root);\n\n/// Read marker state from disk OR from a token in `captured` output, with\n/// the marker file taking precedence. This is the loop-runner entry point\n/// for subprocess mode where stdout is captured into a buffer.\npub fn read_markers_or_token(paths: &MarkerPaths, captured: &str) -> MarkerState {\n    match read_markers_at(paths) {\n        MarkerState::None => match scan_completion_token(captured) {\n            TokenState::Done(s) => MarkerState::Done(s),\n            TokenState::Blocked(s) => MarkerState::Blocked(s),\n            TokenState::None => MarkerState::None,\n        },\n        state => state,\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn classify_issue_url() {\n        match classify(\"https://github.com/acme/widgets/issues/42\") {\n            TaskSpec::GhIssue {\n                owner,\n                repo,\n                kind,\n                number,\n            } => {\n                assert_eq!(owner, \"acme\");\n                assert_eq!(repo, \"widgets\");\n                assert_eq!(kind, GhKind::Issue);\n",
+        "lexical_first5_hit": false,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'loop_spec read_markers_at done before blocked' --scope crates/clud-bin/src/loop_spec.rs",
+        "bytes": 1336,
+        "calls": 1,
+        "seconds": 0.19892185099888593,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            198,
+            203
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            164,
+            169
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            154,
+            158
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            159,
+            161
+          ]
+        ],
+        "evidence": "@ crates/clud-bin/src/loop_spec.rs:198-203 [read_markers_at] terms=4;path=4;heading=4;kind=3;distance=0\n198| pub fn read_markers_at(paths: &MarkerPaths) -> MarkerState {\n199|     if paths.done.is_file() {\n200|         let body = std::fs::read_to_string(&paths.done).unwrap_or_default();\n201|         return MarkerState::Done(body.trim().to_string());\n202|     }\n203|     if paths.blocked.is_file() {\n@ crates/clud-bin/src/loop_spec.rs:164-169 [blocked_path_from_done] terms=3;path=4;heading=3;kind=3;distance=0\n164| ///\n165| /// `DONE.md` becomes `BLOCKED.md`; `DONE` becomes `BLOCKED`.\n166| pub fn blocked_path_from_done(done: &Path) -> PathBuf {\n167|     let parent = done.parent().unwrap_or_else(|| Path::new(\".\"));\n168|     let ext = done.extension().and_then(|s| s.to_str());\n169|     let file_name = match ext {\n@ crates/clud-bin/src/loop_spec.rs:154-158 [done_path] terms=2;path=4;heading=2;kind=3;distance=0\n154| pub fn done_path(git_root: &Path) -> PathBuf {\n155|     loop_dir(git_root).join(DONE_MARKER)\n156| }\n157| \n158| /// Path to the BLOCKED marker.\n@ crates/clud-bin/src/loop_spec.rs:159-161 [blocked_path] terms=2;path=4;heading=2;kind=3;distance=0\n159| pub fn blocked_path(git_root: &Path) -> PathBuf {\n160|     loop_dir(git_root).join(BLOCKED_MARKER)\n161| }\nTRUNCATED=True emitted=4 omitted=23 continue=8da4c83f65ed:4\n",
+        "recall_at_5": true,
+        "followups": 0
+      }
+    },
+    {
+      "id": "config-conflict",
+      "query": "loop_config parse rejects done with no_done",
+      "scopes": [
+        "crates/clud-bin/src/loop_config.rs"
+      ],
+      "pattern": "done|no_done",
+      "kind": "lexical-trap",
+      "ground_truth": [
+        {
+          "path": "crates/clud-bin/src/loop_config.rs",
+          "line": 86,
+          "anchor": "        if cfg.done.is_some() && cfg.no_done == Some(true) {",
+          "sha256": "dbe83fb2b1a94e8303e06cd5aab817cd67e46bf89a032b660b2dd4375e49e215"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e 'done|no_done' crates/clud-bin/src/loop_config.rs",
+          "sed -n 32,94p crates/clud-bin/src/loop_config.rs"
+        ],
+        "bytes": 3317,
+        "calls": 2,
+        "seconds": 0.018117202969733626,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            32,
+            94
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "crates/clud-bin/src/loop_config.rs:37:    /// Custom DONE marker path.\ncrates/clud-bin/src/loop_config.rs:39:    pub done: Option<String>,\ncrates/clud-bin/src/loop_config.rs:40:    /// Disable the DONE/BLOCKED marker contract.\ncrates/clud-bin/src/loop_config.rs:42:    pub no_done: Option<bool>,\ncrates/clud-bin/src/loop_config.rs:69:    #[error(\"{path}: `done` and `no_done: true` conflict\")]\ncrates/clud-bin/src/loop_config.rs:86:        if cfg.done.is_some() && cfg.no_done == Some(true) {\ncrates/clud-bin/src/loop_config.rs:124:            done: cli.done.clone().or_else(|| self.done.clone()),\ncrates/clud-bin/src/loop_config.rs:125:            no_done: cli.no_done.or(self.no_done),\ncrates/clud-bin/src/loop_config.rs:139:        done: Option<&str>,\ncrates/clud-bin/src/loop_config.rs:140:        no_done: bool,\ncrates/clud-bin/src/loop_config.rs:152:            done: done.map(str::to_string),\ncrates/clud-bin/src/loop_config.rs:153:            no_done: no_done.then_some(true),\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub task: Option<String>,\n    /// Iteration budget.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub loop_count: Option<u32>,\n    /// Custom DONE marker path.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub done: Option<String>,\n    /// Disable the DONE/BLOCKED marker contract.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub no_done: Option<bool>,\n    /// Re-run interval such as `30s`, `5m`, `1h`.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub repeat: Option<String>,\n    /// Force re-fetch of a cached GitHub issue/PR body.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub refresh: Option<bool>,\n    /// Message queued for the first iteration.\n    #[serde(default, skip_serializing_if = \"Option::is_none\")]\n    pub message: Option<String>,\n}\n\n/// Why a `loop.json` could not be used. Invalid configs fail fast.\n#[derive(Debug, thiserror::Error)]\npub enum LoopConfigError {\n    #[error(\"cannot read {path}: {source}\")]\n    Read {\n        path: PathBuf,\n        source: std::io::Error,\n    },\n    #[error(\"invalid {path}: {source}\")]\n    Parse {\n        path: PathBuf,\n        source: serde_json::Error,\n    },\n    #[error(\"{path}: unsupported schema_version {found} (this clud supports {SCHEMA_VERSION})\")]\n    Version { path: PathBuf, found: u32 },\n    #[error(\"{path}: `done` and `no_done: true` conflict\")]\n    Conflict { path: PathBuf },\n}\n\nimpl LoopConfig {\n    /// Parse and validate `text` read from `path`.\n    pub fn parse(path: &Path, text: &str) -> Result<Self, LoopConfigError> {\n        let cfg: Self = serde_json::from_str(text).map_err(|source| LoopConfigError::Parse {\n            path: path.to_path_buf(),\n            source,\n        })?;\n        if cfg.schema_version != SCHEMA_VERSION {\n            return Err(LoopConfigError::Version {\n                path: path.to_path_buf(),\n                found: cfg.schema_version,\n            });\n        }\n        if cfg.done.is_some() && cfg.no_done == Some(true) {\n            return Err(LoopConfigError::Conflict {\n                path: path.to_path_buf(),\n            });\n        }\n        Ok(cfg)\n    }\n\n    /// Load the explicit `--config` path, or `<git-root>/loop.json` when it\n",
+        "lexical_first5_hit": false,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'loop_config parse rejects done with no_done' --scope crates/clud-bin/src/loop_config.rs",
+        "bytes": 1365,
+        "calls": 1,
+        "seconds": 0.1951235739979893,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            73,
+            78
+          ],
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            29,
+            31
+          ],
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            53,
+            58
+          ],
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            4,
+            6
+          ]
+        ],
+        "evidence": "@ crates/clud-bin/src/loop_config.rs:73-78 [parse] terms=3;path=3;heading=1;kind=3;distance=0\n73| impl LoopConfig {\n74|     /// Parse and validate `text` read from `path`.\n75|     pub fn parse(path: &Path, text: &str) -> Result<Self, LoopConfigError> {\n76|         let cfg: Self = serde_json::from_str(text).map_err(|source| LoopConfigError::Parse {\n77|             path: path.to_path_buf(),\n78|             source,\n@ crates/clud-bin/src/loop_config.rs:29-31 [LoopConfig] terms=2;path=3;heading=2;kind=3;distance=0\n29| pub struct LoopConfig {\n30|     pub schema_version: u32,\n31|     /// Prompt text, path to a local file, or a GitHub issue/PR URL.\n@ crates/clud-bin/src/loop_config.rs:53-58 [LoopConfigError] terms=2;path=3;heading=2;kind=3;distance=0\n53| \n54| /// Why a `loop.json` could not be used. Invalid configs fail fast.\n55| #[derive(Debug, thiserror::Error)]\n56| pub enum LoopConfigError {\n57|     #[error(\"cannot read {path}: {source}\")]\n58|     Read {\n@ crates/clud-bin/src/loop_config.rs:4-6 [(context)] terms=3;path=3;heading=0;kind=2;distance=0;omitted_lines=3\n4| //! `<git-root>/loop.json`. CLI flags override file values. The resolved\n5| //! config is written to `<git-root>/.clud/loop/loop.json` so every run\n6| //! leaves a record of exactly what it ran with. The committed JSON Schema\nTRUNCATED=True emitted=4 omitted=16 continue=8096d3851992:4\n",
+        "recall_at_5": false,
+        "followups": 1,
+        "repair_command": "sed -n 84,90p crates/clud-bin/src/loop_config.rs",
+        "repair_bytes": 206,
+        "repair_seconds": 0.011307927023153752
+      }
+    },
+    {
+      "id": "config-overlay",
+      "query": "loop_config overridden_by CLI values win",
+      "scopes": [
+        "crates/clud-bin/src/loop_config.rs"
+      ],
+      "pattern": "overridden_by",
+      "kind": "implementation",
+      "ground_truth": [
+        {
+          "path": "crates/clud-bin/src/loop_config.rs",
+          "line": 119,
+          "anchor": "    pub fn overridden_by(&self, cli: &Self) -> Self {",
+          "sha256": "dbe83fb2b1a94e8303e06cd5aab817cd67e46bf89a032b660b2dd4375e49e215"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e overridden_by crates/clud-bin/src/loop_config.rs",
+          "sed -n 114,144p crates/clud-bin/src/loop_config.rs"
+        ],
+        "bytes": 1261,
+        "calls": 2,
+        "seconds": 0.015779427951201797,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            114,
+            144
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "crates/clud-bin/src/loop_config.rs:119:    pub fn overridden_by(&self, cli: &Self) -> Self {\n        Self::parse(&path, &text).map(|cfg| Some((path, cfg)))\n    }\n\n    /// Overlay `cli` on top of `self`: any value the CLI set wins.\n    #[must_use]\n    pub fn overridden_by(&self, cli: &Self) -> Self {\n        Self {\n            schema_version: SCHEMA_VERSION,\n            task: cli.task.clone().or_else(|| self.task.clone()),\n            loop_count: cli.loop_count.or(self.loop_count),\n            done: cli.done.clone().or_else(|| self.done.clone()),\n            no_done: cli.no_done.or(self.no_done),\n            repeat: cli.repeat.clone().or_else(|| self.repeat.clone()),\n            refresh: cli.refresh.or(self.refresh),\n            message: cli.message.clone().or_else(|| self.message.clone()),\n        }\n    }\n\n    /// Build the CLI side of the overlay. `argv` is the raw command line,\n    /// used only to tell an explicit `--loop-count 50` from clap's default.\n    #[allow(clippy::too_many_arguments)]\n    pub fn from_cli(\n        argv: &[String],\n        task: Option<&str>,\n        loop_count: u32,\n        done: Option<&str>,\n        no_done: bool,\n        repeat: Option<&str>,\n        refresh: bool,\n        message: Option<&str>,\n    ) -> Self {\n",
+        "lexical_first5_hit": true,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'loop_config overridden_by CLI values win' --scope crates/clud-bin/src/loop_config.rs",
+        "bytes": 1278,
+        "calls": 1,
+        "seconds": 0.15238189802039415,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            116,
+            121
+          ],
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            29,
+            31
+          ],
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            53,
+            58
+          ],
+          [
+            "crates/clud-bin/src/loop_config.rs",
+            75,
+            78
+          ]
+        ],
+        "evidence": "@ crates/clud-bin/src/loop_config.rs:116-121 [overridden_by] terms=4;path=3;heading=3;kind=3;distance=0\n116| \n117|     /// Overlay `cli` on top of `self`: any value the CLI set wins.\n118|     #[must_use]\n119|     pub fn overridden_by(&self, cli: &Self) -> Self {\n120|         Self {\n121|             schema_version: SCHEMA_VERSION,\n@ crates/clud-bin/src/loop_config.rs:29-31 [LoopConfig] terms=2;path=3;heading=2;kind=3;distance=0\n29| pub struct LoopConfig {\n30|     pub schema_version: u32,\n31|     /// Prompt text, path to a local file, or a GitHub issue/PR URL.\n@ crates/clud-bin/src/loop_config.rs:53-58 [LoopConfigError] terms=2;path=3;heading=2;kind=3;distance=0\n53| \n54| /// Why a `loop.json` could not be used. Invalid configs fail fast.\n55| #[derive(Debug, thiserror::Error)]\n56| pub enum LoopConfigError {\n57|     #[error(\"cannot read {path}: {source}\")]\n58|     Read {\n@ crates/clud-bin/src/loop_config.rs:75-78 [parse] terms=2;path=3;heading=0;kind=3;distance=0\n75|     pub fn parse(path: &Path, text: &str) -> Result<Self, LoopConfigError> {\n76|         let cfg: Self = serde_json::from_str(text).map_err(|source| LoopConfigError::Parse {\n77|             path: path.to_path_buf(),\n78|             source,\nTRUNCATED=True emitted=4 omitted=12 continue=5d6f48d2edd4:4\n",
+        "recall_at_5": true,
+        "followups": 0
+      }
+    },
+    {
+      "id": "origin",
+      "query": "session_origin unknown default SessionOrigin",
+      "scopes": [
+        "crates/clud-bin/src/session_origin.rs"
+      ],
+      "pattern": "Unknown",
+      "kind": "implementation",
+      "ground_truth": [
+        {
+          "path": "crates/clud-bin/src/session_origin.rs",
+          "line": 25,
+          "anchor": "    Unknown,",
+          "sha256": "f6ca5cea6fb917331613baefbbbf4f17ba61e19c702711b5a74bcfa8d2fef89e"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e Unknown crates/clud-bin/src/session_origin.rs",
+          "sed -n 1,69p crates/clud-bin/src/session_origin.rs"
+        ],
+        "bytes": 2288,
+        "calls": 2,
+        "seconds": 0.015133476059418172,
+        "items": [
+          [
+            "crates/clud-bin/src/session_origin.rs",
+            1,
+            69
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "crates/clud-bin/src/session_origin.rs:5://! before the field existed load as [`SessionOrigin::Unknown`].\ncrates/clud-bin/src/session_origin.rs:25:    Unknown,\ncrates/clud-bin/src/session_origin.rs:35:        Self::Unknown,\ncrates/clud-bin/src/session_origin.rs:44:            Self::Unknown => \"unknown\",\n//! Which entry point created a durable session.\n//!\n//! One typed field on the session record, set once at creation by the entry\n//! point and never inferred later from argv or environment. Records written\n//! before the field existed load as [`SessionOrigin::Unknown`].\n//! See `docs/architecture/session-origin.md`.\n\nuse serde::{Deserialize, Serialize};\n\n#[derive(\n    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, clap::ValueEnum,\n)]\n#[serde(rename_all = \"snake_case\")]\npub enum SessionOrigin {\n    /// Created by a `clud` command-line client.\n    Cli,\n    /// Created by the `clud` MCP server (`session_start`).\n    Mcp,\n    /// Created by the daemon itself.\n    Daemon,\n    /// Created by a test harness.\n    Test,\n    /// Written before origins were recorded, or a client that did not say.\n    #[default]\n    Unknown,\n}\n\nimpl SessionOrigin {\n    /// Every variant, for table-driven tests and help text.\n    pub const ALL: [Self; 5] = [\n        Self::Cli,\n        Self::Mcp,\n        Self::Daemon,\n        Self::Test,\n        Self::Unknown,\n    ];\n\n    pub fn as_str(self) -> &'static str {\n        match self {\n            Self::Cli => \"cli\",\n            Self::Mcp => \"mcp\",\n            Self::Daemon => \"daemon\",\n            Self::Test => \"test\",\n            Self::Unknown => \"unknown\",\n        }\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    use clap::ValueEnum;\n\n    #[test]\n    fn serde_clap_and_as_str_agree_for_every_variant() {\n        for origin in SessionOrigin::ALL {\n            let json = serde_json::to_value(origin).unwrap();\n            assert_eq!(json, origin.as_str());\n            assert_eq!(\n                serde_json::from_value::<SessionOrigin>(json).unwrap(),\n                origin\n            );\n            assert_eq!(SessionOrigin::from_str(origin.as_str(), false), Ok(origin));\n        }\n        assert_eq!(\n            SessionOrigin::value_variants().len(),\n            SessionOrigin::ALL.len()\n        );\n    }\n",
+        "lexical_first5_hit": true,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'session_origin unknown default SessionOrigin' --scope crates/clud-bin/src/session_origin.rs",
+        "bytes": 1283,
+        "calls": 1,
+        "seconds": 0.1704245480359532,
+        "items": [
+          [
+            "crates/clud-bin/src/session_origin.rs",
+            14,
+            19
+          ],
+          [
+            "crates/clud-bin/src/session_origin.rs",
+            3,
+            8
+          ],
+          [
+            "crates/clud-bin/src/session_origin.rs",
+            22,
+            27
+          ],
+          [
+            "crates/clud-bin/src/session_origin.rs",
+            1,
+            3
+          ]
+        ],
+        "evidence": "@ crates/clud-bin/src/session_origin.rs:14-19 [SessionOrigin] terms=3;path=3;heading=3;kind=3;distance=0\n14| pub enum SessionOrigin {\n15|     /// Created by a `clud` command-line client.\n16|     Cli,\n17|     /// Created by the `clud` MCP server (`session_start`).\n18|     Mcp,\n19|     /// Created by the daemon itself.\n@ crates/clud-bin/src/session_origin.rs:3-8 [(context)] terms=4;path=3;heading=0;kind=2;distance=0\n3| //! One typed field on the session record, set once at creation by the entry\n4| //! point and never inferred later from argv or environment. Records written\n5| //! before the field existed load as [`SessionOrigin::Unknown`].\n6| //! See `docs/architecture/session-origin.md`.\n7| \n8| use serde::{Deserialize, Serialize};\n@ crates/clud-bin/src/session_origin.rs:22-27 [SessionOrigin] terms=1;path=3;heading=3;kind=2;distance=9\n22|     Test,\n23|     /// Written before origins were recorded, or a client that did not say.\n24|     #[default]\n25|     Unknown,\n26| }\n27| \n@ crates/clud-bin/src/session_origin.rs:1-3 [(context)] terms=1;path=3;heading=0;kind=2;distance=0\n1| //! Which entry point created a durable session.\n2| //!\n3| //! One typed field on the session record, set once at creation by the entry\nTRUNCATED=True emitted=4 omitted=5 continue=0aef27d1ea34:4\n",
+        "recall_at_5": true,
+        "followups": 0
+      }
+    },
+    {
+      "id": "completion-trace",
+      "query": "loop_check loop_spec read_markers_or_token completion trace",
+      "scopes": [
+        "crates/clud-bin/src/loop_check.rs",
+        "crates/clud-bin/src/loop_spec.rs"
+      ],
+      "pattern": "read_markers_or_token",
+      "kind": "cross-module",
+      "ground_truth": [
+        {
+          "path": "crates/clud-bin/src/loop_check.rs",
+          "line": 34,
+          "anchor": "    match loop_spec::read_markers_or_token(&paths, captured_output) {",
+          "sha256": "15a64aaae80a09fbea0cb3e506adc4deec83e337289990b65afa6a7c410c1b18"
+        },
+        {
+          "path": "crates/clud-bin/src/loop_spec.rs",
+          "line": 647,
+          "anchor": "pub fn read_markers_or_token(paths: &MarkerPaths, captured: &str) -> MarkerState {",
+          "sha256": "a1c469933b44a37275950e38d18436fecfa8a236523b9e42322b6514f8720ae5"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e read_markers_or_token crates/clud-bin/src/loop_check.rs crates/clud-bin/src/loop_spec.rs",
+          "sed -n 29,59p crates/clud-bin/src/loop_check.rs; sed -n 642,672p crates/clud-bin/src/loop_spec.rs; sed -n 902,945p crates/clud-bin/src/loop_spec.rs"
+        ],
+        "bytes": 4473,
+        "calls": 2,
+        "seconds": 0.037318539049010724,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_check.rs",
+            29,
+            59
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            642,
+            672
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            902,
+            945
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "crates/clud-bin/src/loop_check.rs:34:    match loop_spec::read_markers_or_token(&paths, captured_output) {\ncrates/clud-bin/src/loop_spec.rs:647:pub fn read_markers_or_token(paths: &MarkerPaths, captured: &str) -> MarkerState {\ncrates/clud-bin/src/loop_spec.rs:907:    fn read_markers_or_token_prefers_marker_file() {\ncrates/clud-bin/src/loop_spec.rs:914:            read_markers_or_token(&paths, captured),\ncrates/clud-bin/src/loop_spec.rs:920:    fn read_markers_or_token_falls_back_to_token() {\ncrates/clud-bin/src/loop_spec.rs:925:            read_markers_or_token(&paths, captured),\ncrates/clud-bin/src/loop_spec.rs:931:    fn read_markers_or_token_none_when_neither() {\ncrates/clud-bin/src/loop_spec.rs:935:            read_markers_or_token(&paths, \"nothing relevant\\n\"),\n    let markers = plan.loop_markers.as_ref()?;\n    let paths = loop_spec::MarkerPaths {\n        done: std::path::PathBuf::from(&markers.done_path),\n        blocked: std::path::PathBuf::from(&markers.blocked_path),\n    };\n    match loop_spec::read_markers_or_token(&paths, captured_output) {\n        loop_spec::MarkerState::Done(summary) => {\n            if summary.is_empty() {\n                eprintln!(\n                    \"[clud loop] DONE marker detected at iteration {iteration}; task resolved.\"\n                );\n            } else {\n                eprintln!(\"[clud loop] DONE at iteration {iteration}: {summary}\");\n            }\n            Some(0)\n        }\n        loop_spec::MarkerState::Blocked(reason) => {\n            if reason.is_empty() {\n                eprintln!(\"[clud loop] BLOCKED marker detected at iteration {iteration}; halting.\");\n            } else {\n                eprintln!(\"[clud loop] BLOCKED at iteration {iteration}: {reason}\");\n            }\n            Some(3)\n        }\n        loop_spec::MarkerState::None => None,\n    }\n}\n\n/// Called after the iteration count is exhausted without a DONE/BLOCKED\n/// marker. Only returns an override exit code when loop markers are active.\n///\n}\n\n/// Read marker state from disk OR from a token in `captured` output, with\n/// the marker file taking precedence. This is the loop-runner entry point\n/// for subprocess mode where stdout is captured into a buffer.\npub fn read_markers_or_token(paths: &MarkerPaths, captured: &str) -> MarkerState {\n    match read_markers_at(paths) {\n        MarkerState::None => match scan_completion_token(captured) {\n            TokenState::Done(s) => MarkerState::Done(s),\n            TokenState::Blocked(s) => MarkerState::Blocked(s),\n            TokenState::None => MarkerState::None,\n        },\n        state => state,\n    }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn classify_issue_url() {\n        match classify(\"https://github.com/acme/widgets/issues/42\") {\n            TaskSpec::GhIssue {\n                owner,\n                repo,\n                kind,\n                number,\n            } => {\n                assert_eq!(owner, \"acme\");\n                assert_eq!(repo, \"widgets\");\n            TokenState::Done(\"payload\".to_string())\n        );\n    }\n\n    #[test]\n    fn read_markers_or_token_prefers_marker_file() {\n        let tmp = tempfile::tempdir().unwrap();\n        ensure_loop_dir(tmp.path()).unwrap();\n        std::fs::write(done_path(tmp.path()), \"via file\\n\").unwrap();\n        let paths = default_marker_paths(tmp.path());\n        let captured = \"<<<CLUD_LOOP_BLOCKED: via token>>>\\n\";\n        assert_eq!(\n            read_markers_or_token(&paths, captured),\n            MarkerState::Done(\"via file\".to_string())\n        );\n    }\n\n    #[test]\n    fn read_markers_or_token_falls_back_to_token() {\n        let tmp = tempfile::tempdir().unwrap();\n        let paths = default_marker_paths(tmp.path());\n        let captured = \"<<<CLUD_LOOP_DONE: token-only completion>>>\\n\";\n        assert_eq!(\n            read_markers_or_token(&paths, captured),\n            MarkerState::Done(\"token-only completion\".to_string())\n        );\n    }\n\n    #[test]\n    fn read_markers_or_token_none_when_neither() {\n        let tmp = tempfile::tempdir().unwrap();\n        let paths = default_marker_paths(tmp.path());\n        assert_eq!(\n            read_markers_or_token(&paths, \"nothing relevant\\n\"),\n            MarkerState::None\n        );\n    }\n\n    #[test]\n    fn render_cache_includes_frontmatter_and_sections() {\n        let doc = IssueDoc {\n            url: \"https://github.com/a/b/issues/1\".into(),\n            title: \"t\".into(),\n            body: \"b\".into(),\n",
+        "lexical_first5_hit": true,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'loop_check loop_spec read_markers_or_token completion trace' --scope crates/clud-bin/src/loop_check.rs --scope crates/clud-bin/src/loop_spec.rs",
+        "bytes": 1434,
+        "calls": 1,
+        "seconds": 0.20727443299256265,
+        "items": [
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            647,
+            649
+          ],
+          [
+            "crates/clud-bin/src/loop_check.rs",
+            13,
+            16
+          ],
+          [
+            "crates/clud-bin/src/loop_check.rs",
+            21,
+            26
+          ],
+          [
+            "crates/clud-bin/src/loop_spec.rs",
+            190,
+            195
+          ]
+        ],
+        "evidence": "@ crates/clud-bin/src/loop_spec.rs:647-649 [read_markers_or_token] terms=5;path=3;heading=5;kind=3;distance=0\n647| pub fn read_markers_or_token(paths: &MarkerPaths, captured: &str) -> MarkerState {\n648|     match read_markers_at(paths) {\n649|         MarkerState::None => match scan_completion_token(captured) {\n@ crates/clud-bin/src/loop_check.rs:13-16 [check_loop_markers] terms=3;path=3;heading=3;kind=3;distance=0\n13| pub fn check_loop_markers(plan: &command::LaunchPlan, iteration: u32) -> Option<i32> {\n14|     check_loop_markers_with_output(plan, iteration, \"\")\n15| }\n16| \n@ crates/clud-bin/src/loop_check.rs:21-26 [check_loop_markers_with_output] terms=3;path=3;heading=3;kind=3;distance=0\n21| /// Marker files take precedence over tokens \u2014 if both are present, the\n22| /// file wins. Pass an empty `captured_output` to opt out of token scanning\n23| /// (PTY mode).\n24| pub fn check_loop_markers_with_output(\n25|     plan: &command::LaunchPlan,\n26|     iteration: u32,\n@ crates/clud-bin/src/loop_spec.rs:190-195 [read_markers] terms=2;path=3;heading=2;kind=3;distance=0\n190| \n191| /// Read the marker state from `<git-root>/.clud/loop/`. DONE wins if both\n192| /// exist (the agent's last word that the task resolved).\n193| pub fn read_markers(git_root: &Path) -> MarkerState {\n194|     let paths = default_marker_paths(git_root);\n195|     read_markers_at(&paths)\nTRUNCATED=True emitted=4 omitted=45 continue=e4412b5e8b52:4\n",
+        "recall_at_5": false,
+        "followups": 1,
+        "repair_command": "sed -n 32,38p crates/clud-bin/src/loop_check.rs; sed -n 645,651p crates/clud-bin/src/loop_spec.rs",
+        "repair_bytes": 799,
+        "repair_seconds": 0.014001119008753449
+      }
+    },
+    {
+      "id": "escape-trace",
+      "query": "bracketed_paste escape_gate EscapeSequenceGate push trace",
+      "scopes": [
+        "crates/clud-bin/src/session/bracketed_paste.rs",
+        "crates/clud-bin/src/session/escape_gate.rs"
+      ],
+      "pattern": "EscapeSequenceGate|fn push",
+      "kind": "cross-module",
+      "ground_truth": [
+        {
+          "path": "crates/clud-bin/src/session/bracketed_paste.rs",
+          "line": 129,
+          "anchor": "        let out = self.gate.push(out);",
+          "sha256": "8e3bfa44fff575105c7cd1c98d82280e4aac5e0ad4bf3ea059a350bc9e7e6bc0"
+        },
+        {
+          "path": "crates/clud-bin/src/session/escape_gate.rs",
+          "line": 27,
+          "anchor": "    pub(crate) fn push(&mut self, bytes: Vec<u8>) -> Vec<u8> {",
+          "sha256": "55c755e0f9a2d6531582cd7cd29dcb7b37a51dc631b98ed71a1c9f4898e8ae1a"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e 'EscapeSequenceGate|fn push' crates/clud-bin/src/session/bracketed_paste.rs crates/clud-bin/src/session/escape_gate.rs",
+          "sed -n 1,92p crates/clud-bin/src/session/bracketed_paste.rs; sed -n 15,45p crates/clud-bin/src/session/escape_gate.rs"
+        ],
+        "bytes": 6280,
+        "calls": 2,
+        "seconds": 0.019304323941469193,
+        "items": [
+          [
+            "crates/clud-bin/src/session/bracketed_paste.rs",
+            1,
+            92
+          ],
+          [
+            "crates/clud-bin/src/session/escape_gate.rs",
+            15,
+            45
+          ]
+        ],
+        "recall_at_5": false,
+        "evidence": "crates/clud-bin/src/session/bracketed_paste.rs:3:use super::escape_gate::EscapeSequenceGate;\ncrates/clud-bin/src/session/bracketed_paste.rs:30:/// [`EscapeSequenceGate`], so no escape sequence leaves it split across two\ncrates/clud-bin/src/session/bracketed_paste.rs:45:    gate: EscapeSequenceGate,\ncrates/clud-bin/src/session/bracketed_paste.rs:67:            gate: EscapeSequenceGate::default(),\ncrates/clud-bin/src/session/escape_gate.rs:20:pub(crate) struct EscapeSequenceGate {\ncrates/clud-bin/src/session/escape_gate.rs:24:impl EscapeSequenceGate {\ncrates/clud-bin/src/session/escape_gate.rs:27:    pub(crate) fn push(&mut self, bytes: Vec<u8>) -> Vec<u8> {\ncrates/clud-bin/src/session/escape_gate.rs:72:        let mut gate = EscapeSequenceGate::default();\ncrates/clud-bin/src/session/escape_gate.rs:87:        let mut gate = EscapeSequenceGate::default();\ncrates/clud-bin/src/session/escape_gate.rs:96:            let mut gate = EscapeSequenceGate::default();\ncrates/clud-bin/src/session/escape_gate.rs:108:        let mut gate = EscapeSequenceGate::default();\nuse std::time::{Duration, Instant};\n\nuse super::escape_gate::EscapeSequenceGate;\nuse super::{looks_like_dropped_path, normalize_dropped_path};\n\n/// Bracketed-paste byte sequence emitted by xterm-class terminals when\n/// the user pastes (or drags-and-drops) text.\npub(crate) const PASTE_START: &[u8] = b\"\\x1b[200~\";\npub(crate) const PASTE_END: &[u8] = b\"\\x1b[201~\";\n\n/// Stream-resumable bracketed-paste detector that, on each completed\n/// paste, runs the buffered inner content through\n/// [`looks_like_dropped_path`] / [`normalize_dropped_path`] to canonicalize\n/// terminal-specific drop encodings (issue #63 / #79).\n///\n/// Behavior:\n/// - Bytes outside any paste pass through unchanged.\n/// - Bytes inside a bracketed paste are buffered. On `\\x1b[201~`:\n///     - If `looks_like_dropped_path(inner)` returns true, emit\n///       `\\x1b[200~` + `normalize_dropped_path(inner)` + `\\x1b[201~`.\n///     - Otherwise, emit the original `\\x1b[200~ inner \\x1b[201~` verbatim.\n/// - The detector survives across chunks: a paste split across reads is\n///   reassembled correctly.\n///\n/// The PASS-IT-VERBATIM rule on non-path content is essential \u2014 a\n/// multi-line code paste must not be mutated, even if its first line\n/// happens to start with `/`.\n///\n/// Every chunk the normalizer emits also passes through an\n/// [`EscapeSequenceGate`], so no escape sequence leaves it split across two\n/// chunks (#1697). Both input paths (the local pump and the daemon attach)\n/// already route every chunk through here and release held bytes through\n/// [`Self::flush_pending_if_due`], so the gate needs no plumbing of its own.\npub struct BracketedPasteNormalizer {\n    /// How many bytes of `PASTE_START` we've matched while outside a\n    /// paste. 0..PASTE_START.len().\n    start_match: usize,\n    /// `Some(buf)` while we are inside a paste body. The buffer holds\n    /// the *inner* paste content (no `\\x1b[200~` prefix and no terminal\n    /// `\\x1b[201~`).\n    inside: Option<Vec<u8>>,\n    /// How many bytes of `PASTE_END` we've matched while inside a paste.\n    end_match: usize,\n    /// Holds an incomplete trailing escape sequence of the output (#1697).\n    gate: EscapeSequenceGate,\n    /// When input last arrived while bytes are held; the release clock.\n    last_input: Option<Instant>,\n}\n\n/// How long held bytes wait for more input before they are released as they\n/// are. Only `ESC`, `ESC [` and `ESC O` can come from a person (Esc, Alt+[,\n/// Alt+O) and must not lag. Anything longer, such as `ESC[<0;10;5` or a\n/// partial `ESC[200~`, is a terminal's report or marker that will complete.\n/// Releasing it early writes a partial sequence, which ConPTY drops at the\n/// end of the write (#1697). Input arriving more than 5 ms apart (a slow link,\n/// a loaded machine, Windows' timer granularity) did exactly that (#1717).\npub const HUMAN_PREFIX_FLUSH: Duration = Duration::from_millis(5);\n/// See [`HUMAN_PREFIX_FLUSH`].\npub const SEQUENCE_FLUSH: Duration = Duration::from_millis(250);\n\nimpl BracketedPasteNormalizer {\n    pub fn new() -> Self {\n        Self {\n            start_match: 0,\n            inside: None,\n            end_match: 0,\n            gate: EscapeSequenceGate::default(),\n            last_input: None,\n        }\n    }\n\n    /// Process a chunk, returning the byte stream that should be\n    /// forwarded downstream (PTY master, in production).\n    pub fn process(&mut self, chunk: &[u8]) -> Vec<u8> {\n        let mut out = Vec::with_capacity(chunk.len());\n        for &b in chunk {\n            if let Some(buf) = self.inside.as_mut() {\n                // We are inside a paste body. Look for PASTE_END.\n                if b == PASTE_END[self.end_match] {\n                    self.end_match += 1;\n                    if self.end_match == PASTE_END.len() {\n                        // Complete: emit normalized form and reset.\n                        let inner = std::mem::take(buf);\n                        self.inside = None;\n                        self.end_match = 0;\n                        emit_paste_block(&mut out, &inner);\n                    }\n                    continue;\n                }\n\n                // PASTE_END prefix broke. Flush any partial-end bytes\n                // back into the inner buffer, then this byte too.\n/// Longest incomplete sequence held. A longer one is malformed: release it\n/// rather than buffer without bound.\nconst MAX_HELD: usize = 64;\n\n#[derive(Debug, Default)]\npub(crate) struct EscapeSequenceGate {\n    held: Vec<u8>,\n}\n\nimpl EscapeSequenceGate {\n    /// Prepend any held bytes to `bytes` and return what can be written now:\n    /// everything up to an incomplete trailing escape sequence, which is held.\n    pub(crate) fn push(&mut self, bytes: Vec<u8>) -> Vec<u8> {\n        let mut out = std::mem::take(&mut self.held);\n        out.extend(bytes);\n        if let Some(start) = incomplete_tail_start(&out) {\n            if out.len() - start <= MAX_HELD {\n                self.held = out.split_off(start);\n            }\n        }\n        out\n    }\n\n    pub(crate) fn has_pending(&self) -> bool {\n        !self.held.is_empty()\n    }\n\n    /// How many bytes are held.\n    pub(crate) fn held_len(&self) -> usize {\n        self.held.len()\n    }\n",
+        "lexical_first5_hit": false,
+        "followups": 1,
+        "repair_command": "sed -n 127,133p crates/clud-bin/src/session/bracketed_paste.rs; sed -n 25,31p crates/clud-bin/src/session/escape_gate.rs",
+        "repair_bytes": 555,
+        "repair_seconds": 0.015191667014732957
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'bracketed_paste escape_gate EscapeSequenceGate push trace' --scope crates/clud-bin/src/session/bracketed_paste.rs --scope crates/clud-bin/src/session/escape_gate.rs",
+        "bytes": 1422,
+        "calls": 1,
+        "seconds": 0.20403490198077634,
+        "items": [
+          [
+            "crates/clud-bin/src/session/escape_gate.rs",
+            20,
+            22
+          ],
+          [
+            "crates/clud-bin/src/session/bracketed_paste.rs",
+            33,
+            38
+          ],
+          [
+            "crates/clud-bin/src/session/escape_gate.rs",
+            25,
+            29
+          ],
+          [
+            "crates/clud-bin/src/session/escape_gate.rs",
+            86,
+            87
+          ]
+        ],
+        "evidence": "@ crates/clud-bin/src/session/escape_gate.rs:20-22 [EscapeSequenceGate] terms=4;path=3;heading=4;kind=3;distance=0\n20| pub(crate) struct EscapeSequenceGate {\n21|     held: Vec<u8>,\n22| }\n@ crates/clud-bin/src/session/bracketed_paste.rs:33-38 [BracketedPasteNormalizer] terms=2;path=3;heading=2;kind=3;distance=0\n33| /// [`Self::flush_pending_if_due`], so the gate needs no plumbing of its own.\n34| pub struct BracketedPasteNormalizer {\n35|     /// How many bytes of `PASTE_START` we've matched while outside a\n36|     /// paste. 0..PASTE_START.len().\n37|     start_match: usize,\n38|     /// `Some(buf)` while we are inside a paste body. The buffer holds\n@ crates/clud-bin/src/session/escape_gate.rs:25-29 [push] terms=1;path=3;heading=1;kind=3;distance=0\n25|     /// Prepend any held bytes to `bytes` and return what can be written now:\n26|     /// everything up to an incomplete trailing escape sequence, which is held.\n27|     pub(crate) fn push(&mut self, bytes: Vec<u8>) -> Vec<u8> {\n28|         let mut out = std::mem::take(&mut self.held);\n29|         out.extend(bytes);\n@ crates/clud-bin/src/session/escape_gate.rs:86-87 [complete_sequences_and_text_pass_straight_through] terms=1;path=3;heading=1;kind=3;distance=0;omitted_lines=4\n86|     fn complete_sequences_and_text_pass_straight_through() {\n87|         let mut gate = EscapeSequenceGate::default();\nTRUNCATED=True emitted=4 omitted=26 continue=95d87b16fe52:4\n",
+        "recall_at_5": false,
+        "followups": 1,
+        "repair_command": "sed -n 127,133p crates/clud-bin/src/session/bracketed_paste.rs; sed -n 25,31p crates/clud-bin/src/session/escape_gate.rs",
+        "repair_bytes": 555,
+        "repair_seconds": 0.017641085025388747
+      }
+    },
+    {
+      "id": "ci-tiers",
+      "query": "Two local test tiers",
+      "scopes": [
+        "docs/architecture/ci.md"
+      ],
+      "pattern": "Two local test tiers",
+      "kind": "doc",
+      "ground_truth": [
+        {
+          "path": "docs/architecture/ci.md",
+          "line": 78,
+          "anchor": "### Two local test tiers (#2356)",
+          "sha256": "b9e5010349c7dbc94e41bc788de408ac68a62107f5ce80c55fa432b50c376dda"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e 'Two local test tiers' docs/architecture/ci.md",
+          "sed -n 73,103p docs/architecture/ci.md"
+        ],
+        "bytes": 1986,
+        "calls": 2,
+        "seconds": 0.01564341800985858,
+        "items": [
+          [
+            "docs/architecture/ci.md",
+            73,
+            103
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "docs/architecture/ci.md:78:### Two local test tiers (#2356)\nGitHub Actions is the CI of record. Run focused tests or lint locally when\nuseful, then push and require every selected hosted check to pass. Bosn is\noptional: publishing and PR validation require no local receipt or commit\ntrailer. PRs and merge groups execute their selected hosted jobs.\n\n### Two local test tiers (#2356)\n\n| Tier | Command | Runs | When |\n| --- | --- | --- | --- |\n| 0 | `bash test --host` | `soldr cargo test --workspace --lib -- --skip tier1_` plus pytest `-m \"not integration and not daemon\"` | Constantly, on the host |\n| 1 | `bash test` / `bash test --integration`, or `clud ci` | The `integration` test target, which spawns a built `clud`, plus every `daemon`-marked Python test | After Tier 0 passes, at most once per PR before push, preferably in bosn |\n\nTier 0 builds no workspace binary and starts no daemon, so it cannot touch\nthe installed `clud` or its daemon. It keeps the host's build cache warm\nacross edits. A pilot on 2026-10-29 measured the full bosn PR plan at\n26.7 min cold and 9.5 min warm, mostly test execution, which no cache removes.\n\n`tests/conftest.py` marks every test in a module that refers to a built\nbinary (`CLUD_TEST_BINARY`, `CLUD_TEST_MOCK_AGENT_BINARY`,\n`CLUD_TEST_BLOCK_BAD_CMD_BINARY`, `target/debug`) as `daemon`. Tier 0 points\nthose variables at a path that does not exist. An unclassified test that\nruns a binary therefore fails loudly instead of quietly reaching the\nhost's `clud`; the fix is to refer to the binary through one of those\nvariables, or to mark the module `daemon` explicitly\n(`pytestmark = pytest.mark.daemon`). On the Rust side, the `integration`\nharness is Tier 1 because Tier 0 runs `--lib` only. A library test that needs\na built binary is named with a `tier1_` prefix, and Tier 0 passes\n`--skip tier1_` (the `daemon::http` turn tests that drive `mock-agent`\nare an example). GitHub Actions still runs both tiers and remains the CI of\nrecord.\n\n",
+        "lexical_first5_hit": true,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'Two local test tiers' --scope docs/architecture/ci.md",
+        "bytes": 1339,
+        "calls": 1,
+        "seconds": 0.15032701200107113,
+        "items": [
+          [
+            "docs/architecture/ci.md",
+            77,
+            80
+          ],
+          [
+            "docs/architecture/ci.md",
+            71,
+            75
+          ],
+          [
+            "docs/architecture/ci.md",
+            162,
+            165
+          ],
+          [
+            "docs/architecture/ci.md",
+            89,
+            94
+          ]
+        ],
+        "evidence": "@ docs/architecture/ci.md:77-80 [Two local test tiers (#2356)] terms=4;path=0;heading=4;kind=3;distance=2\n77| \n78| ### Two local test tiers (#2356)\n79| \n80| | Tier | Command | Runs | When |\n@ docs/architecture/ci.md:71-75 [Local validation before remote CI] terms=1;path=0;heading=1;kind=3;distance=0\n71| ## Local validation before remote CI\n72| \n73| GitHub Actions is the CI of record. Run focused tests or lint locally when\n74| useful, then push and require every selected hosted check to pass. Bosn is\n75| optional: publishing and PR validation require no local receipt or commit\n@ docs/architecture/ci.md:162-165 [Local CI budget] terms=1;path=0;heading=1;kind=3;distance=2\n162| \n163| ### Local CI budget\n164| \n165| `bosn ci` needs bosn 0.1.10 or newer (`uv tool install 'bosn>=0.1.10'`; check\n@ docs/architecture/ci.md:89-94 [Two local test tiers (#2356)] terms=1;path=0;heading=4;kind=1;distance=2\n89| \n90| `tests/conftest.py` marks every test in a module that refers to a built\n91| binary (`CLUD_TEST_BINARY`, `CLUD_TEST_MOCK_AGENT_BINARY`,\n92| `CLUD_TEST_BLOCK_BAD_CMD_BINARY`, `target/debug`) as `daemon`. Tier 0 points\n93| those variables at a path that does not exist. An unclassified test that\n94| runs a binary therefore fails loudly instead of quietly reaching the\nTRUNCATED=True emitted=4 omitted=20 continue=e8d2eba67fd5:4\n",
+        "recall_at_5": true,
+        "followups": 0
+      }
+    },
+    {
+      "id": "ci-queue",
+      "query": "Merge queue",
+      "scopes": [
+        "docs/architecture/ci.md"
+      ],
+      "pattern": "^#### Merge queue",
+      "kind": "doc",
+      "ground_truth": [
+        {
+          "path": "docs/architecture/ci.md",
+          "line": 576,
+          "anchor": "#### Merge queue (#2048, decided)",
+          "sha256": "b9e5010349c7dbc94e41bc788de408ac68a62107f5ce80c55fa432b50c376dda"
+        }
+      ],
+      "A": {
+        "commands": [
+          "rg --sort path -n --with-filename -i -e '^#### Merge queue' docs/architecture/ci.md",
+          "sed -n 571,601p docs/architecture/ci.md"
+        ],
+        "bytes": 2050,
+        "calls": 2,
+        "seconds": 0.012692002987023443,
+        "items": [
+          [
+            "docs/architecture/ci.md",
+            571,
+            601
+          ]
+        ],
+        "recall_at_5": true,
+        "evidence": "docs/architecture/ci.md:576:#### Merge queue (#2048, decided)\nshards 1.2-1.7 each) and ~6 minutes of wall-clock. They run beside the\nWindows build/test, which is longer, so the label's feedback time does not\nchange. The #1310 goal of fast Windows iteration still holds; the label now\nspends ~10 Linux minutes per push to keep `CI OK` honest.\n\n#### Merge queue (#2048, decided)\n\nEnabled on 2026-10-24 after the move to the `talos-hq` organization: GitHub\noffers merge queues only on organization-owned repositories. The queue is\nthe only thing that tests the merged tree rather than the head SHA\n([DD-132](../DESIGN_DECISIONS.md#dd-132-there-is-no-merge-queue-the-ci-windows-rationale-in-dd-088-is-corrected)).\n\nFor a GitHub PR, `clud tool run github/pr_merge.py -- <PR> --repo <OWNER/REPO>\n--match-head-commit <full-head-SHA>` reads GitHub's merge queue for the actual base branch. It enqueues a queue-protected PR using the GitHub GraphQL\n`enqueuePullRequest` mutation, which works even when repository auto-merge is\ndisabled; otherwise it invokes a normal squash merge. It checks the live head\nagainst the required SHA and never uses admin bypass. A successful enqueue is\nnot a merge: follow it with `clud tool run github/pr_merge_watch.py -- <PR>\n--repo <OWNER/REPO> --until merged` and verify the MERGED verdict. This mode\nreports queue position and state changes, exits 13 for ejection, 14 for an\nentry that remains UNMERGEABLE for two polls, and 4 on timeout. Without\n`--until merged`, the watch retains its ordinary check and merge-wait behavior.\nOn timeout or API failure,\ninspect the PR and queue state before retrying the mutation (#2235).\n\n#### Agent landing: workers end at enqueue, chaperones own the merge\n\nThis section owns the contract; `LAND_CONTRACT`, `launch-plan.md`, `CLAUDE.md`\nand [DD-192](../DESIGN_DECISIONS.md#dd-192-workers-end-at-enqueue-and-a-chaperone-owns-the-merge)\n(rationale and timing evidence) link here. It is a candidate fleet policy,\n[GEN-033](https://github.com/forge-ci/ci.yml/blob/main/docs/agent-guide.md).\n",
+        "lexical_first5_hit": true,
+        "followups": 0
+      },
+      "E2": {
+        "command": "/home/niteris/.local/bin/python3.13 code/retrieve.py 'Merge queue' --scope docs/architecture/ci.md",
+        "bytes": 1378,
+        "calls": 1,
+        "seconds": 0.1315493500442244,
+        "items": [
+          [
+            "docs/architecture/ci.md",
+            576,
+            581
+          ],
+          [
+            "docs/architecture/ci.md",
+            593,
+            598
+          ],
+          [
+            "docs/architecture/ci.md",
+            616,
+            618
+          ]
+        ],
+        "evidence": "@ docs/architecture/ci.md:576-581 [Merge queue (#2048, decided)] terms=2;path=0;heading=2;kind=3;distance=0\n576| #### Merge queue (#2048, decided)\n577| \n578| Enabled on 2026-10-24 after the move to the `talos-hq` organization: GitHub\n579| offers merge queues only on organization-owned repositories. The queue is\n580| the only thing that tests the merged tree rather than the head SHA\n581| ([DD-132](../DESIGN_DECISIONS.md#dd-132-there-is-no-merge-queue-the-ci-windows-rationale-in-dd-088-is-corrected)).\n@ docs/architecture/ci.md:593-598 [Agent landing: workers end at enqueue, chaperones own the merge] terms=2;path=0;heading=2;kind=3;distance=2\n593| On timeout or API failure,\n594| inspect the PR and queue state before retrying the mutation (#2235).\n595| \n596| #### Agent landing: workers end at enqueue, chaperones own the merge\n597| \n598| This section owns the contract; `LAND_CONTRACT`, `launch-plan.md`, `CLAUDE.md`\n@ docs/architecture/ci.md:616-618 [Agent landing: workers end at enqueue, chaperones own the merge] terms=2;path=0;heading=2;kind=1;distance=2;omitted_lines=3\n616|   at push (or after a NEEDS-FIXUP push), it first waits for the PR's required\n617|   checks (`pr_merge_watch.py --no-merge-wait`), then enqueues with\n618|   `pr_merge.py --match-head-commit <head>` (or merges by repository policy\nTRUNCATED=True emitted=3 omitted=17 continue=a6793f54bb0e:3\n",
+        "recall_at_5": true,
+        "followups": 0
+      }
+    }
+  ]
+}
