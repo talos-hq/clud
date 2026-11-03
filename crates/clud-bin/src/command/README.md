@@ -70,3 +70,5 @@ deny. See [loop-scoped plan mode](../../../../docs/architecture/hook-dispatch.md
 - `hook_health/prompts.rs` — builds a plan as part of doctor-style health probes.
 - `daemon/entry.rs`, `daemon/types.rs` — persist and re-execute `LaunchPlan` records via the daemon worker.
 - `loop_artifacts.rs` — shares the ISO-8601 format string with `loop_task::chrono_like_now`; both delegate the calendar arithmetic to `crate::civil_time` (#1206).
+
+Foreground print rendering policy: [prompt-output.md](../../../../docs/architecture/prompt-output.md).

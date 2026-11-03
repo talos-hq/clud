@@ -1008,3 +1008,5 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   `shim_main/dispatch.rs` is the shim personality's single entry path: session
   checks, target resolution and fail-open passthrough (#1546); see
   [shim-dispatch.md](../../../docs/architecture/shim-dispatch.md).
+
+- `prompt_output.rs` / `prompt_patch.rs` — compact foreground Claude/Codex print activity and exact per-tool line accounting; see [prompt-output.md](../../../docs/architecture/prompt-output.md).

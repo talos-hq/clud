@@ -9,6 +9,7 @@ re-explaining.
 | Document | Lines | What it covers |
 |---|---|---|
 | [architecture/secret-prompt.md](architecture/secret-prompt.md) | ~60 | Masked native credential input, direct sinks, caller-checked askpass, output secrecy and cancellation |
+| [architecture/prompt-output.md](architecture/prompt-output.md) | ~75 | Compact Claude/Codex print activity, per-tool line counts, exact edit counts and terminal encoding fallbacks |
 | [architecture/loop-subsystem.md](architecture/loop-subsystem.md) | ~250 | `clud loop`: task resolution, plan synthesis, iteration run, DONE/BLOCKED marker contract, artifact rollover, repeat scheduling |
 | [architecture/workflow.md](architecture/workflow.md) | ~60 | `clud workflow`: Anthropic-format scripts in embedded QuickJS, `agent()` batches as concurrent `clud -p` children, ASCII board, `WORKFLOW_DONE.md` |
 | [architecture/testing-tiers.md](architecture/testing-tiers.md) | ~110 | The three test tiers; tier 3 runs the real Claude Code on `mock-agent serve` (scripted model), with the `tests/harness/` fixture and its pitfalls |

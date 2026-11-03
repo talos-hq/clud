@@ -7526,3 +7526,14 @@ fallback.
 not choose. Typing the provider's flag is that choice; requiring two
 environment variables on top of it only broke deliberate use.
 
+## DD-200: print turns classify native events and keep final answers on stdout
+
+Foreground Claude/Codex print turns were too verbose in native inherited-stdio
+mode. The launcher selects each harness's native JSONL protocol and renders
+classified, bounded activity on stderr; final answers remain complete on stdout.
+Explicit native output modes opt out. Tool text-line counts and edit patch
+counts replace bulky bodies. Codex omits diffs from its public exec events, so
+exact edit counts use the current thread's native patch records rather than a
+working-tree diff (which could include unrelated user changes). Named ASCII
+fallbacks plus lossy input decoding/replacement avoid encoding failures.
+The contract and limits live in [prompt-output.md](architecture/prompt-output.md).

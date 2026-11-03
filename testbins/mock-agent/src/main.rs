@@ -26,6 +26,7 @@ const CODEX_BRIDGE_PROBE_REQUEST: &str = include_str!("../assets/codex_bridge_pr
 
 mod codex_app_server;
 mod platform;
+mod prompt_tools;
 mod serve;
 
 #[expect(
@@ -342,12 +343,11 @@ fn main() {
         }
     }
 
-    // Emit canned stream-json events line-by-line. When the integration
-    // test wants to exercise clud's renderer, it points this at a file
-    // containing one JSON event per line; we write them with a flush
-    // between each so the parent's drain loop sees them incrementally,
-    // exactly like real claude would emit them. Then exit immediately
-    // so the test's wait completes without the usual JSON-report tail.
+    if let Some(path) = std::env::var_os("MOCK_AGENT_PROMPT_TOOLS") {
+        prompt_tools::run(Path::new(&path));
+        std::process::exit(exit_code);
+    }
+
     // `clud workflow` integration (#2471): every `agent()` call is a
     // separate `clud -p <prompt>` child, so per-call `--mock-*` flags are
     // impossible. `MOCK_AGENT_WORKFLOW_RESPONSES` names a JSON object whose
@@ -595,7 +595,7 @@ fn main() {
         std::process::exit(86);
     }
     trace("report write start");
-    println!("{}", report_str);
+    prompt_tools::emit_report(&report_str, &filtered_args);
     trace("report write done");
 
     // Also write to file if requested (useful when stdout is captured by PTY)

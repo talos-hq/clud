@@ -268,6 +268,9 @@ pub(crate) fn build_headless_turn_plan(
     turn_args.passthrough.clear();
 
     let mut plan = build_launch_plan_for_target_at(&turn_args, target, backend_path, &request.cwd);
+    if plan.prompt_summary {
+        crate::prompt_output::remove_auto_flags(&mut plan.command, backend);
+    }
     match (backend, &request.session) {
         (Backend::Claude, HeadlessSession::Initial { claude_session_id }) => {
             let id = claude_session_id
@@ -305,6 +308,7 @@ pub(crate) fn build_headless_turn_plan(
     // This flag means the foreground renderer owns the stream; daemon callers
     // keep raw JSONL for event storage instead.
     plan.stream_json_progress = false;
+    plan.prompt_summary = false;
     plan.launch_mode = LaunchMode::Subprocess;
     Ok(plan)
 }
@@ -1039,18 +1043,16 @@ fn build_launch_plan_for_target_at(
         crate::session::terminals_are_interactive(),
     );
 
-    // Issue: subprocess-mode loops on claude went silent until the iteration
-    // finished, because `claude -p` buffers its single final response. Inject
-    // `--output-format stream-json --verbose` so claude emits one JSON event
-    // per turn step, and let the runtime render those into progress lines.
-    // PTY-mode loops already stream the live TUI; codex doesn't expose this
-    // flag at all.
-    //
-    // The flags MUST be inserted BEFORE the prompt (`-p <prompt>`) so that
-    // `command[-1]` remains the prompt — downstream tooling, dry-run JSON
-    // consumers, and integration tests rely on that contract.
+    // The loop renderer keeps its existing contract. Ordinary foreground
+    // print turns opt into the shared compact renderer unless native output
+    // was requested explicitly.
     let stream_json_progress =
         matches!(backend, Backend::Claude) && is_loop_cmd && launch_mode == LaunchMode::Subprocess;
+    let prompt_summary = !crate::daemon::experimental_enabled(args)
+        && !is_loop_cmd
+        && headless
+        && launch_mode == LaunchMode::Subprocess
+        && crate::prompt_output::configure_command(&mut cmd, backend, &args.passthrough);
     if stream_json_progress {
         // For Claude, `push_prompt` emits `-p` then the prompt body. Find that
         // `-p` and slot the stream-json flags in just before it. This keeps
@@ -1090,6 +1092,7 @@ fn build_launch_plan_for_target_at(
         task_summary,
         loop_markers,
         stream_json_progress,
+        prompt_summary,
         codex_model,
         model_selection,
         failover: args.failover.clone(),

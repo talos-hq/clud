@@ -31,6 +31,7 @@ fn sample_launch_spec() -> WorkerLaunchSpec {
             task_summary: Some("wire test".to_string()),
             loop_markers: None,
             stream_json_progress: false,
+            prompt_summary: false,
             codex_model: None,
             model_selection: Some(crate::provider_catalog::ResolvedModelSelection {
                 provider: ModelProvider::Codex,

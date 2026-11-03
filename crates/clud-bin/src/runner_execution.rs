@@ -440,6 +440,71 @@ pub fn run_plan_pty(
     last_exit
 }
 
+/// Drain the same managed pipe as loop progress, retaining the native exit
+/// status and interruption teardown. This is not a PTY path.
+pub(super) fn run_with_prompt_summary(
+    plan: &command::LaunchPlan,
+    process: &subprocess::ManagedSubprocess,
+    interrupted: &AtomicBool,
+    batch_wrapped: bool,
+) -> ProcessOutcome {
+    use running_process::ReadStatus;
+    use std::io::{IsTerminal, Write};
+    use std::time::Duration;
+
+    let utf8 = crate::prompt_output::utf8_output(
+        &|name| std::env::var(name).ok(),
+        crate::platform::stdio::output_is_utf8(),
+    );
+    let icons = std::io::stderr().is_terminal() && std::env::var("TERM").as_deref() != Ok("dumb");
+    let mut renderer = crate::prompt_output::Renderer::for_process(
+        plan.cwd
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default(),
+    );
+    let emit = |output: Vec<crate::prompt_output::Output>| -> std::io::Result<()> {
+        for line in output {
+            let rendered = line.render(utf8, icons);
+            // Fallible writes avoid panics for closed downstream pipes. Lossy
+            // input decoding and ASCII replacement cover encoding failures.
+            if line.answer {
+                writeln!(std::io::stdout().lock(), "{rendered}")?;
+            } else {
+                writeln!(std::io::stderr().lock(), "{rendered}")?;
+            }
+        }
+        Ok(())
+    };
+    loop {
+        if interrupted.load(Ordering::SeqCst) {
+            teardown_interrupted_child(process, batch_wrapped);
+            return ProcessOutcome::Interrupted;
+        }
+        match process.read_stdout(Some(Duration::from_millis(100))) {
+            ReadStatus::Line(bytes) => {
+                if emit(renderer.observe(&String::from_utf8_lossy(&bytes))).is_err() {
+                    teardown_interrupted_child(process, batch_wrapped);
+                    return ProcessOutcome::Error;
+                }
+            }
+            ReadStatus::Timeout => {
+                let _ = process.poll();
+            }
+            ReadStatus::Eof => break,
+        }
+    }
+    if emit(renderer.end_of_stream()).is_err() {
+        return ProcessOutcome::Error;
+    }
+    match process.wait(Some(Duration::from_secs(2))) {
+        Ok(code) => ProcessOutcome::Exited(code),
+        Err(_) => process
+            .returncode()
+            .map_or(ProcessOutcome::Error, ProcessOutcome::Exited),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
