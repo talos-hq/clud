@@ -691,11 +691,7 @@ fn install_claude_in_temp_home(command: &'static str) -> Result<(), String> {
     use crate::claude_temp_home_install as temp_install;
     let real_home = crate::home::user_home().ok_or("home directory unavailable")?;
     let temp_home = temp_install::create_temp_home()?;
-    eprintln!(
-        "[clud] Claude Code install failed in {}; retrying with a temporary install home at {}",
-        real_home.display(),
-        temp_home.display()
-    );
+    eprintln!("{}", temp_install::engaged_warning(&real_home, &temp_home));
     let parent: Vec<_> = std::env::vars().collect();
     let installed = run_posix_installer(
         command,
@@ -704,11 +700,7 @@ fn install_claude_in_temp_home(command: &'static str) -> Result<(), String> {
     .and_then(|()| temp_install::finish(&temp_home, &real_home));
     match installed {
         Ok(done) => {
-            eprintln!(
-                "[clud] installed Claude Code at {} (linked from {}); it lives in RAM-backed temp space and is lost on reboot",
-                done.binary.display(),
-                done.link.display()
-            );
+            eprintln!("{}", temp_install::installed_warning(&done));
             Ok(())
         }
         Err(err) => {
