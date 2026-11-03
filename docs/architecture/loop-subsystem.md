@@ -327,7 +327,7 @@ When an interactive `clud loop` ends (stdin and stderr are terminals, not `--dry
 
 ## Interactive loop dashboard
 
-Headless subprocess loops show a dashboard when stdin and stderr are terminals
+Headless subprocess loops show a dashboard when stdin, stdout and stderr are terminals
 and `TERM` is not `dumb`. `loop_console.rs` owns the alternate screen, raw input,
 and restoration through a drop guard. It uses crossterm events on all hosts;
 its captured child has null stdin so the child cannot consume operator input.

@@ -32,7 +32,7 @@ fn launch(shell: &str, binary: &Path) -> Vec<String> {
             "-c".into(),
             format!(
                 "exec '{}' {args}",
-                binary.replace('\\', "/").replace('\'', "'\\''")
+                clud::path_norm::slash_separators(&binary).replace('\'', "'\\''")
             ),
         ],
     }
@@ -139,11 +139,12 @@ fn exercise(shell: &str) {
     process.write_impl(b"q", false).unwrap();
     wait_text(&process, "Enter: save");
     process
-        .write_impl(b"literal $HOME %PATH% & message\r", false)
+        .write_impl("literal café 🦀 $HOME %PATH% & message\r".as_bytes(), false)
         .unwrap();
     wait_text(&process, "Message queued for next iteration");
     let inbox = root.join(".clud/loop/inbox");
     assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 1);
+    assert_eq!(started_pid(&started), Some(initial_pid));
     process.write_impl(b"i", false).unwrap();
     wait_text(&process, "Enter: review");
     process.write_impl(b"restart message\r", false).unwrap();
@@ -152,6 +153,7 @@ fn exercise(shell: &str) {
     process.write_impl(b"\r", false).unwrap();
     wait_text(&process, "Enter: review");
     assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 1);
+    assert_eq!(started_pid(&started), Some(initial_pid));
     process.write_impl(b"\r", false).unwrap();
     wait_text(&process, "Are you sure?");
     process.write_impl(b"y", false).unwrap();
@@ -163,7 +165,7 @@ fn exercise(shell: &str) {
         "confirmed interrupt did not launch a replacement backend"
     );
     let delivered = std::fs::read_to_string(root.join(".clud/loop/NEXT_MESSAGE.md")).unwrap();
-    assert!(delivered.contains("literal $HOME %PATH% & message"));
+    assert!(delivered.contains("literal café 🦀 $HOME %PATH% & message"));
     assert!(delivered.contains("restart message"));
     // A one-iteration budget still permits restarting that same iteration.
     let info: serde_json::Value =

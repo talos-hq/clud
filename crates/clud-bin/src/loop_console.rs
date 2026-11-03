@@ -229,7 +229,7 @@ pub(crate) struct LoopConsole {
 
 impl LoopConsole {
     pub(crate) fn enter(root: &Path, iteration: u32, total: u32) -> io::Result<Option<Self>> {
-        if !io::stdin().is_terminal()
+        if !crate::session::terminals_are_interactive()
             || !io::stderr().is_terminal()
             || std::env::var("TERM").is_ok_and(|s| s == "dumb")
         {
