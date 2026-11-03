@@ -575,6 +575,28 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: `pgrep -a` / `ps ... args` print each match's whole command line,
+    // and a gate or build process carries its heredoc in argv. Past a few
+    // unbounded dumps per session the next distinct one is refused once with
+    // the width-bounded form of the pipeline it just wrote. Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_proc_scan::opts_out(&payload.command) {
+            append_log(&format!(
+                "PROC-SCAN-GUARD-OVERRIDE: {} in command: proc-scan guard bypassed for tool_name={:?}",
+                block_bad_cmd_proc_scan::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_proc_scan::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            append_log(&format!("PROC-SCAN-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
     // #2233: a Read of a file whose bytes are unchanged since the same read in
     // this session returns nothing new, and every later request pays for it
     // again. Refused with the bounded alternatives named; fails open.
@@ -3988,6 +4010,8 @@ mod block_bad_cmd_reread;
 
 #[path = "block_bad_cmd_imgview.rs"]
 mod block_bad_cmd_imgview;
+#[path = "block_bad_cmd_proc_scan.rs"]
+mod block_bad_cmd_proc_scan;
 
 #[path = "block_bad_cmd_verify_ratio.rs"]
 mod block_bad_cmd_verify_ratio;

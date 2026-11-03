@@ -497,6 +497,40 @@ together was 2.7%. One session opened the same `scratchpad/cur.png` 46 times —
   session, at most 16 paths per session, 2 days / 200 files retained; a path's
   count expires after 60 minutes without a view. Fails open on every state error.
 
+### Process-scan bound (#2233)
+
+`pgrep -a` and `ps aux`/`-ef`/`-eo ...args` print each match's *whole* command
+line, and a gate or build process carries its entire heredoc in argv. The answer
+an agent wants - is it running, which pid, since when - lives in the first ~160
+columns of each line; the rest is pure transcript weight that every later
+request in the session re-sends.
+
+Evidence (24 h probe, 2026-11-03): 284 process-inspection calls produced 455 kB
+of tool text (average 1.6 kB), and one of them -
+`ps -eo pid,etime,args | grep -E 'local.gate|local_gate' | grep -v grep | head`
+- returned **25,686 B for a handful of processes**.
+
+- **Counting:** one count per unbounded dump per session, where a dump is a
+  pipeline (split on `;`, `&`, `&&`, `||`, newlines - never on `|`) whose stages
+  include `pgrep` with an argv flag (`-a`/`-af`/`--list-full`) or `ps` listing
+  `args`/`command` (`aux`, `-ef`, `-ax`, `-eo pid,...,args`). Shell tools only.
+- **Not counted:** a pipeline that already bounds its width (`cut -c`,
+  `head -c`, `--width`, `fold`, `colrm`), a redirect (`... > file`), a
+  command substitution or backtick (the shell consumes that output), and
+  `pgrep`/`ps` forms that print pids or selected columns only. No process is
+  ever filtered out of the output - the guard only bounds each line's width.
+- **Past the limit** the next distinct dump is refused **once**, naming the
+  exact bounded form of the pipeline the agent just wrote
+  (`... | cut -c1-160`). Repeating the identical pipeline always runs, so the
+  guard cannot wedge a session.
+- **Limit:** `N = 3` dumps per session. `CLUD_PROC_SCAN_LIMIT=<n>` overrides it
+  and `0` turns it off; prefixing a command with `CLUD_ALLOW_PROC_SCAN=1`
+  bypasses it once.
+- **State:** `<clud state dir>/proc-scan-guard/<hash>.json`, one file per
+  session, at most 16 refused signatures, 2 days / 200 files. The count resets
+  after an hour of quiet. **Fails open** on every missing fact: no session id,
+  no state dir, no command.
+
 ### Verification-to-edit ratio note (#1988)
 
 `block_bad_cmd_verify_ratio.rs` classifies each PreToolUse call as an edit
