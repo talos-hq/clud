@@ -612,6 +612,28 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         }
     }
 
+    // #2233: `gh run view --log[-failed]` keeps a whole job log in the
+    // transcript, and every later request re-sends it. Past the limit the next
+    // distinct run's raw log is refused once with the bundled bounded reader
+    // (`github/ci_failure_report.py`: <=8 KiB summary + a private artifact).
+    let mut ci_log_note: Option<String> = None;
+    if event == PRE_TOOL_USE_EVENT {
+        match block_bad_cmd_cilog::outcome(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            block_bad_cmd_cilog::Outcome::Deny(reason) => {
+                append_log(&format!("CI-LOG-GUARD-BLOCKED: {reason}"));
+                println!("{}", deny_json(&reason));
+                eprintln!("{reason}");
+                return 2;
+            }
+            block_bad_cmd_cilog::Outcome::Note(note) => ci_log_note = Some(note),
+            block_bad_cmd_cilog::Outcome::Allow => {}
+        }
+    }
+
     // #1988/#2122: classify the call; an advisory note rides on the final
     // allow, and the one escalation deny is returned here.
     let verify_note = if event == PRE_TOOL_USE_EVENT {
@@ -1101,7 +1123,7 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
-    if let Some(note) = merge_notes(verify_note, image_note) {
+    if let Some(note) = merge_notes(merge_notes(verify_note, image_note), ci_log_note) {
         append_log("allowed with an advisory note");
         let output = block_bad_cmd_verify_ratio::context_json(&note);
         println!("{}", with_hook_notice(output, event, &payload));
@@ -3988,6 +4010,9 @@ mod block_bad_cmd_reread;
 
 #[path = "block_bad_cmd_imgview.rs"]
 mod block_bad_cmd_imgview;
+
+#[path = "block_bad_cmd_cilog.rs"]
+mod block_bad_cmd_cilog;
 
 #[path = "block_bad_cmd_verify_ratio.rs"]
 mod block_bad_cmd_verify_ratio;

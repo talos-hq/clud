@@ -497,6 +497,37 @@ together was 2.7%. One session opened the same `scratchpad/cur.png` 46 times —
   session, at most 16 paths per session, 2 days / 200 files retained; a path's
   count expires after 60 minutes without a view. Fails open on every state error.
 
+### Raw CI-log read budget (#2233)
+
+`gh run view --log-failed` prints every line of a failed job into the
+transcript, where every later request re-sends it.
+
+Evidence (24 h probe, 2026-11-03, `reports/rows-2026-11-03.jsonl`): 244
+`gh run view` calls produced 283 kB of tool text but **10.8 MB of exposure
+(4.5%)**, the largest category after `sed`; the widest single call was 27.3 kB
+landing at request 200 of its session, so it alone cost 1 MB. The bounded
+replacement already ships and nobody used it: on one failed job here,
+`gh run view … --log-failed` = **119,184 B** versus **995 B** from
+`github/ci_failure_report.py` (≤8 KiB summary, full log saved to a private
+artifact and named in the output).
+
+- **Counting:** distinct `(repo, run)` pairs read raw in one session. Detected
+  stages are `gh run view … --log` / `--log-failed` and
+  `gh api repos/O/R/actions/runs/<id>/logs`. A command that redirects to a file
+  is already out of the transcript and is never counted; `--json`,
+  `gh run list`, `gh run download` and job-level `gh api` paths (which carry no
+  run id) are ignored.
+- **At the limit** the hook adds an advisory note naming the bounded command,
+  and the call proceeds. **Past the limit** the next raw log for a run not yet
+  read is refused once, with the exact bounded replacement for that run —
+  `"$CLUD_EXE" tool run github/ci_failure_report.py -- --repo R --run ID --job J`.
+  Any retry of the same run's log proceeds, so the decision cannot loop.
+- **Budget:** two raw runs per session. `CLUD_ALLOW_CI_LOG=1` in the command
+  skips one call, `CLUD_CI_LOG_LIMIT=<n>` sets the limit and `0` disables it.
+- **State:** `<clud state dir>/ci-log-guard/<hash>.json`, one file per session,
+  at most 24 runs per session, 2 days / 500 files retained; the count expires
+  after 60 minutes without a read. Fails open on every state error.
+
 ### Verification-to-edit ratio note (#1988)
 
 `block_bad_cmd_verify_ratio.rs` classifies each PreToolUse call as an edit
