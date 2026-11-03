@@ -1109,6 +1109,12 @@ fn validate_launch_target(args: &args::Args, launch_target: backend::ResolvedLau
         );
         std::process::exit(2);
     }
+    if launch_target.effective_harness == backend::Backend::OpenCode {
+        if let Some(error) = clud::opencode_harness::unsupported_option(args) {
+            eprintln!("[clud] error: {error}");
+            std::process::exit(2);
+        }
+    }
     validate_provider_only(args, launch_target);
     if let Some(error) = command::grind_launch_error(args, launch_target)
         .or_else(|| command::video_launch_error(args, launch_target))
@@ -1565,6 +1571,15 @@ fn dsh_needs_clud_credential(launch_target: backend::ResolvedLaunchTarget) -> bo
 /// intentionally remain vault-free -- `launch_preflight_target` returns
 /// `None` for every dry run regardless of provider.
 fn preflight_provider_credentials(args: &args::Args, launch_target: backend::ResolvedLaunchTarget) {
+    // A served OpenCode route uses the server's client token, not a key for
+    // the real provider. Never send that token to the provider's key probe.
+    if launch_target.effective_harness == backend::Backend::OpenCode
+        && clud::route_plan::Ambient::from_process()
+            .opencode_base_url
+            .is_some()
+    {
+        return;
+    }
     if launch_target.effective_harness == backend::Backend::DeepSeek
         && !dsh_needs_clud_credential(launch_target)
     {

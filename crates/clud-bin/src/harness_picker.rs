@@ -382,6 +382,7 @@ pub fn display_name(backend: Backend) -> &'static str {
         Backend::Claude => "Claude Code",
         Backend::Codex => "Codex CLI",
         Backend::DeepSeek => "DeepSeek Harness",
+        Backend::OpenCode => "OpenCode",
     }
 }
 
