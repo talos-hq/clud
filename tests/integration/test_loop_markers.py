@@ -381,3 +381,35 @@ def test_invalid_loop_json_fails_fast(
     assert "invalid" in result.stderr
     assert "loop.json" in result.stderr
     assert "iteration" not in result.stderr
+
+
+@pytest.mark.parametrize("backend", ["--claude", "--codex"])
+@pytest.mark.parametrize("text", ["fix café & %PATH% $HOME", "first line\nsecond line"])
+def test_redirected_loop_keeps_plain_output_and_delivers_literal_message(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path, backend: str, text: str
+) -> None:
+    """Redirected runs never enter raw mode or print dashboard control sequences."""
+    done = _marker_dir(tmp_path) / "DONE"
+    result = _run(
+        clud_binary,
+        backend,
+        "--subprocess",
+        "loop",
+        "--loop-count",
+        "1",
+        "--message",
+        text,
+        "finish task",
+        "--",
+        "--mock-write-done",
+        str(done),
+        "--mock-write-marker-on-iter",
+        "1",
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, 0)
+    assert "\x1b[?1049h" not in result.stderr
+    assert "Interrupt with message" not in result.stderr
+    delivered = (tmp_path / ".clud/loop/NEXT_MESSAGE.md").read_text(encoding="utf-8")
+    assert text in delivered

@@ -836,10 +836,12 @@ impl ForegroundRuntime {
         cwd: Option<PathBuf>,
         capture_stdout: bool,
         creation_flags: Option<u32>,
+        dashboard_owns_stdin: bool,
     ) -> Result<ManagedSubprocess, String> {
         let adapter = NativeSubprocessAdapter {
             capture_stdout,
             creation_flags,
+            dashboard_owns_stdin,
         };
         self.spawn_with(
             &adapter,
@@ -1892,6 +1894,7 @@ pub(crate) fn env_key_eq(left: &str, right: &str) -> bool {
 }
 
 struct NativeSubprocessAdapter {
+    dashboard_owns_stdin: bool,
     capture_stdout: bool,
     creation_flags: Option<u32>,
 }
@@ -1907,7 +1910,12 @@ impl SpawnAdapter<ManagedSubprocess> for NativeSubprocessAdapter {
         env: Vec<(String, String)>,
     ) -> Result<ManagedSubprocess, Self::Error> {
         debug_assert_eq!(mode, SpawnMode::Subprocess);
-        ManagedSubprocess::start(
+        let start = if self.dashboard_owns_stdin {
+            ManagedSubprocess::start_without_stdin
+        } else {
+            ManagedSubprocess::start
+        };
+        start(
             command,
             cwd.map(PathBuf::from),
             env,
