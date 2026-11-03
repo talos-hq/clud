@@ -40,7 +40,7 @@ getrandom = "0.4"
 ignore = "0.4"
 # File identity (including NTFS hardlinks), rather than matching size/mtime.
 same-file = "1"
-# Exact line diffs for compact tool summaries (MIT).
+# Exact line diffs for compact tool summaries (Apache-2.0).
 similar = "3.1"
 # Issue #556: in-process git-index parse for the large-file guard's fast
 # (tracked-files + cached sizes) pass. Pinned exactly; license MIT OR
