@@ -57,6 +57,7 @@ fn session(store: &ApiSessionStore, cwd: &Path) -> String {
             backend: ApiSessionBackend::Claude,
             cwd: cwd.to_path_buf(),
             name: None,
+            origin: clud::session_origin::SessionOrigin::Test,
             resolved_settings: ResolvedApiSessionSettings {
                 model: None,
                 safe: true,

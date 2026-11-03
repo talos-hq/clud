@@ -58,8 +58,7 @@ def _backend_soldr_policy() -> str:
 
     assert len(requirements) == 1, f"expected exactly one build requirement, got {requirements}"
     assert requirements == ["soldr"], (
-        "build-system.requires must use the rolling soldr release policy, "
-        f"got {requirements!r}"
+        f"build-system.requires must use the rolling soldr release policy, got {requirements!r}"
     )
     return "latest"
 
@@ -75,9 +74,7 @@ def _setup_soldr_sources() -> list[Path]:
         *actions.glob("*/action.yaml"),
     ]
     return sorted(
-        path
-        for path in set(paths)
-        if "forge-ci/setup-soldr" in path.read_text(encoding="utf-8")
+        path for path in set(paths) if "forge-ci/setup-soldr" in path.read_text(encoding="utf-8")
     )
 
 
@@ -177,9 +174,7 @@ def _setup_soldr_steps_in_text(  # noqa: C901
                     stripped,
                 )
                 if forwarded is not None:
-                    version = _action_input_default(
-                        source_name, text, forwarded.group("input")
-                    )
+                    version = _action_input_default(source_name, text, forwarded.group("input"))
                     break
 
         version = version or "latest"
@@ -213,9 +208,7 @@ jobs:
         with:
           cache: true
 """
-    assert _setup_soldr_steps_in_text("bad.yml", workflow) == [
-        ("bad.yml", "v0.9.66", "latest")
-    ]
+    assert _setup_soldr_steps_in_text("bad.yml", workflow) == [("bad.yml", "v0.9.66", "latest")]
 
 
 def test_pip_build_uses_soldr_pep517_backend() -> None:
@@ -260,9 +253,7 @@ def test_soldr_release_policy_moves_in_lockstep() -> None:
     # decoupled from the soldr *tool* version, which is what the lockstep above
     # enforces. All refs must still agree with each other.
     action_pins = {ref for _, ref, _ in steps}
-    assert action_pins == {"v0"}, (
-        f"setup-soldr action refs disagree: {sorted(action_pins)}"
-    )
+    assert action_pins == {"v0"}, f"setup-soldr action refs disagree: {sorted(action_pins)}"
 
 
 def test_install_script_uses_wheel_with_legacy_fallback() -> None:
@@ -290,7 +281,7 @@ def test_install_script_uses_wheel_with_legacy_fallback() -> None:
     )
     assert '"$target_dir/python.exe" -c' in text
     assert '"$target_dir/python" -c' in text
-    assert "command -v python3" in text # asserts the installer's fallback; python-name-lint: allow
+    assert "command -v python3" in text  # asserts the installer's fallback; python-name-lint: allow
 
 
 def test_ci_setup_soldr_cooks_only_with_the_build_target() -> None:
@@ -361,3 +352,47 @@ def test_setup_soldr_uses_its_current_repository() -> None:
         if "uses:" in line and "zackees/setup-soldr@" in line
     ]
     assert not stale, f"repin to forge-ci/setup-soldr: {stale}"
+
+
+def test_setup_soldr_cache_steps_wire_the_s3_remote_cache() -> None:
+    """Every `cache: true` setup-soldr step gets the S3 cache, and its keys arrive.
+
+    #2462: bucket/endpoint as inputs, credentials as step env. Reusable
+    workflows get no secrets by default, so every caller that reaches such a
+    step must pass `secrets: inherit`; the composite setup-build action cannot
+    read secrets, so each of its callers forwards them as inputs.
+    """
+    workflows = ROOT / ".github" / "workflows"
+    for path in _setup_soldr_sources():
+        text = path.read_text(encoding="utf-8")
+        name = path.relative_to(ROOT).as_posix()
+        for block in re.split(r"\n\s*- (?:name: .*\n\s*(?:if: .*\n\s*)?)?uses: ", text)[1:]:
+            if not block.startswith("forge-ci/setup-soldr@") or "cache: true" not in block:
+                continue
+            assert "s3-bucket: forge-ci-cache" in block, name
+            assert "s3-endpoint: sfo3.digitaloceanspaces.com" in block, name
+            for key in ("SOLDR_S3_CACHE_ACCESS_KEY", "SOLDR_S3_CACHE_SECRET_KEY"):
+                assert f"{key}: ${{{{" in block, f"{name}: {key} not exported"
+
+    # Reusable workflows that (transitively) reach a cache step.
+    reaching = {"_build-target.yml", "_dylint.yml", "ci.yml", "installer-check.yml"}
+    for path in workflows.glob("*.yml"):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(
+            r"^    uses: \./\.github/workflows/(\S+)\n((?:    #.*\n)*)(    \S.*)?$", text, re.M
+        ):
+            if match.group(1) not in reaching:
+                continue
+            job = text[match.start() :].split("\n\n  ")[0]
+            assert re.search(r"^    secrets: inherit$", job, re.M), (
+                f"{path.name}: caller of {match.group(1)} lacks `secrets: inherit`"
+            )
+        for match in re.finditer(
+            r"uses: \./\.github/actions/setup-build\n((?:\s+.*\n){1,12})", text
+        ):
+            assert "s3-access-key: ${{ secrets.SOLDR_S3_CACHE_ACCESS_KEY }}" in match.group(1), (
+                path.name
+            )
+            assert "s3-secret-key: ${{ secrets.SOLDR_S3_CACHE_SECRET_KEY }}" in match.group(1), (
+                path.name
+            )

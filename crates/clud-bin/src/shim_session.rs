@@ -110,6 +110,7 @@ pub fn activate_rm(env: &mut Vec<(String, String)>) {
     );
     let read_broker = crate::clud_settings::load_gh_read_broker_enabled().unwrap_or(true);
     set_env(env, GH_READ_BROKER_KEY, if read_broker { "1" } else { "0" });
+    set_soldr_porcelain(env, launch_soldr_porcelain());
     set_env(env, GH_SHIM_ACTIVE_KEY, "0");
     let original_path = env
         .iter()
@@ -166,6 +167,30 @@ pub fn activate_rm(env: &mut Vec<(String, String)>) {
             eprintln!("[clud rm shim] installation failed; shell identity guard will deny: {error}")
         }
     }
+}
+
+/// soldr's agent mode: one JSON line on success, a failure digest otherwise.
+pub(crate) const SOLDR_PORCELAIN_KEY: &str = "SOLDR_PORCELAIN";
+
+/// #2443: `rust.porcelain` for the launch directory exports
+/// `SOLDR_PORCELAIN=1` to the agent, so no agent has to remember it. Only the
+/// child session gets it: clud's own soldr calls parse soldr's output. A
+/// value the user already set wins.
+fn set_soldr_porcelain(env: &mut Vec<(String, String)>, enabled: bool) {
+    if enabled
+        && !env
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case(SOLDR_PORCELAIN_KEY))
+    {
+        set_env(env, SOLDR_PORCELAIN_KEY, "1");
+    }
+}
+
+fn launch_soldr_porcelain() -> bool {
+    std::env::current_dir()
+        .ok()
+        .and_then(|cwd| crate::repo_clud_config::discover_effective_clud_config(&cwd))
+        .is_some_and(|config| config.rust.use_soldr && config.rust.porcelain)
 }
 
 /// #2368: `gh.backend` for the launch directory, as `CLUD_GH_BACKEND`.
@@ -327,6 +352,18 @@ mod tests {
             None,
             "no real git: no target, so the alias is a plain passthrough"
         );
+    }
+
+    #[test]
+    fn soldr_porcelain_is_exported_only_when_enabled_and_keeps_a_user_value() {
+        let mut e = env(&[]);
+        set_soldr_porcelain(&mut e, false);
+        assert!(e.is_empty());
+        set_soldr_porcelain(&mut e, true);
+        assert_eq!(e, env(&[("SOLDR_PORCELAIN", "1")]));
+        let mut user = env(&[("SOLDR_PORCELAIN", "0")]);
+        set_soldr_porcelain(&mut user, true);
+        assert_eq!(user, env(&[("SOLDR_PORCELAIN", "0")]));
     }
 
     #[test]

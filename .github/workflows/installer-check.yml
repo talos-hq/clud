@@ -51,6 +51,9 @@ jobs:
           - x86_64-unknown-linux-musl
           - aarch64-unknown-linux-musl
     uses: ./.github/workflows/_build-target.yml
+    # Reusable workflows get no secrets by default; setup-soldr's remote S3
+    # build cache needs SOLDR_S3_CACHE_ACCESS_KEY / _SECRET_KEY.
+    secrets: inherit
     with:
       source_ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
       target: ${{ matrix.target }}
@@ -728,6 +731,8 @@ jobs:
           strategy: soldr
           profile: dev
           soldr-token: ${{ secrets.GITHUB_TOKEN }}
+          s3-access-key: ${{ secrets.SOLDR_S3_CACHE_ACCESS_KEY }}
+          s3-secret-key: ${{ secrets.SOLDR_S3_CACHE_SECRET_KEY }}
       - run: 'soldr cargo test -p clud --lib self_install::'
 
   catalog-site:

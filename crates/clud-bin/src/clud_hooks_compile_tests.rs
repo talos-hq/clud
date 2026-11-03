@@ -3,6 +3,40 @@
 use super::*;
 use crate::clud_hooks::parse;
 
+#[test]
+fn safety_and_declared_hooks_share_one_scanner_per_event() {
+    let mut settings = deletion_safety_fragment();
+    let declared = claude_settings_fragment(
+        &hooks(r#"{"hooks":{"PreToolUse":[{"command":"before"}],"PostToolUse":[{"command":"after"}],"Stop":[{"command":"stop"}]}}"#),
+        false,
+    ).unwrap();
+    merge_hook_settings(&mut settings, &declared).unwrap();
+    merge_hook_settings(
+        &mut settings,
+        &json!({"hooks":{"PreToolUse":[{
+            "matcher":"Bash", "hooks":[
+                {"type":"command", "command":"clud-block-bad-cmd"},
+                {"type":"command", "command":"user-check"}
+            ]
+        }]}}),
+    )
+    .unwrap();
+    consolidate_scanner_hooks(&mut settings);
+    assert_eq!(
+        commands_for(&settings, PRE_TOOL_USE),
+        vec!["user-check", "clud-cmd-scan --event PreToolUse"]
+    );
+    for event in ["PostToolUse", "Stop"] {
+        assert_eq!(
+            commands_for(&settings, event),
+            vec![dispatcher_command(event)]
+        );
+    }
+    let once = settings.clone();
+    consolidate_scanner_hooks(&mut settings);
+    assert_eq!(settings, once);
+}
+
 fn hooks(text: &str) -> CludHooks {
     parse(text).expect("parses")
 }
@@ -243,7 +277,9 @@ fn deletion_safety_fragment_routes_every_guarded_tool_to_the_dispatcher() {
     for tool in GUARDED_TOOLS {
         assert!(matcher.is_match(tool), "{tool} must reach the dispatcher");
     }
-    for tool in ["Read", "Grep", "Glob", "WebFetch"] {
+    // #2233 gave `Read` a rule (the unchanged-re-read guard), so the tools
+    // with no rule left are the read-free ones.
+    for tool in ["Grep", "Glob", "WebFetch", "TodoWrite", "ToolSearch"] {
         assert!(!matcher.is_match(tool), "{tool} has no rule");
     }
     assert_eq!(entries[0]["hooks"][0]["command"], DISPATCHER_BINARY);
@@ -285,15 +321,23 @@ fn a_repo_without_a_catch_all_matcher_still_routes_guarded_tools_to_the_dispatch
         }
     });
     merge_hook_settings(&mut settings, &deletion_safety_fragment()).unwrap();
-    // The /loop stop, a grind planner's Write, a grind Agent spawn.
-    for tool in ["EnterPlanMode", "ScheduleWakeup", "Write", "Agent", "Bash"] {
+    // The /loop stop, a grind planner's Write, a grind Agent spawn, and the
+    // unchanged-re-read guard's `Read` (#2233).
+    for tool in [
+        "EnterPlanMode",
+        "ScheduleWakeup",
+        "Write",
+        "Agent",
+        "Bash",
+        "Read",
+    ] {
         let commands = harness_commands_for_tool(&settings, tool);
         assert!(
             commands.iter().any(|c| c == DISPATCHER_BINARY),
             "{tool} never reaches {DISPATCHER_BINARY}: {commands:?}"
         );
     }
-    assert!(harness_commands_for_tool(&settings, "Read").is_empty());
+    assert!(harness_commands_for_tool(&settings, "Grep").is_empty());
 }
 
 #[test]

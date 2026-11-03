@@ -704,9 +704,38 @@ pub(crate) fn recover(destination: &Path) -> Result<(), String> {
         if host::WINDOWS && destination.exists() {
             fs::remove_file(destination).map_err(|error| error.to_string())?;
         }
-        fs::rename(&backup, destination).map_err(|error| format!("restore prior clud: {error}"))?;
+        rename_when_released(&backup, destination)
+            .map_err(|error| format!("restore prior clud: {error}"))?;
     }
     Ok(())
+}
+
+/// How long [`rename_when_released`] waits for another process to let go of
+/// a just-written executable.
+const RELEASE_WAIT: Duration = Duration::from_secs(5);
+
+/// `fs::rename`, retried briefly while Windows reports the file in use.
+///
+/// A freshly written `.exe` is routinely held open for a moment by an
+/// antivirus scan (or the version probe's image still being unmapped), and
+/// the rename then fails with ERROR_SHARING_VIOLATION (32), or with
+/// ERROR_ACCESS_DENIED (5) for a delete-pending name. Both clear on their own,
+/// so wait up to [`RELEASE_WAIT`]; every other error, and every error off
+/// Windows, returns at once.
+fn rename_when_released(from: &Path, to: &Path) -> io::Result<()> {
+    let deadline = Instant::now() + RELEASE_WAIT;
+    loop {
+        match fs::rename(from, to) {
+            Err(error)
+                if host::WINDOWS
+                    && matches!(error.raw_os_error(), Some(32 | 5))
+                    && Instant::now() < deadline =>
+            {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            result => return result,
+        }
+    }
 }
 
 fn commit(destination: &Path, stage: &Path, version: &str, digest: &str) -> Result<(), String> {
@@ -730,7 +759,7 @@ fn commit(destination: &Path, stage: &Path, version: &str, digest: &str) -> Resu
             }
         }
     }
-    if let Err(error) = fs::rename(stage, destination) {
+    if let Err(error) = rename_when_released(stage, destination) {
         if !destination.exists() && backup.exists() {
             let _ = fs::rename(&backup, destination);
         } else if backup.exists() {
@@ -836,6 +865,20 @@ mod tests {
         assert!(
             validate_native_header(&mut file, Os::Linux, Arch::X86_64, Flavor::Native).is_err()
         );
+    }
+
+    #[test]
+    fn rename_when_released_moves_a_free_file_and_fails_fast_on_a_missing_one() {
+        let temp = tempfile::tempdir().unwrap();
+        let from = temp.path().join("stage");
+        let to = temp.path().join("clud");
+        fs::write(&from, b"x").unwrap();
+        rename_when_released(&from, &to).unwrap();
+        assert_eq!(fs::read(&to).unwrap(), b"x");
+        // Not a sharing violation: no retry, so it returns well inside the wait.
+        let started = Instant::now();
+        assert!(rename_when_released(&from, &to).is_err());
+        assert!(started.elapsed() < RELEASE_WAIT);
     }
 
     #[test]

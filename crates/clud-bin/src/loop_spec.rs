@@ -545,7 +545,40 @@ DONE signal. Use `<<<CLUD_LOOP_BLOCKED: <reason>>>>` for the BLOCKED \
 equivalent. Writing the marker file is still strongly preferred.\n\
 \n\
 Do not write DONE prematurely — only after you are confident the work is \
-complete. Otherwise, continue working — you will be re-invoked.\n"
+complete. Otherwise, continue working — you will be re-invoked.\n\
+\n\
+DONE terminates the entire loop, not just the current iteration. The original \
+task's explicit completion conditions take precedence over this generic \
+contract. Completing one item or one iteration is progress, not permission \
+to write DONE for a multi-item task.\n\
+\n\
+For example, if the task says to stop after 50 issues are fixed, continue \
+until all 50 issues satisfy the task's completion criteria. Persist cumulative progress \
+and evidence (issue identifiers and PR URLs/status) in the task's working \
+files, read that progress on each invocation, and verify the full target \
+before writing DONE. Do not count the same item twice. The iteration budget is a maximum \
+number of invocations, not proof that any number of issues is complete.\n\
+\n\
+A PR accepted into a merge queue completes an individual item only if the original task explicitly \
+uses enqueue as that item's completion criterion. Otherwise follow the \
+task's required verification or merge criterion. For a single-item task, \
+write DONE once that item's requested criterion is satisfied. For a \
+multi-item task, record the item's progress, finish the iteration without \
+DONE, and continue with the remaining items on the next invocation.\n"
+    )
+}
+
+/// Prompt paragraph telling the agent where operator messages for the
+/// current iteration appear (#2471). Appended after the DONE/BLOCKED
+/// contract whenever marker injection is active.
+pub fn next_message_contract(next_message_abs: &Path) -> String {
+    format!(
+        "\nAt the start of every iteration, check whether this file exists:\n\n    {}\n\n\
+If it does, it holds messages the operator queued for this iteration. \
+Read it first and follow its instructions; they take priority over the \
+original task text where they conflict. Do not edit or delete it; clud \
+manages it.\n",
+        next_message_abs.display()
     )
 }
 
@@ -928,5 +961,40 @@ mod tests {
         assert!(rendered.contains("## Body"));
         assert!(rendered.contains("## Comments"));
         assert!(rendered.contains("@bo"));
+    }
+
+    #[test]
+    fn next_message_contract_names_exact_path() {
+        let p = Path::new("/repo/.clud/loop/NEXT_MESSAGE.md");
+        let text = next_message_contract(p);
+        assert!(
+            text.contains("    /repo/.clud/loop/NEXT_MESSAGE.md\n"),
+            "{text}"
+        );
+        assert!(text.contains("Do not edit or delete it"));
+    }
+
+    #[test]
+    fn done_contract_preserves_cumulative_goal() {
+        let text = done_marker_contract(Path::new("/r/DONE"), Path::new("/r/BLOCKED"));
+        assert!(text.contains("DONE terminates the entire loop"), "{text}");
+        assert!(text.contains("50 issues"), "{text}");
+        assert!(text.contains("Persist cumulative progress"), "{text}");
+        let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            !normalized.contains("write DONE with the PR URL as soon as"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn done_contract_defers_item_completion_to_task() {
+        let text = done_marker_contract(Path::new("/r/DONE"), Path::new("/r/BLOCKED"));
+        assert!(
+            text.contains("only if the original task explicitly"),
+            "{text}"
+        );
+        assert!(text.contains("single-item task"), "{text}");
+        assert!(text.contains("iteration budget is a maximum"), "{text}");
     }
 }

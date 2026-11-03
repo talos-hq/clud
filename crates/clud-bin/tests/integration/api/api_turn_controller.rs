@@ -71,6 +71,7 @@ fn create_session(store: &ApiSessionStore, backend: ApiSessionBackend, cwd: &Pat
             backend,
             cwd: cwd.to_path_buf(),
             name: None,
+            origin: clud::session_origin::SessionOrigin::Test,
             resolved_settings: ResolvedApiSessionSettings {
                 model: None,
                 safe: true,

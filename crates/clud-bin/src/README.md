@@ -292,6 +292,7 @@ CLI surface and backend resolution:
 - `video.rs` - `clud video`: browser-use/video-use as a session-scoped Claude
   plugin, never a global skill (#1851). See
   [`launch-targets.md`](../../../docs/architecture/launch-targets.md#clud-video-video-use-as-a-session-scoped-plugin-1851).
+- `metered_policy.rs` - subscription-first env policy (`CLUD_SUBSCRIPTION_PROVIDER`, `CLUD_PROVIDER`, `CLUD_ALLOW_METERED`, `CLUD_METERED_PROVIDER`): metered routes need both overrides and print a recorded warning; see [provider-selection.md](../../../docs/architecture/provider-selection.md#metered-access-needs-two-overrides).
 - `provider_catalog.rs` - the single registry mapping stable clud model IDs,
   gateway discovery IDs, provider wire IDs, compatibility aliases, and
   independent effort/context capability metadata.
@@ -419,6 +420,7 @@ which test tier a change belongs in — lives in
   five-second `reap-health.json` flight-recorder checkpoint for watchdog-reset
   forensics. It records host scans and adaptive-backoff deferrals without
   synchronous per-event logging.
+- `session_origin.rs` - `SessionOrigin` (`cli|mcp|daemon|test|unknown`), the one provenance field on API session records; see [session-origin.md](../../../docs/architecture/session-origin.md).
 - `session_registry.rs` - `redb`-backed registry of live `clud` PIDs that caps
   concurrent siblings; `Drop` removes the row, startup GCs dead rows. Exit-time
   removal is bounded by `SHUTDOWN_BUDGET` (#1660) so a held lock cannot stall exit.
@@ -550,7 +552,12 @@ which test tier a change belongs in — lives in
   line could never deliver. `merge_hook_settings` concatenates per event rather
   than replacing, mirroring how the harness layers hooks, so clud's
   registration cannot displace the bridge's lifecycle hooks or a user's own
-  `--settings` document. Codex receives its PreToolUse command hook and trust
+  `--settings` document. `consolidate_scanner_hooks` folds plain managed
+  registrations into one invocation per event before launch; see
+  [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md).
+  `scanner_hook_migration.rs` consolidates existing plain scanner registrations
+  across normal Claude settings and lets the launch defer to inherited coverage.
+  Codex receives its PreToolUse command hook and trust
   state through launch `-c` values, without writing to user configuration.
   Phase 5 adds the `CwdChanged`
   backstop (`CWD_CHANGED_EVENT`, DD-064): `claude_settings_fragment` inserts
@@ -821,6 +828,7 @@ Diagnostics and misc:
   bare `clud symbols` form prints a five-line summary. Self-contained
   maintenance command; dispatched from `main.rs` before any backend
   resolution. See `docs/architecture/crash-reports.md`.
+- `workflow/` - `clud workflow` script engine (QuickJS), `clud -p` agent runner and ASCII board; see [workflow.md](../../../docs/architecture/workflow.md).
 - `wasm.rs` - `wasmi`-based runner that loads a WASM module, registers a
   minimal `host.log` import, invokes a named export, and propagates the integer
   exit code.

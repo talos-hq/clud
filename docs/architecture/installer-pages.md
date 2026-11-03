@@ -1,8 +1,24 @@
 # Installer Pages and release catalog
 
-Issue #1468 uses GitHub Pages as the installer discovery endpoint. The canonical
-catalog URL is `https://talos-hq.github.io/clud/install/manifest.json`; it is a
-`manifest.json` v1 Catalog, not the repository's internal test-bundle manifest.
+Issue #1468 uses GitHub Pages as the installer discovery endpoint. The catalog
+is a `manifest.json` v1 Catalog, not the repository's internal test-bundle
+manifest. Its `online_url` identity field stays
+`https://talos-hq.github.io/clud/install/manifest.json` (installed binaries
+compare it verbatim), but nothing fetches that URL: the org's Pages custom
+domain makes every `*.github.io` URL 301-redirect.
+
+**Fetch order (#2449).** Clients and publishers read published metadata through
+one ordered list per document — `crate::published_urls` in Rust,
+`installer.catalog.INSTALL_CATALOG_URLS` and `models.publish.MODEL_MANIFEST_URLS`
+in Python: the canonical domain (`https://talosbot.ai/clud/...`) first, then a
+GitHub-owned fallback that survives losing the domain or its certificate. The
+install catalog falls back to
+`github.com/talos-hq/clud/releases/latest/download/installer-candidate-manifest.json`
+(read in candidate mode, since `latest` only resolves to a published release);
+the model manifest falls back to the `models-manifest.json` asset that
+`model-pages.yml` uploads to the latest release, then the built-in table.
+`ci/fetch_fallbacks.py` (`bash lint`) fails when a fetch site bypasses these
+lists or a list stops ending with a GitHub-owned URL.
 
 `installer/catalog.py` fetches the public GitHub release list and verifies each
 candidate wheel or direct clud asset against GitHub's published SHA-256 and byte

@@ -566,6 +566,7 @@ fn cmd_list(state_dir: &Path, json: bool, kind_filter: Option<&str>) -> i32 {
         }
         warn_if_worktree_root_oversized();
         warn_if_session_tmp_oversized();
+        warn_if_session_tmp_foreign_owned();
         warn_if_clud_cache_oversized();
         warn_if_dead_worktree_registrations(state_dir);
         return 0;
@@ -573,6 +574,7 @@ fn cmd_list(state_dir: &Path, json: bool, kind_filter: Option<&str>) -> i32 {
     print_table_from_rows(&rows);
     warn_if_worktree_root_oversized();
     warn_if_session_tmp_oversized();
+    warn_if_session_tmp_foreign_owned();
     warn_if_clud_cache_oversized();
     warn_if_dead_worktree_registrations(state_dir);
     0
@@ -592,6 +594,18 @@ fn warn_if_session_tmp_oversized() {
     }
     let check = check_tree_size(&root, warn_bytes, SIZE_SCAN_ENTRY_BUDGET);
     if let Some(line) = tmp_list_warning(&root, warn_bytes, check) {
+        eprintln!("{line}");
+    }
+}
+
+/// #2486: list the subtrees the session-tmp sweep skipped as owned by another
+/// user, with the command that removes each. The daemon records them.
+fn warn_if_session_tmp_foreign_owned() {
+    let Some(state_dir) = crate::home::user_home().map(|home| home.join(".clud/state")) else {
+        return;
+    };
+    let paths = crate::gc::session_tmp::read_foreign_owned(&state_dir);
+    for line in crate::gc::session_tmp::foreign_owned_lines(&paths) {
         eprintln!("{line}");
     }
 }

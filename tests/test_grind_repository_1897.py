@@ -69,6 +69,14 @@ def test_missing_invalid_or_conflicting_identity_stops_before_any_agent(
     assert "REDACT-ME" not in json.dumps(result)
 
 
+def test_missing_repository_points_at_a_stale_router_skill(tmp_path: Path) -> None:
+    """#2437: only a stale /grind router omits the repository, so say so."""
+    error = probe(tmp_path).get("error", "")
+    assert "GitHub repository is missing" in error, error
+    assert "skills/grind/SKILL.md" in error, error
+    assert "managed-by: clud" in error, error
+
+
 def test_watcher_timeout_is_not_an_arbitrary_two_observation_cutoff() -> None:
     text = (ROOT / "crates/clud-bin/assets/skills/grind-land/SKILL.md").read_text(
         encoding="utf-8"

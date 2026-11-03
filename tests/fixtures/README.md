@@ -34,4 +34,6 @@ keyword and supplies deterministic agent replies. Prompts and feature-landing
 commands are captured without model, shell-tool or GitHub requests. It tests
 workflow data flow rather than the real Claude Workflow host. The companion
 Python tests also exercise real hook caps, task separators and offline waiter
-resumption, with a fork/upstream command-target fixture.
+resumption, with a fork/upstream command-target fixture. An optional `script` maps label prefixes to ordered replies (with
+`delay_ms`), which `tests/test_grind_queue_landing.py` uses to drive the
+merge-queue enqueue, chaperone and fixup paths (#2467).

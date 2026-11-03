@@ -102,6 +102,15 @@ fn approved_next_round(payload: &HookPayloadView) -> bool {
     let Some(input) = payload.tool_input.as_ref() else {
         return false;
     };
+    if snapshot.get("runId") == input.get("resumeFromRunId")
+        && snapshot.get("scriptPath") == input.get("scriptPath")
+        && snapshot.get("args").is_some_and(Value::is_object)
+        && input.get("args") == snapshot.get("args")
+    {
+        // #2470: identical launch arguments advance no epoch, so the native
+        // cache replays exactly what it recorded; this covers a stopped run.
+        return true;
+    }
     let Some(resume) = snapshot.pointer("/result/resume") else {
         return false;
     };

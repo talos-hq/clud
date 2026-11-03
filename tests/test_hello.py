@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from tests import process
+from tests.metered_consent import consent_for
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -181,6 +182,8 @@ def _run(
         env = _isolated_clud_env(source, home, state_dir)
         if env_overrides:
             env.update(env_overrides)
+        # Existing launch tests opt into metered routes explicitly (#2529).
+        env = consent_for(env, args)
         return process.run(
             [str(launch), *args],
             capture_output=True,
@@ -2016,6 +2019,24 @@ def test_dry_run_loop() -> None:
     assert data["loop_markers"] is not None
     assert data["loop_markers"]["done_path"].replace("\\", "/").endswith(".clud/loop/DONE")
     assert data["loop_markers"]["blocked_path"].replace("\\", "/").endswith(".clud/loop/BLOCKED")
+
+
+@pytest.mark.parametrize("backend", ["--claude", "--codex"])
+def test_loop_cumulative_completion_contract(backend: str) -> None:
+    task = (
+        "once the pr lands in the merge queue you are done for the iteration. "
+        "loop terminates after 50 issues have been fixed"
+    )
+    result = _run(backend, "--dry-run", "loop", "--loop-count", "50", task)
+    assert result.returncode == 0, result.stderr
+    data = json.loads(result.stdout)
+    prompt = data["command"][-1]
+    assert prompt.startswith(task)
+    assert data["iterations"] == 50
+    assert "DONE terminates the entire loop" in prompt
+    assert "Persist cumulative progress" in prompt
+    assert "only if the original task explicitly" in prompt
+    assert "write DONE with the PR URL as soon as" not in " ".join(prompt.split())
 
 
 def test_dry_run_loop_no_done() -> None:

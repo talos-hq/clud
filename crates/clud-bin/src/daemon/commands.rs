@@ -5,13 +5,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use super::api_sessions::ApiSessionStore;
+use super::api_sessions::{ApiSessionRecord, ApiSessionStore};
 use super::client::{ensure_daemon, request_api_session_kill, request_session_termination};
 use super::io_helpers::read_json_file;
 use super::paths::{logs_dir, session_log_path, session_snapshot_path};
 use super::sessions::{list_background_sessions, resolve_session_id};
 use super::types::SessionSnapshot;
 use crate::orphan_reaper::{reap_orphans, ReapOpts};
+use crate::session_origin::SessionOrigin;
 
 pub(super) fn run_kill(state_dir: &Path, session_id: Option<&str>, all: bool) -> i32 {
     if let Err(err) = ensure_daemon(state_dir) {
@@ -126,7 +127,99 @@ fn format_duration_short(millis: u64) -> String {
     }
 }
 
-pub(super) fn run_list(state_dir: &Path) -> i32 {
+/// One JSON row per API session, optionally filtered by origin. Every row
+/// carries `origin` (legacy records report `unknown`).
+pub(super) fn api_list_rows(
+    records: &[ApiSessionRecord],
+    origin: Option<SessionOrigin>,
+) -> Vec<serde_json::Value> {
+    records
+        .iter()
+        .filter(|record| origin.is_none_or(|wanted| record.origin == wanted))
+        .map(api_session_summary)
+        .collect()
+}
+
+fn api_session_summary(record: &ApiSessionRecord) -> serde_json::Value {
+    serde_json::json!({
+        "id": record.id,
+        "name": record.name,
+        "state": record.state,
+        "origin": record.origin,
+        "backend": record.backend,
+        "model": record.resolved_settings.model,
+        "cwd": record.cwd,
+        "created_at_ms": record.created_at_ms,
+    })
+}
+
+fn api_state_str(record: &ApiSessionRecord) -> String {
+    format!("{:?}", record.state).to_ascii_lowercase()
+}
+
+/// `clud session show <id>`: origin alongside state, backend and model.
+pub(super) fn run_session_show(state_dir: &Path, id: &str, json: bool) -> i32 {
+    let record = match ApiSessionStore::new(state_dir).get(id) {
+        Ok(record) => record,
+        Err(err) => {
+            eprintln!("[clud] {err}");
+            return 1;
+        }
+    };
+    if json {
+        println!("{}", api_session_summary(&record));
+        return 0;
+    }
+    let backend = serde_json::to_value(record.backend).unwrap_or_default();
+    println!("id:      {}", record.id);
+    println!("state:   {}", api_state_str(&record));
+    println!("origin:  {}", record.origin.as_str());
+    println!("backend: {}", backend.as_str().unwrap_or("-"));
+    println!(
+        "model:   {}",
+        record.resolved_settings.model.as_deref().unwrap_or("-")
+    );
+    println!("cwd:     {}", record.cwd.display());
+    0
+}
+
+/// `--json` and `--origin` select the origin-carrying API session view.
+fn run_list_api_only(state_dir: &Path, json: bool, origin: Option<SessionOrigin>) -> i32 {
+    let records = ApiSessionStore::new(state_dir).list().unwrap_or_default();
+    let records: Vec<_> = records
+        .into_iter()
+        .filter(|record| origin.is_none_or(|wanted| record.origin == wanted))
+        .collect();
+    if json {
+        let rows = api_list_rows(&records, None);
+        println!("{}", serde_json::Value::Array(rows));
+        return 0;
+    }
+    if records.is_empty() {
+        println!("No API sessions.");
+        return 0;
+    }
+    print_api_sessions(&records);
+    0
+}
+
+fn print_api_sessions(records: &[ApiSessionRecord]) {
+    println!("{:<30} {:<12} {:<8} CWD", "API SESSION", "STATUS", "ORIGIN");
+    for session in records {
+        println!(
+            "{:<30} {:<12} {:<8} {}",
+            session.id,
+            api_state_str(session),
+            session.origin.as_str(),
+            session.cwd.display()
+        );
+    }
+}
+
+pub(super) fn run_list(state_dir: &Path, json: bool, origin: Option<SessionOrigin>) -> i32 {
+    if json || origin.is_some() {
+        return run_list_api_only(state_dir, json, origin);
+    }
     let sessions = list_background_sessions(state_dir);
     let api_sessions = ApiSessionStore::new(state_dir).list().unwrap_or_default();
     let has_api_sessions = !api_sessions.is_empty();
@@ -189,15 +282,7 @@ pub(super) fn run_list(state_dir: &Path) -> i32 {
         if has_background_sessions {
             println!();
         }
-        println!("{:<30} {:<12} CWD", "API SESSION", "STATUS");
-        for session in api_sessions {
-            println!(
-                "{:<30} {:<12} {}",
-                session.id,
-                format!("{:?}", session.state).to_ascii_lowercase(),
-                session.cwd.display()
-            );
-        }
+        print_api_sessions(&api_sessions);
     }
     if !checkout_sessions.is_empty() {
         if has_background_sessions || has_api_sessions {

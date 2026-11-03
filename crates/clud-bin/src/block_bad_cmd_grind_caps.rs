@@ -19,7 +19,7 @@
 //! `session_id`, which a workflow agent shares with its parent session, so
 //! concurrent runs never see each other's facts. The facts are `mode`
 //! (`parallel` permits the planner's `git worktree add`) and `ci` (permits the
-//! integrator's `act`), plus the optional `scripts: {lint, test}` the router
+//! integrator's `bosn ci run`), plus the optional `scripts: {lint, test}` the router
 //! detected. Workers and reviewers may never run the repo's lint/test
 //! scripts; the integrator runs them before every push. During the read-only
 //! planning pass the router also writes `"phase": "plan"`, which puts the
@@ -41,6 +41,7 @@ pub(super) const LANDER: &str = "grind-lander";
 pub(super) const PREWORK: &str = "grind-prework";
 pub(super) const ORCHESTRATOR: &str = "grind-orchestrator";
 pub(super) const GATE: &str = "grind-gate";
+pub(super) const CHAPERONE: &str = "grind-chaperone";
 
 /// Read-only inspection commands every shell-holding role may run, subject
 /// to [`inspect_ok`].
@@ -104,6 +105,10 @@ pub(super) struct RunFacts {
     /// The meta issue number (`meta`, a JSON number or string, `#` stripped):
     /// the one issue `grind-prework` may comment on.
     pub meta: Option<String>,
+    /// In a multi-repository run (#1422), the `meta` of every `repos` entry:
+    /// each sister lane's tracker, which its `grind-prework` comments on even
+    /// when the hook's `cwd` resolves to another entry or none (#2468).
+    pub lane_metas: Vec<String>,
     /// Feature-branch mode (`feature: {branch, pr, worktree}`); `None` when
     /// absent, which keeps every cap exactly as in a plain run.
     pub feature: Option<FeatureFacts>,
@@ -145,6 +150,30 @@ pub(super) enum FeatureMerge {
     DecideLater,
     /// Comment on the PR only; the user merges it.
     CommentOnly,
+}
+
+/// The `meta` issue number of one facts object (a JSON number or string,
+/// `#` stripped).
+fn meta_number(value: &Value) -> Option<String> {
+    value.get("meta").and_then(|m| match m {
+        Value::Number(n) => Some(n.to_string()),
+        Value::String(s) => {
+            let s = s.trim();
+            let s = s.strip_prefix('#').unwrap_or(s).trim();
+            (!s.is_empty()).then(|| s.to_string())
+        }
+        _ => None,
+    })
+}
+
+/// Every `repos` entry's meta in a multi-repository facts file (#2468);
+/// empty for a single-repository file.
+pub(super) fn lane_metas(facts: &Value) -> Vec<String> {
+    facts
+        .get("repos")
+        .and_then(Value::as_array)
+        .map(|repos| repos.iter().filter_map(meta_number).collect())
+        .unwrap_or_default()
 }
 
 /// A PR number from a JSON number, `#n`, `n`, or a URL ending in the number.
@@ -192,15 +221,8 @@ impl RunFacts {
                 lint: script("lint"),
                 test: script("test"),
             },
-            meta: value.get("meta").and_then(|m| match m {
-                Value::Number(n) => Some(n.to_string()),
-                Value::String(s) => {
-                    let s = s.trim();
-                    let s = s.strip_prefix('#').unwrap_or(s).trim();
-                    (!s.is_empty()).then(|| s.to_string())
-                }
-                _ => None,
-            }),
+            meta: meta_number(value),
+            lane_metas: Vec::new(),
             feature: value.get("feature").and_then(|f| {
                 let branch = f.get("branch")?.as_str()?.trim();
                 (!branch.is_empty()).then(|| FeatureFacts {
@@ -274,7 +296,17 @@ impl RunFacts {
     /// one, or no single matching repository) the defaults apply, which are
     /// the strictest caps, and the second value says why for the hook log.
     pub(super) fn for_session(session_id: Option<&str>, cwd: &Path) -> (Self, Option<String>) {
-        Self::from_lookup(&crate::grind_facts::lookup_for(session_id, cwd))
+        let whole = crate::grind_facts::lookup(session_id);
+        let lane_metas = whole.facts().map(lane_metas).unwrap_or_default();
+        let (mut run, warning) = Self::from_lookup(&crate::grind_facts::narrow(whole, cwd));
+        run.lane_metas = lane_metas;
+        (run, warning)
+    }
+
+    /// Whether `target` is an issue `grind-prework` may comment on: the
+    /// run's meta, or in a multi-repository run any lane's meta (#2468).
+    fn is_comment_host(&self, target: &str) -> bool {
+        self.meta.as_deref() == Some(target) || self.lane_metas.iter().any(|m| m == target)
     }
 
     pub(super) fn from_lookup(lookup: &crate::grind_facts::Lookup) -> (Self, Option<String>) {
@@ -320,7 +352,15 @@ pub(super) fn agent_spawn_reason(
 pub(super) fn is_grind_role(agent_type: &str) -> bool {
     matches!(
         agent_type,
-        PLANNER | WORKER | REVIEWER | INTEGRATOR | LANDER | PREWORK | ORCHESTRATOR | GATE
+        PLANNER
+            | WORKER
+            | REVIEWER
+            | INTEGRATOR
+            | LANDER
+            | PREWORK
+            | ORCHESTRATOR
+            | GATE
+            | CHAPERONE
     )
 }
 
@@ -338,6 +378,12 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
         Ok(statements) => statements,
         Err(construct) => return Some(format!("{role} may not use {construct}")),
     };
+    if role == CHAPERONE {
+        return statements
+            .iter()
+            .map(|words| strip_gh_repo_flag(words))
+            .find_map(|words| chaperone_reason(&words));
+    }
     if role == INTEGRATOR && is_script_retry_loop(&statements) {
         return Some(format!(
             "{role} may not rerun lint or test in a shell loop: read the failing tests first, and \
@@ -348,6 +394,45 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
         .iter()
         .map(|words| strip_gh_repo_flag(words))
         .find_map(|words| statement_reason(role, &words, run))
+}
+
+/// The queue chaperone (#2467, DD-192) holds no checkout and never builds:
+/// it waits on one queued PR with `pr_merge_watch`, reads CI, reruns a failed
+/// run once (`gh run rerun <id> --failed`) and re-enqueues with `pr_merge.py`
+/// after a batch-mate's ejection. Everything else is refused.
+fn chaperone_reason(words: &[String]) -> Option<String> {
+    if creates_issue(words) || closes_issue(words) {
+        return Some(format!(
+            "{CHAPERONE} never files or closes issues; report in your structured output"
+        ));
+    }
+    if let Some(reason) = remote_ci_reason(CHAPERONE, words) {
+        return Some(reason);
+    }
+    if is_gh_read(words) {
+        return None;
+    }
+    let rerun_failed = program_name(&words[0]) == "gh"
+        && words.get(1).is_some_and(|w| w == "run")
+        && words.get(2).is_some_and(|w| w == "rerun")
+        && words.iter().any(|w| w == "--failed");
+    if rerun_failed {
+        return None;
+    }
+    let tool = bundled_tool(words);
+    if tool.is_some_and(|t| {
+        t.starts_with("github/pr_merge_watch")
+            || t == "github/pr_merge.py"
+            || t == "github/ci_failure_report.py"
+    }) {
+        return None;
+    }
+    Some(format!(
+        "{CHAPERONE} may only watch (`github/pr_merge_watch.py --until merged`), read CI \
+         (`gh pr|run view|list|checks`, `github/ci_failure_report.py`), rerun failed jobs \
+         (`gh run rerun <id> --failed`) and re-enqueue (`github/pr_merge.py`); it has no \
+         checkout and never builds, pushes or merges directly"
+    ))
 }
 
 /// Unlike a planner, the run orchestrator never fetches or creates a worktree.
@@ -471,7 +556,7 @@ const CI_LANE_LABELS: &[&str] = &["ci-test", "ci-full", "ci:full", "ci-windows"]
 
 /// Grind only ever adds remote testing (#1429): a command that would
 /// suppress remote CI is refused for every grind role. The "skip CI" choice
-/// in a run controls local `act` only, so a marker in a commit or PR text, a
+/// in a run controls local `bosn` only, so a marker in a commit or PR text, a
 /// removed CI-lane label or a disabled workflow is always the model
 /// misreading it. Adding a lane label stays allowed.
 fn remote_ci_reason(role: &str, words: &[String]) -> Option<String> {
@@ -485,7 +570,7 @@ fn remote_ci_reason(role: &str, words: &[String]) -> Option<String> {
     let rule = |what: &str| {
         Some(format!(
             "{role} may not {what}: grind only adds remote CI, never removes or skips it. \
-             The run's CI choice controls local `act` only (#1429)"
+             The run's CI choice controls local `bosn` only (#1429)"
         ))
     };
     match program.as_str() {
@@ -651,6 +736,25 @@ pub(super) fn tool_reason(role: &str, tool_name: &str, run: &RunFacts) -> Option
     Some(format!("{role} may not write files{mode}"))
 }
 
+/// The integrator's bosn allowance (#2432): only the bounded `bosn ci` verbs
+/// that drive a run of its own, and `run` only when the router turned local
+/// CI on. `init`, daemon control and everything else stay refused.
+fn bosn_denial(role: &str, rest: &[String], ci_on: bool) -> Option<String> {
+    let verb = (
+        rest.first().map(String::as_str),
+        rest.get(1).map(String::as_str),
+    );
+    match verb {
+        (Some("ci"), Some("run")) if !ci_on => {
+            Some("local CI (bosn) is disabled for this grind run".to_string())
+        }
+        (Some("ci"), Some("run" | "show" | "report" | "logs" | "cancel" | "runners")) => None,
+        _ => Some(format!(
+            "{role} may run only `bosn ci run|show|report|logs|cancel|runners`"
+        )),
+    }
+}
+
 #[expect(
     clippy::too_many_lines,
     clippy::cognitive_complexity,
@@ -697,7 +801,8 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
     }
     match role {
         PLANNER => {
-            if inspect_ok(&program, words) || is_gh_read(words) {
+            // /grind-plan reads the plan comment through `gh api` (#2426, #1816).
+            if inspect_ok(&program, words) || (program == "gh" && orchestrator_gh_read(words)) {
                 return None;
             }
             // Recording a task's files (#1340) writes only the run facts.
@@ -748,7 +853,7 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             {
                 return match comment_target(&words[3..]) {
                     Err(flag) => Some(format!("{role} may not pass `{flag}` to gh issue comment")),
-                    Ok(target) if target.is_some() && target == run.meta => None,
+                    Ok(Some(target)) if run.is_comment_host(&target) => None,
                     Ok(_) => Some(format!(
                         "{role} may comment only on the meta issue{}",
                         run.meta
@@ -817,7 +922,10 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
                 && words.get(1).is_some_and(|w| w == "tool")
                 && words.get(2).is_some_and(|w| w == "run")
                 && words.get(3).is_some_and(|w| {
-                    w.starts_with("github/pr_merge_watch") || w == "github/ci_failure_report.py"
+                    // pr_merge.py is how /grind-land enqueues a green PR (#2425).
+                    w.starts_with("github/pr_merge_watch")
+                        || w == "github/pr_merge.py"
+                        || w == "github/ci_failure_report.py"
                 })
             {
                 return None;
@@ -842,16 +950,30 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             // statements of its own (#1962).
             let tokens: Vec<String> = words.iter().map(|w| program_name(w)).collect();
             let has = |name: &str| tokens.iter().any(|t| t == name);
-            if has("bosn") {
-                return deny("bosn");
+            if (has("pkill") || has("pgrep") || has("killall")) && has("bosn") {
+                return Some(format!(
+                    "{role} may not signal bosn by pattern; stop only your own run with \
+                     `bosn ci cancel RUN`"
+                ));
+            }
+            if let Some(i) = tokens.iter().position(|t| t == "bosn") {
+                if let Some(reason) = bosn_denial(role, &tokens[i + 1..], run.ci) {
+                    return Some(reason);
+                }
             }
             if has("docker") || has("podman") {
                 return Some(format!(
-                    "{role} may not run containers directly; local CI goes through act"
+                    "{role} may not run containers directly; local CI goes through bosn"
                 ));
             }
-            if has("act") && !run.ci {
-                return Some("local CI (act) is disabled for this grind run".to_string());
+            if has("act") {
+                return Some(format!(
+                    "{role} may not run act directly; local CI goes through \
+                     `bosn ci run --workspace . --trigger pr` or `clud ci`"
+                ));
+            }
+            if !run.ci && tokens.windows(2).any(|w| w[0] == "clud" && w[1] == "ci") {
+                return Some("local CI (bosn) is disabled for this grind run".to_string());
             }
             if tokens
                 .windows(2)
@@ -1885,6 +2007,63 @@ mod tests {
         assert!(agent_spawn_reason("Agent", Some(&input), None).is_some());
     }
 
+    /// #2467: the chaperone has no checkout and no build. It watches a queued
+    /// PR, reads CI, reruns failed jobs once and re-enqueues; nothing else.
+    #[test]
+    fn chaperone_watches_reruns_and_reenqueues_only() {
+        let facts = run(false, false);
+        assert!(is_grind_role(CHAPERONE));
+        for command in [
+            "clud tool run github/pr_merge_watch.py -- 5 --repo o/r --until merged --timeout 540",
+            "\"$CLUD_EXE\" tool run github/pr_merge.py -- 5 --repo o/r --match-head-commit abc",
+            "clud tool run github/ci_failure_report.py -- --repo o/r --run 9 --job 3",
+            "gh pr view 5 --repo o/r --json state,mergeStateStatus",
+            "gh run list --repo o/r --branch main --event merge_group --limit 1",
+            "gh run rerun 99 --failed --repo o/r",
+        ] {
+            assert!(allowed(CHAPERONE, command, &facts), "{command}");
+        }
+        for command in [
+            "gh run rerun 99",
+            "gh pr merge 5 --admin --squash",
+            "git push origin grind/5",
+            "git status",
+            "cargo test",
+            "bash lint",
+            "gh run watch 99",
+            "gh issue close 5",
+            "safe-rm x",
+        ] {
+            assert!(!allowed(CHAPERONE, command, &facts), "{command}");
+        }
+    }
+
+    /// #2467: the lander enqueues with pr_merge.py and reads main's runs for
+    /// the red-base comparison.
+    #[test]
+    fn lander_enqueues_and_compares_with_main() {
+        let facts = run(false, false);
+        for command in [
+            "clud tool run github/pr_merge.py -- 5 --repo o/r --match-head-commit abc",
+            "gh run list --repo o/r --branch main --event push --limit 1 --json databaseId,conclusion",
+            "gh run view 77 --repo o/r --json jobs",
+        ] {
+            assert!(allowed(LANDER, command, &facts), "{command}");
+        }
+    }
+
+    /// #2467 dedup preflight: the planner searches PRs that close a child.
+    #[test]
+    fn planner_may_search_prs_for_dedup() {
+        let facts = run(false, false);
+        for command in [
+            "gh pr list --repo o/r --state all --search 'Closes #12' --json number,state,title",
+            "gh search prs --repo o/r 'Closes #12'",
+        ] {
+            assert!(allowed(PLANNER, command, &facts), "{command}");
+        }
+    }
+
     #[test]
     fn only_bundled_roles_are_capped() {
         assert!(is_grind_role("grind-planner"));
@@ -2132,10 +2311,33 @@ mod tests {
     }
 
     #[test]
-    fn integrator_act_follows_the_ci_answer() {
+    fn integrator_local_ci_runs_under_bosn_not_act() {
+        let bosn = "bosn ci run --workspace . --trigger pr --job static-checks --wait";
+        assert!(!allowed(INTEGRATOR, bosn, &run(true, false)));
+        assert!(allowed(INTEGRATOR, bosn, &run(true, true)));
+        assert!(!allowed(
+            INTEGRATOR,
+            "clud ci static-checks",
+            &run(true, false)
+        ));
+        assert!(allowed(
+            INTEGRATOR,
+            "clud ci static-checks",
+            &run(true, true)
+        ));
+        for verb in ["show", "report", "logs", "cancel", "runners"] {
+            let cmd = format!("bosn ci {verb} RUN");
+            assert!(allowed(INTEGRATOR, &cmd, &run(true, false)), "{cmd}");
+        }
+        assert!(!allowed(INTEGRATOR, "bosn daemon stop", &run(true, true)));
+        assert!(!allowed(INTEGRATOR, "pkill -f bosn", &run(true, true)));
+        assert!(!allowed(
+            INTEGRATOR,
+            "kill $(pgrep -f bosn)",
+            &run(true, true)
+        ));
         let act = "act -W .github/workflows/ci.yml -j test --pull=false";
-        assert!(!allowed(INTEGRATOR, act, &run(true, false)));
-        assert!(allowed(INTEGRATOR, act, &run(true, true)));
+        assert!(!allowed(INTEGRATOR, act, &run(true, true)));
     }
 
     /// #1339 items 4-5: every role may outline code; workers and reviewers
@@ -2417,6 +2619,8 @@ mod tests {
         assert!(!allowed(INTEGRATOR, "bash -c 'docker run img'", &facts));
         assert!(!allowed(INTEGRATOR, "env act -j test", &facts));
         assert!(!allowed(INTEGRATOR, "sh -c bosn", &facts));
+        assert!(!allowed(INTEGRATOR, "env bosn init", &facts));
+        assert!(allowed(INTEGRATOR, "env bosn ci show RUN", &facts));
         assert!(!allowed(
             INTEGRATOR,
             "bash -c 'git worktree add /x'",
@@ -2568,6 +2772,41 @@ mod tests {
         }
         // Only prework may run printf at all.
         assert!(!allowed(WORKER, "printf '%s' x", &facts));
+    }
+
+    /// #2468: in a multi-repository run each sister lane's prework posts on
+    /// its own repository's meta, even when the hook's `cwd` resolves to the
+    /// session repository's entry (or to none).
+    #[test]
+    fn multi_repo_prework_comments_on_any_lane_meta() {
+        let file = serde_json::json!({"repos": [
+            {"repo": "/w/clud", "meta": 2233},
+            {"repo": "/w/running-process", "meta": "#1361"},
+            {"repo": "/w/zccache", "meta": 2033}
+        ]});
+        let facts = RunFacts {
+            meta: Some("2233".to_string()),
+            lane_metas: lane_metas(&file),
+            ..run(false, false)
+        };
+        for command in [
+            "gh issue comment 2233 --body x",
+            "gh issue comment 1361 --repo o/running-process --body-file - < p.md",
+            "gh issue comment 2033 -R o/zccache --body x",
+        ] {
+            assert!(allowed(PREWORK, command, &facts), "{command}");
+        }
+        assert!(!allowed(PREWORK, "gh issue comment 999 --body x", &facts));
+        let unmatched = RunFacts {
+            lane_metas: lane_metas(&file),
+            ..run(false, false)
+        };
+        assert!(allowed(
+            PREWORK,
+            "gh issue comment 1361 --body x",
+            &unmatched
+        ));
+        assert!(lane_metas(&serde_json::json!({"meta": 5})).is_empty());
     }
 
     #[test]
@@ -2939,6 +3178,41 @@ mod tests {
                 "gh issue close 12 --repo fork/project",
                 &facts
             ));
+        }
+    }
+
+    /// #2425 / #2426: the lander lands through `pr_merge.py`, and the planner
+    /// reads issues, PRs and API GETs, in the shapes the grind skills type.
+    #[test]
+    fn lander_merges_and_planner_reads_github() {
+        let facts = run(true, true);
+        for command in [
+            "clud tool run github/pr_merge.py -- 12 --repo o/r --match-head-commit abc",
+            "\"$CLUD_EXE\" tool run github/pr_merge.py -- 12 --repo o/r --match-head-commit abc",
+            "\"$CLUD_EXE\" tool run github/pr_merge_watch.py 12",
+        ] {
+            assert!(allowed(LANDER, command, &facts), "lander: {command}");
+        }
+        for command in [
+            "gh issue view 2415 --comments",
+            "gh issue view 2415 --repo o/r --comments",
+            "gh -R o/r issue view 2415",
+            "gh --repo o/r issue view 2415 --json body",
+            "gh pr view 12 --json title",
+            "gh api repos/o/r/issues/2415/comments",
+            "gh api repos/o/r/issues/2415 --jq .body",
+            "gh api --paginate repos/o/r/issues/1/comments",
+        ] {
+            assert!(allowed(PLANNER, command, &facts), "planner: {command}");
+        }
+        for command in [
+            "gh api -X POST repos/o/r/issues -f title=x",
+            "gh api repos/o/r/issues -f title=x",
+            "gh api --method PATCH repos/o/r/issues/1",
+            "gh api graphql -f query=x",
+            "gh issue edit 1 --body x",
+        ] {
+            assert!(!allowed(PLANNER, command, &facts), "planner: {command}");
         }
     }
 }

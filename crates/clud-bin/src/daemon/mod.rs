@@ -1,10 +1,14 @@
 mod activity;
 mod api_session_http;
+pub mod api_session_inject;
 pub mod api_session_lifecycle;
+#[cfg(test)]
+mod api_session_origin_tests;
 pub mod api_sessions;
 pub mod api_turn_controller;
 mod attach;
 mod attach_input;
+mod board;
 mod checkout_claims;
 mod client;
 mod client_compat;
@@ -17,6 +21,7 @@ mod gc_service;
 mod handover_registry;
 mod headless_adapter;
 mod http;
+pub mod inject_client;
 pub(crate) mod io_helpers;
 mod login_env;
 mod paths;
@@ -27,6 +32,7 @@ mod rp_broker;
 mod runtime_config;
 mod server;
 mod session_flags;
+pub mod session_new_client;
 mod session_state_sweep;
 mod session_tmp_sweep;
 mod sessions;
@@ -43,7 +49,7 @@ mod worker_shared;
 
 pub(crate) use checkout_claims::claimed_by_other;
 pub use checkout_claims::{
-    run_claim_command, start_foreground_presence, ForegroundCheckoutPresence,
+    foreground_session_id, run_claim_command, start_foreground_presence, ForegroundCheckoutPresence,
 };
 pub use client::try_register_gc_watch;
 pub use client::{

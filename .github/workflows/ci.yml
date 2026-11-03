@@ -293,12 +293,12 @@ jobs:
           SOLDR_S3_CACHE_ACCESS_KEY: ${{ secrets.SOLDR_S3_CACHE_ACCESS_KEY }}
           SOLDR_S3_CACHE_SECRET_KEY: ${{ secrets.SOLDR_S3_CACHE_SECRET_KEY }}
         with:
-          # Remote S3 build cache: bucket forge-ci in DigitalOcean Spaces nyc3.
+          # Remote S3 build cache: bucket forge-ci-cache in DigitalOcean Spaces sfo3.
           # The 50G high watermark is enforced only on the merge-queue
           # (merge_group) singleton; unset bucket/creds disables it entirely.
-          s3-bucket: forge-ci
-          s3-endpoint: nyc3.digitaloceanspaces.com
-          s3-region: nyc3
+          s3-bucket: forge-ci-cache
+          s3-endpoint: sfo3.digitaloceanspaces.com
+          s3-region: sfo3
           s3-cache-limit: 50G
           cache: true
           # setup-soldr#559: a failed or cancelled job saves no build outputs
@@ -420,6 +420,9 @@ jobs:
     # queue, CI OK green must imply Linux passed on the same head SHA.
     if: needs.static.outputs.mode != '' && needs.static.outputs.skip_lint-linux-x64 != 'true'
     uses: ./.github/workflows/_build-target.yml
+    # Reusable workflows get no secrets by default; setup-soldr's remote S3
+    # build cache needs SOLDR_S3_CACHE_ACCESS_KEY / _SECRET_KEY.
+    secrets: inherit
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: x86_64-unknown-linux-gnu
@@ -448,6 +451,7 @@ jobs:
           && (needs.cache-maint.result == 'success' || needs.cache-maint.result == 'skipped')
           && needs.static.outputs.mode != '' }}
     uses: ./.github/workflows/_build-target.yml
+    secrets: inherit
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: x86_64-unknown-linux-gnu
@@ -524,6 +528,7 @@ jobs:
     # `windows` is the ci-windows iteration mode (#1310).
     if: needs.static.outputs.mode == 'extended' || needs.static.outputs.mode == 'full' || needs.static.outputs.mode == 'windows'
     uses: ./.github/workflows/_build-target.yml
+    secrets: inherit
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: x86_64-pc-windows-msvc
@@ -559,6 +564,7 @@ jobs:
     # `macos` is the ci-macos iteration mode: both Darwin lanes, nothing else native.
     if: needs.static.outputs.mode == 'full' || needs.static.outputs.mode == 'macos'
     uses: ./.github/workflows/_build-target.yml
+    secrets: inherit
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: aarch64-apple-darwin
@@ -590,6 +596,7 @@ jobs:
     needs: static
     if: needs.static.outputs.mode == 'full'
     uses: ./.github/workflows/_build-target.yml
+    secrets: inherit
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: aarch64-unknown-linux-gnu
@@ -616,6 +623,7 @@ jobs:
     needs: static
     if: needs.static.outputs.mode == 'full'
     uses: ./.github/workflows/_build-target.yml
+    secrets: inherit
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: aarch64-pc-windows-msvc
@@ -648,6 +656,7 @@ jobs:
     # `macos` is the ci-macos iteration mode: both Darwin lanes, nothing else native.
     if: needs.static.outputs.mode == 'full' || needs.static.outputs.mode == 'macos'
     uses: ./.github/workflows/_build-target.yml
+    secrets: inherit
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: x86_64-apple-darwin
@@ -672,6 +681,10 @@ jobs:
   # ---------------------------------------------------------------- gate ----
   # Single required status check. Branch protection points here, so adding or
   # removing a triple never requires touching branch-protection settings.
+  # `always()` stays (#2273): a skipped required check counts as success, so
+  # a hand-cancelled run must still publish a failing CI OK. Only a run that a
+  # newer run of this workflow on the same head SHA superseded passes without
+  # verification; the newer run's CI OK, posted later, is the verdict.
   ci-ok:
     name: CI OK
     if: always()
@@ -705,7 +718,27 @@ jobs:
       # a lockfile changed. Listing it would put a `skipped` result into the
       # `RESULTS` blob the Check results step inspects, which is exactly the
       # malformed-condition class the explicit lists below exist to prevent.
+      # #2273: a run that concurrency cancelled because a newer run of this
+      # workflow started on the same head SHA is superseded; it passes so its
+      # stale failure cannot block the replacement's verdict. Any other
+      # cancelled need (a hand-cancelled run) still fails the verifier.
+      - name: Detect superseded run
+        id: superseded
+        if: contains(toJSON(needs.*.result), 'cancelled')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          workflow_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .workflow_id)
+          newer=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow_id/runs?head_sha=$HEAD_SHA&per_page=100" \
+            --jq "[.workflow_runs[] | select(.id > $GITHUB_RUN_ID)] | length")
+          if [ "$newer" -gt 0 ]; then
+            echo "Superseded by $newer newer run(s) on $HEAD_SHA; their CI OK is the verdict." >>"$GITHUB_STEP_SUMMARY"
+            echo "superseded=true" >>"$GITHUB_OUTPUT"
+          fi
       - name: Checkout verified source
+        if: steps.superseded.outputs.superseded != 'true'
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
@@ -713,6 +746,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Set up uv
+        if: steps.superseded.outputs.superseded != 'true'
         uses: astral-sh/setup-uv@e58605a9b6da7c637471fab8847a5e5a6b8df081 # v5
         with:
           enable-cache: false
@@ -738,6 +772,7 @@ jobs:
       # The shared verifier derives required jobs from this workflow and
       # independently verifies hosted results and default-branch reuse.
       - name: Check results
+        if: steps.superseded.outputs.superseded != 'true'
         env:
           RESULTS: ${{ toJSON(needs) }}
           REUSE_EVIDENCE: ${{ needs.static.outputs.reuse_evidence }}

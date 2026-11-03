@@ -46,7 +46,8 @@ fn candidates(
 ) -> Vec<Candidate> {
     let keep = keep_list::load(&keep_list::keep_path_for(wt_root));
     let top = crate::gc::worktree_top::read_for(wt_root, now, 6 * 60 * 60);
-    top.into_iter()
+    let mut out: Vec<Candidate> = top
+        .into_iter()
         .map(|t| {
             let row = rows.iter().find(|r| r.path == t.path);
             let exempt = row.is_none_or(|r| in_use(r, &keep, live_cwds, procs));
@@ -58,7 +59,26 @@ fn candidates(
                 dirty: None,
             }
         })
-        .collect()
+        .collect();
+    // #2487: age retention looks at every worktree under the root, not only
+    // the largest; size is unknown (0) for one outside the top list.
+    for r in rows {
+        let idle_secs = now.saturating_sub(r.mtime_unix);
+        if idle_secs < worktree_schedule::MAX_AGE_SECS
+            || Path::new(&r.path).parent() != Some(wt_root)
+            || out.iter().any(|c| c.path == r.path)
+        {
+            continue;
+        }
+        out.push(Candidate {
+            path: r.path.clone(),
+            bytes: 0,
+            idle_secs,
+            exempt: in_use(r, &keep, live_cwds, procs),
+            dirty: None,
+        });
+    }
+    out
 }
 
 /// One tick of warn-then-clean. Production only; without a process snapshot
@@ -80,16 +100,19 @@ pub(super) fn run(
     let mut over = matches!(cached.map(|c| c.check), Some(SizeCheck::Over(_)));
     let mut schedule = worktree_schedule::load(wt_root);
     let mut cands = candidates(wt_root, rows, live_cwds, procs, now);
-    // Probe git only when the root is over budget: candidates are scheduled
-    // only then, so an under-budget root pays no git cost.
-    if over {
-        worktree_schedule::mark_dirty(&mut cands, &|p| {
+    // Probe git only for candidates that can be scheduled this tick (over
+    // budget, or aged per #2487), so an idle, young root pays no git cost.
+    let any_aged = cands.iter().any(worktree_schedule::aged);
+    if over || any_aged {
+        worktree_schedule::mark_dirty(&mut cands, over, &|p| {
             worktree_schedule::dirty_reason(&worktree_schedule::probe_dirty(Path::new(p)))
         });
     }
-    if over && mode == ReclaimMode::Delete {
+    if (over || any_aged) && mode == ReclaimMode::Delete {
         let warn_bytes = cached.map_or(0, |c| c.warn_bytes);
-        over = prune_build_output(wt_root, rows, live_cwds, &mut cands, warn_bytes, now);
+        let still_over =
+            prune_build_output(wt_root, rows, live_cwds, &mut cands, over, warn_bytes, now);
+        over = over && still_over;
     }
     let actions = worktree_schedule::plan(&mut schedule, over, &cands, now);
     let _ = worktree_schedule::save(wt_root, &schedule);
@@ -100,33 +123,58 @@ pub(super) fn run(
                 bytes,
                 remove_after,
             } => eprintln!(
-                "[clud] gc: {path} ({bytes} bytes) is unmerged and over worktrees.warn_bytes; \
-                 it moves to clud trash after unix {remove_after} unless `clud gc keep` pins it"
+                "[clud] gc: {path} ({bytes} bytes) is idle and unused (over worktrees.warn_bytes \
+                 or idle 14+ days); it moves to clud trash after unix {remove_after} unless \
+                 `clud gc keep` pins it"
             ),
             Action::KeptDirty { path, reason } => {
                 eprintln!("[clud] gc: kept: dirty {path} ({reason}); not scheduled for trash");
             }
             Action::Trash { path } if mode == ReclaimMode::Observe => {
-                eprintln!("[clud] gc tick: observe mode, would trash oversized worktree {path}");
+                eprintln!(
+                    "[clud] gc tick: observe mode, would trash idle or oversized worktree {path}"
+                );
             }
             Action::Trash { path } => trash(&path, tx, now),
         }
     }
 }
 
+/// #2487: move stray top-level `*.log` files out of the worktrees root into
+/// the capped `~/.clud/logs/worktrees`. Delete mode only.
+pub(super) fn tidy_root_logs(wt_root: Option<&Path>, mode: ReclaimMode) {
+    let Some(wt_root) = wt_root else { return };
+    if cfg!(test) || mode != ReclaimMode::Delete {
+        return;
+    }
+    let logs = crate::gc::worktree_root_logs::logs_dir_for(wt_root);
+    let r = crate::gc::worktree_root_logs::tidy(wt_root, &logs, std::time::SystemTime::now());
+    if r.moved > 0 || r.deleted > 0 {
+        eprintln!(
+            "[clud] gc: moved {} stray log(s) from {} to {}; expired {} ({} bytes)",
+            r.moved,
+            wt_root.display(),
+            logs.display(),
+            r.deleted,
+            r.deleted_bytes
+        );
+    }
+}
+
 /// #2302: prune `target/` dirs of idle, unused worktrees before anything is
-/// scheduled for trash. Returns whether the root is still over budget; any
+/// scheduled for trash (#2487: also those due by age while under budget). Returns whether the root is still over budget; any
 /// failure (no soldr, prune error) leaves the previous verdict standing.
 fn prune_build_output(
     wt_root: &Path,
     rows: &[RepoWorktreeRow],
     live_cwds: &[PathBuf],
     cands: &mut [Candidate],
+    over: bool,
     warn_bytes: u64,
     now: i64,
 ) -> bool {
     let picked: Vec<usize> = (0..cands.len())
-        .filter(|&i| target_prune::eligible(&cands[i]))
+        .filter(|&i| target_prune::eligible(&cands[i]) && worktree_schedule::due(&cands[i], over))
         .collect();
     if picked.is_empty() {
         return true;

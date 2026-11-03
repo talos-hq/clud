@@ -549,10 +549,19 @@ impl Roots {
     }
 
     /// Whether `root` is itself the top of a git checkout.
+    ///
+    /// A `.git` entry is not enough: when it is not a valid repository git
+    /// walks up to an enclosing one, and that repo's worktrees and git dir
+    /// would then widen the roots. Git's own top level must be `root`.
     fn is_checkout(root: &Path) -> bool {
-        crate::block_bad_cmd::nearest_repo_root_public(root)
+        let marker = crate::block_bad_cmd::nearest_repo_root_public(root)
             .and_then(|r| crate::path_norm::canonicalize_plain(r).ok())
-            .is_some_and(|r| r == root)
+            .is_some_and(|r| r == root);
+        marker
+            && crate::worktrees::run_git(root, &["rev-parse", "--show-toplevel"])
+                .ok()
+                .and_then(|top| crate::path_norm::canonicalize_plain(top.trim()).ok())
+                .is_some_and(|top| top == root)
     }
 
     /// The `origin` URLs of the roots that are checkouts.

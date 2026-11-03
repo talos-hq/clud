@@ -342,6 +342,11 @@ impl ForegroundRuntime {
                 if fixture_keys {
                     return Some(format!("clud-test-{}-key", provider.as_str()));
                 }
+                // Subscription-first: a metered key joins the gateway only
+                // with the operator's two-override consent for it.
+                if !crate::metered_policy::process_allows_metered(provider) {
+                    return None;
+                }
                 // Integration runs probe Kimi only when a Kimi fake exists, so
                 // a stored key can never reach the real Moonshot endpoint from
                 // a test.
@@ -1621,7 +1626,23 @@ fn compose_launch_settings_document(
     plan: &LaunchPlan,
     settings: serde_json::Value,
 ) -> Result<(serde_json::Value, bool), BridgeError> {
-    compose_launch_settings_document_with(plan, settings, claude_takes_worktree_hooks(plan))
+    let (mut settings, replaces) =
+        compose_launch_settings_document_with(plan, settings, claude_takes_worktree_hooks(plan))?;
+    crate::clud_hooks_compile::consolidate_scanner_hooks(&mut settings);
+    let cwd = plan
+        .cwd
+        .as_deref()
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let repo = crate::block_bad_cmd::nearest_repo_root_public(&cwd).unwrap_or(cwd);
+    let home = crate::hook_health::hook_home_dir();
+    if !plan
+        .command
+        .iter()
+        .any(|arg| arg == "--setting-sources" || arg.starts_with("--setting-sources="))
+    {
+        crate::scanner_hook_migration::remove_inherited(&mut settings, &repo, home.as_deref());
+    }
+    Ok((settings, replaces))
 }
 
 /// [`compose_launch_settings_document`] with the worktree-hook decision
@@ -1749,9 +1770,10 @@ fn merge_deletion_denies(
 }
 
 fn write_launch_scoped_settings(
-    settings: serde_json::Value,
+    mut settings: serde_json::Value,
     replaces_user_argument: bool,
 ) -> Result<ClaudeSettings, BridgeError> {
+    crate::clud_hooks_compile::consolidate_scanner_hooks(&mut settings);
     let mut file = tempfile::Builder::new()
         .prefix("clud-claude-settings-")
         .suffix(".json")
@@ -4224,7 +4246,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             settings["hooks"]["PreToolUse"][1]["hooks"][0]["command"],
-            crate::clud_hooks_compile::DISPATCHER_BINARY
+            crate::clud_hooks_compile::dispatcher_command(crate::clud_hooks_compile::PRE_TOOL_USE)
         );
         assert_eq!(
             settings["permissions"]["deny"],

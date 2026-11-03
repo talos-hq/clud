@@ -1164,7 +1164,7 @@ mod tests {
         );
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "{\"configured\":true,\"source\":\"native_vault\"}\n"
+            "{\"source\":\"native_vault\",\"configured\":true}\n"
         );
 
         let mut output = Vec::new();

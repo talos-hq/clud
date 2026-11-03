@@ -413,6 +413,60 @@ retry stays denied.
   `0` turns the guard off (the rollback switch). Evidence and tradeoff:
   [DD-140](../DESIGN_DECISIONS.md#dd-140-the-repeated-call-guard-denies-call-201-of-an-identical-streak-and-fails-open).
 
+### Per-file shell read-hop guard (#2233)
+
+The repeated-call guard above only sees an *identical* call; a hunt never
+repeats one. Measured over 24 h of local transcripts, 55% of the bytes that
+shell reads put into context came from file-sessions that read the **same
+file** four or more times, and 562 file-sessions per day read one file eight
+or more times. So `block_bad_cmd_hop.rs` counts hops per `(session, file)` for
+shell reads (`sed`, `cat`, `head`, `tail`, `nl`, `less`, `bat`, `tac`,
+`awk`, `xxd`) and denies hop `N + 1` on that file with a message naming
+`clud tool run code/outline.py`, so the next read can target one range.
+
+- Narrow on purpose: only files that exist and are at least 8 KiB, only known
+  source extensions, and `grep`/`git`/`gh` are searches, never hops. A file's
+  count expires after 15 minutes without a hop, so a later revisit is fine.
+- **Writes are not hops.** `sed -i` / `sed -ni` / `sed --in-place[=SUFFIX]`
+  rewrites the file in place, and a redirect ends a read segment, so
+  `cat > notes.md <<EOF` names a destination rather than a source. Without this
+  a fix loop that edits one file seven times would be denied with advice to
+  outline it. `wc` is not counted either: it returns a count, not content.
+- Targets resolve the way the shell resolves them — `~/x` against `$HOME`,
+  relative paths against the hook's working directory — so both spellings of
+  the same file share one hop count.
+- **Limit:** `N = 6`, per file. `CLUD_FILE_HOP_LIMIT=<n>` overrides it and `0`
+  turns the guard off. `CLUD_ALLOW_FILE_HOPS=1` in a command allows one more
+  slice deliberately (logged).
+- **State:** `<clud state dir>/file-hop-guard/<hash>.json`, one file per
+  session, at most 32 files per session, 2 days / 500 files retained. Fail
+  open on every state error.
+
+### Unchanged-re-read guard (#2233)
+
+A `Read` that repeats a call already made in this session — same path, same
+`offset`/`limit` — returns bytes the model already holds, and every later
+request in the session pays for them again. The hook keys the call on its
+canonical `tool_input` (so a different range is a different read) and
+fingerprints the file as `(len, mtime)`:
+
+- **Unchanged fingerprint** (byte-identical copy already read): denied, with
+  a message naming the bounded alternatives — one range via `offset`+`limit`,
+  or `clud tool run code/outline.py` to map an unfamiliar file first.
+- **Changed fingerprint** (any edit, checkout or rewrite): allowed and
+  re-recorded, so read-after-edit verification is never refused.
+- **Files under 8 KiB** are never refused: a small re-read costs less than
+  the friction of refusing it.
+
+State is one small JSON ledger per session under
+`<state dir>/reread-guard/`, capped at 256 entries and pruned like the repeat
+guard's. **Fails open** on a missing session id, an unreadable state dir, or a
+file that cannot be `stat`ed. `CLUD_REREAD_GUARD=0` turns it off.
+
+Evidence (24 h probe, 2026-10-31): 308 of 1,035 `Read` calls repeated a
+call already made in the same session, re-supplying 1,029,780 bytes, led by
+one 2,142-line file read 23 times.
+
 ### Verification-to-edit ratio note (#1988)
 
 `block_bad_cmd_verify_ratio.rs` classifies each PreToolUse call as an edit
@@ -511,10 +565,37 @@ This is why the invocation carries an `explicit` flag rather than just an event
 name: a bare call and a compiled `--event PreToolUse` call name the same event
 but play different roles.
 
+Before writing launch-scoped Claude settings, clud consolidates its plain
+scanner registrations into one explicit `--event <E>` command per event.
+Safety checks and declared hooks then run in the same process. Legacy
+`clud-block-bad-cmd` and Python guard lines in a supplied `--settings` document
+are folded into that command too. Matchers are combined; unrelated handlers
+and handlers with custom options are preserved.
+
+The startup hook migration also folds existing plain scanner registrations
+across normal Claude user/project settings into one explicit catch-all per
+event, preferring an existing user registration (`CLAUDE_CONFIG_DIR` when set).
+Project registrations and arbitrary project hooks stay in the project and
+retain their trust boundary. Project scanners suppress generated launch
+coverage only when workspace trust has already been verified; unknown or
+untrusted project settings never replace launch safety. The migration preserves unrelated
+hooks, settings and customized handlers, and adds no registration where none
+existed. The generated launch fragment defers to those inherited canonical
+registrations. Explicit `--setting-sources` overrides retain launch coverage
+because they can exclude the settings file holding the inherited scanner.
+
+At startup clud also installs the scanner alias beside the public `clud`
+launcher on PATH. This includes a uv tool's public symlink directory. An
+existing scanner beside another installation is left alone; a missing one
+is installed even for an absolute-path development launch. Login shells can rebuild
+PATH and discard the session helper directory; the public alias keeps the
+portable scanner command available in that case. No interpreter or other
+tool aliases are installed in the public directory by this step.
+
 ## Delivery: compiled into CLI args, not written to files
 
-clud never writes hook lines into a user's config. It **compiles** its hook set
-into each frontend's native surface and passes it at launch:
+clud **compiles** its hook set into each frontend's native surface and passes
+it at launch. The migration above only consolidates existing scanner wiring:
 
 - **Claude** takes `--settings <file-or-json>`, an *additional* source that
   merges with the settings files rather than replacing them, with hook entries

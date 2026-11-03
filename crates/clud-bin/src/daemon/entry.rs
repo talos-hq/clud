@@ -118,6 +118,38 @@ fn grant_daemon_spawn() {
     }
 }
 
+/// `clud inject` (docs/architecture/session-inject.md).
+fn run_inject_command(args: &Args) -> i32 {
+    let Some(Command::Inject {
+        session,
+        message,
+        interrupt,
+        client_msg_id,
+        from,
+        ticket,
+        detach,
+        timeout,
+        json,
+    }) = &args.command
+    else {
+        return 2;
+    };
+    let state_dir = state_dir(args);
+    grant_daemon_spawn();
+    let options = super::inject_client::InjectOptions {
+        session: session.clone(),
+        message: message.clone(),
+        interrupt: *interrupt,
+        client_msg_id: client_msg_id.clone(),
+        from: from.clone(),
+        ticket: ticket.clone(),
+        detach: *detach,
+        timeout_secs: *timeout,
+        json: *json,
+    };
+    super::inject_client::run(&state_dir, &options)
+}
+
 fn run_daemon_subcommand(state_dir: &Path, subcommand: &DaemonSubcommand) -> i32 {
     match subcommand {
         DaemonSubcommand::ApiInfo { json } => {
@@ -674,7 +706,7 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
                 eprintln!("[clud] auto-attaching to only session: {}", sessions[0].id);
                 Some(run_attach(&sessions[0].id, &state_dir, interrupted))
             } else {
-                Some(run_list(&state_dir))
+                Some(run_list(&state_dir, false, None))
             }
         }
         Some(Command::Kill { session_id, all }) => {
@@ -685,9 +717,41 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             let state_dir = state_dir(args);
             Some(run_kill(&state_dir, None, true))
         }
-        Some(Command::List) => {
+        Some(Command::List { json, origin }) => {
             let state_dir = state_dir(args);
-            Some(run_list(&state_dir))
+            Some(run_list(&state_dir, *json, *origin))
+        }
+        Some(Command::Session {
+            action:
+                crate::args::SessionAction::New {
+                    backend,
+                    cwd,
+                    name,
+                    model,
+                    safe,
+                    json,
+                },
+        }) => {
+            let state_dir = state_dir(args);
+            let cwd = cwd
+                .clone()
+                .or_else(|| std::env::current_dir().ok())
+                .unwrap_or_default();
+            let cwd = std::path::absolute(&cwd).unwrap_or(cwd);
+            let request = super::session_new_client::NewSessionRequest {
+                backend: backend.clone(),
+                cwd,
+                name: name.clone(),
+                model: model.clone(),
+                safe: *safe,
+            };
+            Some(super::session_new_client::run(&state_dir, &request, *json))
+        }
+        Some(Command::Session {
+            action: crate::args::SessionAction::Show { id, json },
+        }) => {
+            let state_dir = state_dir(args);
+            Some(super::commands::run_session_show(&state_dir, id, *json))
         }
         Some(Command::Top {
             json,
@@ -755,6 +819,7 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             grant_spawn_for_daemon_subcommand(subcommand);
             Some(run_daemon_subcommand(&state_dir, subcommand))
         }
+        Some(Command::Inject { .. }) => Some(run_inject_command(args)),
         Some(Command::InternalDaemon { state_dir }) => {
             super::startup_phases::install_panic_hook(state_dir);
             super::startup_phases::redirect_stderr_to_log(state_dir);

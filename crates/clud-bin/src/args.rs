@@ -243,6 +243,12 @@ pub struct Args {
     #[arg(skip)]
     pub do_rendered_prompt: Option<String>,
 
+    /// The exercised `/goal` condition for Claude, compacted to fit the cap
+    /// before launch setup (#2522). Never a CLI flag; see
+    /// `command::goal_compact`.
+    #[arg(skip)]
+    pub do_goal: Option<String>,
+
     #[arg(long = "detach", conflicts_with = "dry_run")]
     pub detach: bool,
 
@@ -606,10 +612,11 @@ impl Args {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
-    /// Serve Claude or Codex and optional OpenRouter models to local API clients.
+    /// Serve Claude or Codex and optional Anthropic-compatible provider models
+    /// to local API clients.
     Serve {
         /// Enable the Claude upstream.
-        #[arg(long, required_unless_present = "codex")]
+        #[arg(long, required_unless_present_any = ["codex", "deepseek", "kimi", "openrouter"])]
         claude: bool,
         /// Enable Codex using clud's managed login or OPENAI_API_KEY.
         #[arg(long)]
@@ -617,6 +624,12 @@ pub enum Command {
         /// Add the configured OpenRouter upstream.
         #[arg(long)]
         openrouter: bool,
+        /// Add the configured DeepSeek upstream (vault key or DEEPSEEK_API_KEY).
+        #[arg(long)]
+        deepseek: bool,
+        /// Add the configured Kimi upstream (vault key or KIMI_API_KEY).
+        #[arg(long)]
+        kimi: bool,
         /// Local port for API clients; zero chooses an available port.
         #[arg(long, default_value_t = 8317)]
         port: u16,
@@ -639,6 +652,41 @@ pub enum Command {
     /// matcher's tool coverage (#1954). Exits 1 when anything is wrong.
     Doctor {
         /// Print the report as one JSON document.
+        #[arg(long)]
+        json: bool,
+        /// Repair what doctor finds: replace stale or missing aliases in
+        /// clud's own alias dirs with the running binary. Files outside
+        /// those dirs are never touched.
+        #[arg(long)]
+        fix: bool,
+    },
+    /// Inject a user message into a running daemon session: queued for the
+    /// next turn boundary, or `--interrupt` to replace the running turn
+    /// (docs/architecture/session-inject.md). Never prompts.
+    Inject {
+        /// Session id (`sess-...`) returned by `session_start` / `POST /v1/sessions`.
+        session: String,
+        /// The message the agent receives as its next user turn.
+        message: String,
+        /// Interrupt the running turn instead of waiting for it to end.
+        #[arg(long)]
+        interrupt: bool,
+        /// Idempotency key; defaults to a hash of session + message.
+        #[arg(long = "client-msg-id")]
+        client_msg_id: Option<String>,
+        /// Who is steering (recorded on the session); defaults to the board id.
+        #[arg(long = "from")]
+        from: Option<String>,
+        /// Ticket or issue reference recorded with the injection.
+        #[arg(long = "ticket")]
+        ticket: Option<String>,
+        /// Return once accepted instead of waiting for delivery.
+        #[arg(long)]
+        detach: bool,
+        /// Seconds to wait for delivery when not detached.
+        #[arg(long = "timeout", default_value_t = 600)]
+        timeout: u64,
+        /// Print the result as one JSON object.
         #[arg(long)]
         json: bool,
     },
@@ -693,6 +741,14 @@ pub enum Command {
         /// between runs (for example `30s`, `5m`, `1h`).
         #[arg(long = "repeat")]
         repeat: Option<String>,
+        /// Queue a message for the next loop iteration (delivered via
+        /// `.clud/loop/NEXT_MESSAGE.md`). Without a task, queue and exit.
+        #[arg(long = "message")]
+        message: Option<String>,
+        /// Read loop settings from this `loop.json` instead of the implicit
+        /// `<git-root>/loop.json`. CLI flags override file values.
+        #[arg(long = "config")]
+        config: Option<String>,
     },
     Up {
         #[arg(short = 'm', long = "message")]
@@ -773,6 +829,20 @@ pub enum Command {
         #[arg(long = "home", value_name = "DIR")]
         home: Option<std::path::PathBuf>,
     },
+    /// Run an Anthropic-format workflow script (`export const meta` +
+    /// `agent()`/`parallel()`/`pipeline()`/`phase()`); every `agent()` call
+    /// is a headless `clud -p` child.
+    Workflow {
+        /// Path to the workflow script (`.js`).
+        script: String,
+        /// JSON value exposed to the script as the global `args`.
+        #[arg(long = "args")]
+        args_json: Option<String>,
+        /// Reuse cached results of agent() calls whose inputs are unchanged
+        /// (named `--reuse` because `--resume` belongs to the harness).
+        #[arg(long = "reuse")]
+        resume: bool,
+    },
     Wasm {
         module: String,
         #[arg(long = "invoke", default_value = "run")]
@@ -790,7 +860,15 @@ pub enum Command {
     },
     /// Kill all active background sessions.
     Slay,
-    List,
+    /// List background, API and live sessions.
+    List {
+        /// Emit API sessions as a JSON array (each row carries `origin`).
+        #[arg(long = "json")]
+        json: bool,
+        /// Show only API sessions created by this entry point.
+        #[arg(long = "origin", value_enum)]
+        origin: Option<crate::session_origin::SessionOrigin>,
+    },
     /// Inspect or manage a live checkout claim.
     Claim {
         #[command(subcommand)]
@@ -1069,6 +1147,54 @@ pub enum Command {
         /// Emit the exact HTTP body a route writes, not one JSON per line.
         #[arg(long, requires = "response")]
         http: bool,
+    },
+    #[command(name = "__openai-responses-translate", hide = true)]
+    InternalOpenAiResponsesTranslate,
+    /// Hidden test seam for xAI's RFC 8628 device login: run discovery, request
+    /// a device code, poll until authorized, and print progress as JSON lines.
+    /// Never used by a launched session.
+    #[command(name = "__xai-device-login", hide = true)]
+    InternalXaiDeviceLogin {
+        /// Discovery document URL (defaults to xAI's).
+        #[arg(long = "discovery-url")]
+        discovery_url: Option<String>,
+        /// Device authorization endpoint, skipping discovery.
+        #[arg(long = "device-endpoint", requires = "token_endpoint")]
+        device_endpoint: Option<String>,
+        /// Token endpoint, skipping discovery.
+        #[arg(long = "token-endpoint", requires = "device_endpoint")]
+        token_endpoint: Option<String>,
+        /// Minimum poll interval in milliseconds.
+        #[arg(long = "interval-ms")]
+        interval_ms: Option<u64>,
+        /// Bound on the whole polling wait, in milliseconds.
+        #[arg(long = "max-poll-ms")]
+        max_poll_ms: Option<u64>,
+    },
+    /// Hidden test seam for Kimi Code's RFC 8628 device login: request a device
+    /// code, poll until authorized, and print progress as JSON lines. With
+    /// `--refresh-stored` it renews the login already in the OS vault instead.
+    /// Never used by a launched session.
+    #[command(name = "__kimi-device-login", hide = true)]
+    InternalKimiDeviceLogin {
+        /// Kimi domain: `com` (default) or `ai`.
+        #[arg(long)]
+        domain: Option<String>,
+        /// Device authorization endpoint, overriding the compiled-in one.
+        #[arg(long = "device-endpoint", requires = "token_endpoint")]
+        device_endpoint: Option<String>,
+        /// Token endpoint, overriding the compiled-in one.
+        #[arg(long = "token-endpoint", requires = "device_endpoint")]
+        token_endpoint: Option<String>,
+        /// Minimum poll interval in milliseconds.
+        #[arg(long = "interval-ms")]
+        interval_ms: Option<u64>,
+        /// Bound on the whole polling wait, in milliseconds.
+        #[arg(long = "max-poll-ms")]
+        max_poll_ms: Option<u64>,
+        /// Refresh the login stored in the OS vault instead of starting a new one.
+        #[arg(long = "refresh-stored")]
+        refresh_stored: bool,
     },
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
@@ -1493,6 +1619,36 @@ pub enum SessionAction {
         #[arg(long = "session")]
         session: Option<String>,
     },
+    /// Create a durable API session from the CLI (recorded as `origin: cli`)
+    /// and print its id.
+    New {
+        /// Harness backend: `claude` or `codex`.
+        #[arg(long = "backend", default_value = "claude")]
+        backend: String,
+        /// Working directory; defaults to the current directory.
+        #[arg(long = "cwd")]
+        cwd: Option<std::path::PathBuf>,
+        /// Display name.
+        #[arg(long = "name")]
+        name: Option<String>,
+        /// Model to pin.
+        #[arg(long = "model")]
+        model: Option<String>,
+        /// Run the session without the permission bypass.
+        #[arg(long = "safe")]
+        safe: bool,
+        /// Print the created record as JSON.
+        #[arg(long = "json")]
+        json: bool,
+    },
+    /// Print one API session's state, origin, backend and model.
+    Show {
+        /// API session id (`sess-...`).
+        id: String,
+        /// Emit the stored record as JSON.
+        #[arg(long = "json")]
+        json: bool,
+    },
 }
 
 /// Subcommands under `clud gc`. See `crates/clud-bin/src/gc/`.
@@ -1597,6 +1753,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "grind",
     "video",
     "wasm",
+    "workflow",
     "attach",
     "kill",
     "slay",
@@ -1613,6 +1770,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "tool",
     "optimize",
     "daemon",
+    "inject",
     "symbols",
     "settings",
     "test",
@@ -1634,7 +1792,89 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__start-cmd",
     "__openai-chat-translate",
     "__gemini-client-translate",
+    "__openai-responses-translate",
+    "__kimi-device-login",
+    "__xai-device-login",
 ];
+
+/// Quote `token` for a copy-pasteable shell example.
+fn shell_example_token(token: &str) -> String {
+    let plain = !token.is_empty()
+        && token
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._/:=@-+,".contains(c));
+    if plain {
+        token.to_string()
+    } else {
+        format!("'{}'", token.replace('\'', "'\\''"))
+    }
+}
+
+/// Whether `cmd` or any nested subcommand declares `--name`.
+fn subtree_has_long(cmd: &clap::Command, name: &str) -> bool {
+    cmd.get_arguments().any(|arg| arg.get_long() == Some(name))
+        || cmd.get_subcommands().any(|sub| subtree_has_long(sub, name))
+}
+
+/// A root-only flag written after the subcommand (`clud do --model x …`),
+/// reported with the reordered call instead of clap's bare usage dump
+/// (#2521). `None` when every flag is where clap accepts it.
+pub(crate) fn misplaced_global_flag(raw: &[String]) -> Option<String> {
+    use clap::CommandFactory;
+    let root = Args::command();
+    let root_arg = |name: &str| {
+        root.get_arguments()
+            .find(|arg| arg.get_long() == Some(name))
+            .cloned()
+    };
+    let mut i = 1;
+    while i < raw.len() && raw[i].starts_with('-') {
+        let flag = raw[i].trim_start_matches('-');
+        let takes_value = !raw[i].contains('=')
+            && (root_arg(flag).is_some_and(|arg| arg.get_action().takes_values())
+                || (raw[i].len() == 2
+                    && root.get_arguments().any(|arg| {
+                        arg.get_short().map(String::from).as_deref() == Some(flag)
+                            && arg.get_action().takes_values()
+                    })));
+        i += if takes_value { 2 } else { 1 };
+    }
+    let sub_name = raw.get(i)?;
+    let sub = root.find_subcommand(sub_name)?;
+    let rest = &raw[i + 1..];
+    for (at, token) in rest.iter().enumerate() {
+        if token == "--" {
+            return None;
+        }
+        let Some(long) = token.strip_prefix("--") else {
+            continue;
+        };
+        let name = long.split('=').next().unwrap_or(long);
+        let Some(arg) = root_arg(name) else {
+            continue;
+        };
+        if arg.is_global_set() || subtree_has_long(sub, name) {
+            continue;
+        }
+        let width = if arg.get_action().takes_values() && !long.contains('=') && at + 1 < rest.len()
+        {
+            2
+        } else {
+            1
+        };
+        let mut example: Vec<String> = raw[..i].to_vec();
+        example.extend(rest[at..at + width].iter().cloned());
+        example.push(sub_name.clone());
+        example.extend(rest[..at].iter().cloned());
+        example.extend(rest[at + width..].iter().cloned());
+        let example: Vec<String> = example.iter().map(|t| shell_example_token(t)).collect();
+        return Some(format!(
+            "`--{name}` is a global flag, and global flags go before the subcommand. Run: {}",
+            example.join(" ")
+        ));
+    }
+    None
+}
 
 impl Args {
     pub fn parse_with_passthrough() -> Self {
@@ -1664,6 +1904,12 @@ impl Args {
                     .exit()
             }
         };
+        if let Some(message) = misplaced_global_flag(&known) {
+            use clap::CommandFactory;
+            Args::command()
+                .error(clap::error::ErrorKind::UnknownArgument, message)
+                .exit()
+        }
         let mut args = Args::parse_from(known.clone());
         if let Some(Command::SafeRm { args: command_args }) = &mut args.command {
             // Clap consumes global options even after a trailing subcommand.
@@ -1885,6 +2131,10 @@ const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--loop-count",
     "--done",
     "--repeat",
+    // `clud workflow <script> --args JSON` (#2471).
+    "--args",
+    "--message",
+    "--config",
     "--daemon-state-dir",
     "--stale-after",
     // Issue: `clud gc prune/purge --older-than <dur>` value arg.
@@ -1918,6 +2168,8 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
     let value_flags: &[&str] = SPLITTER_VALUE_FLAGS;
     let short_value_flags: &[&str] = SPLITTER_SHORT_VALUE_FLAGS;
     let bool_flags: &[&str] = &[
+        // `clud workflow --reuse` (#2471).
+        "--reuse",
         "--zdr",
         "--no-data-collection",
         "--redact-secrets",
@@ -1965,6 +2217,8 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--quiet-orphans",
         "--explain-orphans",
         "--json",
+        // `clud doctor --fix`.
+        "--fix",
         "--no-open",
         "--demo-gfx-sixel",
         "--help",

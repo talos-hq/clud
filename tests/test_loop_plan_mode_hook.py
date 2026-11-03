@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from tests import process
+from tests.metered_consent import consent
 
 SESSION = "loop-plan-mode-1844"
 DENIED = "loop-plan-mode"
@@ -176,7 +177,7 @@ def test_openrouter_launch_carries_explicit_plan_mode_choice(
     result = process.run(
         [binary, "--openrouter", "--model", "nvidia/nemotron-3-ultra-550b-a55b:free",
          "--dry-run", *(["--allow-plan-mode"] if allowed else [])],
-        env=env, cwd=repo, capture_output=True, text=True, timeout=30,
+        env=consent(env, "openrouter"), cwd=repo, capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stdout + result.stderr
     plan = json.loads(result.stdout)

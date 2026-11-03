@@ -336,13 +336,17 @@ after it, by the main session or anyone else.
   as is and is billed outside the pin, which clud cannot refuse on that
   route; record such an answer only after saying so in the question.
 - **Local CI**, asked only when both hold:
-  - `docker info` succeeds. Otherwise print
-    "Docker/github actions disabled due to no docker running" and set CI off.
+  - `bosn --version` succeeds (bosn is the repo's local CI replay, always
+    latest, never pinned). Otherwise print
+    "bosn not installed; local CI replay skipped" and set CI off. Do not
+    gate on Docker or `docker info`: bosn manages its own runners.
   - `.github/workflows/ci.yml` exists. Otherwise print
     "No .github/workflows/ci.yml; local GitHub Actions run skipped" and set CI off.
 
-  The question: run the relevant `ci.yml` job locally under `act` before
-  each push? This choice is local-only. Remote CI always runs: grind only
+  The question: run the relevant `ci.yml` jobs locally under bosn
+  (`bosn ci run --workspace . --trigger pr`, or `clud ci [JOB]`) before
+  the push? One full plan at most per change; focused `--job` runs
+  otherwise (ci.md "local CI budget"). This choice is local-only. Remote CI always runs: grind only
   adds testing, so a user's "skip CI" means skip local validation, never a
   `[skip ci]` marker, a removed CI-lane label or a disabled workflow (the
   hook refuses those for every grind role, #1429).
@@ -427,6 +431,10 @@ For goals in several repositories, write
 `{"repos": [{"repo": "<abs checkout>", ...the object above for that repo}, ...]}`
 instead. The hook picks the entry whose `repo` contains the calling agent's
 working directory, and applies the strictest caps when none or two match.
+Each entry's `meta` must be an issue in that entry's own repository (its
+tracker), never the top meta of another repository: that lane's prework
+posts its plan there, and the hook lets prework comment on any entry's
+`meta` (#2468).
 
 `undo` is the section 2b change record (empty without a regroup).
 Also include `orchestration` with the complete graph the user approved in
@@ -447,7 +455,7 @@ starting branch. `preflight` is what Finish restores, and nothing else. `feature
 (the top meta issue for a meta of metas).
 
 clud's command hook reads it to apply the per-role caps (the planner may add
-worktrees only in parallel mode; the integrator may run `act` only when CI is
+worktrees only in parallel mode; the integrator may run `bosn ci run` / `clud ci` only when CI is
 on; `grind-prework` may comment only on `meta`). Remove it with
 `clud grind-facts clear` when the run ends (Finish, step 3).
 
@@ -579,8 +587,11 @@ the feature PR, or run Finish cleanup while this manifest remains.
 After the last workflow call returns (both stage calls, when there are
 two), whether or not every goal merged:
 
-1. **Report** each goal's PR and whether it merged, and list anything left
-   open with its reason, including each feature child blocked by a stuck
+1. **Report** each goal's PR and its landing state: `merged`, `queued`
+   (still in the merge queue after the final bounded wait; not a failure),
+   `stuck` (dropped by the queue past its automatic fixups), `base-red` (the
+   same required job fails on `<main>`), or `covered by #PR` (dedup
+   preflight), and list anything left open with its reason, including each feature child blocked by a stuck
    bug (`blocked: bug #N did not land`) next to that bug. For a feature
    stage, by `feature_merge`:
    - `later`: when every feature goal landed, mark the feature PR ready
@@ -667,8 +678,9 @@ two), whether or not every goal merged:
 | `/grind-plan` (plan-only) | `grind-planner` | read-only git/gh; no Write/Edit, worktree or push |
 | `/grind-work` | `grind-worker` | read/write assigned files; read-only `gh`; web search |
 | `/grind-review` | `grind-reviewer` | same as worker |
-| `/grind-integrate` | `grind-integrator` | full shell, one at a time; no `bosn`, containers only via `act`, no new worktrees |
-| `/grind-land` | `grind-lander` | `gh pr`, `pr_merge_watch`, `git push`; no edits |
+| `/grind-integrate` | `grind-integrator` | full shell, one at a time; bounded `bosn ci` / `clud ci` only (own run), no `act` or containers, no new worktrees |
+| `/grind-land` | `grind-lander` | `gh pr`, `pr_merge_watch`, `pr_merge.py` (enqueue), `git push`; no edits |
+| (workflow) | `grind-chaperone` | haiku; bounded `pr_merge_watch --until merged`, `gh run rerun --failed`, `pr_merge.py` re-enqueue; no checkout |
 | `/grind-cron` | router | main session |
 | Finish: file problems | router | main session; the only node that runs `gh issue create --repo <github-repo>` (`grind:followup` issues) |
 

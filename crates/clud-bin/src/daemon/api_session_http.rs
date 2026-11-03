@@ -97,7 +97,16 @@ struct CreateDto {
     model: Option<String>,
     #[serde(default)]
     safe: bool,
+    /// The creating client declares its own origin. A request that does not
+    /// is created by the daemon's own API entry point: `daemon`. `unknown` is
+    /// reserved for records written before origins existed.
+    #[serde(default = "daemon_origin")]
+    origin: crate::session_origin::SessionOrigin,
 }
+fn daemon_origin() -> crate::session_origin::SessionOrigin {
+    crate::session_origin::SessionOrigin::Daemon
+}
+
 #[derive(Deserialize)]
 struct TurnDto {
     message: String,
@@ -242,7 +251,7 @@ fn new_claude_session_id() -> Result<String, String> {
     crate::session_history::new_session_uuid()
 }
 
-fn turn_plan(record: &ApiSessionRecord, message: String) -> Result<LaunchPlan, String> {
+pub(super) fn turn_plan(record: &ApiSessionRecord, message: String) -> Result<LaunchPlan, String> {
     if message.trim().is_empty() || message.len() > MAX_MESSAGE_BYTES {
         return Err("message must be non-empty and at most 64 KiB".to_string());
     }
@@ -357,6 +366,7 @@ pub(super) fn handle(
             backend: body.backend,
             cwd: body.cwd,
             name: body.name,
+            origin: body.origin,
             resolved_settings: ResolvedApiSessionSettings {
                 model: body.model,
                 safe: body.safe,
@@ -559,6 +569,7 @@ mod tests {
                 backend,
                 cwd: temp.path().to_path_buf(),
                 name: Some("api-test".to_string()),
+                origin: crate::session_origin::SessionOrigin::Test,
                 resolved_settings: ResolvedApiSessionSettings {
                     model: Some("test-model".to_string()),
                     safe: true,
@@ -568,6 +579,25 @@ mod tests {
                 },
             })
             .unwrap()
+    }
+
+    #[test]
+    fn create_body_carries_the_declared_origin_verbatim() {
+        use crate::session_origin::SessionOrigin;
+        for origin in SessionOrigin::ALL {
+            let body = format!(
+                r#"{{"backend":"claude","cwd":"/","origin":"{}"}}"#,
+                origin.as_str()
+            );
+            let dto: CreateDto = serde_json::from_str(&body).unwrap();
+            assert_eq!(dto.origin, origin);
+        }
+        let absent: CreateDto = serde_json::from_str(r#"{"backend":"claude","cwd":"/"}"#).unwrap();
+        assert_eq!(absent.origin, SessionOrigin::Daemon);
+        assert!(serde_json::from_str::<CreateDto>(
+            r#"{"backend":"claude","cwd":"/","origin":"bogus"}"#
+        )
+        .is_err());
     }
 
     #[test]

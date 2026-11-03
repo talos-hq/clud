@@ -10,8 +10,8 @@ use crate::codex_model::ModelSpec;
 use crate::codex_pipeline::{Pipeline, PipelineError, ProviderFailure};
 use crate::codex_sse::InBandFailure;
 use crate::codex_upstream::{
-    ApiKeyCredentials, CredentialSource, FailureClass, ResolvedCredentials, UpstreamClient,
-    UpstreamConfig, UpstreamError, UpstreamFailure, UpstreamTarget,
+    ApiKeyCredentials, CredentialSource, FailureClass, ImagesStreamOutcome, ResolvedCredentials,
+    UpstreamClient, UpstreamConfig, UpstreamError, UpstreamFailure, UpstreamTarget,
 };
 use crate::failover::{FailoverLadder, FailoverRung};
 use crate::provider_catalog;
@@ -345,10 +345,14 @@ impl UnifiedGatewayConfig {
         upstreams: &UnifiedIntegrationUpstreams,
     ) -> Self {
         self.anthropic_base_url = upstreams.anthropic_base_url.clone();
+        self.override_route_base_url(ModelProvider::DeepSeek, upstreams.deepseek_base_url.clone());
         self.override_route_base_url(
             ModelProvider::OpenRouter,
             upstreams.openrouter_base_url.clone(),
         );
+        if let Some(url) = &upstreams.kimi_base_url {
+            self.override_route_base_url(ModelProvider::Kimi, url.clone());
+        }
         self
     }
 
@@ -1025,7 +1029,7 @@ fn serve(
 
 fn reserve_worker(active: &AtomicUsize, limit: usize) -> bool {
     active
-        .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+        .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
             (current < limit).then_some(current + 1)
         })
         .is_ok()
@@ -1117,6 +1121,7 @@ fn handle_connection(
         log,
         fallback_root,
         cache_health,
+        sessionless_standalone: standalone_root.is_some(),
     };
     route_request(&mut stream, &connection, parsed, &conversation_key);
 }
@@ -1129,6 +1134,22 @@ struct ConnectionContext<'a> {
     log: Option<&'a SharedBridgeLog>,
     fallback_root: &'a str,
     cache_health: &'a SharedCacheHealth,
+    /// A standalone request without a session header (#2554).
+    sessionless_standalone: bool,
+}
+
+impl ConnectionContext<'_> {
+    /// The prefix-stable key a sessionless standalone turn uses instead of
+    /// its per-request one (#2554); `None` keeps the header-derived key.
+    fn turn_key(
+        &self,
+        request: &serde_json::Value,
+        parsed: &ParsedRequest,
+    ) -> Option<ConversationKey> {
+        self.sessionless_standalone.then(|| {
+            sessionless_conversation_key(request, parsed.agent_id.as_deref(), self.fallback_root)
+        })
+    }
 }
 
 /// Read the request headers and admit the request: size and credential
@@ -1274,20 +1295,19 @@ fn route_request(
         // than a literal one. A path under the prefix with an unknown verb is
         // still a Gemini client talking to us: answer it in Gemini's shape
         // instead of dropping it into the generic 404.
-        ("POST", path) if path.starts_with(GEMINI_ROUTE_PREFIX) => {
-            match parse_generate_content_route(path) {
-                Some(call) => {
-                    route_generate_content(stream, connection, &mut parsed, &call, conversation_key)
-                }
-                None => {
-                    record_rejection(log, 404, "unrouted_generate_content");
-                    refuse_gemini(
-                        stream,
-                        404,
-                        "the path must be /v1beta/models/<model>:generateContent or :streamGenerateContent",
-                    );
-                }
-            }
+        ("POST", path) if path.starts_with(GEMINI_ROUTE_PREFIX) => route_generate_content_path(
+            stream,
+            connection,
+            &mut parsed,
+            path,
+            conversation_key,
+            log,
+        ),
+        ("POST", "/v1/images/generations") => {
+            route_images_generations(stream, connection, &mut parsed, conversation_key);
+        }
+        ("POST", "/v1/images/edits") => {
+            route_images_edits(stream, connection, &mut parsed, conversation_key);
         }
         _ => {
             if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
@@ -1434,6 +1454,8 @@ fn route_messages(
         }
     };
     record_request_effort(&config.status_usage, &json, parsed.agent_id.is_some());
+    let derived = connection.turn_key(&json, parsed);
+    let conversation_key = derived.as_ref().unwrap_or(conversation_key);
     let streaming = json.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
     if matches!(config.gateway_mode, GatewayMode::Unified(_)) {
         serve_unified_messages(
@@ -1498,6 +1520,8 @@ fn route_chat_completions(
         return;
     };
     let model = model.to_string();
+    let derived = connection.turn_key(&request, parsed);
+    let conversation_key = derived.as_ref().unwrap_or(conversation_key);
     let streaming = request.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
     if !matches!(config.gateway_mode, GatewayMode::Unified(_)) {
         record_rejection(log, 501, "chat_completions_unsupported");
@@ -1638,6 +1662,306 @@ fn refuse_chat(stream: &mut TcpStream, status: u16, message: &str) {
     // Every refusal on this route is an OpenAI error envelope: the client did
     // not ask for, and cannot parse, an Anthropic one.
     let envelope = crate::openai_ingress::render_chat_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
+/// Dispatch a path under [`GEMINI_ROUTE_PREFIX`]: a known verb reaches the
+/// route, an unknown one is answered in Gemini's own error shape rather than
+/// the generic Anthropic 404, because a path under the prefix still means a
+/// Gemini client is talking to us.
+fn route_generate_content_path(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    path: &str,
+    conversation_key: &ConversationKey,
+    log: Option<&SharedBridgeLog>,
+) {
+    match parse_generate_content_route(path) {
+        Some(call) => {
+            route_generate_content(stream, connection, parsed, &call, conversation_key);
+        }
+        None => {
+            record_rejection(log, 404, "unrouted_generate_content");
+            refuse_gemini(
+                stream,
+                404,
+                "the path must be /v1beta/models/<model>:generateContent or :streamGenerateContent",
+            );
+        }
+    }
+}
+
+/// `POST /v1/images/generations` -- OpenAI's images API on the Codex lane.
+///
+/// Upstream capability: CLIProxyAPI answers `/v1/images/generations` from the
+/// Codex executor (`internal/runtime/executor/codex_openai_images.go:341`
+/// `executeDirectOpenAIImage`, routed at `internal/api/server_routes.go`).
+/// clud had no image door at all. This route forwards the validated body to the
+/// Codex images endpoint and hands the upstream's own envelope back, so an
+/// OpenAI images client works unchanged. Only the Codex lane can spend an image
+/// model -- Claude, DeepSeek, Kimi and OpenRouter do not expose one -- so a
+/// launch without `--codex` refuses by name instead of pretending to answer.
+///
+/// A `stream: true` request is forwarded as `true` and the upstream SSE body is
+/// relayed as it arrives: see [`serve_images_stream`].
+fn route_images_generations(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    serve_images(
+        stream,
+        connection,
+        parsed,
+        conversation_key,
+        ImagesDoor::Generations,
+    );
+}
+
+/// `POST /v1/images/edits` -- the multipart half of OpenAI's images API.
+///
+/// Upstream capability: CLIProxyAPI routes `/v1/images/edits` through the same
+/// Codex executor and rewrites the multipart form into the JSON contract
+/// (`internal/runtime/executor/codex_openai_images.go:556`
+/// `codexPrepareDirectOpenAIImageEditPayload`). clud accepted only JSON
+/// generations before this door. The upstream answer is forwarded verbatim, as
+/// on the generations door, and an edit is never retried because a retry is a
+/// second billed image.
+fn route_images_edits(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    serve_images(
+        stream,
+        connection,
+        parsed,
+        conversation_key,
+        ImagesDoor::Edits,
+    );
+}
+
+/// Which images contract a request arrived on. The two doors differ only in how
+/// the client's body is validated and rewritten; the credential, upstream and
+/// error handling are shared so they cannot drift apart.
+#[derive(Clone, Copy)]
+enum ImagesDoor {
+    Generations,
+    Edits,
+}
+
+impl ImagesDoor {
+    /// The path a refusal names, so the client sees its own door.
+    fn path(self) -> &'static str {
+        match self {
+            Self::Generations => "/v1/images/generations",
+            Self::Edits => "/v1/images/edits",
+        }
+    }
+}
+
+/// Shared body of both images doors: codex availability, validation, one
+/// non-retried upstream call, and the OpenAI error envelope on refusal.
+fn serve_images(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+    door: ImagesDoor,
+) {
+    let (config, log) = (connection.config, connection.log);
+    let content_type = parsed
+        .header("content-type")
+        .unwrap_or_default()
+        .to_string();
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    let codex_available = match &config.gateway_mode {
+        GatewayMode::Codex => true,
+        GatewayMode::Unified(unified) => unified.codex_available,
+    };
+    if !codex_available {
+        record_rejection(log, 501, "images_route_missing");
+        refuse_images(
+            stream,
+            501,
+            &format!(
+                "POST {} needs the Codex route; start the gateway with --codex",
+                door.path()
+            ),
+        );
+        return;
+    }
+    let prepared = match door {
+        ImagesDoor::Generations => crate::images_ingress::prepare_generation(&body),
+        ImagesDoor::Edits => crate::images_ingress::prepare_edit(&body, &content_type),
+    };
+    let prepared = match prepared {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            record_rejection(log, 400, "invalid_image_request");
+            refuse_images(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let client = match codex_upstream_client(config, log, conversation_key, codex_redactor(config))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            let (status, message) = images_failure(&error);
+            record_rejection(log, status, "images_credentials");
+            refuse_images(stream, status, message);
+            return;
+        }
+    };
+    if prepared.stream {
+        serve_images_stream(
+            stream,
+            &client,
+            &prepared.body,
+            connection,
+            config.stream_idle_timeout,
+        );
+        return;
+    }
+    match client.images(&prepared.body, connection.shutdown) {
+        // The upstream's envelope is the client contract, on success and on
+        // failure alike: an images client parses `{"error": ...}` from a 4xx.
+        Ok(reply) => {
+            let _ = write_response(stream, reply.status, "application/json", &reply.body, false);
+        }
+        Err(UpstreamError::Cancelled) => {}
+        Err(error) => {
+            let (status, message) = images_failure(&error);
+            record_rejection(log, status, "images_upstream_failure");
+            refuse_images(stream, status, message);
+        }
+    }
+}
+
+/// Relay a streaming (`stream: true`) images answer.
+///
+/// The upstream body is SSE and is forwarded as it arrives
+/// (`executeDirectOpenAIImageStream`, `codex_openai_images.go:413`). Nothing is
+/// written until the upstream's first byte lands, so a failure before that
+/// point is still a clean OpenAI error envelope; after the head is out the
+/// response is committed and an upstream failure only terminates the chunked
+/// body (DD-029's rule, as on the Messages relay). Never retried: a retry is a
+/// second billed image.
+fn serve_images_stream(
+    stream: &mut TcpStream,
+    client: &UpstreamClient<ResolvedCredentials>,
+    body: &[u8],
+    connection: &ConnectionContext<'_>,
+    idle_timeout: Duration,
+) {
+    let log = connection.log;
+    let mut writer = ChunkedImagesBody::new(stream, idle_timeout);
+    let outcome = {
+        let mut sink = |chunk: &[u8]| {
+            writer
+                .write_chunk(chunk)
+                .map_err(|_| UpstreamError::Transport("client went away"))
+        };
+        client.images_stream(body, connection.shutdown, &mut sink)
+    };
+    match outcome {
+        Ok(ImagesStreamOutcome::Streamed(_)) | Err(UpstreamError::Cancelled) => {
+            let _ = writer.finish();
+        }
+        // The upstream's own envelope is the client contract, on failure too.
+        Ok(ImagesStreamOutcome::Rejected(reply)) => {
+            let _ = write_response(
+                writer.stream,
+                reply.status,
+                "application/json",
+                &reply.body,
+                false,
+            );
+        }
+        Err(error) => {
+            if writer.started {
+                record_rejection(log, 502, "images_stream_upstream_failure");
+                let _ = writer.finish();
+            } else {
+                let (status, message) = images_failure(&error);
+                record_rejection(log, status, "images_upstream_failure");
+                refuse_images(writer.stream, status, message);
+            }
+        }
+    }
+}
+
+/// Write an SSE images answer as an HTTP/1.1 chunked body.
+///
+/// `started` is what makes the pre-commit rule work: the head is written with
+/// the first chunk, so callers know whether a failure still fits in an error
+/// envelope.
+struct ChunkedImagesBody<'a> {
+    stream: &'a mut TcpStream,
+    started: bool,
+    idle_timeout: Duration,
+}
+
+impl<'a> ChunkedImagesBody<'a> {
+    fn new(stream: &'a mut TcpStream, idle_timeout: Duration) -> Self {
+        Self {
+            stream,
+            started: false,
+            idle_timeout,
+        }
+    }
+
+    fn write_chunk(&mut self, chunk: &[u8]) -> io::Result<()> {
+        if !self.started {
+            let _ = self.stream.set_write_timeout(Some(self.idle_timeout));
+            self.stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
+            )?;
+            self.stream.flush()?;
+            self.started = true;
+        }
+        write!(self.stream, "{:x}\r\n", chunk.len())?;
+        self.stream.write_all(chunk)?;
+        self.stream.write_all(b"\r\n")?;
+        self.stream.flush()
+    }
+
+    /// Seal the body. A no-op when nothing was written, so a refusal can still
+    /// own the response.
+    fn finish(&mut self) -> io::Result<()> {
+        if !self.started {
+            return Ok(());
+        }
+        self.stream.write_all(b"0\r\n\r\n")?;
+        self.stream.flush()?;
+        let _ = self.stream.shutdown(Shutdown::Both);
+        Ok(())
+    }
+}
+
+/// Map an upstream failure to a status and a message that names no credential.
+fn images_failure(error: &UpstreamError) -> (u16, &'static str) {
+    match error {
+        UpstreamError::Credentials(_) => (
+            503,
+            "Codex credentials are unavailable; run `clud auth login codex`",
+        ),
+        UpstreamError::Timeout => (
+            504,
+            "the Codex upstream timed out before returning an image",
+        ),
+        _ => (502, "the Codex upstream failed before returning an image"),
+    }
+}
+
+/// Answer a refused images turn in the OpenAI error envelope its client parses.
+fn refuse_images(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::images_ingress::render_error(status, message);
     let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
@@ -2029,6 +2353,53 @@ fn conversation_key_from_headers(
     }
 }
 
+/// #2554: the conversation key for a standalone client that sent no session
+/// header. Each such request gets its own history store, but its upstream
+/// prompt-cache key must stay the same across requests that share a prompt
+/// prefix, or the provider's cache routing changes on every call. The key is
+/// the client's own `prompt_cache_key` or `user` when it sends one, otherwise
+/// a digest of the stable prefix: model, system or instructions, tools and the
+/// first message. It stays beneath this listener's random root, so it never
+/// matches another launch.
+fn sessionless_conversation_key(
+    request: &serde_json::Value,
+    agent_id: Option<&str>,
+    fallback_root: &str,
+) -> ConversationKey {
+    let client_key = ["prompt_cache_key", "user"].iter().find_map(|field| {
+        request
+            .get(*field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+    });
+    let identity = match client_key {
+        Some(key) => format!("client:{key}"),
+        None => {
+            let first = ["messages", "input"].iter().find_map(|field| {
+                request
+                    .get(*field)
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|items| items.first())
+            });
+            let prefix = serde_json::json!([
+                request.get("model"),
+                request.get("system"),
+                request.get("instructions"),
+                request.get("tools"),
+                first,
+            ]);
+            format!("prefix:{prefix}")
+        }
+    };
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(identity.as_bytes());
+    let short: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    conversation_key_from_headers(None, agent_id, &format!("{fallback_root}-p{short}"))
+}
+
 fn serve_context_compact(
     stream: &mut TcpStream,
     config: &BridgeConfig,
@@ -2178,6 +2549,26 @@ fn build_pipeline(
     conversation_key: &ConversationKey,
     redaction: Option<&SharedSession>,
 ) -> Result<Pipeline<ResolvedCredentials>, UpstreamError> {
+    let client = codex_upstream_client(config, log, conversation_key, redaction)?;
+    let mut pipeline = Pipeline::new(client);
+    if let Some(model) = config.default_model.clone() {
+        pipeline = pipeline.with_default_model(model);
+    }
+    Ok(pipeline)
+}
+
+/// Build the upstream client alone, without a Messages pipeline.
+///
+/// The images door needs the same credential resolution, test-upstream seam and
+/// session identity as the Messages path but none of its translation state, so
+/// both callers share this one constructor rather than each resolving
+/// credentials their own way.
+fn codex_upstream_client(
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+    conversation_key: &ConversationKey,
+    redaction: Option<&SharedSession>,
+) -> Result<UpstreamClient<ResolvedCredentials>, UpstreamError> {
     let mut credentials = match config.test_upstream_url.as_deref() {
         Some(base_url) => ResolvedCredentials::ApiKey(ApiKeyCredentials::new(
             "clud-test-upstream-key",
@@ -2195,9 +2586,9 @@ fn build_pipeline(
         read_timeout: config.stream_idle_timeout,
         ..UpstreamConfig::default()
     };
-    // `build_pipeline` runs for every Messages request. A fresh client UUID
-    // here would rotate the upstream prompt-cache key and session headers on
-    // every turn, defeating cache reuse for a long Claude conversation.
+    // A fresh client UUID here would rotate the upstream prompt-cache key and
+    // session headers on every turn, defeating cache reuse for a long Claude
+    // conversation.
     let mut client = UpstreamClient::new(credentials, upstream_config)
         .with_session_id(conversation_key.id.clone())
         .with_redaction(redaction.cloned());
@@ -2209,11 +2600,7 @@ fn build_pipeline(
             record_retry(&log, error, attempt, budget, backoff);
         });
     }
-    let mut pipeline = Pipeline::new(client);
-    if let Some(model) = config.default_model.clone() {
-        pipeline = pipeline.with_default_model(model);
-    }
-    Ok(pipeline)
+    Ok(client)
 }
 
 fn codex_redactor(config: &BridgeConfig) -> Option<&SharedSession> {
@@ -2887,8 +3274,9 @@ fn serve_unified_anthropic_proxy(
     });
     if let Some(beats) = heartbeat {
         let succeeded = matches!(outcome, ProxyOutcome::Committed { status } if status < 400);
-        let target =
-            succeeded.then(|| heartbeat_target(base_url, path, body, headers, injected_api_key));
+        let target = succeeded
+            .then(|| heartbeat_replay(base_url, path, body, headers, injected_api_key, redaction))
+            .flatten();
         beats.finish(&conversation_key.id, target, Instant::now());
     }
     if let Err(error) = routed {
@@ -2903,6 +3291,28 @@ fn serve_unified_anthropic_proxy(
 
 /// #2046: what the cache heartbeat replays: the request exactly as this hop
 /// sent it upstream (forwarded headers, injected credential, same body).
+/// #2552: the heartbeat replays the bytes the upstream actually received.
+/// Redaction tokens are stable for the session, so this matches the real
+/// prefix; replaying the raw body would warm the wrong prefix and send the
+/// secrets upstream. A body that cannot be redacted gets no heartbeat.
+fn heartbeat_replay(
+    base_url: &str,
+    path: &str,
+    body: &[u8],
+    headers: &[(String, String)],
+    injected_api_key: Option<&str>,
+    redaction: Option<&SharedSession>,
+) -> Option<crate::cache_heartbeat::Target> {
+    let sent = redact_request(body, redaction).ok()?;
+    Some(heartbeat_target(
+        base_url,
+        path,
+        &sent,
+        headers,
+        injected_api_key,
+    ))
+}
+
 fn heartbeat_target(
     base_url: &str,
     path: &str,
@@ -3212,12 +3622,8 @@ fn serve_anthropic_proxy(
     };
     let status = response.status();
     if target.sanitize_errors && status >= 400 && !probe {
-        return write_sanitized_failure(
-            stream,
-            status,
-            target.chat.map(|c| c.dialect),
-            idle_timeout,
-        );
+        let dialect = target.chat.map(|chat| chat.dialect);
+        return write_sanitized_failure(stream, status, dialect, idle_timeout);
     }
     let content_type = response
         .header("content-type")
@@ -4121,6 +4527,20 @@ fn serve_messages(
             return;
         }
     };
+    // A tool-less side call (session title, summary) arrives under the main
+    // session header. It gets a one-request history store and its own cache
+    // key, so it neither splices its transcript into the main conversation
+    // nor moves the main cache prefix.
+    let side_store;
+    let side_key;
+    let (conversations, conversation_key) = match side_call_key(&redacted, conversation_key) {
+        Some(key) => {
+            side_store = ConversationStore::new(config.history_limits);
+            side_key = key;
+            (&side_store, &side_key)
+        }
+        None => (conversations, conversation_key),
+    };
     let pipeline = match build_pipeline(config, log, conversation_key, redaction) {
         Ok(pipeline) => pipeline,
         Err(error) => {
@@ -4149,6 +4569,45 @@ fn serve_messages(
     } else {
         serve_messages_complete(stream, &turn);
     }
+}
+
+/// The key for a Claude Code side call, or `None` for a conversation turn.
+///
+/// Claude Code's main and subagent turns send their tool list; its side calls
+/// (session titles, summaries) send `"tools": []` without thinking or context
+/// management controls, under the main session
+/// header and with no agent id. Such a call is keyed beneath the main conversation by a
+/// digest of its system prompt, so repeated side calls of one kind share a
+/// stable cache key without touching the main one.
+fn side_call_key(body: &[u8], main: &ConversationKey) -> Option<ConversationKey> {
+    let request: serde_json::Value = serde_json::from_slice(body).ok()?;
+    // Captured from Claude Code 2.1.316: the side call sends `"tools": []`,
+    // explicitly empty, without main-turn controls. `--tools ""` main turns
+    // still send thinking or context management and must keep canonical history.
+    let explicitly_tool_less = request
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(Vec::is_empty);
+    if !explicitly_tool_less
+        || request.get("thinking").is_some()
+        || request.get("context_management").is_some()
+    {
+        return None;
+    }
+    let system = request
+        .get("system")
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(system.as_bytes());
+    let short: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Some(ConversationKey {
+        id: format!("{}-side-{short}", main.id),
+        session_prefix: main.session_prefix.clone(),
+    })
 }
 
 /// One `POST /v1/messages` turn, once its pipeline is built.
@@ -5594,6 +6053,71 @@ mod tests {
     use std::thread;
     use std::time::Duration;
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+
+    /// #2554: sessionless standalone requests that share a prompt prefix get
+    /// one conversation key (and so one upstream prompt-cache key); unrelated
+    /// prefixes and a client-supplied key stay distinct.
+    #[test]
+    fn sessionless_requests_sharing_a_prefix_share_one_cache_key() {
+        let turn = |system: &str, messages: serde_json::Value| serde_json::json!({"model": "m", "system": system, "tools": [{"name": "Bash"}], "messages": messages});
+        let first = turn(
+            "sys",
+            serde_json::json!([{"role": "user", "content": "u1"}]),
+        );
+        let later = turn(
+            "sys",
+            serde_json::json!([
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u2"}
+            ]),
+        );
+        let other = turn(
+            "other system",
+            serde_json::json!([{"role": "user", "content": "u1"}]),
+        );
+        let key =
+            |request: &serde_json::Value| sessionless_conversation_key(request, None, "root").id;
+
+        assert_eq!(key(&first), key(&later));
+        assert_ne!(key(&first), key(&other));
+        assert!(key(&first).starts_with("bridge-root-p"));
+
+        let mut pinned = other.clone();
+        pinned["prompt_cache_key"] = serde_json::json!("client-key");
+        let mut pinned_too = first.clone();
+        pinned_too["prompt_cache_key"] = serde_json::json!("client-key");
+        assert_eq!(key(&pinned), key(&pinned_too));
+        assert_ne!(key(&pinned), key(&first));
+    }
+
+    /// #2552: the cache heartbeat must replay what the upstream received,
+    /// never the pre-redaction body.
+    #[test]
+    fn heartbeat_replays_the_redacted_body_the_upstream_received() {
+        let secret = "FAKE_HEARTBEAT_VAULT_KEY_FIXTURE_2552";
+        let session: SharedSession = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::secret_redaction::reversible::Session::new(vec![secret.into()]).unwrap(),
+        ));
+        let body =
+            format!(r#"{{"model":"m","messages":[{{"role":"user","content":"key {secret}"}}]}}"#);
+        let sent = redact_request(body.as_bytes(), Some(&session))
+            .unwrap()
+            .into_owned();
+
+        let target = heartbeat_replay(
+            "http://up.invalid",
+            "/v1/messages",
+            body.as_bytes(),
+            &[],
+            None,
+            Some(&session),
+        )
+        .expect("a redactable body gets a heartbeat");
+
+        assert!(!String::from_utf8_lossy(&target.body).contains(secret));
+        assert_eq!(target.body, sent);
+    }
 
     #[test]
     fn unified_gateway_injects_the_complete_openrouter_privacy_policy() {
@@ -7833,13 +8357,13 @@ Connection: close
         bridge.shutdown().unwrap();
 
         let text = std::fs::read_to_string(log_path).unwrap();
-        // Serialized field order is serde_json's (sorted): model, then reason.
+        // Serialized field order is insertion order (preserve_order): reason, then model.
         assert!(
-            text.contains(r#""model":"gpt-6-nonexistent","reason":"unknown_model""#),
+            text.contains(r#""reason":"unknown_model","model":"gpt-6-nonexistent""#),
             "{text}"
         );
         assert!(
-            text.contains(r#""model":"clud-claude-kimi-k3","reason":"model_not_served_here""#),
+            text.contains(r#""reason":"model_not_served_here","model":"clud-claude-kimi-k3""#),
             "{text}"
         );
         // The model field comes from a 32 MiB-capped body: one oversized value
@@ -7885,7 +8409,7 @@ Connection: close
 
         let text = std::fs::read_to_string(&log_path).unwrap();
         assert!(
-            text.contains(r#""model":"gpt-6-sol","reason":"model_not_allowed""#),
+            text.contains(r#""reason":"model_not_allowed","model":"gpt-6-sol""#),
             "{text}"
         );
         assert!(!text.contains(&bearer), "{text}");
@@ -7996,7 +8520,7 @@ Connection: close
 
         let text = std::fs::read_to_string(&log_path).unwrap();
         assert!(
-            text.contains(r#""model":"deepseek-flash","reason":"model_not_allowed""#),
+            text.contains(r#""reason":"model_not_allowed","model":"deepseek-flash""#),
             "{text}"
         );
     }
@@ -11382,6 +11906,113 @@ Connection: close
                 );
             }
         }
+    }
+
+    /// Claude Code's tool-less side calls (session titles, summaries) carry
+    /// the main session header with no agent id. They must not read or write
+    /// the main conversation's history, or the main turn is sent with the
+    /// side call's transcript spliced in and its cache prefix moves.
+    #[test]
+    fn a_tool_less_side_call_does_not_enter_the_main_history() {
+        let upstream = FakeResponses::start();
+        let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+        let session = [("X-Claude-Code-Session-Id", "claude-session-side")];
+        let side = r#"{"model":"claude-x","system":"You are naming a coding session","tools":[],"messages":[{"role":"user","content":"SIDE-CALL-TRANSCRIPT"}],"stream":false}"#;
+        let main = r#"{"model":"claude-x","system":"main agent","tools":[{"name":"Bash","description":"run","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"MAIN-TURN"}],"stream":false}"#;
+        for body in [side, main] {
+            let response = request(
+                bridge.socket_addr(),
+                &authorized_with_headers(
+                    "POST",
+                    "/v1/messages",
+                    bridge.bearer_token(),
+                    body,
+                    &session,
+                ),
+            );
+            assert_eq!(status(&response), 200, "{response}");
+        }
+        let requests = upstream.requests();
+        assert_eq!(requests.len(), 2);
+        let main_sent = captured_body(&requests[1]);
+        assert!(main_sent.contains("MAIN-TURN"), "{main_sent}");
+        assert!(!main_sent.contains("SIDE-CALL-TRANSCRIPT"), "{main_sent}");
+        let key = |request: &str| {
+            let body: serde_json::Value = serde_json::from_str(captured_body(request)).unwrap();
+            body["prompt_cache_key"].as_str().unwrap().to_string()
+        };
+        assert_ne!(key(&requests[0]), key(&requests[1]));
+    }
+
+    /// #2561: disabling tools must preserve canonical history and cache identity.
+    #[test]
+    fn tool_less_main_turns_reuse_main_history() {
+        for controls in [
+            serde_json::json!({"thinking": {"type": "adaptive"}}),
+            serde_json::json!({"context_management": {"edits": []}}),
+            serde_json::json!({
+                "thinking": {"type": "adaptive"},
+                "context_management": {"edits": []}
+            }),
+        ] {
+            let upstream = FakeResponses::start();
+            let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+            let session = [("X-Claude-Code-Session-Id", "tool-less-main")];
+            for content in ["FIRST-MAIN-TURN", "SECOND-MAIN-TURN"] {
+                let mut body = serde_json::json!({
+                    "model": "claude-x", "system": "main agent", "tools": [],
+                    "messages": [{"role": "user", "content": content}], "stream": false
+                });
+                body.as_object_mut()
+                    .unwrap()
+                    .extend(controls.as_object().unwrap().clone());
+                let response = request(
+                    bridge.socket_addr(),
+                    &authorized_with_headers(
+                        "POST",
+                        "/v1/messages",
+                        bridge.bearer_token(),
+                        &body.to_string(),
+                        &session,
+                    ),
+                );
+                assert_eq!(status(&response), 200, "{response}");
+            }
+            let requests = upstream.requests();
+            assert_eq!(requests.len(), 2);
+            let second: serde_json::Value =
+                serde_json::from_str(captured_body(&requests[1])).unwrap();
+            assert!(second["input"].to_string().contains("FIRST-MAIN-TURN"));
+            assert!(second["input"].to_string().contains("SECOND-MAIN-TURN"));
+            let main = ConversationKey::from_headers(Some("tool-less-main"), None);
+            assert_eq!(second["prompt_cache_key"], main.id);
+        }
+    }
+
+    /// #2554: a standalone client without a session header used to get a new
+    /// upstream prompt-cache key on every request.
+    #[test]
+    fn standalone_sessionless_turns_with_one_prefix_share_a_cache_key() {
+        let upstream = FakeResponses::start();
+        let bridge =
+            BridgeHandle::start(bridged_config(&upstream).with_standalone_client_auth()).unwrap();
+        for _ in 0..2 {
+            let response = request(
+                bridge.socket_addr(),
+                &authorized("POST", "/v1/messages", bridge.bearer_token(), PROBE_BODY),
+            );
+            assert_eq!(status(&response), 200, "{response}");
+        }
+        let keys = upstream
+            .requests()
+            .iter()
+            .map(|request| {
+                let body: serde_json::Value = serde_json::from_str(captured_body(request)).unwrap();
+                body["prompt_cache_key"].as_str().unwrap().to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0], keys[1]);
     }
 
     #[test]

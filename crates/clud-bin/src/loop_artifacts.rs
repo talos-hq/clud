@@ -212,6 +212,12 @@ impl LoopSession {
         self.info.start_iteration(iteration);
         let _ = self.info.save(&self.info_path);
         log_iteration_start(&self.git_root, iteration);
+        if let Ok(Some(n)) = drain_inbox(&self.git_root, iteration) {
+            append_log_line(
+                &self.git_root,
+                &format!("=== iteration {iteration} delivered {n} queued message(s) ==="),
+            );
+        }
     }
 
     /// Hook after iteration `iteration` finishes with exit code `rc`.
@@ -231,6 +237,7 @@ impl LoopSession {
         self.info.mark_completed(error);
         let _ = self.info.save(&self.info_path);
         log_loop_end(&self.git_root, summary);
+        let _ = write_root_summary(&self.git_root, &self.info, summary);
     }
 
     /// Borrow the current task info — exposed for tests that want to
@@ -239,6 +246,137 @@ impl LoopSession {
     pub fn info(&self) -> &TaskInfo {
         &self.info
     }
+}
+
+/// Path to the visible `LOOP_DONE.md` summary at the project root.
+pub fn root_summary_path(git_root: &Path) -> PathBuf {
+    git_root.join("LOOP_DONE.md")
+}
+
+/// Render the root `LOOP_DONE.md` body: outcome, an ASCII iteration
+/// table, and pointers into the hidden `.clud/loop/` artifact dir.
+pub fn render_root_summary(info: &TaskInfo, summary: &str) -> String {
+    let mut out = String::new();
+    out.push_str("# LOOP_DONE\n\n");
+    out.push_str(&format!("- Outcome: {summary}\n"));
+    out.push_str(&format!("- Started: {}\n", info.start_time));
+    if let Some(end) = &info.end_time {
+        out.push_str(&format!("- Ended: {end}\n"));
+    }
+    out.push_str(&format!(
+        "- Iterations: {}/{}\n",
+        info.iterations.len(),
+        info.total_iterations
+    ));
+    if let Some(err) = &info.error {
+        out.push_str(&format!("- Error: {err}\n"));
+    }
+    out.push_str("\n```\n+------+------+\n| iter |  rc  |\n+------+------+\n");
+    for it in &info.iterations {
+        let rc = it
+            .exit_code
+            .map_or_else(|| "-".to_string(), |c| c.to_string());
+        out.push_str(&format!("| {:>4} | {:>4} |\n", it.iteration, rc));
+    }
+    out.push_str("+------+------+\n```\n\n");
+    out.push_str("Artifacts (hidden directory):\n\n");
+    for name in [
+        "loop.json",
+        "info.json",
+        "log.txt",
+        "LOOP.md",
+        "NEXT_MESSAGE.md",
+        "DONE",
+        "BLOCKED",
+    ] {
+        out.push_str(&format!("- `.clud/loop/{name}`\n"));
+    }
+    out
+}
+
+/// Write `<git-root>/LOOP_DONE.md` so the loop result is visible without
+/// opening the hidden `.clud/loop/` directory.
+pub fn write_root_summary(git_root: &Path, info: &TaskInfo, summary: &str) -> std::io::Result<()> {
+    std::fs::write(
+        root_summary_path(git_root),
+        render_root_summary(info, summary),
+    )
+}
+
+/// Directory where operator messages for the next iteration are queued.
+pub fn inbox_dir(git_root: &Path) -> PathBuf {
+    loop_dir(git_root).join("inbox")
+}
+
+/// File the agent is told to read at the start of each iteration.
+pub fn next_message_path(git_root: &Path) -> PathBuf {
+    loop_dir(git_root).join("NEXT_MESSAGE.md")
+}
+
+/// Queue `text` for delivery at the start of the next iteration.
+/// Returns the path of the queued file.
+pub fn queue_message(git_root: &Path, text: &str) -> std::io::Result<PathBuf> {
+    let dir = inbox_dir(git_root);
+    std::fs::create_dir_all(&dir)?;
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    let mut n = 0u32;
+    loop {
+        let path = dir.join(format!("{stamp:024}-{n:03}.md"));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                use std::io::Write;
+                f.write_all(text.as_bytes())?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => n += 1,
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// Move queued inbox messages into `NEXT_MESSAGE.md` for `iteration`,
+/// archiving the consumed files under `inbox/delivered/`. With an empty
+/// inbox, a stale `NEXT_MESSAGE.md` from an earlier iteration is removed
+/// so messages are delivered exactly once. Returns how many messages were
+/// delivered (`None` when the inbox was empty).
+pub fn drain_inbox(git_root: &Path, iteration: u32) -> std::io::Result<Option<usize>> {
+    let next = next_message_path(git_root);
+    let dir = inbox_dir(git_root);
+    let mut queued: Vec<PathBuf> = match std::fs::read_dir(&dir) {
+        Ok(rd) => rd
+            .filter_map(Result::ok)
+            .map(|e| e.path())
+            .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "md"))
+            .collect(),
+        Err(_) => Vec::new(),
+    };
+    if queued.is_empty() {
+        if next.exists() {
+            std::fs::remove_file(&next)?;
+        }
+        return Ok(None);
+    }
+    queued.sort();
+    let mut body = format!("# Operator messages for iteration {iteration}\n");
+    for (i, path) in queued.iter().enumerate() {
+        let text = std::fs::read_to_string(path)?;
+        body.push_str(&format!("\n## Message {}\n\n{}\n", i + 1, text.trim_end()));
+    }
+    std::fs::write(&next, body)?;
+    let delivered = dir.join("delivered");
+    std::fs::create_dir_all(&delivered)?;
+    for path in &queued {
+        if let Some(name) = path.file_name() {
+            std::fs::rename(path, delivered.join(name))?;
+        }
+    }
+    Ok(Some(queued.len()))
 }
 
 /// Path to `motivation.md` under the loop dir.
@@ -705,6 +843,9 @@ mod tests {
         s.on_iteration_start(2);
         s.on_iteration_end(2, 1, Some("nonzero".into()));
         s.on_loop_end("BLOCKED", Some("Interrupted by user".into()));
+        let root = std::fs::read_to_string(root_summary_path(tmp.path())).unwrap();
+        assert!(root.contains("Outcome: BLOCKED"), "{root}");
+        assert!(root.contains(".clud/loop/info.json"), "{root}");
 
         let info: TaskInfo =
             serde_json::from_str(&fs::read_to_string(TaskInfo::info_path(tmp.path())).unwrap())
@@ -749,5 +890,43 @@ mod tests {
         assert_eq!(&ts[10..11], "T");
         assert_eq!(&ts[13..14], ":");
         assert_eq!(&ts[16..17], ":");
+    }
+
+    #[test]
+    fn queued_messages_are_delivered_once_in_order() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        assert_eq!(drain_inbox(root, 1).unwrap(), None);
+        queue_message(root, "first").unwrap();
+        queue_message(root, "second\n").unwrap();
+        assert_eq!(drain_inbox(root, 2).unwrap(), Some(2));
+        let body = fs::read_to_string(next_message_path(root)).unwrap();
+        assert!(
+            body.starts_with("# Operator messages for iteration 2"),
+            "{body}"
+        );
+        let (a, b) = (body.find("first").unwrap(), body.find("second").unwrap());
+        assert!(a < b, "{body}");
+        assert_eq!(
+            fs::read_dir(inbox_dir(root).join("delivered"))
+                .unwrap()
+                .count(),
+            2
+        );
+        // Next iteration with nothing queued clears the stale file.
+        assert_eq!(drain_inbox(root, 3).unwrap(), None);
+        assert!(!next_message_path(root).exists());
+    }
+
+    #[test]
+    fn loop_session_delivers_inbox_at_iteration_start() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut s = LoopSession::start(tmp.path(), 3);
+        queue_message(tmp.path(), "focus on tests").unwrap();
+        s.on_iteration_start(1);
+        let body = fs::read_to_string(next_message_path(tmp.path())).unwrap();
+        assert!(body.contains("focus on tests"));
+        let log = fs::read_to_string(log_path(tmp.path())).unwrap();
+        assert!(log.contains("delivered 1 queued message(s)"), "{log}");
     }
 }

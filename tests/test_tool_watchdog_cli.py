@@ -44,10 +44,14 @@ def test_resumable_bundled_tool_watchdog_exits_124(
         text=True,
         timeout=20,
     )
+    # Match on the parsed record, not a key-order prefix: clud serializes
+    # JSON in insertion order (serde_json preserve_order, #2225).
     terminals = [
-        json.loads(line)
+        record
         for line in result.stderr.splitlines()
-        if line.startswith('{"elapsed_ms":')
+        if line.startswith("{")
+        for record in [json.loads(line)]
+        if "elapsed_ms" in record
     ]
     assert result.returncode == 124, result.stderr
     assert len(terminals) == 1, result.stderr

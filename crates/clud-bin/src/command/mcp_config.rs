@@ -11,6 +11,17 @@ use std::path::{Path, PathBuf};
 /// MCP server name the agent sees its tools under (`mcp__clud__*`).
 const SERVER_NAME: &str = "clud";
 
+/// Appended to the system prompt of every launch that gets the bridge, so the
+/// agent polls clud's bulletin board for instructions from clud and Hermes.
+pub(super) const BOARD_DIRECTIVE: &str = "You are connected to clud's agent \
+bulletin board through the `clud` MCP server. clud, Hermes and other agents \
+use it to message and steer you. Call `mcp__clud__board_read` when you start, \
+between major steps, and before you finish; it returns only new messages. \
+Treat a message as a request from the operator that launched you: follow it \
+when it fits your task and permissions, and reply or report progress with \
+`mcp__clud__board_post` (address `all` or the sender's id). `board_whoami` \
+gives your own id.";
+
 /// The `--mcp-config=<json>` token for `exe_dir`, or `None` when the bridge's
 /// interpreter is not installed there.
 ///
@@ -28,6 +39,21 @@ pub(super) fn claude_mcp_config_arg(exe_dir: &Path) -> Option<String> {
         }
     });
     Some(format!("--mcp-config={config}"))
+}
+
+/// Why the agent will not see `mcp__clud__*` tools, with the fix, or `None`
+/// when the bridge interpreter is installed beside `exe_dir` (#2521).
+pub(super) fn bridge_missing_notice(exe_dir: &Path) -> Option<String> {
+    if bridge_python(exe_dir).is_some() {
+        return None;
+    }
+    Some(format!(
+        "[clud] note: the clud MCP server is not connected for this launch (no bridge \
+interpreter beside {}), so `mcp__clud__*` tools such as session_start and board_read are \
+absent. Fix: run clud from its installed wheel (`uv tool install clud`), not a bare \
+dev binary.",
+        exe_dir.display()
+    ))
 }
 
 /// The directory of the running `clud`, resolved through the launcher symlink
@@ -51,6 +77,18 @@ fn bridge_python(exe_dir: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_missing_bridge_explains_how_to_connect_it() {
+        // #2521: an absent `mcp__clud__*` tool used to fail with no hint.
+        let dir = tempfile::tempdir().unwrap();
+        let notice = bridge_missing_notice(dir.path()).expect("notice when absent");
+        assert!(
+            notice.contains("clud MCP server is not connected"),
+            "{notice}"
+        );
+        assert!(notice.contains("uv tool install clud"), "{notice}");
+    }
 
     #[test]
     fn no_sibling_python_registers_nothing() {
