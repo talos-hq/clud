@@ -1,0 +1,480 @@
+{
+  "schema": 1,
+  "source_commit": "3aa062efc9e5b96eecdfcbd79edd423c9bf2e3f0",
+  "method": "Frozen single-run paired benchmark; A is filename-aware and researcher-scripted, not observed model behavior. Repair is oracle-assisted and reported separately.",
+  "tasks": [
+    {
+      "id": "dispatch",
+      "query": "where is hook dispatch registered",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/clud_hooks_compile.rs",
+        "line": 115,
+        "anchor": "\"PostToolUse\": [{",
+        "sha256": "9835cd7b5239819ed9881bff399704feee9784dd09fe24a4dcfe0ea12b8dd64f"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e PostToolUse crates/clud-bin/src/clud_hooks_compile.rs",
+          "sed -n -e 110,146p crates/clud-bin/src/clud_hooks_compile.rs"
+        ],
+        "calls": 2,
+        "bytes": 1896,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.006761148979421705
+      },
+      "E": {
+        "command": "python code/retrieve.py 'where is hook dispatch registered'",
+        "calls": 1,
+        "bytes": 3946,
+        "recall_at_5": false,
+        "followups": 1,
+        "seconds": 2.325862363970373,
+        "items": [
+          [
+            "docs/architecture/hook-dispatch.md",
+            1,
+            33
+          ],
+          [
+            "docs/architecture/hook-dispatch.md",
+            85,
+            129
+          ]
+        ],
+        "truncated": true,
+        "repair_command": "sed -n 110,140p crates/clud-bin/src/clud_hooks_compile.rs",
+        "repair_bytes": 1418,
+        "repair_seconds": 0.0033977320417761803,
+        "evidence": "@ docs/architecture/hook-dispatch.md:1-33 [Hook dispatch] terms=2;path=2;heading=2;definition=1;distance=0\n1| # Hook dispatch\n2| \n3| How clud runs a repo's hooks itself, so they stop depending on where the agent\n4| happens to be standing.\n5| \n6| Design record: [#966](https://github.com/zackees/clud/issues/966) (spec),\n7| [#967](https://github.com/zackees/clud/issues/967) (phased plan),\n8| [#977](https://github.com/zackees/clud/issues/977) (settings compilation),\n9| [#965](https://github.com/zackees/clud/issues/965) (the failure that started\n10| it). Decisions: DD-047, DD-060, DD-061, DD-062, DD-063, DD-064.\n11| \n12| ## The problem\n13| \n14| A `cd` in a Bash tool call moves the **session** cwd, not just that command's.\n15| Every later tool call inherits it. Hooks are conventionally written as\n16| repo-relative script paths \u2014 `uv run python ci/hooks/check-on-stop.py` \u2014 so\n17| once the cwd drifts, they resolve against the wrong directory and fail. When\n18| the failing hook is a blocking one, nothing can run: the session wedges until a\n19| human intervenes.\n20| \n21| Three things follow from that, and they are what this subsystem exists to fix:\n22| \n23| 1. Hooks must not depend on cwd.\n24| 2. A nested repo's own hooks never load at all \u2014 the harness reads hooks only\n25|    from the session root.\n26| 3. The parent's hooks *do* keep firing inside a nested checkout, against files\n27|    they know nothing about.\n28| \n29| Upstream will not fix this: the cwd contract is documented as following the\n30| agent, and the tracker's own reports disagree about whether cwd drifts or\n31| silently resets (anthropics/claude-code#83636, #76708, #84685; the exact class\n32| in #50960 and #42282 was closed NOT_PLANNED).\n33| \n@ docs/architecture/hook-dispatch.md:85-129 [Repeated Stop-hook continuations] terms=1;path=2;heading=1;definition=1;distance=0\n85| ## Repeated Stop-hook continuations\n86| \n87| A `/goal` condition the sandbox cannot satisfy keeps the harness's Stop\n88| evaluator re-prompting (#1597). That loop belongs to Claude Code: `/goal` is a\n89| prompt-based Stop hook, and the docs give no precedence between it and another\n90| Stop hook's output, so clud does not try to end the turn. The harness has its\n91| own breakers: an \"impossible\" verdict, a no-progress stop, and a cap of 8\n92| consecutive blocks.\n93| \n94| clud only detects the loop. When `stop_hook_active` is true and\n95| `last_assistant_message` is identical on 2 consecutive Stop events,\n96| `stop_repeat.rs` prints one `systemMessage` that tells the user how to break\n97| it. A different answer or a user-driven stop resets the count. `SessionEnd`\n98| drops the per-session state file under `~/.clud/state/stop-repeat/`.\n99| \n100| ## Declaring hooks\n101| \n102| `<repo>/.clud/hooks.json`:\n103| \n104| ```json\n105| {\n106|   \"hooks\": {\n107|     \"PreToolUse\": [\n108|       { \"matcher\": \"Bash\", \"command\": \"uv run --frozen --no-sync python ci/hooks/check_cmd.py\" }\n109|     ],\n110|     \"Stop\": [\n111|       { \"command\": \"uv run --frozen --no-sync python ci/hooks/check_on_stop.py\", \"timeout\": 120 }\n112|     ]\n113|   }\n114| }\n115| ```\n116| \n117| - `command` is a **shell command line**, the same shape both frontends accept.\n118| - `matcher` is a regex over the tool name, anchored so `Edit` cannot catch\n119|   `MultiEdit`. Absent or `\"*\"` matches everything. A pattern that will not\n120|   compile falls back to exact equality \u2014 a declaration clud cannot understand\n121|   should under-match, never over-match.\n122| - `timeout` is seconds, defaulting to 60.\n123| - Event names are free-form strings, so a declaration for an event clud has not\n124|   learned to fire sits inert rather than failing the file.\n125| \n126| Parsing is lenient in the same way `repo_clud_config` is: one malformed entry\n127| is skipped with a warning rather than taking the file's other hooks down with\n128| it.\n129| \nTRUNCATED=True emitted=2 remaining=1147 continue=f8695d191301:2\n"
+      }
+    },
+    {
+      "id": "decode",
+      "query": "what decodes tool_response.stdout",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/block_bad_cmd_grind_gate_evidence.rs",
+        "line": 122,
+        "anchor": ".get(\"stdout\")",
+        "sha256": "ec185a9aed9ba7f8709f81b594ce005982c4c66353985d8b0a02cf454f30e537"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e 'tool_response|stdout' crates/clud-bin/src/block_bad_cmd_grind_gate_evidence.rs",
+          "sed -n -e 86,149p crates/clud-bin/src/block_bad_cmd_grind_gate_evidence.rs"
+        ],
+        "calls": 2,
+        "bytes": 2029,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.007562876970041543
+      },
+      "E": {
+        "command": "python code/retrieve.py 'what decodes tool_response.stdout'",
+        "calls": 1,
+        "bytes": 3632,
+        "recall_at_5": false,
+        "followups": 1,
+        "seconds": 3.386150707025081,
+        "items": [
+          [
+            "crates/clud-bin/assets/tools/README.md",
+            1,
+            25
+          ],
+          [
+            "crates/clud-bin/assets/tools/diagnostics/transcript_report.py",
+            61,
+            66
+          ],
+          [
+            "crates/clud-bin/assets/tools/diagnostics/transcript_report.py",
+            67,
+            97
+          ]
+        ],
+        "truncated": true,
+        "repair_command": "sed -n 117,147p crates/clud-bin/src/block_bad_cmd_grind_gate_evidence.rs",
+        "repair_bytes": 853,
+        "repair_seconds": 0.0026084979763254523,
+        "evidence": "@ crates/clud-bin/assets/tools/README.md:1-25 [Bundled tools] terms=1;path=1;heading=1;definition=1;distance=0\n1| # Bundled tools\n2| \n3| `src/tools.rs` embeds the scripts here and installs them under\n4| `~/.clud/tools/`. Invoke one with `clud tool run <relative-path> [args]`.\n5| \n6| The runner returns the tool's own exit code when the tool finishes. Its\n7| watchdog returns `124` when a time limit fires. A resumable tool gets a JSON\n8| line on stderr with `status: in-progress`; run it again with the same args.\n9| A killable tool gets `status: aborted`. If an observer resumes too late to\n10| determine whether a deadline was met, the runner reports `status:\n11| observation-delayed` and `deadline_outcome: unknown`, with the observed child\n12| exit code. A zero child exit then returns wrapper code `124` rather than\n13| claiming a verified success; a nonzero child exit is preserved. Exit `0` means\n14| the tool finished successfully within what the observer could verify. The watchdog passes its command cap to children as\n15| `CLUD_TOOL_COMMAND_TIMEOUT_SECS`; `github/pr_merge_watch.py` uses that value\n16| to finish its own timeout and cleanup before the wrapper's cap.\n17| \n18| Stdout over 32 KB truncates visibly with an artifact path; see\n19| [bounded-output.md](../../../../docs/architecture/bounded-output.md).\n20| \n21| For a large issue, use `clud tool run github/issue_context.py -- --repo OWNER/REPO --issue N`.\n22| It returns a bounded overview and a private snapshot path. Read saved material with\n23| `--artifact PATH --section body`, `--section comments --offset N`, or\n24| `--section comment:ID --offset N`; offsets for body and comment text count Unicode\n25| characters. `--refresh PATH` fetches a new snapshot and reports added, edited,\n@ crates/clud-bin/assets/tools/diagnostics/transcript_report.py:61-66 [Bounded stdout (#1676, docs/architecture/bounded-output.md): a result over] terms=1;path=1;heading=1;definition=1;distance=0\n61| # Bounded stdout (#1676, docs/architecture/bounded-output.md): a result over\n62| # STDOUT_CAP_BYTES prints its head, a truncation notice, and the path of an\n63| # artifact under the clud tmp dir that holds the full text.\n64| STDOUT_CAP_BYTES = 32 * 1024\n65| \n66| \n@ crates/clud-bin/assets/tools/diagnostics/transcript_report.py:67-97 [_tool_output_dir] terms=1;path=1;heading=1;definition=1;distance=0\n67| def _tool_output_dir() -> Path | None:\n68|     override = os.environ.get(\"CLUD_TOOL_OUTPUT_DIR\")\n69|     if override:\n70|         return Path(override)\n71|     home = os.environ.get(\"USERPROFILE\") or os.environ.get(\"HOME\")\n72|     return Path(home) / \".clud\" / \"tmp\" / \"tool-output\" if home else None\n73| \n74| \n75| def emit_bounded(text: str, name: str, cap: int = STDOUT_CAP_BYTES) -> None:\n76|     data = text.encode(\"utf-8\")\n77|     if len(data) <= cap:\n78|         print(text)\n79|         return\n80|     try:\n81|         out_dir = _tool_output_dir()\n82|         if out_dir is None:\n83|             raise OSError(\"no home directory\")\n84|         out_dir.mkdir(parents=True, exist_ok=True)\n85|         stamp = time.strftime(\"%Y%m%dT%H%M%S\")\n86|         artifact = out_dir / f\"{name}-{stamp}-{os.getpid()}.txt\"\n87|         artifact.write_bytes(data)\n88|         where = f\"full output: {artifact}\"\n89|     except OSError as exc:\n90|         where = f\"full output could not be saved ({exc})\"\n91|     print(data[:cap].decode(\"utf-8\", \"ignore\"))\n92|     print(f\"[TRUNCATED: showed {cap} of {len(data)} bytes; {where}]\")\n93| \n94| \n95| DEFAULT_BURST_THRESHOLD = 20\n96| DEFAULT_JUMP_THRESHOLD = 50_000\n97| \nTRUNCATED=True emitted=3 remaining=1975 continue=0b4da5368317:3\n"
+      }
+    },
+    {
+      "id": "notice",
+      "query": "which file merges the project-hook notice",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/block_bad_cmd_hook_notice.rs",
+        "line": 123,
+        "anchor": "fn merge(",
+        "sha256": "b592b2e579043b856fb9277ab303ae9c8084817c9a55399aeda5b821c36ea905"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e 'fn merge' crates/clud-bin/src/block_bad_cmd_hook_notice.rs",
+          "sed -n -e 118,143p crates/clud-bin/src/block_bad_cmd_hook_notice.rs"
+        ],
+        "calls": 2,
+        "bytes": 1050,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.004658990015741438
+      },
+      "E": {
+        "command": "python code/retrieve.py 'which file merges the project-hook notice'",
+        "calls": 1,
+        "bytes": 2445,
+        "recall_at_5": false,
+        "followups": 1,
+        "seconds": 1.808808779984247,
+        "items": [
+          [
+            "crates/clud-bin/src/hook_health/codex_trust.rs",
+            8,
+            33
+          ],
+          [
+            "crates/clud-bin/src/hook_health/codex_trust.rs",
+            82,
+            112
+          ]
+        ],
+        "truncated": true,
+        "repair_command": "sed -n 118,143p crates/clud-bin/src/block_bad_cmd_hook_notice.rs",
+        "repair_bytes": 975,
+        "repair_seconds": 0.0025017360458150506,
+        "evidence": "@ crates/clud-bin/src/hook_health/codex_trust.rs:8-33 [add_codex_project_trust] terms=2;path=1;heading=1;definition=1;distance=0\n8| use super::{CODEX_PRE_TOOL_USE_STATE, CURRENT_CODEX_HOOKS_FEATURE, LEGACY_CODEX_HOOKS_FEATURE};\n9| \n10| pub(in crate::hook_health) fn add_codex_project_trust(\n11|     config_path: &Path,\n12|     project_key: &str,\n13| ) -> io::Result<()> {\n14|     let text = fs::read_to_string(config_path).unwrap_or_default();\n15|     let mut document = if text.trim().is_empty() {\n16|         DocumentMut::new()\n17|     } else {\n18|         text.parse::<DocumentMut>()\n19|             .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error.to_string()))?\n20|     };\n21|     if document.get(\"projects\").is_none() {\n22|         document[\"projects\"] = table();\n23|     }\n24|     if document[\"projects\"].get(project_key).is_none() {\n25|         document[\"projects\"][project_key] = table();\n26|     }\n27|     document[\"projects\"][project_key][\"trust_level\"] = value(\"trusted\");\n28|     if let Some(parent) = config_path.parent() {\n29|         fs::create_dir_all(parent)?;\n30|     }\n31|     fs::write(config_path, document.to_string())\n32| }\n33| \n@ crates/clud-bin/src/hook_health/codex_trust.rs:82-112 [normalize_project_path_key] terms=2;path=1;heading=1;definition=1;distance=0\n82| pub(in crate::hook_health) fn normalized_state_key(key: &str) -> String {\n83|     let Some((path, suffix)) = key.split_once(&format!(\":{CODEX_PRE_TOOL_USE_STATE}:\")) else {\n84|         return key.to_string();\n85|     };\n86|     format!(\n87|         \"{}:{CODEX_PRE_TOOL_USE_STATE}:{suffix}\",\n88|         normalize_project_path_key(path)\n89|     )\n90| }\n91| \n92| pub fn codex_project_key(path: &Path) -> String {\n93|     normalize_project_path_key(&path.to_string_lossy())\n94| }\n95| \n96| pub(in crate::hook_health) fn normalize_project_path_key(raw: &str) -> String {\n97|     let mut s = raw.replace('/', \"\\\\\");\n98|     if let Some(stripped) = s.strip_prefix(r\"\\\\?\\\") {\n99|         s = stripped.to_string();\n100|     }\n101|     if looks_like_windows_path(&s) {\n102|         s.to_ascii_lowercase()\n103|     } else {\n104|         raw.to_string()\n105|     }\n106| }\n107| \n108| pub(in crate::hook_health) fn looks_like_windows_path(path: &str) -> bool {\n109|     let bytes = path.as_bytes();\n110|     bytes.len() >= 2 && bytes[1] == b':' || path.starts_with(r\"\\\\?\\\")\n111| }\n112| \nTRUNCATED=True emitted=2 remaining=1196 continue=852d388e61be:2\n"
+      }
+    },
+    {
+      "id": "matcher",
+      "query": "find the matcher for PostToolUse",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/clud_hooks_compile.rs",
+        "line": 120,
+        "anchor": "\"matcher\": \"Bash\"",
+        "sha256": "9835cd7b5239819ed9881bff399704feee9784dd09fe24a4dcfe0ea12b8dd64f"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e PostToolUse crates/clud-bin/src/clud_hooks_compile.rs",
+          "sed -n -e 110,146p crates/clud-bin/src/clud_hooks_compile.rs"
+        ],
+        "calls": 2,
+        "bytes": 1896,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.03443130193045363
+      },
+      "E": {
+        "command": "python code/retrieve.py 'find the matcher for PostToolUse'",
+        "calls": 1,
+        "bytes": 3421,
+        "recall_at_5": false,
+        "followups": 1,
+        "seconds": 5.502894164004829,
+        "items": [
+          [
+            "crates/clud-bin/src/block_bad_cmd_verify_ratio_tests.rs",
+            351,
+            372
+          ],
+          [
+            "crates/clud-bin/src/tool_run_telemetry.rs",
+            71,
+            106
+          ],
+          [
+            "crates/clud-bin/src/tool_watchdog.rs",
+            317,
+            332
+          ]
+        ],
+        "truncated": true,
+        "repair_command": "sed -n 115,145p crates/clud-bin/src/clud_hooks_compile.rs",
+        "repair_bytes": 1394,
+        "repair_seconds": 0.002740678028203547,
+        "evidence": "@ crates/clud-bin/src/block_bad_cmd_verify_ratio_tests.rs:351-372 [a_post_tool_use_adds_the_elapsed_time_to_the_calls_kind] terms=3;path=0;heading=3;definition=1;distance=0\n351| fn a_post_tool_use_adds_the_elapsed_time_to_the_calls_kind() {\n352|     let mut test = call(Kind::Test, 1_000);\n353|     test.id = Some(\"t1\".into());\n354|     let (ledger, _) = observe(&Ledger::default(), &test, LIMITS);\n355|     let ledger = finish(&ledger, \"t1\", 61_000).unwrap();\n356|     assert_eq!(\n357|         ledger.totals[&Kind::Test],\n358|         Total {\n359|             calls: 1,\n360|             ms: 60_000\n361|         }\n362|     );\n363|     assert!(ledger.pending.is_empty());\n364|     assert_eq!(\n365|         finish(&ledger, \"t1\", 99_000),\n366|         None,\n367|         \"a second finish is a no-op\"\n368|     );\n369|     assert_eq!(finish(&ledger, \"unknown\", 99_000), None);\n370| }\n371| \n372| #[test]\n@ crates/clud-bin/src/tool_run_telemetry.rs:71-106 [post_tool_telemetry] terms=2;path=1;heading=2;definition=1;distance=0\n71|     pub(super) fn finish(&self, exit_code: i32, stderr_tail: Option<String>) {\n72|         let Some(server) = self.server.as_ref() else {\n73|             return;\n74|         };\n75|         let Some(token) = self.token.as_ref() else {\n76|             return;\n77|         };\n78|         let stderr_tail = if exit_code == 0 { None } else { stderr_tail };\n79|         let event = ToolTelemetryEvent {\n80|             event: \"finish\",\n81|             id: &self.id,\n82|             name: &self.name,\n83|             start_time_ms: self.start_time_ms,\n84|             end_time_ms: Some(current_unix_millis()),\n85|             exit_code: Some(exit_code),\n86|             stderr_tail: stderr_tail.as_deref(),\n87|         };\n88|         post_tool_telemetry(server, token, &event);\n89|     }\n90| }\n91| \n92| fn post_tool_telemetry(server: &str, token: &str, event: &ToolTelemetryEvent<'_>) {\n93|     let Ok(body) = serde_json::to_vec(event) else {\n94|         return;\n95|     };\n96|     let url = format!(\"{}/tools/event\", server.trim_end_matches('/'));\n97|     let _ = ureq::AgentBuilder::new()\n98|         .timeout(TOOL_TELEMETRY_TIMEOUT)\n99|         .build()\n100|         .post(&url)\n101|         .set(\"Content-Type\", \"application/json\")\n102|         .set(\"Host\", &crate::log_event::dashboard_host_header(server))\n103|         .set(\"Cookie\", &format!(\"clud_dashboard_token={token}\"))\n104|         .send_bytes(&body);\n105| }\n106| \n@ crates/clud-bin/src/tool_watchdog.rs:317-332 [for_rel_path_unknown_tool_uses_killable_defaults] terms=2;path=1;heading=2;definition=1;distance=0\n317|     fn for_rel_path_unknown_tool_uses_killable_defaults() {\n318|         let w = Watchdog::for_rel_path(\"does/not/exist.py\");\n319|         assert_eq!(w.kill_semantics, KillSemantics::Killable);\n320|         assert_eq!(w.command_timeout, Duration::from_secs(60 * 60));\n321|         assert_eq!(w.progress_timeout, None);\n322|         assert!(!w.quiet_ok);\n323|     }\n324| \n325|     #[test]\n326|     fn for_rel_path_known_tool_uses_registry_values() {\n327|         // pr_merge_watch.py is in BUNDLED_TOOLS as Resumable per slice 1.\n328|         let w = Watchdog::for_rel_path(\"github/pr_merge_watch.py\");\n329|         assert_eq!(w.kill_semantics, KillSemantics::Resumable);\n330|         assert_eq!(w.command_timeout, Duration::from_secs(3660));\n331|     }\n332| }\nTRUNCATED=True emitted=3 remaining=3939 continue=b49cb57771ac:3\n"
+      }
+    },
+    {
+      "id": "hunt",
+      "query": "where does hunt_ranges parse sed ranges",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/block_bad_cmd_hunt.rs",
+        "line": 223,
+        "anchor": "fn hunt_ranges(",
+        "sha256": "7f5dd5dc0714c86814d5d3b3ec15455ca3faf8dabeca2e6b63b13704af5fbd4c"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e 'fn hunt_ranges' crates/clud-bin/src/block_bad_cmd_hunt.rs",
+          "sed -n -e 218,248p crates/clud-bin/src/block_bad_cmd_hunt.rs"
+        ],
+        "calls": 2,
+        "bytes": 1288,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.004905014997348189
+      },
+      "E": {
+        "command": "python code/retrieve.py 'where does hunt_ranges parse sed ranges'",
+        "calls": 1,
+        "bytes": 2018,
+        "recall_at_5": false,
+        "followups": 1,
+        "seconds": 4.27007962600328,
+        "items": [
+          [
+            "crates/clud-bin/src/block_bad_cmd_hunt_tests.rs",
+            121,
+            166
+          ]
+        ],
+        "truncated": true,
+        "repair_command": "sed -n 218,248p crates/clud-bin/src/block_bad_cmd_hunt.rs",
+        "repair_bytes": 1227,
+        "repair_seconds": 0.0029555049841292202,
+        "evidence": "@ crates/clud-bin/src/block_bad_cmd_hunt_tests.rs:121-166 [the_measured_hunt_shape_is_parsed_into_all_of_its_ranges] terms=4;path=1;heading=4;definition=1;distance=0\n121| fn the_measured_hunt_shape_is_parsed_into_all_of_its_ranges() {\n122|     let dir = tempdir().expect(\"tempdir\");\n123|     let a = fixture(dir.path(), \"signal.rs\", 20_000);\n124|     let b = fixture(dir.path(), \"interleave.rs\", 20_000);\n125|     let a = a.to_string_lossy();\n126|     let b = b.to_string_lossy();\n127|     let command = format!(\"cd /w && sed -n 140,413p {a}; sed -n 300,345p {a}; sed -n 1,80p {b}\");\n128|     let hunt = detect(&command, dir.path()).expect(\"three ranges\");\n129|     assert_eq!(\n130|         hunt.ranges,\n131|         vec![\n132|             Range {\n133|                 path: a.to_string(),\n134|                 start: 140,\n135|                 end: 413\n136|             },\n137|             Range {\n138|                 path: a.to_string(),\n139|                 start: 300,\n140|                 end: 345\n141|             },\n142|             Range {\n143|                 path: b.to_string(),\n144|                 start: 1,\n145|                 end: 80\n146|             },\n147|         ]\n148|     );\n149| }\n150| \n151| #[test]\n152| fn piped_and_redirected_segments_are_not_ranges() {\n153|     let dir = tempdir().expect(\"tempdir\");\n154|     let a = fixture(dir.path(), \"a.rs\", 20_000);\n155|     let b = fixture(dir.path(), \"b.rs\", 20_000);\n156|     let a = a.to_string_lossy();\n157|     let b = b.to_string_lossy();\n158|     // A pipe ends the read: `sed -n 1,40p f | head` is already bounded.\n159|     assert!(hunt_ranges(&format!(\"sed -n '1,40p' {a} | head -5\")).is_empty());\n160|     // Redirects are writes.\n161|     assert!(hunt_ranges(&format!(\"sed -n '1,40p' {a} > out.txt; cat {b}\")).is_empty());\n162|     // `sed -i` never lands in the transcript.\n163|     assert!(hunt_ranges(&format!(\"sed -ni '1,40p' {a}\")).is_empty());\n164| }\n165| \n166| #[test]\nTRUNCATED=True emitted=1 remaining=3281 continue=9b014fed0e7e:1\n"
+      }
+    },
+    {
+      "id": "home",
+      "query": "where is user_home resolved",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/home.rs",
+        "line": 22,
+        "anchor": "fn user_home(",
+        "sha256": "74d98526d460ca02cf0e133ed09ef9124a36fbbdc134acfc5f6883d4740b89c0"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e 'fn user_home' crates/clud-bin/src/home.rs",
+          "sed -n -e 17,47p crates/clud-bin/src/home.rs"
+        ],
+        "calls": 2,
+        "bytes": 865,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.005085356999188662
+      },
+      "E": {
+        "command": "python code/retrieve.py 'where is user_home resolved'",
+        "calls": 1,
+        "bytes": 2765,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 2.934697614982724,
+        "items": [
+          [
+            "crates/clud-bin/src/home.rs",
+            1,
+            31
+          ],
+          [
+            "crates/clud-bin/src/home.rs",
+            56,
+            84
+          ]
+        ],
+        "truncated": true,
+        "repair_command": null,
+        "repair_bytes": 0,
+        "repair_seconds": 0,
+        "evidence": "@ crates/clud-bin/src/home.rs:1-31 [user_home] terms=3;path=1;heading=3;definition=1;distance=0\n1| //! The one place clud decides which directory is the user's home (#1836).\n2| //!\n3| //! Every `~/.clud`, `~/.claude`, `~/.codex` and managed-install path hangs off\n4| //! this answer, so two subsystems that resolve it differently stop agreeing\n5| //! about where a file lives. That happened in #1829: the managed DeepSeek\n6| //! Harness installed under the Windows Known Folder profile while discovery\n7| //! searched `USERPROFILE`, and the launch fell back to a bare `dsh`.\n8| //!\n9| //! Precedence, the long-standing behavior of `clud_settings`:\n10| //! - Windows: `USERPROFILE`, then `HOME`, then the OS profile folder.\n11| //! - Elsewhere: `HOME`, then the OS lookup.\n12| //!\n13| //! Environment variables come first so a launch with an isolated home (tests,\n14| //! sandboxes, `HOME=... clud`) is honored everywhere at once. Empty values are\n15| //! ignored. `dirs::home_dir` and `std::env::home_dir` are banned outside this\n16| //! module by the `ban_dirs_home_dir` Dylint lint and `ci/banned_home_dir.py`.\n17| \n18| use std::ffi::OsString;\n19| use std::path::PathBuf;\n20| \n21| /// The user's home directory, or `None` when nothing names one.\n22| pub fn user_home() -> Option<PathBuf> {\n23|     resolve(\n24|         crate::platform::host::WINDOWS,\n25|         std::env::var_os(\"USERPROFILE\"),\n26|         std::env::var_os(\"HOME\"),\n27|         dirs::home_dir,\n28|     )\n29| }\n30| \n31| /// Pure precedence rule behind [`user_home`], seamed for tests.\n@ crates/clud-bin/src/home.rs:56-84 [windows_prefers_user_profile_then_home_then_os] terms=2;path=1;heading=2;definition=1;distance=0\n56|     fn windows_prefers_user_profile_then_home_then_os() {\n57|         let fallback = || Some(PathBuf::from(\"known-folder\"));\n58|         assert_eq!(\n59|             resolve(true, os(\"profile\"), os(\"home\"), fallback),\n60|             Some(PathBuf::from(\"profile\"))\n61|         );\n62|         assert_eq!(\n63|             resolve(true, None, os(\"home\"), fallback),\n64|             Some(PathBuf::from(\"home\"))\n65|         );\n66|         assert_eq!(\n67|             resolve(true, os(\"\"), os(\"\"), fallback),\n68|             Some(PathBuf::from(\"known-folder\"))\n69|         );\n70|     }\n71| \n72|     #[test]\n73|     fn unix_uses_home_and_ignores_user_profile() {\n74|         assert_eq!(\n75|             resolve(false, os(\"profile\"), os(\"home\"), || None),\n76|             Some(PathBuf::from(\"home\"))\n77|         );\n78|         assert_eq!(\n79|             resolve(false, os(\"profile\"), None, || Some(PathBuf::from(\"passwd\"))),\n80|             Some(PathBuf::from(\"passwd\"))\n81|         );\n82|     }\n83| \n84|     #[test]\nTRUNCATED=True emitted=2 remaining=1972 continue=16211b049052:2\n"
+      }
+    },
+    {
+      "id": "purge",
+      "query": "how are retired tools purged purge_retired_tools_at",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/tool_install.rs",
+        "line": 172,
+        "anchor": "fn purge_retired_tools_at(",
+        "sha256": "c2b48f86de43e6993eccffc5177d7a02cb9d76d76d7d19397a673a39f5a2b68c"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e 'fn purge_retired_tools_at' crates/clud-bin/src/tool_install.rs",
+          "sed -n -e 167,197p crates/clud-bin/src/tool_install.rs"
+        ],
+        "calls": 2,
+        "bytes": 1292,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.0059754730318672955
+      },
+      "E": {
+        "command": "python code/retrieve.py 'how are retired tools purged purge_retired_tools_at'",
+        "calls": 1,
+        "bytes": 3638,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 4.894992525980342,
+        "items": [
+          [
+            "crates/clud-bin/src/tool_install.rs",
+            172,
+            215
+          ],
+          [
+            "crates/clud-bin/src/shim_install.rs",
+            368,
+            399
+          ]
+        ],
+        "truncated": true,
+        "repair_command": null,
+        "repair_bytes": 0,
+        "repair_seconds": 0,
+        "evidence": "@ crates/clud-bin/src/tool_install.rs:172-215 [purge_retired_tools_at] terms=6;path=1;heading=5;definition=1;distance=0\n172| pub fn purge_retired_tools_at(home: &Path, purged_tools: &[PurgedTool]) -> PurgeReport {\n173|     let mut report = PurgeReport::default();\n174|     for tool in purged_tools {\n175|         let path = target_path_at(home, tool.rel_path);\n176|         match std::fs::read_to_string(&path) {\n177|             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {\n178|                 report.missing += 1;\n179|             }\n180|             Err(e) => {\n181|                 report.errors += 1;\n182|                 eprintln!(\n183|                     \"[clud] note: could not read retired tool {}: {e}\",\n184|                     path.display()\n185|                 );\n186|             }\n187|             Ok(content) => {\n188|                 if !content.contains(MANAGED_BY_CLUD_MARKER) {\n189|                     report.preserved_user += 1;\n190|                     continue;\n191|                 }\n192|                 match std::fs::remove_file(&path) {\n193|                     Ok(()) => {\n194|                         report.removed += 1;\n195|                         eprintln!(\n196|                             \"\\x1b[32m[clud] removed retired tool/{} ({})\\x1b[0m\",\n197|                             tool.rel_path, tool.reason\n198|                         );\n199|                     }\n200|                     Err(e) => {\n201|                         report.errors += 1;\n202|                         eprintln!(\n203|                             \"[clud] note: could not remove retired tool/{} at {}: {e}\",\n204|                             tool.rel_path,\n205|                             path.display()\n206|                         );\n207|                     }\n208|                 }\n209|             }\n210|         }\n211|     }\n212|     report\n213| }\n214| \n215| #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]\n@ crates/clud-bin/src/shim_install.rs:368-399 [retired_aliases_are_purged_from_both_alias_dirs] terms=4;path=1;heading=4;definition=1;distance=0\n368|     fn replace_file(path: &Path, content: &[u8]) {\n369|         let staged = path.with_extension(\"new\");\n370|         fs::write(&staged, content).unwrap();\n371|         fs::rename(&staged, path).unwrap();\n372|     }\n373| \n374|     /// #1954: the retired deletion helpers outlived their retirement as old-build\n375|     /// copies in both alias dirs, because only current names were managed.\n376|     #[test]\n377|     fn retired_aliases_are_purged_from_both_alias_dirs() {\n378|         let (tmp, src) = make_source(b\"clud\");\n379|         let home = tmp.path().join(\"home\");\n380|         let shims = home.join(SHIMS_SUBDIR);\n381|         let session = home.join(shim_registry::SESSION_SUBDIR);\n382|         for dir in [&shims, &session] {\n383|             fs::create_dir_all(dir).unwrap();\n384|             for name in RETIRED_ALIASES {\n385|                 fs::write(dir.join(shim_registry::file_name(name)), b\"old build\").unwrap();\n386|             }\n387|         }\n388|         extract_shims_at(&home, &src).unwrap();\n389|         install_rm_at(&home, &src).unwrap();\n390|         for dir in [&shims, &session] {\n391|             for name in RETIRED_ALIASES {\n392|                 let path = dir.join(shim_registry::file_name(name));\n393|                 assert!(!path.exists(), \"{} survived\", path.display());\n394|             }\n395|         }\n396|     }\n397| \n398|     /// Replace an alias the way an attacker or a bad tool would: unlink and\n399|     /// write a different file.\nTRUNCATED=True emitted=2 remaining=3803 continue=a76e8eb19f0d:2\n"
+      }
+    },
+    {
+      "id": "flags",
+      "query": "where split_known_unknown handles backend flag passthrough",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/args.rs",
+        "line": 2176,
+        "anchor": "fn split_known_unknown(",
+        "sha256": "ec55d341603582277f52027e24b9dc553851f23a9bb5d0e90e7db187bf997c34"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e 'fn split_known_unknown' crates/clud-bin/src/args.rs",
+          "sed -n -e 2171,2201p crates/clud-bin/src/args.rs"
+        ],
+        "calls": 2,
+        "bytes": 1014,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.005550367990508676
+      },
+      "E": {
+        "command": "python code/retrieve.py 'where split_known_unknown handles backend flag passthrough'",
+        "calls": 1,
+        "bytes": 3516,
+        "recall_at_5": false,
+        "followups": 1,
+        "seconds": 3.47287736000726,
+        "items": [
+          [
+            "docs/architecture/launch-plan.md",
+            217,
+            237
+          ],
+          [
+            "crates/clud-bin/src/args_tests.rs",
+            152,
+            192
+          ]
+        ],
+        "truncated": true,
+        "repair_command": "sed -n 2171,2201p crates/clud-bin/src/args.rs",
+        "repair_bytes": 922,
+        "repair_seconds": 0.002742211043369025,
+        "evidence": "@ docs/architecture/launch-plan.md:217-237 [Unknown-flag passthrough] terms=4;path=0;heading=4;definition=1;distance=0\n217| ## Unknown-flag passthrough\n218| \n219| `args.passthrough` holds backend arguments the pre-split did not claim. In the\n220| top-level flag region, clud first corrects exact `-deepseek` and exact public\n221| option names with a Unicode dash prefix. An unrecognized flag-shaped token\n222| is checked against clap's public top-level options: a near miss fails with a\n223| suggestion, and any unknown option followed by a key-shaped token fails\n224| closed without echoing the key. Other backend flags still pass through\n225| byte-for-byte. The `--` separator is the explicit escape hatch and stops\n226| correction and validation. A bare-word subcommand near miss is only a note,\n227| because the word may be an intentional prompt. The builder appends accepted\n228| passthrough after the synthesized prompt and before launch-mode splices.\n229| Recognized Claude/Codex-only clud options are rejected for DeepSeek Harness;\n230| native `dsh` options can still be passed after `--`.\n231| \n232| Operational argv remains unredacted in memory for execution and web-terminal\n233| forwarding. Launch records, dry-run JSON, crash reports, and whole-Args debug\n234| rendering mask key-shaped values at their output boundaries. This does not\n235| remove an inline key from shell history or the operating system process list;\n236| vault-backed interactive entry is safer for a live key.\n237| \n@ crates/clud-bin/src/args_tests.rs:152-192 [near_miss_flags_fail_before_backend_passthrough] terms=3;path=0;heading=3;definition=1;distance=0\n152| fn near_miss_flags_fail_before_backend_passthrough() {\n153|     for spelling in [\"--deepskeek\", \"--deepsek\", \"-deepskeek\", \"-\u2013deepskeek\"] {\n154|         let error = validate_top_level_unknown(spelling, None).unwrap_err();\n155|         assert!(error.contains(spelling), \"{error}\");\n156|         assert!(error.contains(\"--deepseek\"), \"{error}\");\n157|     }\n158|     let error =\n159|         validate_top_level_unknown(\"--not-a-clud-flag\", Some(DEEPSEEK_SHAPED_KEY)).unwrap_err();\n160|     assert!(!error.contains(DEEPSEEK_SHAPED_KEY));\n161|     assert!(validate_top_level_unknown(\"--not-a-clud-flag\", None).is_ok());\n162| }\n163| \n164| #[test]\n165| fn whole_args_debug_masks_raw_and_passthrough_keys_without_changing_execution_values() {\n166|     let args = parse(&[\"clud\", \"--\", DEEPSEEK_SHAPED_KEY]);\n167|     assert_eq!(args.raw_argv[2], DEEPSEEK_SHAPED_KEY);\n168|     assert_eq!(args.passthrough[0], DEEPSEEK_SHAPED_KEY);\n169|     let debug = format!(\"{args:?}\");\n170|     assert!(debug.contains(\"****cdef\"));\n171|     assert!(!debug.contains(DEEPSEEK_SHAPED_KEY));\n172| }\n173| \n174| #[test]\n175| fn every_top_level_clap_long_option_is_claimed_by_the_splitter() {\n176|     use clap::CommandFactory;\n177|     let mut missing = Vec::new();\n178|     for argument in Args::command().get_arguments() {\n179|         let Some(long) = argument.get_long() else {\n180|             continue;\n181|         };\n182|         let flag = format!(\"--{long}\");\n183|         let raw = vec![\"clud\".to_string(), flag.clone(), \"fixture\".to_string()];\n184|         match split_known_unknown(&raw) {\n185|             Ok((known, _)) if known.contains(&flag) => {}\n186|             _ => missing.push(flag),\n187|         }\n188|     }\n189|     assert!(missing.is_empty(), \"splitter omitted {missing:?}\");\n190| }\n191| \n192| #[test]\nTRUNCATED=True emitted=2 remaining=2568 continue=559c031017d8:2\n"
+      }
+    },
+    {
+      "id": "skills",
+      "query": "where are explicit invocation policies installed for skills",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/skills.rs",
+        "line": 390,
+        "anchor": "fn install_explicit_invocation_policies(",
+        "sha256": "ffad2731d3d9035324a32c713ec51ad887cace3740434f5d7791fdcecb5c886b"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e 'fn install_explicit_invocation_policies' crates/clud-bin/src/skills.rs",
+          "sed -n -e 385,415p crates/clud-bin/src/skills.rs"
+        ],
+        "calls": 2,
+        "bytes": 1337,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.005162362998817116
+      },
+      "E": {
+        "command": "python code/retrieve.py 'where are explicit invocation policies installed for skills'",
+        "calls": 1,
+        "bytes": 2668,
+        "recall_at_5": false,
+        "followups": 1,
+        "seconds": 4.954381570976693,
+        "items": [
+          [
+            "docs/architecture/grind.md",
+            247,
+            268
+          ],
+          [
+            "crates/clud-bin/src/skills_tests.rs",
+            31,
+            53
+          ],
+          [
+            "crates/clud-bin/assets/skills/clud-docker-rust-app-dev/SKILL.md",
+            75,
+            78
+          ]
+        ],
+        "truncated": true,
+        "repair_command": "sed -n 385,415p crates/clud-bin/src/skills.rs",
+        "repair_bytes": 1250,
+        "repair_seconds": 0.002587699971627444,
+        "evidence": "@ docs/architecture/grind.md:247-268 [Grind skills require explicit invocation] terms=3;path=0;heading=3;definition=1;distance=0\n247| ### Grind skills require explicit invocation\n248| \n249| The leaves and roles exist for the workflow, and for a person testing one by\n250| hand; a model must never pick them up from an ordinary prompt.\n251| \n252| - **All grind skills**, including `/grind`, have\n253|   `disable-model-invocation: true` for Claude and Codex's\n254|   `allow_implicit_invocation: false` policy. A person can still invoke them\n255|   directly. The router reads `grind-intake` and `grind-cron` as files next to\n256|   its own directory instead of invoking them.\n257| - **The agent types** ignore that frontmatter, so they're still listed to the\n258|   model. clud's PreToolUse hook refuses direct `Agent` calls to the internal\n259|   execution roles. `grind-orchestrator` is the read-only router exception.\n260|   The workflow's `agent()` spawns don't go\n261|   through the `Agent` tool, so the workflow is unaffected.\n262|   `CLUD_ALLOW_GRIND_AGENTS=1` lifts the block for testing a role by hand.\n263| - **Each execution agent carries its procedure.** A hidden skill can't be loaded with\n264|   the `Skill` tool or `skills:` preload, so `claude_files.rs` writes each\n265|   agent file with its leaf skill's body appended. The skill remains the\n266|   single source. The standalone orchestrator instructions live in its agent\n267|   definition; it has no duplicate leaf skill.\n268| \n@ crates/clud-bin/src/skills_tests.rs:31-53 [do_and_grind_skills_install_with_explicit_only_invocation] terms=3;path=1;heading=3;definition=1;distance=2\n31| fn fake_skills() -> Vec<BundledSkill> {\n32|     vec![\n33|         BundledSkill {\n34|             name: \"alpha\",\n35|             skill_md: \"alpha body\\n\",\n36|         },\n37|         BundledSkill {\n38|             name: \"beta\",\n39|             skill_md: \"beta body\\n\",\n40|         },\n41|     ]\n42| }\n43| \n44| #[test]\n45| fn do_and_grind_skills_install_with_explicit_only_invocation() {\n46|     let dir = tempdir().unwrap();\n47|     let base = dir.path();\n48|     install_to(base, BUNDLED_SKILLS).unwrap();\n49|     install_explicit_invocation_policies(base).unwrap();\n50| \n51|     for name in [\n52|         \"do\",\n53|         \"grind\",\n@ crates/clud-bin/assets/skills/clud-docker-rust-app-dev/SKILL.md:75-78 [Explicit so the named-volume mount points are unambiguous.] terms=2;path=1;heading=2;definition=1;distance=0\n75| # Explicit so the named-volume mount points are unambiguous.\n76| ENV CARGO_HOME=/root/.cargo\n77| ENV CARGO_TARGET_DIR=/work/target\n78| \nTRUNCATED=True emitted=3 remaining=3773 continue=4c256f9ba03e:3\n"
+      }
+    },
+    {
+      "id": "hooks",
+      "query": "how do hook matchers match tool names matches_tool",
+      "ground_truth": {
+        "path": "crates/clud-bin/src/clud_hooks.rs",
+        "line": 85,
+        "anchor": "fn matches_tool(",
+        "sha256": "53a76e58ede401aaac44441ce17fcfa60c001d4178a47c20842ae98db1a6d053"
+      },
+      "A": {
+        "commands": [
+          "rg -n -e 'fn matches_tool' crates/clud-bin/src/clud_hooks.rs",
+          "sed -n -e 80,110p crates/clud-bin/src/clud_hooks.rs"
+        ],
+        "calls": 2,
+        "bytes": 1361,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 0.00480723095824942
+      },
+      "E": {
+        "command": "python code/retrieve.py 'how do hook matchers match tool names matches_tool'",
+        "calls": 1,
+        "bytes": 3509,
+        "recall_at_5": true,
+        "followups": 0,
+        "seconds": 6.268157985003199,
+        "items": [
+          [
+            "crates/clud-bin/src/clud_hooks.rs",
+            65,
+            110
+          ],
+          [
+            "crates/clud-bin/src/uv_run_hook_guard.rs",
+            178,
+            204
+          ]
+        ],
+        "truncated": true,
+        "repair_command": null,
+        "repair_bytes": 0,
+        "repair_seconds": 0,
+        "evidence": "@ crates/clud-bin/src/clud_hooks.rs:65-110 [matches_tool] terms=4;path=1;heading=4;definition=1;distance=0\n65| /// One declared hook.\n66| #[derive(Debug, Clone, PartialEq, Eq)]\n67| pub struct HookEntry {\n68|     /// Tool-name pattern, harness-style. `None` or `\"*\"` matches every tool.\n69|     /// Only meaningful for tool-scoped events; ignored for `Stop` and friends.\n70|     pub matcher: Option<String>,\n71|     pub command: String,\n72|     pub timeout_secs: u64,\n73| }\n74| \n75| impl HookEntry {\n76|     /// Whether this entry applies to `tool_name`.\n77|     ///\n78|     /// The harness treats a matcher as a regex over the tool name, so this\n79|     /// does too, anchored so `Edit` cannot match `MultiEdit` by accident. A\n80|     /// pattern that will not compile falls back to exact equality \u2014 a\n81|     /// declaration clud cannot understand should under-match, never\n82|     /// over-match, since over-matching would fire someone's guard against\n83|     /// tools they never meant to guard.\n84|     #[must_use]\n85|     pub fn matches_tool(&self, tool_name: Option<&str>) -> bool {\n86|         let Some(matcher) = self.matcher.as_deref() else {\n87|             return true;\n88|         };\n89|         let matcher = matcher.trim();\n90|         if matcher.is_empty() || matcher == MATCH_ALL {\n91|             return true;\n92|         }\n93|         let Some(tool_name) = tool_name else {\n94|             // A tool-scoped matcher on an event that carries no tool cannot\n95|             // be satisfied; skip rather than guess.\n96|             return false;\n97|         };\n98|         match regex::Regex::new(&format!(\"^(?:{matcher})$\")) {\n99|             Ok(regex) => regex.is_match(tool_name),\n100|             Err(_) => matcher == tool_name,\n101|         }\n102|     }\n103| }\n104| \n105| /// Every hook a repo declares, indexed by event name.\n106| ///\n107| /// Event names are kept as free-form strings rather than an enum: the harness\n108| /// adds events regularly, and a declaration for an event clud has not heard of\n109| /// should sit inert until clud learns to fire it, not fail the file.\n110| #[derive(Debug, Clone, Default, PartialEq, Eq)]\n@ crates/clud-bin/src/uv_run_hook_guard.rs:178-204 [tool_rel_path_matches_bundled_registry] terms=3;path=1;heading=3;definition=1;distance=0\n178|     fn tool_rel_path_matches_bundled_registry() {\n179|         let registered = crate::tools::BUNDLED_TOOLS\n180|             .iter()\n181|             .any(|t| t.rel_path == TOOL_REL_PATH);\n182|         assert!(\n183|             registered,\n184|             \"TOOL_REL_PATH `{TOOL_REL_PATH}` is not in BUNDLED_TOOLS \u2014 \\\n185|              the wrapper would silently never find the asset\"\n186|         );\n187|     }\n188| \n189|     /// Sanity-check the resolver: when `tools_root` succeeds the path\n190|     /// ends with `hooks/uv_run_hook_guard.py` (or the Windows\n191|     /// equivalent). When it fails (no home dir in env), we return None\n192|     /// rather than producing a nonsense path.\n193|     #[test]\n194|     fn installed_tool_path_shape() {\n195|         let Some(path) = installed_tool_path() else {\n196|             return;\n197|         };\n198|         let s = path.to_string_lossy().to_string();\n199|         assert!(\n200|             s.ends_with(\"hooks/uv_run_hook_guard.py\") || s.ends_with(\"hooks\\\\uv_run_hook_guard.py\"),\n201|             \"installed_tool_path returned an unexpected suffix: {s}\"\n202|         );\n203|     }\n204| }\nTRUNCATED=True emitted=2 remaining=4698 continue=682d1f889506:2\n"
+      }
+    }
+  ],
+  "budget_bytes": 4096,
+  "scoring": "Hit if a gold path+line occurs inside one of at most five emitted source ranges. This is exact-anchor localization, not answer correctness. No-hit oracle repair is one measured sed call, not evidence that a model can identify that repair unaided.",
+  "runner": "POSIX os.posix_spawnp, merged stdout+stderr into TemporaryFile, waitpid, perf_counter; one serial A then E run/task, warm/uncontrolled filesystem, simultaneous local validation. rg 40 matches/file/pass internally; all output bytes counted before harness wrapping."
+}
