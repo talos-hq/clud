@@ -67,7 +67,7 @@ def search(query, scopes=()):
     hints = [p for p in files if any(w in Path(p).name.lower() for w in words if len(w) > 3)]
     patterns = [re.escape(w) for w in words if len(w) > 2]
     if not patterns:
-        return []
+        return [], []
     common = [
         "rg",
         "-n",
@@ -105,7 +105,21 @@ def search(query, scopes=()):
             if match:
                 path, line, text = match.groups()
                 hits[path, int(line)] = text
-    return rank(hits, words)
+    # Exact whole-token query terms bypass search caps, ranking and window deduplication.
+    exact_pattern = r"\b(?:" + "|".join(re.escape(w) for w in words) + r")\b"
+    unlimited = common[:]
+    at = unlimited.index("-m")
+    del unlimited[at : at + 2]
+    exact_output = run([*unlimited, "-e", exact_pattern, *roots])
+    anchors = []
+    for row in exact_output.splitlines():
+        match = re.match(r"(.+?):(\d+):(.*)", row)
+        if match:
+            path, line, text = match.groups()
+            matched = sorted(set(re.findall(exact_pattern, text, re.I)))
+            anchors.append(dict(path=path, line=int(line), anchors=matched))
+    anchors.sort(key=lambda x: (x["path"], x["line"]))
+    return anchors, rank(hits, words)
 
 
 def rank(hits, words):
@@ -178,7 +192,7 @@ def rank(hits, words):
     return merged
 
 
-def render(items, budget, handle):
+def render_context(items, budget, handle):
     fingerprint = hashlib.sha256(
         json.dumps(
             [
@@ -227,6 +241,22 @@ def render(items, budget, handle):
     if index == offset and index < len(items):
         footer += "Next item exceeds budget; retry with larger --max-bytes.\n"
     return output + footer
+
+
+def render(result, budget, handle):
+    """The complete floor precedes optional ranked expansion, even on continuation."""
+    anchors, items = result
+    floor = "".join(
+        f"! {a['path']}:{a['line']} anchors={','.join(a['anchors'])}\n" for a in anchors
+    )
+    remaining = budget - len(floor.encode())
+    if remaining < 256:
+        footer = (
+            f"FLOOR anchors={len(anchors)} expansions=0 "
+            f"budget_exceeded={len(floor.encode()) > budget}\n"
+        )
+        return floor + footer if len((floor + footer).encode()) <= budget else floor
+    return floor + render_context(items, remaining, handle)
 
 
 def main():

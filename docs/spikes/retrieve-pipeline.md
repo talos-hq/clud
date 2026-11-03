@@ -360,3 +360,181 @@ soldr: dylint skipped: inputs match a passing run
   freezing results and did not drive another weight adjustment.
 - `git diff --check`: passed. Only spike artifacts changed from the starting
   snapshot; no production code needed reverting.
+
+## Round 4 — recall floor
+
+2026-11-03. Subscription-only Codex via clud; no paid API, agents, embeddings or
+LLM reranking. Deterministic, read-only retrieval. Only the unbundled spike
+prototype, benchmark runner/results and this report change.
+
+Hypothesis: preserve EVERY exact lexical query-anchor hit independently of
+ranking/deduplication, achieving recall@5 >= A on BOTH frozen sets, with bytes
+<1.6x A and calls <=0.6x A. **Failed; stop. Do not ship.**
+
+### Implementation and measurement
+
+`code/retrieve.py` now gathers an uncapped, case-insensitive whole-token literal
+pass separately from the old capped candidate passes. Tokens are the existing
+`terms(query)` normalization (original tokens plus underscore/camel/path splits,
+minus existing stopwords); substrings inside longer identifiers do not qualify.
+The floor contains every matching source line, once per path/line, with all
+matched literal tokens: `! path:line anchors=...`. Stable path/line order has no
+relevance ranking. Ranking/deduplication still controls only optional context.
+No gold terms, task-specific weights or extra filename hints were added.
+
+The 1,536-byte cap includes all emitted material. The floor comes first; context
+uses only the remaining budget. If the floor alone exceeds the cap, all anchors
+are emitted and there are no expansions or footer. This is the requested
+explicit exception to the budget, not a claim that every pack is bounded.
+Compact floor entries omit enclosing-symbol annotations to minimize overhead.
+
+Reproduce: `python code/retrieve_bench_round4.py`. Both existing JSON files are
+read as frozen inputs and retained unchanged; full commands, evidence, emitted
+locations, gold hashes, first-five recall, all-emitted coverage, measured timings
+and oracle-assisted repair costs are in `code/retrieve_bench_round4.json`.
+All 22 gold anchors/hashes were verified before executing their task.
+Original A reruns its frozen two commands; held-out A reruns Round 3's sorted rg
+and first-five -5/+25 source windows. E3 uses the original natural query and scope
+policy: automatic inference for the original set, identical explicit scopes for
+the held-out set. Thus the original set retains its known scope asymmetry; this
+is not a new matched-scope ablation for that set. No scope changes were fitted.
+
+Calls count model-facing retrieval calls (A=2, E3=1); local internal searches
+are not model-facing calls. Bytes include all raw stdout/stderr. Seconds are one
+warm serial paired run, with local validation active, not a latency distribution.
+An initial measured run preceded a renderer-only correction: overflow output is
+now floor-only, and a floor below budget cannot exceed it by adding a footer.
+No ranking, query, scope or gold adjustment followed either run.
+
+Recall@5 retains the frozen definition: all gold path/lines must occur within the
+first FIVE actually emitted locations/ranges. Each compact anchor is one location;
+an exhaustive appendix is not counted as a single range or as a first-five hit.
+All-emitted coverage is reported separately, never substituted for recall@5.
+Repairs remain one executed gold-aware batched source read per miss, an optimistic
+cost rather than an observed unaided model trajectory.
+
+### Held-out per-task results
+
+Initial retrieval, A / E3; follow-ups and their bytes are separate.
+
+| Task | Bytes A / E3 | Calls A / E3 | Recall@5 A / E3 | Follow-ups A / E3 | Seconds A / E3 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| classify | 4,683 / 3,537 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0139 / 0.0844 |
+| short-form | 1,996 / 3,147 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0111 / 0.0954 |
+| marker-priority | 2,501 / 5,449 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0107 / 0.0914 |
+| config-conflict | 3,317 / 1,877 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0085 / 0.0974 |
+| config-overlay | 1,261 / 1,490 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0085 / 0.0882 |
+| origin | 2,288 / 1,408 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0093 / 0.0844 |
+| completion-trace | 4,473 / 5,385 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0140 / 0.1082 |
+| escape-trace | 6,280 / 4,114 | 2 / 1 | 0 / 0 | 1 / 1 | 0.0110 / 0.0986 |
+| ci-tiers | 1,986 / 5,935 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0091 / 0.0693 |
+| ci-queue | 2,050 / 1,543 | 2 / 1 | 1 / 0 | 0 / 1 | 0.0075 / 0.0668 |
+
+### Aggregates for both sets
+
+| Set | Bytes A / E3 | Calls A / E3 | Recall@5 A / E3 | Follow-ups A / E3 | Seconds A / E3 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| original | 14,028 / 812,965 | 20 / 10 | 10/10 / 0/10 | 0 / 10 | 0.1220 / 5.2603 |
+| heldout | 30,835 / 33,885 | 20 / 10 | 9/10 / 0/10 | 1 / 10 | 0.1037 / 0.8843 |
+| combined | 44,863 / 846,850 | 40 / 20 | 19/20 / 0/20 | 1 / 20 | 0.2257 / 6.1446 |
+
+E3 bytes are 57.95x A on original, 1.10x on held-out, and 18.88x combined.
+Calls are 0.50x A in both sets, meeting the initial-call threshold. Bytes meet
+1.6x only on held-out, and recall fails on BOTH sets. Six original and eight
+held-out packs exceed 1,536 bytes because the floor alone exceeds the cap.
+Oracle repairs add original A/E3 0/2,991 bytes and 0/0.0637 seconds;
+held-out 555/3,341 bytes and 0.0084/0.0626 seconds. Including repairs, combined
+A/E3 costs are 45,418/853,182 bytes and 41/40 calls. These repairs do not improve
+first-call recall@5 and erase most of the call advantage.
+
+### Misses, reasons and decision
+
+All ten held-out tasks miss recall@5, although all twelve held-out gold anchors
+are emitted somewhere. Their 1-based emitted positions are:
+
+| Task | Gold positions in E3 output | Reason for recall@5 miss |
+| --- | --- | --- |
+| classify | 15 | Earlier lexical occurrences fill the first five. |
+| short-form | 20 | Earlier lexical occurrences fill the first five. |
+| marker-priority | 31 | Earlier lexical occurrences fill the first five. |
+| config-conflict | 21 | Earlier lexical occurrences fill the first five. |
+| config-overlay | 14 | Earlier lexical occurrences fill the first five. |
+| origin | 8 | Earlier lexical occurrences fill the first five. |
+| completion-trace | 11, 79 | Earlier lexical occurrences fill the first five. |
+| escape-trace | 26, 43 | Earlier lexical occurrences fill the first five. |
+| ci-tiers | 14 | Earlier lexical occurrences fill the first five. |
+| ci-queue | 17 | Earlier lexical occurrences fill the first five. |
+
+In particular, config-conflict's condition survives at position 21;
+completion-trace's caller/callee survive at 11/79; escape-trace's caller/callee
+survive at 26/43. The suspected ranking loss is real for these locations, but
+merely retaining them does not establish useful first-five recall. Common query
+words generate many exact matches, especially in docs and tests.
+
+All ten original tasks also miss first-five recall. `decode`, `hunt` and `home`
+have all-emitted coverage, at positions 842, 563 and 7. `dispatch`, `notice`,
+`purge`, `flags` and `hooks` lack their gold files because unchanged exact-stem
+scope inference selects hook/dispatch, hook, tools, backend and hook files,
+respectively. `matcher` finds PostToolUse but its gold matcher line has no exact
+non-stopword query token; context is dropped behind a 424,825-byte floor.
+`skills` gold is a longer underscore identifier, not a whole-token match for
+explicit/invocation/policies; its expansion is likewise dropped. These are
+scope or lexical-definition limitations, not dropped exact anchors. Retention
+is guaranteed only inside the selected scopes and existing source-type globs.
+A misses only escape-trace, as in Round 3.
+
+**Decision: keep research artifacts only; revert adoption / do not ship.**
+The recall floor remains solely in the unbundled spike prototype. No production
+code changed, so there was no production patch to revert. Remain on
+`spike/retrieve-pipeline`; no merge, tag, push to main, workflow or integration.
+No further retrieval experiment was run after rejecting this hypothesis.
+
+**ONE next highest-value experiment:** on the frozen matched-scope held-out set,
+order compact exact anchors by deterministic query-token specificity (inverse
+file frequency), retaining the exhaustive floor after the first-five preview.
+Keep gold, scopes and budget policy fixed. This tests whether relevance ordering
+can restore first-five trace recall without losing the retention guarantee;
+it does not assume that an exhaustive floor itself supplies first-five recall.
+
+### Validation
+
+- Independent full-file Python regex enumeration matched all emitted floor
+  locations on all 20 tasks, with no per-file hit cap. Every budget overflow
+  consisted solely of a floor already exceeding the budget. Empty-term query
+  smoke check passed. All frozen gold hashes/anchors verified.
+- `ruff check code/retrieve.py code/retrieve_bench_round4.py`: passed;
+  `ruff format` applied. `git diff --check`: passed.
+- `bash lint --host-only`: exit 1 at the interpreter-name guard, after Ruff and
+  preceding repository guards passed. The unchanged Round 3 held-out JSON
+  contains ten captured resolved interpreter paths named `python3.13`.
+  Full log: `/tmp/retrieve-round4-lint.log`. Historical command evidence was
+  not rewritten to manufacture a green gate. Full repo lint is not green.
+- `clud tool run diagnostics/test_report.py -- bash test --host`: exit 1.
+  The documented lane invokes Rust through soldr. Failure tail:
+
+```text
+failures:
+    process_scan::tests::a_repeated_ask_about_known_identities_is_served_from_cache
+    process_scan::tests::scan_is_callable_and_excludes_an_undeclared_self
+
+test result: FAILED. 5163 passed; 2 failed; 12 ignored; 0 measured; 16 filtered out; finished in 27.01s
+error: test failed, to rerun pass `-p clud --lib`
+```
+
+Full artifact:
+`/home/niteris/.clud/tmp/tool-output/local-test-private/local-test-jOKgZY.log`.
+These two process_scan assumptions also failed in Round 3. No production changes
+or test exclusions were used to hide them; Python tests were not reached.
+
+Final-state rerun: the report wrapper returned `unable to produce a complete safe
+report`; the bounded fallback `bash test --host > /tmp/retrieve-round4-test-final.log
+2>&1` completed with exit 1. Final tail (same failures, no exclusions):
+
+```text
+failures:
+    process_scan::tests::a_repeated_ask_about_known_identities_is_served_from_cache
+    process_scan::tests::scan_is_callable_and_excludes_an_undeclared_self
+
+test result: FAILED. 5163 passed; 2 failed; 12 ignored; 0 measured; 16 filtered out; finished in 23.02s
+error: test failed, to rerun pass `-p clud --lib`
+```
