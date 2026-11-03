@@ -274,6 +274,10 @@ CLI surface and backend resolution:
 
 - `args.rs` - `clap` `Args` and `Command` definitions; passthrough for unknown
   flags; subcommand definitions for `loop`, `up`, `rebase`, `fix`, `do`, `gc`, etc.
+- `claude_temp_home_install.rs` - fallback for Claude Code's native installer
+  when the home volume is too small or not writable (a live USB such as the
+  Arch ISO): `backend_bootstrap.rs` reruns the installer once with `HOME` in
+  the RAM-backed temp dir and links the binary to `~/.local/bin/claude`.
 - `backend.rs` - concrete `Backend`, independent `ModelProvider` /
   `HarnessSelection` resolution, provider `RoutingMode`, process `LaunchMode`,
   PATH lookup, and backend-path resolution. See

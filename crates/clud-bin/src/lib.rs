@@ -39,6 +39,7 @@ pub mod capture;
 pub mod ci_local;
 pub mod civil_time;
 pub mod claude_files;
+pub mod claude_temp_home_install;
 pub mod claude_worktree_hook;
 pub mod clud_hook_roots;
 pub mod clud_hooks;
