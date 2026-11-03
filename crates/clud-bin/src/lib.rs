@@ -125,6 +125,8 @@ pub mod preference;
 pub mod process_identity;
 pub mod process_scan;
 pub mod process_tree;
+pub mod prompt_output;
+mod prompt_patch;
 pub mod provider_auth;
 pub mod provider_catalog;
 pub mod provider_registry;

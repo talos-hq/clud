@@ -20,6 +20,7 @@ fn test_codex_prompt_goes_through_exec_subcommand() {
             codex_prefix(),
             vec![
                 "exec".to_string(),
+                "--json".to_string(),
                 "--dangerously-bypass-approvals-and-sandbox".to_string(),
                 "hello".to_string(),
             ],

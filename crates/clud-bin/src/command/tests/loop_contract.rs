@@ -402,13 +402,12 @@ fn test_codex_loop_does_not_inject_stream_json() {
 }
 
 #[test]
-fn test_claude_plain_prompt_does_not_inject_stream_json() {
-    // Single-shot `clud -p` is short-lived and not a loop, so we keep
-    // the existing UX untouched. Stream-json injection is loop-only.
+fn test_claude_plain_prompt_uses_compact_renderer_not_loop_renderer() {
+    // Ordinary print turns share the native protocol but keep their own renderer.
     let p = plan(&["clud", "--subprocess", "-p", "hello"]);
     assert!(
-        !p.command.iter().any(|a| a == "stream-json"),
-        "plain -p must NOT receive stream-json injection; cmd={:?}",
+        p.prompt_summary && p.command.iter().any(|a| a == "stream-json"),
+        "plain -p must select compact progress; cmd={:?}",
         p.command
     );
     assert!(!p.stream_json_progress);
