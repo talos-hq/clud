@@ -6,7 +6,7 @@ use running_process::pty::NativePtyProcess;
 
 fn launch(shell: &str, binary: &Path) -> Vec<String> {
     let binary = binary.to_string_lossy();
-    let args = "--no-daemon --claude --subprocess loop --loop-count 1 test-dashboard -- --mock-sleep-ms 60000";
+    let args = "--no-daemon --claude --subprocess loop --loop-count 1 test-dashboard -- --mock-sleep-ms 60000 --mock-started-file backend-started.json";
     match shell {
         "cmd" => vec![
             "cmd.exe".into(),
@@ -67,12 +67,13 @@ fn wait_text(process: &NativePtyProcess, text: &str) -> String {
     );
 }
 
-fn exercise(shell: &str) {
-    let temp = tempfile::Builder::new()
-        .prefix("loop console spaces ")
-        .tempdir()
-        .unwrap();
-    let root = temp.path();
+fn started_pid(path: &Path) -> Option<u64> {
+    let body = std::fs::read(path).ok()?;
+    let report: serde_json::Value = serde_json::from_slice(&body).ok()?;
+    report["pid"].as_u64()
+}
+
+fn isolated_env(root: &Path) -> Vec<(String, String)> {
     let home = root.join("home");
     std::fs::create_dir_all(&home).unwrap();
     let ext = if clud::platform::host::WINDOWS {
@@ -107,6 +108,16 @@ fn exercise(shell: &str) {
         ("SOLDR_BROKER_AUTOSPAWN".into(), "0".into()),
         ("TERM".into(), "xterm-256color".into()),
     ]);
+    env
+}
+
+fn exercise(shell: &str) {
+    let temp = tempfile::Builder::new()
+        .prefix("loop console spaces ")
+        .tempdir()
+        .unwrap();
+    let root = temp.path();
+    let env = isolated_env(root);
     let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
     let process = NativePtyProcess::new(
         launch(shell, &binary),
@@ -120,6 +131,11 @@ fn exercise(shell: &str) {
     process.set_echo(false);
     process.start_impl().unwrap();
     wait_text(&process, "Interrupt with message");
+    let started = root.join("backend-started.json");
+    assert!(crate::common::wait_until(Duration::from_secs(15), || {
+        started_pid(&started).is_some()
+    }));
+    let initial_pid = started_pid(&started).unwrap();
     process.write_impl(b"q", false).unwrap();
     wait_text(&process, "Enter: save");
     process
@@ -140,6 +156,12 @@ fn exercise(shell: &str) {
     wait_text(&process, "Are you sure?");
     process.write_impl(b"y", false).unwrap();
     wait_text(&process, "Interrupt with message");
+    assert!(
+        crate::common::wait_until(Duration::from_secs(15), || {
+            started_pid(&started).is_some_and(|pid| pid != initial_pid)
+        }),
+        "confirmed interrupt did not launch a replacement backend"
+    );
     let delivered = std::fs::read_to_string(root.join(".clud/loop/NEXT_MESSAGE.md")).unwrap();
     assert!(delivered.contains("literal $HOME %PATH% & message"));
     assert!(delivered.contains("restart message"));

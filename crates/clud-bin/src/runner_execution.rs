@@ -54,7 +54,7 @@ pub(super) fn run_with_stream_json_renderer(
     use running_process::ReadStatus;
     use std::time::Duration;
 
-    let timeout = Duration::from_millis(100);
+    let timeout = Duration::from_millis(if console.is_some() { 16 } else { 100 });
     loop {
         if interrupted.load(Ordering::SeqCst) {
             teardown_interrupted_child(process, batch_wrapped);
@@ -893,7 +893,6 @@ pub(super) fn loop_console(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 pub(super) fn wait_loop_child(
     process: &subprocess::ManagedSubprocess,
     interrupted: &AtomicBool,
@@ -961,12 +960,16 @@ pub(super) fn finish_loop_console(
     captured: &str,
     iteration: u32,
 ) {
-    let had_console = console.is_some();
+    let transcript = console
+        .as_ref()
+        .map(crate::loop_console::LoopConsole::transcript);
     drop(console);
-    if had_console {
+    if let Some(transcript) = transcript {
         let summary = stream_json::IterationSummary::from_output(captured);
         if summary != stream_json::IterationSummary::default() {
             eprintln!("{}", summary.render_panel(iteration));
+        } else if !transcript.is_empty() {
+            eprintln!("{transcript}");
         }
     }
 }

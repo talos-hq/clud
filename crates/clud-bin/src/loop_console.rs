@@ -253,6 +253,15 @@ impl LoopConsole {
         Ok(Some(console))
     }
 
+    pub(crate) fn transcript(&self) -> String {
+        self.dashboard
+            .lines
+            .iter()
+            .map(|line| line.chars().filter(|c| !c.is_control()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     pub(crate) fn line(&mut self, line: &str) -> io::Result<()> {
         self.dashboard.push(line);
         self.draw()
@@ -269,7 +278,8 @@ impl LoopConsole {
                 None
             }
             Some(Action::Restart(text)) => self
-                .save(&text, Mode::Interrupt)
+                .dashboard
+                .save(&self.root, &text, Mode::Interrupt)
                 .then_some(Action::Restart(text)),
             other => other,
         };
