@@ -575,6 +575,37 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: a multi-range shell read hunt (`sed -n` over several disjoint
+    // windows in one call) lands every window in the transcript, where each
+    // later request re-sends it. Past a few per session the hunt is refused
+    // once with the exact `code/slice.py` call for the ranges it named.
+    // Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_hunt::opts_out(
+            payload
+                .tool_input
+                .as_ref()
+                .and_then(|input| input.get("command"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ) {
+            append_log(&format!(
+                "READ-HUNT-GUARD-OVERRIDE: {} in command: read-hunt guard bypassed for tool_name={:?}",
+                block_bad_cmd_hunt::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_hunt::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            append_log(&format!("READ-HUNT-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
     // #2233: a Read of a file whose bytes are unchanged since the same read in
     // this session returns nothing new, and every later request pays for it
     // again. Refused with the bounded alternatives named; fails open.
@@ -3983,6 +4014,8 @@ mod block_bad_cmd_repeat;
 
 #[path = "block_bad_cmd_hop.rs"]
 mod block_bad_cmd_hop;
+#[path = "block_bad_cmd_hunt.rs"]
+mod block_bad_cmd_hunt;
 #[path = "block_bad_cmd_reread.rs"]
 mod block_bad_cmd_reread;
 
