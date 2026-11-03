@@ -442,6 +442,42 @@ shell reads (`sed`, `cat`, `head`, `tail`, `nl`, `less`, `bat`, `tac`,
   session, at most 32 files per session, 2 days / 500 files retained. Fail
   open on every state error.
 
+### Multi-range read-hunt guard (#2233)
+
+The hop guard counts how often a file is read; this one looks at a **single**
+call. `sed -n '40,60p' a.rs; sed -n '120,160p' a.rs; sed -n '400,430p' b.rs`
+lands every disjoint window in the transcript, and each later request in the
+session re-sends all of them. Measured over 24 h: 1,143 shell `sed` calls
+produced 3.9 MB of results — ~37 % of all tool-result text the fleet re-sends
+on average 71× — and 91 % of those calls were multi-command hunts.
+
+`block_bad_cmd_hunt.rs` therefore counts multi-range hunts per session and,
+past the limit, refuses the next **distinct** hunt once with the exact
+replacement for the ranges the command named:
+
+```text
+clud tool run code/slice.py /w/a.rs --lines 40-60 --lines 120-160 --lines 400-430
+```
+
+`code/slice.py` merges overlaps, prints `LINE| text` instead of repeating the
+path on every line, and stops at a byte cap whose footer names the line to
+continue from.
+
+- Qualifies only when every range is `sed -n A,Bp FILE` over an existing
+  source file of at least 8 KiB, there are at least two of them, and they add
+  up to at least 80 requested lines. A single ranged read, a short
+  confirmation read, a piped read (already bounded downstream) and any
+  non-source target are ignored.
+- `sed -i` and redirects are writes, not reads, and pass untouched.
+- A retry of the **identical** hunt is allowed: the refusal is recorded by
+  range signature, so the guard can never wedge a session.
+- **Limit:** `N = 3` hunts per session, reset after an hour without a hunt.
+  `CLUD_READ_HUNT_LIMIT=<n>` overrides it and `0` turns the guard off.
+  `CLUD_ALLOW_READ_HUNT=1` in a command runs one hunt deliberately (logged).
+- **State:** `<clud state dir>/read-hunt-guard/<hash>.json`, one file per
+  session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
+  on every state, parse or stat error.
+
 ### Unchanged-re-read guard (#2233)
 
 A `Read` that repeats a call already made in this session — same path, same
@@ -466,6 +502,36 @@ file that cannot be `stat`ed. `CLUD_REREAD_GUARD=0` turns it off.
 Evidence (24 h probe, 2026-10-31): 308 of 1,035 `Read` calls repeated a
 call already made in the same session, re-supplying 1,029,780 bytes, led by
 one 2,142-line file read 23 times.
+
+### Image-view budget (#2233)
+
+A screenshot is not retained like text: every frame an agent opens stays in the
+conversation for the rest of the session and is re-sent on every later request,
+so a UI loop that overwrites and re-opens one scratchpad screenshot pays for
+every frame it ever looked at, forever.
+
+Evidence (24 h probe, 2026-11-03): image `Read`s were 162 calls but **19.9% of
+all context exposure** (182 MB of the 916 MB re-sent) while every text `Read`
+together was 2.7%. One session opened the same `scratchpad/cur.png` 46 times —
+45 distinct frames, ~190 KB of base64 each.
+
+- **Counting:** views per `(session, image path)`, resolved the way the harness
+  resolves them (`~/` against `$HOME`, relative against the tool's cwd, so both
+  spellings share one count). Only `Read`/`read_file`/`readfile` on an existing
+  image file of at least 8 KiB (`png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`,
+  `tif`, `tiff`, `heic`). A shell `cat x.png` and text files are not counted.
+- **Past half the limit** the allow carries an `additionalContext` note with the
+  frame number, the per-frame payload and the cheaper capture — clip or scale
+  the capture, or crop the region that changed — and the read runs.
+- **Past the limit** the read is refused **once** per file per session, naming
+  the retained payload and the same cheaper capture; repeating the read runs it.
+  A `Read` has no command text to hang a per-call override on, and a permanent
+  wall would have no escape at all, so the refusal is a single decision point.
+- **Limit:** `N = 12` views per file. `CLUD_IMAGE_READ_LIMIT=<n>` overrides it
+  and `0` turns the guard off.
+- **State:** `<clud state dir>/image-view-guard/<hash>.json`, one file per
+  session, at most 16 paths per session, 2 days / 200 files retained; a path's
+  count expires after 60 minutes without a view. Fails open on every state error.
 
 ### Verification-to-edit ratio note (#1988)
 

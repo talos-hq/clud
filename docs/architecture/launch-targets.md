@@ -4,7 +4,7 @@ clud resolves two independent launch dimensions before harness bootstrap,
 setup, or launch-plan construction:
 
 - `ModelProvider` is the API/model family selected by provider flags.
-- `HarnessSelection` is `default`, `claude`, `codex`, or `deepseek`, selected by
+- `HarnessSelection` is `default`, `claude`, `codex`, `deepseek`, or `opencode`, selected by
   `--harness`.
 
 `default` maps the provider to its native harness: Claude to Claude and Codex
@@ -18,6 +18,9 @@ backward-compatible meaning: use the DeepSeek API through Claude Code.
 `--harness deepseek` selects DeepSeek AI's `dsh` executable. A bare `dsh`
 launch maps to `dsh web`; a prompt-bearing launch maps to
 `dsh --profile headless <prompt>`.
+
+OpenCode selection, provider configuration and acceptance tests are specified
+in [opencode.md](opencode.md).
 
 ## Resolution
 

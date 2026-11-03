@@ -837,7 +837,7 @@ pub fn run_plan_subprocess(
         let process = match runtime.spawn_subprocess(
             plan.command.clone(),
             plan.cwd.as_ref().map(PathBuf::from),
-            plan.stream_json_progress,
+            plan.stream_json_progress || plan.prompt_summary,
             win_creation_flags::user_facing_backend_creationflags(),
         ) {
             Ok(process) => process,
@@ -866,12 +866,7 @@ pub fn run_plan_subprocess(
             plan.backend.executable_name(),
         );
 
-        // Issue #95: in stream-json mode we also accumulate the rendered
-        // output so we can fall back to scanning for the
-        // `<<<CLUD_LOOP_DONE: ...>>>` token if the agent skipped the
-        // marker file. In inherited-stdio mode the child writes directly
-        // to the user's terminal and we never see the bytes — the token
-        // fallback is unavailable there.
+        // Loop stream capture preserves the DONE token fallback.
         let mut captured_output = String::new();
         // #1168: a wedged `clud -p` on the Windows lanes left an empty stage
         // trace with the backend already finished, so the wait and the
@@ -883,7 +878,9 @@ pub fn run_plan_subprocess(
         // names the one that did not come back.
         let wait_started =
             stage_trace::begin(trace_enabled, stage_trace::Phase::Launch, "child_wait");
-        let exit_code = if plan.stream_json_progress {
+        let exit_code = if plan.prompt_summary {
+            runner_execution::run_with_prompt_summary(plan, &process, interrupted, batch_wrapped)
+        } else if plan.stream_json_progress {
             run_with_stream_json_renderer(
                 &process,
                 interrupted,

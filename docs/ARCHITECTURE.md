@@ -9,6 +9,7 @@ re-explaining.
 | Document | Lines | What it covers |
 |---|---|---|
 | [architecture/secret-prompt.md](architecture/secret-prompt.md) | ~60 | Masked native credential input, direct sinks, caller-checked askpass, output secrecy and cancellation |
+| [architecture/prompt-output.md](architecture/prompt-output.md) | ~75 | Compact Claude/Codex print activity, per-tool line counts, exact edit counts and terminal encoding fallbacks |
 | [architecture/loop-subsystem.md](architecture/loop-subsystem.md) | ~250 | `clud loop`: task resolution, plan synthesis, iteration run, DONE/BLOCKED marker contract, artifact rollover, repeat scheduling |
 | [architecture/workflow.md](architecture/workflow.md) | ~60 | `clud workflow`: Anthropic-format scripts in embedded QuickJS, `agent()` batches as concurrent `clud -p` children, ASCII board, `WORKFLOW_DONE.md` |
 | [architecture/testing-tiers.md](architecture/testing-tiers.md) | ~110 | The three test tiers; tier 3 runs the real Claude Code on `mock-agent serve` (scripted model), with the `tests/harness/` fixture and its pitfalls |
@@ -31,6 +32,7 @@ re-explaining.
 | [architecture/route-plan.md](architecture/route-plan.md) | ~140 | `ResolvedRoute`: the one place a launch's backend, upstreams, slots, allowlist, discovery, context, effort, timeouts, scrub list and launch checks are decided; every backend renders it, launch checks run before the backend branch, and request-path features stay gateway-side (#1852) |
 | [architecture/launch-plan.md](architecture/launch-plan.md) | ~180 | `LaunchPlan` as the single source of truth: construction, consumers, `--dry-run` JSON |
 | [architecture/launch-targets.md](architecture/launch-targets.md) | ~540 | Independent model-provider and harness resolution, sticky settings, foreground bridge lifecycle, compatibility; DeepSeek direct provider (credential trust boundary, preflight, child overlay, no bridge) |
+| [architecture/opencode.md](architecture/opencode.md) | ~150 | OpenCode harness contract and real-client served mock acceptance tests |
 | [architecture/provider-selection.md](architecture/provider-selection.md) | ~120 | #900's compatible launch grammar, direct-vs-unified routing mode, provider-neutral model catalog, modifier normalization, and plan/repeat propagation |
 | [architecture/server-settings.md](architecture/server-settings.md) | ~170 | Server-side settings (#1192): the baked-in `server-settings.json` refreshed from `main`, per-section last-known-good merge, bounded-wait refresh and backoff, strict JSON parsing, controls, OpenRouter's context map (#1258) and separate weighted-pricing catalog (#1256) |
 | [architecture/unified-gateway.md](architecture/unified-gateway.md) | ~130 | #898/#899's authenticated foreground multiplexer: version gate, discovery, provider routing, route epochs, token counting, credential isolation, and cross-provider effort contract |

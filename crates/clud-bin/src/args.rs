@@ -1196,6 +1196,32 @@ pub enum Command {
         #[arg(long = "refresh-stored")]
         refresh_stored: bool,
     },
+    /// Hidden test seam for Meta Muse's RFC 8628 device login: request a device
+    /// code, poll until the account authorizes it, mint the Meta Model API key,
+    /// store the credential in the OS vault and print progress as JSON lines.
+    /// `--status` prints the stored (non-secret) record without a network call.
+    /// Never used by a launched session.
+    #[command(name = "__meta-device-login", hide = true)]
+    InternalMetaDeviceLogin {
+        /// Device authorization endpoint, overriding the compiled-in one.
+        #[arg(long = "device-endpoint", requires = "token_endpoint")]
+        device_endpoint: Option<String>,
+        /// Token endpoint, overriding the compiled-in one.
+        #[arg(long = "token-endpoint", requires = "device_endpoint")]
+        token_endpoint: Option<String>,
+        /// API-key mint endpoint, overriding the compiled-in one.
+        #[arg(long = "mint-url")]
+        mint_url: Option<String>,
+        /// Minimum poll interval in milliseconds.
+        #[arg(long = "interval-ms")]
+        interval_ms: Option<u64>,
+        /// Bound on the whole polling wait, in milliseconds.
+        #[arg(long = "max-poll-ms")]
+        max_poll_ms: Option<u64>,
+        /// Print the stored credential summary instead of starting a login.
+        #[arg(long)]
+        status: bool,
+    },
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
         #[arg(long = "state-dir")]
@@ -1795,6 +1821,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__openai-responses-translate",
     "__kimi-device-login",
     "__xai-device-login",
+    "__meta-device-login",
 ];
 
 /// Quote `token` for a copy-pasteable shell example.
@@ -1885,6 +1912,7 @@ impl Args {
     pub fn parse_from_raw(raw: Vec<String>) -> Self {
         let (normalized, continue_index) = extract_continue_index(&raw);
         let normalized = normalize_bare_resume_before_subcommand(&normalized);
+        let normalized = split_unicode_space_glued_flags(&normalized);
         let normalized = normalize_known_option_dashes(&normalized);
         let normalized = match split_inline_key_assignments(&normalized) {
             Ok(normalized) => normalized,
@@ -2064,6 +2092,34 @@ fn normalize_bare_resume_before_subcommand(raw: &[String]) -> Vec<String> {
 /// is its value rather than a flag or subcommand.
 fn takes_next_value(arg: &str) -> bool {
     SPLITTER_VALUE_FLAGS.contains(&arg) || SPLITTER_SHORT_VALUE_FLAGS.contains(&arg)
+}
+
+/// A command copied from a chat or web page often carries non-breaking
+/// spaces. The shell does not split on them, so `--model<NBSP>x` reaches clud
+/// as one token and was rejected as an unknown flag. Before `--`, a flag token
+/// containing non-ASCII whitespace is split as if the spaces were real.
+fn split_unicode_space_glued_flags(raw: &[String]) -> Vec<String> {
+    let mut normalized = Vec::with_capacity(raw.len());
+    let mut in_clud_flags = true;
+    for (index, arg) in raw.iter().enumerate() {
+        if index > 0 && arg == "--" {
+            in_clud_flags = false;
+        }
+        let glued = in_clud_flags
+            && index > 0
+            && arg.starts_with('-')
+            && arg.chars().any(|c| c.is_whitespace() && !c.is_ascii());
+        if glued {
+            normalized.extend(
+                arg.split(char::is_whitespace)
+                    .filter(|part| !part.is_empty())
+                    .map(str::to_string),
+            );
+        } else {
+            normalized.push(arg.clone());
+        }
+    }
+    normalized
 }
 
 /// Provider flags that accept an inline API key.

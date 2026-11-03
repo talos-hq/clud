@@ -11,6 +11,9 @@ The per-launch `--unsafe` choice crosses argv, `LaunchPlan`, child environment,
 command hooks, and the `rm` alias. See
 [unsafe-mode.md](../../../docs/architecture/unsafe-mode.md).
 
+`opencode_harness.rs` owns OpenCode argv translation and child-local provider
+configuration; see [OpenCode](../../../docs/architecture/opencode.md).
+
 Entry point and source tree for the `clud-bin` Rust binary. The binary launches
 a backend agent (`claude` or `codex`) in YOLO mode, optionally through a PTY,
 with first-class support for loop iterations, drag-and-drop, voice input, and a
@@ -137,6 +140,10 @@ Entry and orchestration:
   see `docs/architecture/provider-failover.md`.
 - `serve_gateway.rs` - foreground API-server startup and credential setup; see [standalone-gateway.md](../../../docs/architecture/standalone-gateway.md).
 - `serve_transport.rs` - tracked standalone upstream TLS sockets and shutdown cancellation.
+- `tool_result_cap.rs` — recoverable, line-aligned shell text budgets in the
+  Codex translator; `tool_result_cap_translate_tests.rs` covers normal/pending
+  translation and opt-in captured-output replay. Configuration and coverage:
+  [codex-via-claude.md](../../../docs/architecture/codex-via-claude.md#shell-tool-result-budget).
 - `codex_model.rs` - #752's Codex compatibility view over the shared provider
   catalog: the `sol`/`terra`/`luna` aliases and per-model defaults, the
   `<model>@<effort>` parser, and the provider-neutral `Effort` ladder
@@ -274,6 +281,14 @@ CLI surface and backend resolution:
 
 - `args.rs` - `clap` `Args` and `Command` definitions; passthrough for unknown
   flags; subcommand definitions for `loop`, `up`, `rebase`, `fix`, `do`, `gc`, etc.
+- `claude_temp_home_install.rs` - fallback for Claude Code's native installer
+  when the home volume is too small or not writable (a live USB such as the
+  Arch ISO): `backend_bootstrap.rs` reruns the installer once with `HOME` in
+  the RAM-backed temp dir and links the binary to `~/.local/bin/claude`;
+  `discover` finds such an install when that link is missing.
+- `temp_home_logs.rs` - low-space mode: when Claude Code runs from a temp
+  install home, redirects clud's and Claude Code's log dirs there and purges
+  the oldest files, on write events only, once they pass 64 MiB.
 - `backend.rs` - concrete `Backend`, independent `ModelProvider` /
   `HarnessSelection` resolution, provider `RoutingMode`, process `LaunchMode`,
   PATH lookup, and backend-path resolution. See
@@ -997,3 +1012,5 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   `shim_main/dispatch.rs` is the shim personality's single entry path: session
   checks, target resolution and fail-open passthrough (#1546); see
   [shim-dispatch.md](../../../docs/architecture/shim-dispatch.md).
+
+- `prompt_output.rs` / `prompt_patch.rs` — compact foreground Claude/Codex print activity and exact per-tool line accounting; see [prompt-output.md](../../../docs/architecture/prompt-output.md).

@@ -126,7 +126,7 @@ pub fn has_noninteractive_prompt(args: &Args, backend: Backend) -> bool {
             target
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty())
-                && matches!(backend, Backend::DeepSeek)
+                && matches!(backend, Backend::DeepSeek | Backend::OpenCode)
         }
         Some(Command::Up { .. }) | Some(Command::Rebase) | Some(Command::Fix { .. }) => {
             !matches!(backend, Backend::Codex)
@@ -268,6 +268,9 @@ pub(crate) fn build_headless_turn_plan(
     turn_args.passthrough.clear();
 
     let mut plan = build_launch_plan_for_target_at(&turn_args, target, backend_path, &request.cwd);
+    if plan.prompt_summary {
+        crate::prompt_output::remove_auto_flags(&mut plan.command, backend);
+    }
     match (backend, &request.session) {
         (Backend::Claude, HeadlessSession::Initial { claude_session_id }) => {
             let id = claude_session_id
@@ -305,6 +308,7 @@ pub(crate) fn build_headless_turn_plan(
     // This flag means the foreground renderer owns the stream; daemon callers
     // keep raw JSONL for event storage instead.
     plan.stream_json_progress = false;
+    plan.prompt_summary = false;
     plan.launch_mode = LaunchMode::Subprocess;
     Ok(plan)
 }
@@ -583,6 +587,7 @@ fn build_launch_plan_for_target_at(
     // callers safe by preserving the picker and withholding the prompt.
     let seed_interactive_builtin = !(codex_uses_resume && matches!(args.resume, Some(None)));
 
+    crate::opencode_harness::append_launch_args(args, target, model_selection.as_ref(), &mut cmd);
     if matches!(backend, Backend::DeepSeek) {
         if has_noninteractive_prompt(args, backend) {
             cmd.extend(["--profile".to_string(), "headless".to_string()]);
@@ -697,7 +702,7 @@ fn build_launch_plan_for_target_at(
         match backend {
             Backend::Claude => cmd.push("--dangerously-skip-permissions".to_string()),
             Backend::Codex => cmd.push("--dangerously-bypass-approvals-and-sandbox".to_string()),
-            Backend::DeepSeek => {}
+            Backend::DeepSeek | Backend::OpenCode => {}
         }
     }
 
@@ -783,7 +788,7 @@ fn build_launch_plan_for_target_at(
                 cmd.push("-m".to_string());
                 cmd.push(emitted);
             }
-            Backend::DeepSeek => {}
+            Backend::DeepSeek | Backend::OpenCode => {}
         }
     }
     // Effort is harness-owned session state and travels independently from
@@ -898,6 +903,9 @@ fn build_launch_plan_for_target_at(
                             .as_deref()
                             .is_some_and(|text| !text.trim().is_empty()),
                     ),
+                    (Backend::OpenCode, _, _) => {
+                        do_procedure(args.do_rendered_prompt.as_deref()).to_string()
+                    }
                     _ => build_do_prompt(args.do_rendered_prompt.as_deref()),
                 };
                 push_prompt_interactive(&mut cmd, prompt);
@@ -982,6 +990,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::InternalGeminiClientTranslate { .. })
         | Some(Command::InternalOpenAiResponsesTranslate)
         | Some(Command::InternalKimiDeviceLogin { .. })
+        | Some(Command::InternalMetaDeviceLogin { .. })
         | Some(Command::InternalXaiDeviceLogin { .. })
         | Some(Command::InternalDaemon { .. })
         | Some(Command::Statusline { .. })
@@ -1013,8 +1022,7 @@ fn build_launch_plan_for_target_at(
                     }
                     // Codex's session selector was emitted before the command
                     // arm so generated built-in prompts follow it in argv.
-                    Backend::Codex => {}
-                    Backend::DeepSeek => {}
+                    Backend::Codex | Backend::DeepSeek | Backend::OpenCode => {}
                 }
             }
         }
@@ -1023,12 +1031,11 @@ fn build_launch_plan_for_target_at(
     cmd.extend(passthrough);
 
     let is_loop_cmd = matches!(&args.command, Some(Command::Loop { .. }));
-    // Headless: Claude `-p`/`--print` (from clud or passthrough), `codex exec`,
-    // DeepSeek's headless profile.
+    // Headless: Claude print, Codex exec, dsh headless, or OpenCode run.
     let headless = match backend {
         Backend::Claude => cmd.iter().any(|a| a == "-p" || a == "--print"),
         Backend::Codex => codex_uses_exec,
-        Backend::DeepSeek => has_noninteractive_prompt(args, backend),
+        Backend::DeepSeek | Backend::OpenCode => has_noninteractive_prompt(args, backend),
     };
     let launch_mode = crate::backend::resolve_launch_mode(
         args.pty,
@@ -1037,18 +1044,16 @@ fn build_launch_plan_for_target_at(
         crate::session::terminals_are_interactive(),
     );
 
-    // Issue: subprocess-mode loops on claude went silent until the iteration
-    // finished, because `claude -p` buffers its single final response. Inject
-    // `--output-format stream-json --verbose` so claude emits one JSON event
-    // per turn step, and let the runtime render those into progress lines.
-    // PTY-mode loops already stream the live TUI; codex doesn't expose this
-    // flag at all.
-    //
-    // The flags MUST be inserted BEFORE the prompt (`-p <prompt>`) so that
-    // `command[-1]` remains the prompt — downstream tooling, dry-run JSON
-    // consumers, and integration tests rely on that contract.
+    // The loop renderer keeps its existing contract. Ordinary foreground
+    // print turns opt into the shared compact renderer unless native output
+    // was requested explicitly.
     let stream_json_progress =
         matches!(backend, Backend::Claude) && is_loop_cmd && launch_mode == LaunchMode::Subprocess;
+    let prompt_summary = !crate::daemon::experimental_enabled(args)
+        && !is_loop_cmd
+        && headless
+        && launch_mode == LaunchMode::Subprocess
+        && crate::prompt_output::configure_command(&mut cmd, backend, &args.passthrough);
     if stream_json_progress {
         // For Claude, `push_prompt` emits `-p` then the prompt body. Find that
         // `-p` and slot the stream-json flags in just before it. This keeps
@@ -1088,6 +1093,7 @@ fn build_launch_plan_for_target_at(
         task_summary,
         loop_markers,
         stream_json_progress,
+        prompt_summary,
         codex_model,
         model_selection,
         failover: args.failover.clone(),
@@ -1101,9 +1107,7 @@ fn build_launch_plan_for_target_at(
         pinned_from_previous_selection: args.model_pin_is_from_previous_selection(),
         route: None,
     };
-    // #1855: the route is resolved once, here, from the plan it describes --
-    // so every backend renderer and `--dry-run` read one decision instead of
-    // re-deriving their own copy of it.
+    // Resolve once for every runtime renderer and dry run.
     plan.route = Some(crate::route_plan::resolve(
         &plan,
         &crate::route_plan::Ambient::from_process(),
