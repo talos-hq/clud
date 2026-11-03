@@ -110,6 +110,7 @@ pub mod loop_config;
 pub mod loop_plan_mode;
 pub mod loop_restart;
 pub mod loop_spec;
+pub mod meta_auth;
 pub mod metered_policy;
 pub mod multicall;
 pub mod openai_ingress;

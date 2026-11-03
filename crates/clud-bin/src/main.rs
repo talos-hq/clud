@@ -355,14 +355,17 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             interval_ms,
             max_poll_ms,
             refresh_stored,
-        } => clud::kimi_auth::run_seam(&clud::kimi_auth::SeamArgs {
-            domain: domain.as_deref(),
-            device_endpoint: device_endpoint.as_deref(),
-            token_endpoint: token_endpoint.as_deref(),
-            interval_ms: *interval_ms,
-            max_poll_ms: *max_poll_ms,
-            refresh_stored: *refresh_stored,
-        }),
+        } => run_kimi_device_login_seam(
+            domain.as_deref(),
+            device_endpoint.as_deref(),
+            token_endpoint.as_deref(),
+            *interval_ms,
+            *max_poll_ms,
+            *refresh_stored,
+        ),
+        // Hidden test seam for Meta Muse's device login: no session, backend or
+        // daemon, and it never prints a token or an API key.
+        args::Command::InternalMetaDeviceLogin { .. } => run_meta_device_login_seam(cmd),
         args::Command::DoPrompt { target } => command::do_prompt::run(target),
         args::Command::GrindScripts => command::grind_scripts::run(),
         args::Command::GrindFacts { args } => clud::grind_facts::run_cli(args),
@@ -379,6 +382,50 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
         _ => return None,
     };
     Some(code)
+}
+
+/// Runs the hidden Kimi Code device-login seam. Kept out of
+/// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
+fn run_kimi_device_login_seam(
+    domain: Option<&str>,
+    device_endpoint: Option<&str>,
+    token_endpoint: Option<&str>,
+    interval_ms: Option<u64>,
+    max_poll_ms: Option<u64>,
+    refresh_stored: bool,
+) -> i32 {
+    clud::kimi_auth::run_seam(&clud::kimi_auth::SeamArgs {
+        domain,
+        device_endpoint,
+        token_endpoint,
+        interval_ms,
+        max_poll_ms,
+        refresh_stored,
+    })
+}
+
+/// Runs the hidden Meta Muse device-login seam. Kept out of
+/// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
+fn run_meta_device_login_seam(cmd: Option<&args::Command>) -> i32 {
+    let Some(args::Command::InternalMetaDeviceLogin {
+        device_endpoint,
+        token_endpoint,
+        mint_url,
+        interval_ms,
+        max_poll_ms,
+        status,
+    }) = cmd
+    else {
+        return 1;
+    };
+    clud::meta_auth::run_seam(&clud::meta_auth::SeamArgs {
+        device_endpoint: device_endpoint.as_deref(),
+        token_endpoint: token_endpoint.as_deref(),
+        mint_url: mint_url.as_deref(),
+        interval_ms: *interval_ms,
+        max_poll_ms: *max_poll_ms,
+        status: *status,
+    })
 }
 
 /// Codex updates, credential management and catalog queries: self-contained,

@@ -1181,6 +1181,32 @@ pub enum Command {
         #[arg(long = "refresh-stored")]
         refresh_stored: bool,
     },
+    /// Hidden test seam for Meta Muse's RFC 8628 device login: request a device
+    /// code, poll until the account authorizes it, mint the Meta Model API key,
+    /// store the credential in the OS vault and print progress as JSON lines.
+    /// `--status` prints the stored (non-secret) record without a network call.
+    /// Never used by a launched session.
+    #[command(name = "__meta-device-login", hide = true)]
+    InternalMetaDeviceLogin {
+        /// Device authorization endpoint, overriding the compiled-in one.
+        #[arg(long = "device-endpoint", requires = "token_endpoint")]
+        device_endpoint: Option<String>,
+        /// Token endpoint, overriding the compiled-in one.
+        #[arg(long = "token-endpoint", requires = "device_endpoint")]
+        token_endpoint: Option<String>,
+        /// API-key mint endpoint, overriding the compiled-in one.
+        #[arg(long = "mint-url")]
+        mint_url: Option<String>,
+        /// Minimum poll interval in milliseconds.
+        #[arg(long = "interval-ms")]
+        interval_ms: Option<u64>,
+        /// Bound on the whole polling wait, in milliseconds.
+        #[arg(long = "max-poll-ms")]
+        max_poll_ms: Option<u64>,
+        /// Print the stored credential summary instead of starting a login.
+        #[arg(long)]
+        status: bool,
+    },
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
         #[arg(long = "state-dir")]
@@ -1779,6 +1805,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__openai-responses-translate",
     "__kimi-device-login",
     "__xai-device-login",
+    "__meta-device-login",
 ];
 
 /// Quote `token` for a copy-pasteable shell example.
