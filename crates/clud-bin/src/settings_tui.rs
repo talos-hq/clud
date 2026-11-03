@@ -32,7 +32,7 @@ fn model_options() -> Vec<ChoiceOption<ModelProvider>> {
         .collect()
 }
 
-const HARNESS_OPTIONS: [ChoiceOption<HarnessSelection>; 4] = [
+const HARNESS_OPTIONS: [ChoiceOption<HarnessSelection>; 5] = [
     ChoiceOption {
         value: HarnessSelection::Default,
         label: "default",
@@ -51,6 +51,11 @@ const HARNESS_OPTIONS: [ChoiceOption<HarnessSelection>; 4] = [
     ChoiceOption {
         value: HarnessSelection::DeepSeek,
         label: "deepseek",
+        note: "",
+    },
+    ChoiceOption {
+        value: HarnessSelection::OpenCode,
+        label: "opencode",
         note: "",
     },
 ];
@@ -692,6 +697,8 @@ mod tests {
         assert_eq!(harness, SettingValue::Harness(HarnessSelection::Codex));
         harness.cycle();
         assert_eq!(harness, SettingValue::Harness(HarnessSelection::DeepSeek));
+        harness.cycle();
+        assert_eq!(harness, SettingValue::Harness(HarnessSelection::OpenCode));
         harness.cycle();
         assert_eq!(harness, SettingValue::Harness(HarnessSelection::Default));
     }

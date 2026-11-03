@@ -54,6 +54,7 @@ fn plan(provider: ModelProvider, harness: Backend) -> LaunchPlan {
             Backend::Claude => HarnessSelection::Claude,
             Backend::Codex => HarnessSelection::Codex,
             Backend::DeepSeek => HarnessSelection::DeepSeek,
+            Backend::OpenCode => HarnessSelection::OpenCode,
         }),
         effective_harness: Some(harness),
         provider_source: Some(PreferenceSource::Cli),

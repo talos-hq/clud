@@ -7480,3 +7480,27 @@ uses one code path for Claude and Codex, survives restarts, and reuses the
 lifecycle's existing idempotency and interrupt machinery. A harness that cannot
 take daemon turns (DeepSeek Harness) fails closed with its name instead of
 queueing a message that would never arrive.
+
+
+## DD-198: OpenCode is a harness with a child-local Messages adapter
+
+**Context:** OpenCode must run both native provider models and models behind
+`clud serve`. Its flags and configuration are independent of Claude Code's;
+notably, `opencode run -p` supplies a password instead of a prompt.
+
+**Decision:** model-provider resolution stays independent of the new OpenCode
+harness. The launch builder translates prompts to `opencode run`, while the
+foreground runtime renders the resolved Messages route into child-local
+`OPENCODE_CONFIG_CONTENT`. It uses a dedicated `clud` provider and selects
+that provider for both primary and small-model work. User configuration and
+permission denies are preserved outside clud's owned route keys. No auth or
+config files are written. Codex and unified routing fail explicitly until
+their adapters are supported; Claude-only hooks and slash commands are never
+forwarded to OpenCode.
+
+**Why:** one explicit wire adapter works with the existing served gateway and
+Messages-compatible providers. Reusing Claude's argv or writing OpenCode's
+global authentication would change another tool's behavior and expose state
+across launches. The acceptance test uses the real OpenCode binary, a served
+mock provider, and a complete file-read tool cycle; see
+[OpenCode](architecture/opencode.md).

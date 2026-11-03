@@ -77,6 +77,7 @@ pub mod doctor;
 pub mod dsh_harness;
 pub mod extern_cli;
 pub mod extern_root;
+pub mod opencode_harness;
 
 pub mod build_id;
 pub mod clud_repo_dev;

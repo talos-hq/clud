@@ -11,6 +11,9 @@ Provider/harness metadata travels additively inside each worker's
 for the cross-route ownership boundary and
 [docs/architecture/launch-targets.md](../../../../docs/architecture/launch-targets.md)
 for field-level resolution.
+OpenCode JSONL session identities are recognized by `headless_adapter.rs`;
+managed API turns remain limited to Claude and Codex and reject OpenCode
+explicitly. See [OpenCode](../../../../docs/architecture/opencode.md).
 Normalized model/effort/context fields and unified-mode repeat reconstruction
 are owned by
 [docs/architecture/provider-selection.md](../../../../docs/architecture/provider-selection.md).

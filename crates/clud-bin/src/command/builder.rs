@@ -126,7 +126,7 @@ pub fn has_noninteractive_prompt(args: &Args, backend: Backend) -> bool {
             target
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty())
-                && matches!(backend, Backend::DeepSeek)
+                && matches!(backend, Backend::DeepSeek | Backend::OpenCode)
         }
         Some(Command::Up { .. }) | Some(Command::Rebase) | Some(Command::Fix { .. }) => {
             !matches!(backend, Backend::Codex)
@@ -583,6 +583,7 @@ fn build_launch_plan_for_target_at(
     // callers safe by preserving the picker and withholding the prompt.
     let seed_interactive_builtin = !(codex_uses_resume && matches!(args.resume, Some(None)));
 
+    crate::opencode_harness::append_launch_args(args, target, model_selection.as_ref(), &mut cmd);
     if matches!(backend, Backend::DeepSeek) {
         if has_noninteractive_prompt(args, backend) {
             cmd.extend(["--profile".to_string(), "headless".to_string()]);
@@ -697,7 +698,7 @@ fn build_launch_plan_for_target_at(
         match backend {
             Backend::Claude => cmd.push("--dangerously-skip-permissions".to_string()),
             Backend::Codex => cmd.push("--dangerously-bypass-approvals-and-sandbox".to_string()),
-            Backend::DeepSeek => {}
+            Backend::DeepSeek | Backend::OpenCode => {}
         }
     }
 
@@ -783,7 +784,7 @@ fn build_launch_plan_for_target_at(
                 cmd.push("-m".to_string());
                 cmd.push(emitted);
             }
-            Backend::DeepSeek => {}
+            Backend::DeepSeek | Backend::OpenCode => {}
         }
     }
     // Effort is harness-owned session state and travels independently from
@@ -898,6 +899,9 @@ fn build_launch_plan_for_target_at(
                             .as_deref()
                             .is_some_and(|text| !text.trim().is_empty()),
                     ),
+                    (Backend::OpenCode, _, _) => {
+                        do_procedure(args.do_rendered_prompt.as_deref()).to_string()
+                    }
                     _ => build_do_prompt(args.do_rendered_prompt.as_deref()),
                 };
                 push_prompt_interactive(&mut cmd, prompt);
@@ -1012,8 +1016,7 @@ fn build_launch_plan_for_target_at(
                     }
                     // Codex's session selector was emitted before the command
                     // arm so generated built-in prompts follow it in argv.
-                    Backend::Codex => {}
-                    Backend::DeepSeek => {}
+                    Backend::Codex | Backend::DeepSeek | Backend::OpenCode => {}
                 }
             }
         }
@@ -1022,12 +1025,11 @@ fn build_launch_plan_for_target_at(
     cmd.extend(passthrough);
 
     let is_loop_cmd = matches!(&args.command, Some(Command::Loop { .. }));
-    // Headless: Claude `-p`/`--print` (from clud or passthrough), `codex exec`,
-    // DeepSeek's headless profile.
+    // Headless: Claude print, Codex exec, dsh headless, or OpenCode run.
     let headless = match backend {
         Backend::Claude => cmd.iter().any(|a| a == "-p" || a == "--print"),
         Backend::Codex => codex_uses_exec,
-        Backend::DeepSeek => has_noninteractive_prompt(args, backend),
+        Backend::DeepSeek | Backend::OpenCode => has_noninteractive_prompt(args, backend),
     };
     let launch_mode = crate::backend::resolve_launch_mode(
         args.pty,
@@ -1100,9 +1102,7 @@ fn build_launch_plan_for_target_at(
         pinned_from_previous_selection: args.model_pin_is_from_previous_selection(),
         route: None,
     };
-    // #1855: the route is resolved once, here, from the plan it describes --
-    // so every backend renderer and `--dry-run` read one decision instead of
-    // re-deriving their own copy of it.
+    // Resolve once for every runtime renderer and dry run.
     plan.route = Some(crate::route_plan::resolve(
         &plan,
         &crate::route_plan::Ambient::from_process(),

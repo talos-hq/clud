@@ -245,6 +245,16 @@ impl ForegroundRuntime {
             model_pin_notices(plan, std::io::IsTerminal::is_terminal(&std::io::stderr()));
         // `dsh` owns its provider configuration and credentials. A native
         // DeepSeek Harness launch needs no clud vault or bridge setup at all.
+        if plan.effective_harness() == Backend::OpenCode {
+            crate::opencode_harness::prepare_child(plan, &mut env)
+                .map_err(BridgeError::Settings)?;
+            return Ok(Self {
+                env,
+                bridge: None,
+                claude_settings: None,
+                startup_notices: pin_notices,
+            });
+        }
         if plan.effective_harness() == Backend::DeepSeek {
             apply_route_context(&mut env, plan);
             prepare_dsh_child(plan, &mut env)?;
@@ -2006,6 +2016,7 @@ pub(crate) mod tests {
                 Backend::Claude => HarnessSelection::Claude,
                 Backend::Codex => HarnessSelection::Codex,
                 Backend::DeepSeek => HarnessSelection::DeepSeek,
+                Backend::OpenCode => HarnessSelection::OpenCode,
             }),
             effective_harness: Some(harness),
             provider_source: Some(PreferenceSource::Cli),

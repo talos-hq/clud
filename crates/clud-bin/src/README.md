@@ -11,6 +11,9 @@ The per-launch `--unsafe` choice crosses argv, `LaunchPlan`, child environment,
 command hooks, and the `rm` alias. See
 [unsafe-mode.md](../../../docs/architecture/unsafe-mode.md).
 
+`opencode_harness.rs` owns OpenCode argv translation and child-local provider
+configuration; see [OpenCode](../../../docs/architecture/opencode.md).
+
 Entry point and source tree for the `clud-bin` Rust binary. The binary launches
 a backend agent (`claude` or `codex`) in YOLO mode, optionally through a PTY,
 with first-class support for loop iterations, drag-and-drop, voice input, and a

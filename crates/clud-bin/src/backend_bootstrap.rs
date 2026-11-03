@@ -241,6 +241,7 @@ impl BackendInstallSpec {
                 },
                 fallback_location: InstallLocation::LocalAppDataCodexBin,
             },
+            (Backend::OpenCode, platform) => Self::for_opencode(platform),
             (Backend::DeepSeek, platform) => Self {
                 backend,
                 platform,
@@ -253,6 +254,32 @@ impl BackendInstallSpec {
                 fallback_location: InstallLocation::ManagedDsh {
                     windows: platform == InstallPlatform::Windows,
                 },
+            },
+        }
+    }
+
+    fn for_opencode(platform: InstallPlatform) -> Self {
+        Self {
+            backend: Backend::OpenCode,
+            platform,
+            product_name: "OpenCode",
+            vendor_name: "OpenCode",
+            installer_kind: "npm",
+            prompt_text:
+                "OpenCode is not installed. Install opencode-ai@1.19.5 with npm now? [y/N]",
+            manual_install_command: "npm install -g opencode-ai@1.19.5",
+            installer: if platform == InstallPlatform::Windows {
+                InstallerPlan::WindowsPowerShell {
+                    command: "npm install -g opencode-ai@1.19.5",
+                    cmd_fallback: None,
+                }
+            } else {
+                InstallerPlan::PosixShell {
+                    command: "npm install -g opencode-ai@1.19.5",
+                }
+            },
+            fallback_location: InstallLocation::HomeLocalBin {
+                executable: "opencode",
             },
         }
     }
