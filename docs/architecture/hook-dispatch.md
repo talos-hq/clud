@@ -478,6 +478,43 @@ continue from.
   session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
   on every state, parse or stat error.
 
+### Oversized single-range read guard (#2233)
+
+The hunt guard covers one call that names several ranges. The other half of the
+`sed` habit is a single wide range: `sed -n '120,720p' file` prints the whole
+600-line window into the transcript, and every later request in the session
+re-sends it. Measured over 24 h (2,903 calls, 291 MB of context exposure):
+single-range slices that print at least 8 KiB are **14 calls, 164 kB of text,
+4.8 % of all exposure**, because they tend to land early in long sessions.
+
+For exactly those calls the bounded reader is smaller. Same file, same ranges:
+`120,520p` is 14,713 B with `sed` and 8,240 B through `code/slice.py`, whose
+`--max-bytes` cap (8 KiB default) stops the text with a footer naming the line
+to continue from. Under the cap `slice.py` is *larger* than `sed` (it prefixes
+every line), which is why this guard never counts a read that fits the cap.
+
+`block_bad_cmd_slice.rs` predicts the printed size from the file itself, counts
+oversized reads per session and, past the limit, refuses the next **distinct**
+one once with the exact replacement for the range it named:
+
+```text
+clud tool run code/slice.py /w/a.rs --lines 300-900
+```
+
+- Only a command whose `sed` reads name **one** range is counted; multi-range
+  calls belong to the hunt guard, so no call is billed twice.
+- Targets must exist, carry a source extension and be at least 8 KiB; logs and
+  data files are never counted. Segments with a pipe, a redirect or `sed -i`
+  are bounded or writes and pass untouched.
+- A retry of the **identical** read is allowed: refusals are recorded by range
+  signature, so the guard can never wedge a session.
+- **Limit:** `N = 2` oversized reads per session, reset after an hour without
+  one. `CLUD_SLICE_BUDGET_LIMIT=<n>` overrides it and `0` turns the guard off.
+  `CLUD_ALLOW_SLICE_BUDGET=1` in a command runs one read deliberately (logged).
+- **State:** `<clud state dir>/read-slice-guard/<hash>.json`, one file per
+  session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
+  on every state, parse or stat error.
+
 ### Unchanged-re-read guard (#2233)
 
 A `Read` that repeats a call already made in this session — same path, same

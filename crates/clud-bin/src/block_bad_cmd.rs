@@ -606,6 +606,37 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: one `sed -n A,Bp` range that would print more than the bounded
+    // reader's cap lands all of it in the transcript, where every later request
+    // re-sends it. Past a few per session the next distinct oversized read is
+    // refused once with the exact `code/slice.py` call for the range it named.
+    // Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_slice::opts_out(
+            payload
+                .tool_input
+                .as_ref()
+                .and_then(|input| input.get("command"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ) {
+            append_log(&format!(
+                "READ-SLICE-GUARD-OVERRIDE: {} in command: read-slice guard bypassed for tool_name={:?}",
+                block_bad_cmd_slice::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_slice::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            append_log(&format!("READ-SLICE-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
     // #2233: a Read of a file whose bytes are unchanged since the same read in
     // this session returns nothing new, and every later request pays for it
     // again. Refused with the bounded alternatives named; fails open.
@@ -4018,6 +4049,8 @@ mod block_bad_cmd_hop;
 mod block_bad_cmd_hunt;
 #[path = "block_bad_cmd_reread.rs"]
 mod block_bad_cmd_reread;
+#[path = "block_bad_cmd_slice.rs"]
+mod block_bad_cmd_slice;
 
 #[path = "block_bad_cmd_imgview.rs"]
 mod block_bad_cmd_imgview;
