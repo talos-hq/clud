@@ -318,14 +318,31 @@ pub fn reconcile_cli(policy: &EnvPolicy, cli: Option<ModelProvider>) -> Result<(
     }
 }
 
-/// The final gate on a resolved launch: whatever selected it, a metered
-/// provider is reached only with the environment's consent for exactly it.
+/// Whether the user named this metered provider themselves on the command
+/// line (`--openrouter`, `--deepseek`, `--kimi`, `--provider <p>`). Naming it
+/// is consent: the gate exists to stop *implicit* routes (a saved setting, a
+/// provider inferred from `--model`, a credential fallback, failover) from
+/// silently moving a subscription user onto API billing.
+pub fn explicitly_selected_metered(
+    provider: ModelProvider,
+    explicit_cli: Option<ModelProvider>,
+) -> bool {
+    is_metered(provider) && explicit_cli == Some(provider)
+}
+
+/// The final gate on a resolved launch: a metered provider is reached only
+/// when the user named it on the command line or the environment consents to
+/// exactly it.
 pub fn enforce_resolved(
     policy: &EnvPolicy,
     provider: ModelProvider,
+    explicit_cli: Option<ModelProvider>,
     failover_allow_metered: bool,
 ) -> Result<(), PolicyError> {
-    if is_metered(provider) && !policy.allows(provider) {
+    if is_metered(provider)
+        && !policy.allows(provider)
+        && !explicitly_selected_metered(provider, explicit_cli)
+    {
         return Err(PolicyError::ResolvedMeteredWithoutConsent(provider));
     }
     if failover_allow_metered && policy.consented.is_empty() {
@@ -346,6 +363,15 @@ pub fn metered_warning(provider: ModelProvider) -> String {
          [clud] WARNING: this launch uses pay-per-token API billing, not your subscription.\n\
          [clud] WARNING: enabled by CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER={provider}.\n\
          [clud] WARNING: unset both (and CLUD_PROVIDER) to return to your subscription."
+    )
+}
+
+/// The warning for a metered provider the user named on the command line.
+pub fn explicit_metered_warning(provider: ModelProvider) -> String {
+    format!(
+        "[clud] WARNING: METERED PROVIDER IN USE: {provider}\n\
+     [clud] WARNING: this launch uses pay-per-token API billing, not your subscription.\n\
+     [clud] WARNING: selected explicitly with --{provider}."
     )
 }
 
