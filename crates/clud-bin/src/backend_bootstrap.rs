@@ -651,14 +651,13 @@ pub(crate) fn run_verified_codex_installer_with_parent_env(
 fn run_backend_installer(spec: &BackendInstallSpec) -> Result<(), String> {
     match spec.installer {
         InstallerPlan::TrustedCodex => trusted_codex_update(),
-        InstallerPlan::PosixShell { command } => run_interactive_command(
-            CommandSpec::Argv(vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                command.to_string(),
-            ]),
-            None,
-        ),
+        InstallerPlan::PosixShell { command } => match run_posix_installer(command, None) {
+            Err(first) if spec.backend == Backend::Claude => install_claude_in_temp_home(command)
+                .map_err(|second| {
+                    format!("{first}; retrying with a temporary install home also failed: {second}")
+                }),
+            other => other,
+        },
         InstallerPlan::WindowsPowerShell {
             command,
             cmd_fallback,
@@ -666,6 +665,55 @@ fn run_backend_installer(spec: &BackendInstallSpec) -> Result<(), String> {
         InstallerPlan::ManagedDsh => {
             let home = crate::dsh_harness::managed_home().ok_or("home directory unavailable")?;
             crate::dsh_harness::install(&home).map(|_| ())
+        }
+    }
+}
+
+fn run_posix_installer(
+    command: &'static str,
+    env: Option<Vec<(String, String)>>,
+) -> Result<(), String> {
+    run_interactive_command_with_env(
+        CommandSpec::Argv(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            command.to_string(),
+        ]),
+        None,
+        env,
+    )
+}
+
+/// The home volume of a live USB is too small for Claude Code; rerun the
+/// installer with `HOME` in the (usually RAM-backed) temp dir and link the
+/// binary back. See `claude_temp_home_install`.
+fn install_claude_in_temp_home(command: &'static str) -> Result<(), String> {
+    use crate::claude_temp_home_install as temp_install;
+    let real_home = crate::home::user_home().ok_or("home directory unavailable")?;
+    let temp_home = temp_install::create_temp_home()?;
+    eprintln!(
+        "[clud] Claude Code install failed in {}; retrying with a temporary install home at {}",
+        real_home.display(),
+        temp_home.display()
+    );
+    let parent: Vec<_> = std::env::vars().collect();
+    let installed = run_posix_installer(
+        command,
+        Some(temp_install::installer_env(&parent, &temp_home)),
+    )
+    .and_then(|()| temp_install::finish(&temp_home, &real_home));
+    match installed {
+        Ok(done) => {
+            eprintln!(
+                "[clud] installed Claude Code at {} (linked from {}); it lives in RAM-backed temp space and is lost on reboot",
+                done.binary.display(),
+                done.link.display()
+            );
+            Ok(())
+        }
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&temp_home);
+            Err(err)
         }
     }
 }
@@ -723,10 +771,18 @@ fn run_windows_cmd_installer(command: &'static str, backend: Backend) -> Result<
 }
 
 fn run_interactive_command(command: CommandSpec, cwd: Option<PathBuf>) -> Result<(), String> {
+    run_interactive_command_with_env(command, cwd, None)
+}
+
+fn run_interactive_command_with_env(
+    command: CommandSpec,
+    cwd: Option<PathBuf>,
+    env: Option<Vec<(String, String)>>,
+) -> Result<(), String> {
     let process = NativeProcess::new(ProcessConfig {
         command,
         cwd,
-        env: None,
+        env,
         capture: false,
         stderr_mode: StderrMode::Stdout,
         creationflags: None,
