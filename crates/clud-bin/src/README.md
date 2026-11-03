@@ -645,6 +645,10 @@ which test tier a change belongs in — lives in
   command by how much restating it needs; `gate_replay.rs` and the
   `clud-bench-gate-replay` bench binary use it to measure the gate's cost
   over recorded transcripts (#1067 step 2).
+- `gate/` - `clud gate lint|test|both`: detects Rust, Python and JavaScript tools,
+  streams per-element logs to `~/.clud/gate/<run-id>/`, ranks diagnostics and emits
+  one compact JSON object. `both` fails fast by default; `--no-fast-fail` continues.
+  Green results use `passed_elements` with an empty `elements` list.
 - `gate_replay.rs` - content-safe aggregation for that replay: extracts Bash
   commands from Claude Code transcript lines and counts gate classes, never
   command text.

@@ -1,0 +1,5 @@
+# t0=2026-11-03
+ --> src/main.rs:4:5
+error: could not compile fixture
+error[E0308]: mismatched types
+ --> src/main.rs:4:5

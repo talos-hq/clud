@@ -1,0 +1,3 @@
+# t0=2026-11-03
+src/example.py:4:7: F821 Undefined name `missing`
+Found 1 error.

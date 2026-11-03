@@ -1,0 +1,3 @@
+================= FAILURES =================
+E       AssertionError: assert 1 == 2
+tests/test_example.py:12: AssertionError

@@ -278,6 +278,11 @@ fn session_stats(session: Option<&str>) -> i32 {
 
 fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
     let code = match cmd? {
+        args::Command::Gate {
+            lane,
+            repo,
+            no_fast_fail,
+        } => clud::gate::run(*lane, repo, *no_fast_fail),
         // #1189: Claude Code runs `clud statusline` as its statusLine command
         // every couple of seconds. Like `clud tool`, it must not touch the daemon,
         // the runtime cache, or any launch machinery.
