@@ -1047,7 +1047,8 @@ fn build_launch_plan_for_target_at(
     // was requested explicitly.
     let stream_json_progress =
         matches!(backend, Backend::Claude) && is_loop_cmd && launch_mode == LaunchMode::Subprocess;
-    let prompt_summary = !is_loop_cmd
+    let prompt_summary = !crate::daemon::experimental_enabled(args)
+        && !is_loop_cmd
         && headless
         && launch_mode == LaunchMode::Subprocess
         && crate::prompt_output::configure_command(&mut cmd, backend, &args.passthrough);

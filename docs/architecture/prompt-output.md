@@ -4,7 +4,9 @@ Ordinary subprocess `clud -p` turns for the Claude and Codex harnesses use
 native JSONL events internally and render compact classified activity on stderr.
 The complete final answer is written once to stdout, so piping the answer still
 works. Interactive/explicit PTY launches, loop rendering, daemon event storage,
-and other harnesses retain their respective protocols.
+and other harnesses retain their respective protocols. The canonical daemon
+mode selector excludes managed/detached/transcript launches from automatic
+foreground JSONL injection, including its environment override.
 
 Examples in a Unicode terminal:
 

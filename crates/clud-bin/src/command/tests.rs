@@ -1065,3 +1065,24 @@ fn flag_shaped_literal_prompts_are_not_native_output_requests() {
         assert!(p.prompt_summary, "{:?}", p.command);
     }
 }
+
+#[test]
+fn managed_print_sessions_keep_their_native_log_protocol() {
+    for backend in ["--claude", "--codex"] {
+        for managed in [
+            "--detach",
+            "--detachable",
+            "--experimental-daemon-centralized",
+        ] {
+            let p = plan(&["clud", backend, managed, "-p", "hello"]);
+            assert!(!p.prompt_summary, "{:?}", p.command);
+            assert!(
+                !p.command
+                    .iter()
+                    .any(|arg| arg == "--json" || arg == "stream-json"),
+                "{:?}",
+                p.command
+            );
+        }
+    }
+}

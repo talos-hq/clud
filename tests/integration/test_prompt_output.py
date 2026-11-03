@@ -439,3 +439,20 @@ def test_each_tool_result_counts_text_blocks_separately(
     assert result.returncode == 0, result.stderr
     name = "Read" if backend == "claude" else "files/read"
     assert f"{name}: 4 output lines" in result.stderr
+
+
+@pytest.mark.parametrize("backend", ["claude", "codex"])
+def test_daemon_environment_override_does_not_inject_foreground_protocol(
+    clud_binary: Path, mock_env: dict[str, str], backend: str
+) -> None:
+    result = process.run(
+        [str(clud_binary), f"--{backend}", "--dry-run", "-p", "hello"],
+        env={**mock_env, "CLUD_EXPERIMENTAL_DAEMON": "1"},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    command = json.loads(result.stdout)["command"]
+    assert "--json" not in command
+    assert "stream-json" not in command
