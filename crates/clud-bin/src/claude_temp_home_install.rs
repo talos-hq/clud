@@ -11,6 +11,10 @@
 //! `HOME`; the login and settings stay under the real `~/.claude`.
 
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+/// Name prefix of every temp install home clud creates.
+pub const TEMP_HOME_PREFIX: &str = "clud-claude-home-";
 
 /// Where the fallback install put the binary and the link clud resolves.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44,10 +48,72 @@ pub fn installed_warning(done: &TempHomeInstall) -> String {
 /// It is kept on purpose: the installed binary lives there.
 pub fn create_temp_home() -> Result<PathBuf, String> {
     tempfile::Builder::new()
-        .prefix("clud-claude-home-")
+        .prefix(TEMP_HOME_PREFIX)
         .tempdir_in(std::env::temp_dir())
         .map(tempfile::TempDir::keep)
         .map_err(|err| format!("cannot create a temporary install home: {err}"))
+}
+
+/// `<temp_home>/.local/bin/claude`, where the native installer puts the binary.
+pub fn binary_in(temp_home: &Path) -> PathBuf {
+    temp_home.join(".local").join("bin").join("claude")
+}
+
+/// Find a Claude Code binary in a temp install home under the system temp
+/// dir, for when `~/.local/bin/claude` is missing. POSIX only: the fallback
+/// never runs on Windows.
+pub fn discover() -> Option<PathBuf> {
+    if crate::platform::host::WINDOWS {
+        return None;
+    }
+    discover_in(&std::env::temp_dir())
+}
+
+/// The newest `<temp_root>/clud-claude-home-*/.local/bin/claude`. The temp
+/// root is shared, so a home counts only when it is a real directory owned
+/// by this user and writable by no one else; anything another user planted
+/// is ignored.
+pub fn discover_in(temp_root: &Path) -> Option<PathBuf> {
+    let mut newest: Option<(SystemTime, PathBuf)> = None;
+    for entry in std::fs::read_dir(temp_root).ok()?.flatten() {
+        if !entry
+            .file_name()
+            .to_string_lossy()
+            .starts_with(TEMP_HOME_PREFIX)
+        {
+            continue;
+        }
+        let home = entry.path();
+        let Ok(meta) = home.symlink_metadata() else {
+            continue;
+        };
+        if !meta.is_dir() || !crate::platform::self_install::user_controlled_dir(&meta) {
+            continue;
+        }
+        let binary = binary_in(&home);
+        let Ok(binary_meta) = binary.metadata() else {
+            continue;
+        };
+        if !binary_meta.is_file() {
+            continue;
+        }
+        let modified = binary_meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+        if newest.as_ref().is_none_or(|(best, _)| modified > *best) {
+            newest = Some((modified, binary));
+        }
+    }
+    newest.map(|(_, binary)| binary)
+}
+
+/// The temp install home `binary` really lives in (after following links),
+/// or `None` for an ordinary install.
+pub fn temp_home_of(binary: &Path) -> Option<PathBuf> {
+    let binary = std::fs::canonicalize(binary).ok()?;
+    let temp_root = std::fs::canonicalize(std::env::temp_dir()).ok()?;
+    let first = binary.strip_prefix(&temp_root).ok()?.components().next()?;
+    let name = first.as_os_str().to_string_lossy();
+    name.starts_with(TEMP_HOME_PREFIX)
+        .then(|| temp_root.join(first.as_os_str()))
 }
 
 /// The parent environment with `HOME` replaced by `temp_home`.
@@ -64,7 +130,7 @@ pub fn installer_env(parent: &[(String, String)], temp_home: &Path) -> Vec<(Stri
 /// After the installer succeeded under `temp_home`, drop its download cache
 /// (it costs RAM on tmpfs) and link the binary to `<real_home>/.local/bin`.
 pub fn finish(temp_home: &Path, real_home: &Path) -> Result<TempHomeInstall, String> {
-    let binary = temp_home.join(".local").join("bin").join("claude");
+    let binary = binary_in(temp_home);
     if !binary.is_file() {
         return Err(format!(
             "the installer finished but left no binary at {}",
@@ -116,6 +182,48 @@ mod tests {
                 assert!(warning.contains(path), "{warning}");
             }
         }
+    }
+
+    fn plant_binary(home: &Path) -> PathBuf {
+        let binary = binary_in(home);
+        std::fs::create_dir_all(binary.parent().unwrap()).unwrap();
+        std::fs::write(&binary, b"bin").unwrap();
+        binary
+    }
+
+    #[test]
+    fn discover_finds_a_private_temp_home_and_ignores_others() {
+        if crate::platform::host::WINDOWS {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let ours = tempfile::Builder::new()
+            .prefix(TEMP_HOME_PREFIX)
+            .tempdir_in(root.path())
+            .unwrap();
+        let binary = plant_binary(ours.path());
+        // Unrelated name, and a home with no binary: both ignored.
+        plant_binary(&root.path().join("someone-else"));
+        std::fs::create_dir(root.path().join(format!("{TEMP_HOME_PREFIX}empty"))).unwrap();
+        assert_eq!(discover_in(root.path()), Some(binary));
+    }
+
+    #[test]
+    fn discover_ignores_a_temp_home_others_can_write() {
+        if crate::platform::host::WINDOWS {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let shared = root.path().join(format!("{TEMP_HOME_PREFIX}shared"));
+        plant_binary(&shared);
+        crate::platform::shim_fs::set_mode(&shared, 0o777).unwrap();
+        assert_eq!(discover_in(root.path()), None);
+    }
+
+    #[test]
+    fn discover_returns_none_without_any_temp_home() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(discover_in(root.path()), None);
     }
 
     #[test]
