@@ -1,4 +1,4 @@
-//! Oversized single-range shell read guard (#2233).
+//! Oversized shell read guard: one wide `sed` range, or a whole-file `cat` (#2233).
 //!
 //! The read-hunt guard (`block_bad_cmd_hunt`) covers one call that names several
 //! disjoint ranges. The other half of the `sed` habit is a *single* wide range:
@@ -8,6 +8,14 @@
 //! exposure): single-range slices that print at least 8 KiB are only 14 calls
 //! but 164 kB of text and **4.8 % of all exposure**, because they land early in
 //! long sessions.
+//!
+//! The same budget covers the other half of the habit, which no guard saw before:
+//! `cat some_doc.md` prints a whole file and, unlike `sed`, `cat` has no range to
+//! bound. Measured over the same 24 h and weighted by the requests that later
+//! re-sent each result, whole-file `cat` of a source or doc file is the largest
+//! unguarded read shape left (e.g. `cat docs/handoffs/<date>.md`, 12,292 B early
+//! in a long session). `cat` is sized exactly from the file metadata, so the
+//! decision costs no read.
 //!
 //! For exactly those calls the bounded reader is provably smaller: `code/slice.py`
 //! stops at its `--max-bytes` cap (8 KiB default) and its footer names the line
@@ -41,7 +49,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::block_bad_cmd_hunt::{hunt_ranges, Range};
+use super::block_bad_cmd_hunt::{hunt_ranges, is_source_file, plausible_path, program, Range};
 
 /// Oversized single-range reads allowed per session before the next distinct
 /// one is refused.
@@ -55,6 +63,10 @@ pub(super) const MIN_FILE_BYTES: u64 = 8 * 1024;
 pub(super) const CAP_BYTES: u64 = 8 * 1024;
 /// Files larger than this are not scanned to predict the printed size.
 const MAX_SCAN_BYTES: u64 = 4 * 1024 * 1024;
+/// Floor for one file inside a whole-file `cat`: the *total* is what the guard
+/// charges against [`CAP_BYTES`], so three 4 KiB docs are as expensive as one
+/// 12 KiB file and must count the same.
+const CAT_MIN_FILE_BYTES: u64 = 1024;
 /// Per-call override, written into the command.
 pub(super) const ALLOW_TOKEN: &str = "CLUD_ALLOW_SLICE_BUDGET=1";
 /// Session-wide limit override; `0` disables the guard.
@@ -93,6 +105,12 @@ pub(super) struct State {
     /// Signature -> refusal time. A retry of a refused read is allowed.
     #[serde(default)]
     pub refused: BTreeMap<String, u64>,
+    /// Oversized whole-file `cat` reads, counted separately from ranged reads.
+    #[serde(default)]
+    pub cats: u32,
+    /// Signature -> refusal time for whole-file reads.
+    #[serde(default)]
+    pub refused_cats: BTreeMap<String, u64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -131,20 +149,19 @@ pub(super) fn decide(
 /// Drop expired refusals, then the oldest ones so one long session cannot grow
 /// the state file without bound.
 fn trim(state: &mut State, now: u64) {
-    state
-        .refused
-        .retain(|_, at| now.saturating_sub(*at) <= RESET_SECS);
-    while state.refused.len() > 16 {
-        let oldest = state
-            .refused
-            .iter()
-            .min_by_key(|(_, at)| **at)
-            .map(|(key, _)| key.clone());
-        match oldest {
-            Some(key) => {
-                state.refused.remove(&key);
+    for refused in [&mut state.refused, &mut state.refused_cats] {
+        refused.retain(|_, at| now.saturating_sub(*at) <= RESET_SECS);
+        while refused.len() > 16 {
+            let oldest = refused
+                .iter()
+                .min_by_key(|(_, at)| **at)
+                .map(|(key, _)| key.clone());
+            match oldest {
+                Some(key) => {
+                    refused.remove(&key);
+                }
+                None => break,
             }
-            None => break,
         }
     }
 }
@@ -327,11 +344,18 @@ pub(super) fn reason(
     if opts_out(command) {
         return None;
     }
-    let slice = detect(command, cwd)?;
     let state_dir = crate::daemon::default_state_dir().ok()?;
-    match check_at(&state_dir, session_id, &slice, now_secs(), limit) {
-        Verdict::Allow => None,
-        Verdict::Deny { slice, count } => Some(deny_message(&slice, count, limit)),
+    let now = now_secs();
+    if let Some(slice) = detect(command, cwd) {
+        return match check_at(&state_dir, session_id, &slice, now, limit) {
+            Verdict::Allow => None,
+            Verdict::Deny { slice, count } => Some(deny_message(&slice, count, limit)),
+        };
+    }
+    let whole = detect_whole(command, cwd)?;
+    match check_whole_at(&state_dir, session_id, &whole, now, limit) {
+        CatVerdict::Allow => None,
+        CatVerdict::Deny { whole, count } => Some(whole_message(&whole, count, limit)),
     }
 }
 
@@ -348,6 +372,164 @@ pub(super) fn deny_message(slice: &Slice, count: u32, limit: u32) -> String {
         path = slice.path,
         start = slice.start,
         end = slice.end,
+    )
+}
+
+/// One whole-file read a command asks for: every source file it `cat`s and the
+/// text that would land in the transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct WholeRead {
+    pub paths: Vec<String>,
+    pub bytes: u64,
+}
+
+impl WholeRead {
+    /// Stable identity for "this exact read", so a forced retry passes.
+    fn signature(&self) -> String {
+        let digest = Sha256::digest(format!("{HASH_DOMAIN}cat\0{}", self.paths.join("\0")));
+        digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// The first file named: the one the advice points at.
+    fn first(&self) -> &str {
+        self.paths.first().map_or("", String::as_str)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum CatVerdict {
+    Allow,
+    Deny { whole: WholeRead, count: u32 },
+}
+
+/// The whole-file decision table. Mirrors [`decide`] but counts a separate
+/// habit, so a session that reads wide `sed` ranges still gets the full
+/// allowance for whole-file `cat`.
+pub(super) fn decide_whole(
+    previous: Option<&State>,
+    whole: &WholeRead,
+    now: u64,
+    limit: u32,
+) -> (CatVerdict, State) {
+    let mut state = previous.cloned().unwrap_or_default();
+    if now.saturating_sub(state.last) > RESET_SECS {
+        state = State::default();
+    }
+    let signature = whole.signature();
+    state.cats = state.cats.saturating_add(1);
+    state.last = now;
+    let mut verdict = CatVerdict::Allow;
+    if limit > 0 && state.cats > limit && !state.refused_cats.contains_key(&signature) {
+        state.refused_cats.insert(signature, now);
+        verdict = CatVerdict::Deny {
+            whole: whole.clone(),
+            count: state.cats,
+        };
+    }
+    trim(&mut state, now);
+    (verdict, state)
+}
+
+/// The whole-file read this command is, or `None` when it does not qualify.
+///
+/// Only `cat` segments count, only plain source/doc paths, and each file must
+/// exist at [`CAT_MIN_FILE_BYTES`]..[`MAX_SCAN_BYTES`] with the segment total
+/// reaching [`CAP_BYTES`]. Any segment with a pipe or a
+/// redirect is bounded or a write and is skipped. A command the hunt guard owns
+/// (two or more ranged reads) is left to it, so no call is counted twice.
+pub(super) fn detect_whole(command: &str, cwd: &Path) -> Option<WholeRead> {
+    if hunt_ranges(command).len() >= 2 {
+        return None;
+    }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let mut paths: Vec<String> = Vec::new();
+    let mut bytes: u64 = 0;
+    for segment in command.split([';', '&', '\n']) {
+        let tokens: Vec<&str> = segment.split_whitespace().collect();
+        if tokens.is_empty()
+            || segment.contains('|')
+            || segment.contains('>')
+            || program(tokens[0]) != "cat"
+        {
+            continue;
+        }
+        let mut segment_bytes: u64 = 0;
+        let mut segment_paths: Vec<String> = Vec::new();
+        let mut eligible = true;
+        for token in &tokens[1..] {
+            if token.starts_with('-') {
+                continue;
+            }
+            let token = token.trim_matches(|c| c == '"' || c == '\'');
+            if !plausible_path(token) || !is_source_file(token) {
+                eligible = false;
+                break;
+            }
+            let Some(path) = resolve(token, cwd, home.as_deref()) else {
+                eligible = false;
+                break;
+            };
+            let Ok(meta) = std::fs::metadata(&path) else {
+                eligible = false;
+                break;
+            };
+            if !meta.is_file() || meta.len() < CAT_MIN_FILE_BYTES || meta.len() > MAX_SCAN_BYTES {
+                eligible = false;
+                break;
+            }
+            segment_bytes = segment_bytes.saturating_add(meta.len());
+            segment_paths.push(path.to_string_lossy().into_owned());
+        }
+        if !eligible || segment_paths.is_empty() {
+            continue;
+        }
+        bytes = bytes.saturating_add(segment_bytes);
+        paths.extend(segment_paths);
+    }
+    (bytes >= CAP_BYTES && !paths.is_empty()).then_some(WholeRead { paths, bytes })
+}
+
+/// Compare-and-decide a whole-file read against the persisted session state.
+/// Any filesystem error allows the call.
+pub(super) fn check_whole_at(
+    state_dir: &Path,
+    session_id: &str,
+    whole: &WholeRead,
+    now: u64,
+    limit: u32,
+) -> CatVerdict {
+    let path = session_file(state_dir, session_id);
+    let existing = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<State>(&text).ok());
+    let (verdict, state) = decide_whole(existing.as_ref(), whole, now, limit);
+    let Ok(bytes) = serde_json::to_vec(&state) else {
+        return CatVerdict::Allow;
+    };
+    if existing.is_none() {
+        if std::fs::create_dir_all(state_dir.join(DIR_NAME)).is_err() {
+            return CatVerdict::Allow;
+        }
+        prune(&state_dir.join(DIR_NAME), SystemTime::now());
+    }
+    if std::fs::write(&path, bytes).is_err() {
+        return CatVerdict::Allow;
+    }
+    verdict
+}
+
+pub(super) fn whole_message(whole: &WholeRead, count: u32, limit: u32) -> String {
+    format!(
+        "[clud read-cat-guard] this `cat` would print {bytes} B from {files} file(s) into the \
+         transcript, and every later request in this session re-sends it. This session has \
+         already made {count} oversized whole-file reads (limit {limit}). Read only what you \
+         need: `clud tool run code/outline.py -- {path}` lists every definition and heading \
+         with its line range, then `clud tool run code/slice.py {path} --lines A-B` prints that \
+         range byte-capped with a footer naming the line to continue from. For a first look use \
+         `head -n 80 {path}`. To run this call as written, prefix it with `{ALLOW_TOKEN}`.",
+        bytes = whole.bytes,
+        files = whole.paths.len(),
+        path = whole.first(),
     )
 }
 

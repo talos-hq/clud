@@ -254,3 +254,172 @@ fn check_at_counts_across_calls_and_refuses_the_third_distinct_read() {
     );
     assert!(second.path.ends_with("walk.rs") && path.ends_with("walk.rs"));
 }
+
+// ---- whole-file `cat` budget -------------------------------------------------
+
+fn whole_for(paths: &[&str], bytes: u64) -> WholeRead {
+    WholeRead {
+        paths: paths.iter().map(|p| (*p).to_string()).collect(),
+        bytes,
+    }
+}
+
+#[test]
+fn a_whole_file_cat_is_sized_from_the_file_not_guessed() {
+    let dir = tempdir().expect("dir");
+    let path = source(dir.path(), "handoff.md", 300, 60);
+    let whole = detect_whole("cat handoff.md", dir.path()).expect("detected");
+    assert_eq!(whole.bytes, std::fs::metadata(&path).expect("meta").len());
+    assert_eq!(whole.paths, vec![path.to_string_lossy().into_owned()]);
+}
+
+#[test]
+fn a_small_cat_is_left_alone() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "tiny.md", 20, 40);
+    assert!(detect_whole("cat tiny.md", dir.path()).is_none());
+}
+
+#[test]
+fn several_small_cats_that_add_up_are_one_oversized_read() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "a.md", 80, 60);
+    source(dir.path(), "b.md", 80, 60);
+    let whole = detect_whole("cat a.md b.md", dir.path()).expect("detected");
+    assert_eq!(whole.paths.len(), 2);
+    assert!(whole.bytes >= CAP_BYTES);
+}
+
+#[test]
+fn cat_with_a_pipe_redirect_or_glob_passes_untouched() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "doc.md", 300, 60);
+    assert!(detect_whole("cat doc.md | head -20", dir.path()).is_none());
+    assert!(detect_whole("cat doc.md > /tmp/out.txt", dir.path()).is_none());
+    assert!(detect_whole("cat *.md", dir.path()).is_none());
+}
+
+#[test]
+fn cat_of_logs_data_and_missing_files_is_never_counted() {
+    let dir = tempdir().expect("dir");
+    let log = dir.path().join("run.log");
+    std::fs::write(&log, "x".repeat(64 * 1024)).expect("fixture");
+    assert!(detect_whole("cat run.log", dir.path()).is_none());
+    assert!(detect_whole("cat missing.md", dir.path()).is_none());
+    assert!(detect_whole("cat /etc/hosts", dir.path()).is_none());
+}
+
+#[test]
+fn a_multi_range_sed_call_is_left_to_the_hunt_guard() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "wide.rs", 900, 60);
+    assert!(
+        detect_whole(
+            "sed -n '1,300p' wide.rs; sed -n '400,700p' wide.rs",
+            dir.path()
+        )
+        .is_none(),
+        "the hunt guard owns two or more ranged reads"
+    );
+}
+
+#[test]
+fn distinct_whole_file_cats_are_refused_once_past_the_limit_and_a_retry_passes() {
+    let whole = whole_for(&["/w/doc.md"], 12_000);
+    let mut state: Option<State> = None;
+    let mut verdicts = Vec::new();
+    for index in 0..(LIMIT + 3) {
+        let (verdict, next) = decide_whole(state.as_ref(), &whole, 1_000 + u64::from(index), LIMIT);
+        verdicts.push(verdict != CatVerdict::Allow);
+        state = Some(next);
+    }
+    assert_eq!(verdicts, vec![false, false, true, false, false]);
+}
+
+#[test]
+fn whole_file_and_ranged_reads_keep_separate_counts() {
+    let dir = tempdir().expect("dir");
+    let path = source(dir.path(), "mix.rs", 900, 60);
+    let ranged = detect("sed -n '1,400p' mix.rs", dir.path()).expect("ranged");
+    let whole = whole_for(&[path.to_string_lossy().as_ref()], 9_000);
+    let mut state: Option<State> = None;
+    for index in 0..(2 * LIMIT) {
+        let (_, next) = decide(state.as_ref(), &ranged, 1_000 + u64::from(index), LIMIT);
+        state = Some(next);
+    }
+    let (verdict, _) = decide_whole(state.as_ref(), &whole, 2_000, LIMIT);
+    assert_eq!(
+        verdict,
+        CatVerdict::Allow,
+        "a wide ranged habit does not spend the whole-file allowance"
+    );
+}
+
+#[test]
+fn a_limit_of_zero_disables_the_whole_file_guard() {
+    let whole = whole_for(&["/w/doc.md"], 12_000);
+    let mut state: Option<State> = None;
+    for index in 0..8_u64 {
+        let (verdict, next) = decide_whole(state.as_ref(), &whole, 1_000 + index, 0);
+        assert_eq!(verdict, CatVerdict::Allow);
+        state = Some(next);
+    }
+}
+
+#[test]
+fn the_whole_file_refusal_names_the_outline_and_slice_commands() {
+    let whole = whole_for(&["/repo/docs/handoff.md"], 12_292);
+    let message = whole_message(&whole, 3, LIMIT);
+    assert!(message.contains("read-cat-guard"));
+    assert!(message.contains("12292 B"));
+    assert!(message.contains("code/outline.py -- /repo/docs/handoff.md"));
+    assert!(message.contains("code/slice.py /repo/docs/handoff.md"));
+    assert!(message.contains("--lines A-B"));
+    assert!(message.contains("head -n 80"));
+    assert!(message.contains(ALLOW_TOKEN));
+    assert!(message.contains("already made 3 oversized whole-file reads"));
+}
+
+#[test]
+fn check_whole_at_counts_across_calls_and_refuses_the_third_distinct_read() {
+    let dir = tempdir().expect("dir");
+    let first = whole_for(&["/w/a.md"], 9_000);
+    let second = whole_for(&["/w/b.md"], 9_000);
+    let third = whole_for(&["/w/c.md"], 9_000);
+    assert_eq!(
+        check_whole_at(dir.path(), "s1", &first, 1_000, LIMIT),
+        CatVerdict::Allow
+    );
+    assert_eq!(
+        check_whole_at(dir.path(), "s1", &second, 1_001, LIMIT),
+        CatVerdict::Allow
+    );
+    assert!(matches!(
+        check_whole_at(
+            dir.path(),
+            "s1",
+            &whole_for(&["/w/c.md"], 9_000),
+            1_002,
+            LIMIT
+        ),
+        CatVerdict::Deny { .. }
+    ));
+    assert_eq!(
+        check_whole_at(dir.path(), "s1", &third, 1_003, LIMIT),
+        CatVerdict::Allow,
+        "the retry of the refused read passes"
+    );
+}
+
+#[test]
+fn whole_file_state_errors_fail_open() {
+    let dir = tempdir().expect("dir");
+    let whole = whole_for(&["/w/a.md"], 9_000);
+    std::fs::create_dir_all(dir.path().join(DIR_NAME)).expect("dir");
+    let path = session_file(dir.path(), "s1");
+    std::fs::write(&path, b"{not json").expect("write");
+    assert_eq!(
+        check_whole_at(dir.path(), "s1", &whole, 1_000, 1),
+        CatVerdict::Allow
+    );
+}

@@ -478,7 +478,7 @@ continue from.
   session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
   on every state, parse or stat error.
 
-### Oversized single-range read guard (#2233)
+### Oversized read guard: wide `sed` range and whole-file `cat` (#2233)
 
 The hunt guard covers one call that names several ranges. The other half of the
 `sed` habit is a single wide range: `sed -n '120,720p' file` prints the whole
@@ -514,6 +514,25 @@ clud tool run code/slice.py /w/a.rs --lines 300-900
 - **State:** `<clud state dir>/read-slice-guard/<hash>.json`, one file per
   session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
   on every state, parse or stat error.
+
+**Whole-file `cat` is the same budget** (same file, same state, same limit and
+override knobs). `cat docs/handoffs/<date>.md` prints an entire file and, unlike
+`sed`, offers no range to bound; measured over the same 24 h it is the largest
+unguarded read shape left — **6 calls, 106 kB of text, 14.8 MB of exposure
+(11.6 %)** of a 127 MB run, because a single `cat` lands early and is re-sent by
+every later request.
+
+- Only `cat` segments count. Targets must be plain source/doc paths between
+  1 KiB and 4 MiB, and the segment total must reach 8 KiB, so `cat SPEC.md
+  README.md BLOCKERS.md` counts as one oversized read.
+- A command the hunt guard owns (two or more ranged reads) is skipped, so no
+  call is billed twice; a wide-`sed` habit does not spend the `cat` allowance.
+- The refusal names `code/outline.py` first, then `code/slice.py --lines A-B`,
+  and `head -n 80` for a first look:
+
+```text
+clud tool run code/outline.py -- path/to/file
+```
 
 ### Unchanged-re-read guard (#2233)
 
