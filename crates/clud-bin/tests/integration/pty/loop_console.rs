@@ -4,17 +4,26 @@ use std::time::{Duration, Instant};
 
 use running_process::pty::NativePtyProcess;
 
-fn launch(shell: &str, binary: &Path) -> Vec<String> {
+fn launch(shell: &str, binary: &Path, root: &Path) -> Vec<String> {
     let binary = binary.to_string_lossy();
     let args = "--no-daemon --claude --subprocess loop --loop-count 1 test-dashboard -- --mock-sleep-ms 60000 --mock-started-file backend-started.json";
     match shell {
-        "cmd" => vec![
-            "cmd.exe".into(),
-            "/d".into(),
-            "/s".into(),
-            "/c".into(),
-            format!("\"\"{binary}\" {args}\""),
-        ],
+        "cmd" => {
+            // ConPTY's argv encoder quotes strings for normal Windows argv,
+            // while cmd /c parses a shell command. A relative script avoids
+            // sending nested command quotes through that extra argv layer.
+            std::fs::write(
+                root.join("loop-console.cmd"),
+                format!("@echo off\r\n\"{binary}\" {args}\r\nexit /b %errorlevel%\r\n"),
+            )
+            .unwrap();
+            vec![
+                "cmd.exe".into(),
+                "/d".into(),
+                "/c".into(),
+                "loop-console.cmd".into(),
+            ]
+        }
         "powershell" => vec![
             "powershell.exe".into(),
             "-NoLogo".into(),
@@ -26,7 +35,9 @@ fn launch(shell: &str, binary: &Path) -> Vec<String> {
             ),
         ],
         _ => vec![
-            "bash".into(),
+            super::platform::bash_executable()
+                .to_string_lossy()
+                .into_owned(),
             "--noprofile".into(),
             "--norc".into(),
             "-c".into(),
@@ -120,7 +131,7 @@ fn exercise(shell: &str) {
     let env = isolated_env(root);
     let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
     let process = NativePtyProcess::new(
-        launch(shell, &binary),
+        launch(shell, &binary, root),
         Some(root.to_string_lossy().into_owned()),
         Some(env),
         24,
