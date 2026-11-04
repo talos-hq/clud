@@ -1,9 +1,8 @@
 //! Provider setup (#2219, from #2223): pick OpenRouter, Claude or Codex,
 //! store an OpenRouter key and model, and persist the provider with the
 //! native harness. `clud setup` ([`crate::setup_command`]) is its entry
-//! point. The installer does not chain into it: its fresh-shell activation
-//! probes share the controlling terminal, and a selector opened after them
-//! fails with EIO (#2223 needed an isolated-PTY probe rewrite for that).
+//! point; the native installer reaches it through
+//! [`crate::setup_command::run_provider_step_interactive`].
 
 use std::io::{self, Write};
 use std::path::Path;
