@@ -33,6 +33,9 @@ MAC_SAFARI = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
     "(KHTML, like Gecko) Version/17.4 Safari/605.1.15"
 )
+MAC_FIREFOX = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0"
+)
 CHROME_WIN = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
@@ -67,27 +70,24 @@ DETECTION_TABLE = [
         True,
     ),
     (
-        "macos-apple-silicon-safari-webgl",
-        {"platform": "MacIntel", "userAgent": MAC_SAFARI, "webglRenderer": "Apple GPU"},
+        # Safari and Firefox expose no client hints: a labelled Apple Silicon guess.
+        "macos-safari-no-client-hints-assumes-apple-silicon",
+        {"platform": "MacIntel", "userAgent": MAC_SAFARI},
         "darwin",
         "aarch64",
         True,
     ),
     (
-        "macos-intel-safari-webgl",
-        {
-            "platform": "MacIntel",
-            "userAgent": MAC_SAFARI,
-            "webglRenderer": "Intel(R) Iris(TM) Plus Graphics 655",
-        },
+        "macos-firefox-no-client-hints-assumes-apple-silicon",
+        {"platform": "MacIntel", "userAgent": MAC_FIREFOX},
         "darwin",
-        "x86_64",
+        "aarch64",
         True,
     ),
     (
-        # The frozen "Intel Mac OS X" UA must not be read as an Intel CPU.
-        "macos-arch-unknown",
-        {"platform": "MacIntel", "userAgent": MAC_SAFARI},
+        # A 32-bit hint is a real answer with no binary: never overridden by a guess.
+        "macos-32bit-client-hint-no-guess",
+        {"uaPlatform": "macOS", "uaArch": "x86", "uaBitness": "32", "platform": "MacIntel"},
         "darwin",
         None,
         False,
@@ -282,6 +282,126 @@ def test_detection_table_maps_every_agent_to_the_right_asset_or_none() -> None:
         assert name == expected, case
 
 
+MAC_ASSUMPTION_STATUS = (
+    "Detected: macOS · assuming Apple Silicon (aarch64) — most Macs since 2020."
+)
+
+
+def run_node(program: str, *args: str) -> object:
+    node = shutil.which("node")
+    assert node, "node is required to test the download page's detection script"
+    done = run_process(
+        [node, "-e", program, str(DETECT_JS), *args], capture_output=True, text=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout)
+
+
+def test_detection_marks_only_hintless_macs_as_a_labelled_assumption() -> None:
+    cases = {case: facts for case, facts, *_ in DETECTION_TABLE}
+    names = list(cases)
+    results = dict(zip(names, run_detection([cases[n] for n in names]), strict=True))
+    assumed = {name for name, got in results.items() if got["assumed"]}
+    assert assumed == {
+        "macos-safari-no-client-hints-assumes-apple-silicon",
+        "macos-firefox-no-client-hints-assumes-apple-silicon",
+    }
+    for name in assumed:
+        got = results[name]
+        assert "assuming" in got["label"], name
+        assert "Apple Silicon" in got["label"], name
+        assert got["override"] == {"label": "Switch to Intel.", "os": "darwin", "arch": "x86_64"}
+    # Client hints are a real answer: no assumption, no override.
+    for name in ("macos-apple-silicon-client-hints", "macos-intel-client-hints"):
+        assert results[name]["assumed"] is False, name
+        assert results[name]["override"] is None, name
+        assert "assuming" not in results[name]["label"], name
+    for name in ("junk-agent", "unknown-agent", "iphone-has-no-binary"):
+        assert results[name]["override"] is None, name
+        assert results[name]["recommended"] is False, name
+
+
+FAKE_DOM = r"""
+const d = require(process.argv[1]);
+const rows = JSON.parse(process.argv[2]);
+const facts = JSON.parse(process.argv[3]);
+function el(id) {
+  return { id, hidden: false, textContent: "", href: null, value: "", listeners: {},
+    attrs: {}, addEventListener(t, f) { this.listeners[t] = f; },
+    removeAttribute(n) { if (n === "href") this.href = null; },
+    setAttribute(n, v) { this.attrs[n] = v; } };
+}
+const els = {};
+for (const id of ["platform-select", "recommended", "recommended-name", "detected-text",
+  "arch-override", "copy-one-liner", "one-liner"]) els[id] = el(id);
+els["platform-select"].options = rows.map((r) => ({ value: r.url, textContent: r.filename,
+  dataset: { os: r.os, arch: r.arch, filename: r.filename } }));
+const doc = { getElementById: (id) => els[id] };
+const nav = { platform: facts.platform, userAgent: facts.userAgent, maxTouchPoints: 0 };
+if (facts.uaArch) {
+  nav.userAgentData = { platform: facts.uaPlatform,
+    getHighEntropyValues: () => Promise.resolve({ architecture: facts.uaArch, bitness: "64" }) };
+}
+const snap = () => ({ href: els.recommended.hidden ? null : els.recommended.href,
+  status: els["detected-text"].textContent, override: els["arch-override"].hidden ? null
+    : els["arch-override"].textContent });
+d.start(nav, doc).then(() => {
+  const before = snap();
+  if (!els["arch-override"].hidden) els["arch-override"].listeners.click();
+  console.log(JSON.stringify({ before, after: snap() }));
+});
+"""
+
+
+def page_rows() -> list[dict[str, str]]:
+    base = f"https://github.com/talos-hq/clud/releases/download/{VERSION}"
+    return [
+        {"os": o, "arch": a, "filename": f"clud-{VERSION}-{t}", "url": f"{base}/clud-{VERSION}-{t}"}
+        for (o, a), t in TRIPLES.items()
+    ]
+
+
+def asset_url(os_name: str, arch: str) -> str:
+    triple = TRIPLES[(os_name, arch)]
+    return f"https://github.com/talos-hq/clud/releases/download/{VERSION}/clud-{VERSION}-{triple}"
+
+
+def test_switch_to_intel_override_changes_the_recommended_href() -> None:
+    facts = {"platform": "MacIntel", "userAgent": MAC_SAFARI}
+    got = run_node(FAKE_DOM, json.dumps(page_rows()), json.dumps(facts))
+    assert got["before"]["href"] == asset_url("darwin", "aarch64")
+    assert got["before"]["status"] == MAC_ASSUMPTION_STATUS
+    assert got["before"]["override"] == "Switch to Intel."
+    assert got["after"]["href"] == asset_url("darwin", "x86_64")
+    assert got["after"]["override"] is None
+    assert "Intel (x86_64)" in got["after"]["status"]
+
+
+@pytest.mark.parametrize(
+    ("facts", "expected"),
+    [
+        ({"uaPlatform": "macOS", "uaArch": "arm", "platform": "MacIntel"}, ("darwin", "aarch64")),
+        ({"uaPlatform": "macOS", "uaArch": "x86", "platform": "MacIntel"}, ("darwin", "x86_64")),
+    ],
+)
+def test_user_agent_data_answer_is_used_without_an_override(facts, expected) -> None:
+    got = run_node(FAKE_DOM, json.dumps(page_rows()), json.dumps(facts))
+    assert got["before"]["href"] == asset_url(*expected)
+    assert got["before"]["override"] is None
+    assert "assuming" not in got["before"]["status"]
+
+
+def test_unknown_agent_gets_no_recommendation_and_no_override() -> None:
+    facts = {"platform": "", "userAgent": "curl/8.9.1"}
+    got = run_node(FAKE_DOM, json.dumps(page_rows()), json.dumps(facts))
+    assert got["before"] == {
+        "href": None,
+        "status": "Could not detect a supported system. Choose your download below.",
+        "override": None,
+    }
+
+
+
 class Page(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -322,10 +442,42 @@ def test_page_dropdown_references_every_published_asset_of_the_release() -> None
         "detected",
         "one-liner",
         "copy-one-liner",
+        "detected-text",
+        "arch-override",
+        "recommended-name",
     } <= parsed.ids
     assert "curl -fsSL https://talosbot.ai/clud/install.sh | sh" in page
     assert '<meta name="viewport"' in page
     assert DETECT_JS.read_text(encoding="utf-8").strip() in "".join(parsed.scripts)
+
+
+class Assets(HTMLParser):
+    """Every attribute that makes a browser fetch something to render the page."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fetched: list[str] = []
+
+    def handle_starttag(self, tag, attrs) -> None:
+        values = dict(attrs)
+        for name in ("src", "srcset", "poster", "data"):
+            if values.get(name):
+                self.fetched.append(values[name])
+        if tag == "link" and values.get("href"):
+            self.fetched.append(values["href"])
+
+
+def test_page_is_self_contained_with_no_external_assets() -> None:
+    page = render_page(assets_catalog())
+    parsed = Assets()
+    parsed.feed(page)
+    assert parsed.fetched == []
+    lowered = page.lower()
+    for needle in ("@import", "url(http", "url(//", "@font-face", "fonts.googleapis"):
+        assert needle not in lowered, needle
+    # Styled, responsive and accessible, without a framework or build step.
+    for needle in ("prefers-reduced-motion", ":focus-visible", "@media", "color-scheme:dark"):
+        assert needle in page, needle
 
 
 def test_site_serves_download_page_at_root_and_install_sh(tmp_path) -> None:
