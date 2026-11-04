@@ -5,12 +5,19 @@ dispatch runs before the runtime-cache hop, Windows trampoline, daemon,
 backend, title keeper, and launch setup. The automatic offer is limited to a
 bare, interactive `clud` invocation when no executable named `clud` resolves
 on the effective PATH. `picker.rs` supplies the menu, confirmation, and full
-release-list models to the shared `selector.rs` terminal driver. The automatic
+release-list models (current/latest version summaries and yellow/green ASCII
+arrows) to the shared `selector.rs` terminal driver. The automatic
 menu defaults to **Not now**; the explicit menu defaults to **Install this
 version**. `transaction.rs` builds the read-only plan, verifies the selected
 source, and commits one executable. `activation.rs` builds the read-only
 shell plan shown before consent, updates owned Bash, zsh, or fish startup
 files, and proves fresh login and interactive name-based lookup.
+On Unix, an owned launcher symlink into a user-controlled home directory
+(such as a uv tool launcher) can be replaced with a native executable; its
+package target and hardlinked cache entries are preserved. Prior executables
+are bounded separately at 1 GiB to accommodate debug symbols without raising
+the 256 MiB new-executable limit. Links outside the
+home or through writable directories remain refused.
 The host halves live behind the platform boundary (#1953):
 `platform/unix/self_install_activation.rs` owns the Bash, zsh, and fish
 startup-file edits and fresh-shell proof, and
