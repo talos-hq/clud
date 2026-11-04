@@ -274,23 +274,7 @@ fn commits_are_squash_merged(cwd: &Path) -> bool {
 
     // Every unpushed commit, and the subset reachable from HEAD. `git cherry`
     // speaks only for HEAD, so anything outside it must veto.
-    let Some(all_unpushed) = probe_git(
-        cwd,
-        &[
-            "--no-optional-locks",
-            "--git-dir=.git",
-            "--work-tree=.",
-            "log",
-            if linked_metadata_is_external(cwd) {
-                "HEAD"
-            } else {
-                "--all"
-            },
-            "--not",
-            "--remotes",
-            "--format=%H",
-        ],
-    ) else {
+    let Some(all_unpushed) = unpublished_ref_log(cwd, false) else {
         return false;
     };
     let Some(head_unpushed) = probe_git(
@@ -414,24 +398,7 @@ pub(super) fn git_work_state(cwd: &Path) -> GitWorkState {
     // only expands `refs/heads` and would report such a repo as clean and
     // let it be deleted. With no remotes configured every commit qualifies
     // → HasLocalWork, which is the conservative (spare) answer we want.
-    let Some(unpushed) = probe_git(
-        cwd,
-        &[
-            "--no-optional-locks",
-            "--git-dir=.git",
-            "--work-tree=.",
-            "log",
-            if linked_metadata_is_external(cwd) {
-                "HEAD"
-            } else {
-                "--all"
-            },
-            "--not",
-            "--remotes",
-            "--format=%H",
-            "--max-count=1",
-        ],
-    ) else {
+    let Some(unpushed) = unpublished_ref_log(cwd, true) else {
         return GitWorkState::ProbeFailed;
     };
     if !unpushed.trim().is_empty() {
@@ -494,6 +461,32 @@ fn linked_metadata_is_external(cwd: &Path) -> bool {
         return false;
     };
     gitdir != common && !gitdir.starts_with(&root) && !common.starts_with(&root)
+}
+
+fn unpublished_ref_log(cwd: &Path, first_only: bool) -> Option<String> {
+    let mut args = vec![
+        "--no-optional-locks",
+        "--git-dir=.git",
+        "--work-tree=.",
+        "log",
+    ];
+    if linked_metadata_is_external(cwd) {
+        // These refs live in this worktree's private Git directory and are
+        // removed with it. Shared refs and stash live in the common directory.
+        args.extend([
+            "HEAD",
+            "--glob=refs/worktree/*",
+            "--glob=refs/bisect/*",
+            "--glob=refs/rewritten/*",
+        ]);
+    } else {
+        args.push("--all");
+    }
+    args.extend(["--not", "--remotes", "--format=%H"]);
+    if first_only {
+        args.push("--max-count=1");
+    }
+    probe_git(cwd, &args)
 }
 
 pub(super) fn tracked_source_purge_verdict(
@@ -1021,6 +1014,42 @@ mod tests {
         assert_eq!(git(&repo, &["stash", "list"]), stash);
         assert_eq!(git(&repo, &["rev-parse", "HEAD"]), unrelated_tip);
         assert!(repo.join(".git").is_dir());
+    }
+
+    #[test]
+    fn linked_worktree_preserves_unpublished_private_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        init_repo(&repo);
+        git(&repo, &["commit", "--allow-empty", "-m", "base"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+        git(
+            &repo,
+            &["update-ref", "refs/remotes/origin/main", base.trim()],
+        );
+        let child = tmp.path().join("child");
+        git(
+            &repo,
+            &["worktree", "add", "-b", "child", child.to_str().unwrap()],
+        );
+        git(
+            &child,
+            &["commit", "--allow-empty", "-m", "private unpublished work"],
+        );
+        let private = git(&child, &["rev-parse", "HEAD"]);
+        git(&child, &["reset", "--hard", base.trim()]);
+        for name in [
+            "refs/worktree/private",
+            "refs/bisect/private",
+            "refs/rewritten/private",
+        ] {
+            git(&child, &["update-ref", name, private.trim()]);
+            assert_eq!(git_work_state(&child), GitWorkState::HasLocalWork, "{name}");
+            assert_eq!(git(&child, &["rev-parse", name]).trim(), private.trim());
+            git(&child, &["update-ref", "-d", name]);
+        }
+        assert_eq!(git_work_state(&child), GitWorkState::Clean);
     }
 
     /// Regression guard for the production layout. `.extern-repos/` lives

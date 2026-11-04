@@ -246,7 +246,8 @@ is **an error**, not a fallback — there is no read-only path in v1
   *after* it is first seen clean.
 
   Unverified source rows display `pinned: source verification pending`. Linked worktrees
-  check their own HEAD and dirty/untracked files, rather than every shared branch or
+  check their own HEAD, private `refs/worktree/*`, `refs/bisect/*`, `refs/rewritten/*`
+  references and dirty/untracked files, rather than every shared branch or
   the repository-wide stash. This narrower check requires both their per-worktree Git
   directory and their common Git directory to resolve outside the removed tree.
   Removing such a worktree leaves the shared branches and stash intact. Standalone

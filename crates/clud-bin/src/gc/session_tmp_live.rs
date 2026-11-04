@@ -222,8 +222,35 @@ fn process_paths() -> Option<Vec<PathBuf>> {
             && p.status() != ProcessStatus::Zombie
             && crate::platform::session_tmp_live::verified_desktop_service(p.pid().as_u32()),
     };
-    let procs: Vec<ProcFacts> = system.processes().values().map(facts).collect();
-    paths_from_facts(&facts(me), &procs)
+    let mut blocked = Vec::new();
+    let procs: Vec<ProcFacts> = system
+        .processes()
+        .values()
+        .map(|process| {
+            let fact = facts(process);
+            if fact.same_user
+                && !fact.zombie
+                && !fact.desktop_service
+                && !cwd_available(fact.cwd.as_deref())
+                && fact.environ.is_empty()
+            {
+                blocked.push(format!(
+                    "{} ({})",
+                    process.pid(),
+                    process.name().to_string_lossy()
+                ));
+            }
+            fact
+        })
+        .collect();
+    let own = facts(me);
+    let paths = paths_from_facts(&own, &procs);
+    if paths.is_none() {
+        eprintln!("tmp: liveness census unavailable: own cwd={}, own environment={}; {} unreadable process(es): {}",
+            cwd_available(own.cwd.as_deref()), !own.environ.is_empty(), blocked.len(),
+            blocked.iter().take(8).cloned().collect::<Vec<_>>().join(", "));
+    }
+    paths
 }
 
 /// Ids of sessions the daemon still tracks, from its state directory.
