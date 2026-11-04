@@ -49,26 +49,72 @@ fn read_process(pid: u32) -> Option<Process> {
 
 fn trusted_program(command: &str) -> bool {
     let path = Path::new(command);
-    let Ok(resolved) = path.canonicalize() else {
-        return false;
-    };
     path.is_absolute()
-        && fs::metadata(&resolved).is_ok_and(|meta| meta.is_file())
-        && path
-            .ancestors()
-            .chain(resolved.ancestors())
-            .all(root_controls_entry)
+        && root_controlled_path(path, &mut 40, &inspect_entry)
+        && fs::metadata(path).is_ok_and(|meta| meta.is_file() && meta.mode() & 0o111 != 0)
 }
 
-fn root_controls_entry(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|meta| {
-        meta.uid() == 0
-            && (meta.file_type().is_symlink()
+struct PathEntry {
+    controlled: bool,
+    link_target: Option<std::path::PathBuf>,
+}
+
+fn inspect_entry(path: &Path) -> Option<PathEntry> {
+    let meta = fs::symlink_metadata(path).ok()?;
+    let controlled = meta.uid() == 0
+        && (meta.file_type().is_symlink()
             || meta.mode() & 0o022 == 0
             // Sticky root-owned directories cannot have their existing
             // root-owned children replaced by another user (e.g. /nix/store).
-            || (meta.is_dir() && meta.mode() & 0o1000 != 0))
+            || (meta.is_dir() && meta.mode() & 0o1000 != 0));
+    let link_target = if meta.file_type().is_symlink() {
+        Some(fs::read_link(path).ok()?)
+    } else {
+        None
+    };
+    Some(PathEntry {
+        controlled,
+        link_target,
     })
+}
+
+fn root_controlled_path(
+    path: &Path,
+    remaining_links: &mut usize,
+    inspect: &impl Fn(&Path) -> Option<PathEntry>,
+) -> bool {
+    if !path.is_absolute() {
+        return false;
+    }
+    for ancestor in path.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        let Some(entry) = inspect(ancestor) else {
+            return false;
+        };
+        if !entry.controlled {
+            return false;
+        }
+        if let Some(target) = entry.link_target {
+            if *remaining_links == 0 {
+                return false;
+            }
+            *remaining_links -= 1;
+            let target = if target.is_absolute() {
+                target
+            } else {
+                let Some(parent) = ancestor.parent() else {
+                    return false;
+                };
+                parent.join(target)
+            };
+            // Verify each target path before following the remainder. Final
+            // canonicalization alone can hide a writable trampoline that
+            // links back into a root-owned package directory.
+            if !root_controlled_path(&target, remaining_links, inspect) {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 fn program_matches(process: &Process, program: &str, comm: &[&str]) -> bool {
@@ -493,5 +539,51 @@ mod tests {
         fs::set_permissions(&program, fs::Permissions::from_mode(0o666)).unwrap();
         assert!(!trusted_program(program.to_str().unwrap()));
         assert!(!trusted_program("fusermount3"));
+    }
+
+    #[test]
+    fn every_symlink_target_must_stay_under_root_control() {
+        let inspect = |path: &Path| {
+            let target = match path.to_str().unwrap() {
+                "/trusted/bin" => Some("/home/user/bin"),
+                "/trusted/bin/fusermount3" | "/home/user/bin/fusermount3" => {
+                    Some("/nix/store/fuse/bin/fusermount3")
+                }
+                _ => None,
+            };
+            Some(PathEntry {
+                controlled: path != Path::new("/home/user"),
+                link_target: target.map(Into::into),
+            })
+        };
+        assert!(!root_controlled_path(
+            Path::new("/trusted/bin/fusermount3"),
+            &mut 40,
+            &inspect
+        ));
+        let root_links = |path: &Path| {
+            Some(PathEntry {
+                controlled: true,
+                link_target: (path == Path::new("/run/current-system"))
+                    .then(|| "/nix/store/system".into()),
+            })
+        };
+        assert!(root_controlled_path(
+            Path::new("/run/current-system/bin/fusermount3"),
+            &mut 40,
+            &root_links
+        ));
+        let cycle = |_: &Path| {
+            Some(PathEntry {
+                controlled: true,
+                link_target: Some("/loop".into()),
+            })
+        };
+        assert!(!root_controlled_path(Path::new("/loop"), &mut 40, &cycle));
+        assert!(!root_controlled_path(
+            Path::new("/unknown"),
+            &mut 40,
+            &|_| None
+        ));
     }
 }
