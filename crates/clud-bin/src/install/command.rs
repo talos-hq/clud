@@ -192,6 +192,7 @@ fn configure(home: &Path, product: &Product, options: &Options, out: &mut dyn Wr
     code
 }
 
+#[derive(Debug)]
 struct Failure {
     summary: String,
     tail: Vec<String>,
@@ -246,17 +247,33 @@ fn run_bootstrap(
     dir: &Path,
     options: &Options,
 ) -> Result<(), Failure> {
-    let shell = if cfg!(windows) { "bash" } else { "sh" };
-    let mut command = std::process::Command::new(shell);
-    command.arg(script).env(product.dir_env, dir);
+    // Execute the bootstrap through its own shebang: hermes-slim's is `#!/bin/sh`
+    // and talos' is `#!/usr/bin/env bash`, so forcing one interpreter breaks the
+    // other. Windows has no shebang line, so it names bash.
+    let mut command = if cfg!(windows) {
+        let mut command = std::process::Command::new("bash");
+        command.arg(script);
+        command
+    } else {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).map_err(
+            |error| Failure {
+                summary: format!("cannot make {} executable: {error}", script.display()),
+                tail: Vec::new(),
+            },
+        )?;
+        std::process::Command::new(script)
+    };
+    command.env(product.dir_env, dir);
     if let Some(version) = &options.version {
         command.arg("--version").arg(version);
     }
-    if !options.passthrough.is_empty() {
-        command.arg("--").args(&options.passthrough);
-    }
+    // Appended as-is, not behind a `--`: hermes-slim's bootstrap treats a bare
+    // `--` as "hand the rest to hermes-slim-setup", while talos' rejects any
+    // argument it does not know, so a separator is one product's syntax.
+    command.args(&options.passthrough);
     let output = command.output().map_err(|error| Failure {
-        summary: format!("cannot run {shell} {}: {error}", script.display()),
+        summary: format!("cannot run {}: {error}", script.display()),
         tail: Vec::new(),
     })?;
     if output.status.success() {
@@ -345,6 +362,44 @@ mod tests {
         let code = run_at(&home, &options("talos"), false, &mut out);
         assert_eq!(code, EXIT_USAGE);
         assert!(!home.join(".clud/cache/install/talos").exists());
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn the_bootstrap_runs_through_its_own_shebang_with_the_dir_and_extra_args() {
+        let home = tempdir();
+        let script = home.join("bootstrap.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\nprintf '%s|%s' \"$HERMES_SLIM_DIR\" \"$1\" > \"$2\"\n",
+        )
+        .expect("seed");
+        let product = products::find("hermes").expect("hermes");
+        let dir = home.join("install-here");
+        let seen = home.join("seen.txt");
+        let options = Options {
+            passthrough: vec!["--include-desktop".to_string(), seen.display().to_string()],
+            ..Options::default()
+        };
+        run_bootstrap(&script, product, &dir, &options).expect("runs");
+        assert_eq!(
+            std::fs::read_to_string(&seen).expect("read"),
+            format!("{}|--include-desktop", dir.display())
+        );
+        let _ = std::fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn a_failing_bootstrap_reports_its_tail() {
+        let home = tempdir();
+        let script = home.join("bootstrap.sh");
+        std::fs::write(&script, "#!/bin/sh\necho boom >&2\nexit 3\n").expect("seed");
+        let product = products::find("talos").expect("talos");
+        let options = Options::default();
+        let failure =
+            run_bootstrap(&script, product, &home.join("d"), &options).expect_err("fails");
+        assert_eq!(failure.summary, "exit 3");
+        assert!(failure.tail.iter().any(|line| line.contains("boom")));
         let _ = std::fs::remove_dir_all(home);
     }
 

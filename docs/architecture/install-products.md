@@ -140,13 +140,24 @@ registry), [`install/command.rs`](../../crates/clud-bin/src/install/command.rs)
 (the vault read and the config editor).
 
 ## Testing
-- `crates/clud-bin/tests/integration/cli/install_products.rs` drives the whole
-  command against a fake bootstrap script and a fake product tree:
-  unknown target, `--dry-run` writing nothing, missing `--yes` off a terminal,
-  bootstrap failure reporting its last lines, `--configure-only` skipping the
-  fetch, the alias producing byte-identical behaviour, and an idempotent rerun.
-- Unit tests own the registry (every product's variables and config path) and
-  the config editor (preserving comments and unknown keys, refusing a parse
-  failure, replacing a value only after confirmation).
-- One test asserts the migration prompt appears only when clud holds a key, and
-  one asserts no secret value ever reaches stdout.
+
+Unit tests live with the code and run in the `clud` lib target:
+
+- `install::products` — every target resolves to itself, lookup ignores case,
+  targets are unique and lowercase, the bootstrap URL joins repo/branch/path,
+  the reconfigure hint names the product's binary.
+- `install::command` — unknown target refused with the known ones, `--dry-run`
+  reporting the plan and writing nothing, a terminal-less install refused before
+  any fetch, `--dir` and `--target` mutually exclusive, `--configure-only`
+  installing nothing, the bootstrap executing through its own shebang with the
+  directory variable and the extra arguments set, and a failing bootstrap
+  reporting its last lines.
+- `install::configure` — the OpenAI-compatible URL derived from the registry's
+  Anthropic one, an empty document gaining a `providers:` block, a new provider
+  joining an existing mapping with comments intact, an existing provider's
+  values replaced in place, a missing key added, a document that does not parse
+  refused byte-identical, the offer summary secret-free, and nothing stored
+  writing nothing.
+
+Still open: a CLI-level test that drives `clud install` and `clud setup
+<product>` as processes, asserting the alias produces identical output.
