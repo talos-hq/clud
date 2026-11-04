@@ -413,3 +413,28 @@ def test_redirected_loop_keeps_plain_output_and_delivers_literal_message(
     assert "Interrupt with message" not in result.stderr
     delivered = (tmp_path / ".clud/loop/NEXT_MESSAGE.md").read_text(encoding="utf-8")
     assert text in delivered
+
+
+@pytest.mark.parametrize("backend", ["--claude", "--codex"])
+def test_no_done_loop_still_instructs_agent_to_read_queued_messages(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path, backend: str
+) -> None:
+    import json
+
+    result = _run(
+        clud_binary,
+        backend,
+        "--dry-run",
+        "loop",
+        "--no-done",
+        "task",
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, 0)
+    plan = json.loads(result.stdout)
+    prompt = plan["command"][-1]
+    assert prompt.startswith("task")
+    assert "NEXT_MESSAGE.md" in prompt
+    assert "DONE terminates" not in prompt
+    assert plan["loop_markers"] is None

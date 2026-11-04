@@ -848,21 +848,17 @@ fn build_launch_plan_for_target_at(
             if let Some(ref t) = task {
                 let prompt_text = resolve_loop_task(t, &git_root, *refresh);
                 task_summary = Some(summarize_task_name(&prompt_text, 50));
-                let final_prompt = if let Some(markers) = marker_paths.as_ref() {
-                    // Issue #95: feed absolute paths into the contract so the
-                    // model writes to the exact path clud is polling, not
-                    // some invented alternative like `~/.loop/LOOP.md`.
-                    format!(
-                        "{}{}{}",
-                        prompt_text,
-                        done_marker_contract(&markers.done, &markers.blocked),
-                        crate::loop_spec::next_message_contract(
-                            &crate::loop_artifacts::next_message_path(&git_root)
-                        )
+                let done_contract = marker_paths.as_ref().map_or_else(String::new, |markers| {
+                    done_marker_contract(&markers.done, &markers.blocked)
+                });
+                let message_contract = if marker_paths.is_some() || repeat_schedule.is_none() {
+                    crate::loop_spec::next_message_contract(
+                        &crate::loop_artifacts::next_message_path(&git_root),
                     )
                 } else {
-                    prompt_text
+                    String::new()
                 };
+                let final_prompt = format!("{prompt_text}{done_contract}{message_contract}");
                 push_prompt(&mut cmd, backend, final_prompt);
             }
             if let Some(markers) = marker_paths {

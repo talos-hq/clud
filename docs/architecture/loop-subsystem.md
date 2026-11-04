@@ -341,7 +341,9 @@ Esc discards the draft. The interrupt editor opens a confirmation:
 returns to editing. Confirmation persists the message before stopping the child.
 The runner reaps the child synchronously, clears its completion markers, and
 relaunches the same iteration without spending another iteration from the budget.
-Both actions use the existing inbox and `NEXT_MESSAGE.md` delivery contract.
+Both actions use the existing inbox and `NEXT_MESSAGE.md` delivery contract,
+including `--no-done` loops. Cron-style repeats without markers keep their
+existing prompt because their daemon worker does not drain this inbox.
 Queueing alone never stops a child or overrides its DONE marker; a message can
 remain queued if the current iteration completes the entire task.
 
