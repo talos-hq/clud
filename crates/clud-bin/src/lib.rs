@@ -130,6 +130,7 @@ pub mod published_urls;
 pub mod reap_log;
 pub mod reaper_facts;
 pub mod repo_clud_config;
+pub mod responses_compact;
 pub mod responses_ingress;
 pub mod route_health;
 pub mod route_plan;

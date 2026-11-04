@@ -1277,6 +1277,9 @@ fn route_request(
         ("POST", "/v1/responses") => {
             route_responses(stream, connection, &mut parsed, conversation_key);
         }
+        ("POST", "/v1/responses/compact") => {
+            route_responses_compact(stream, connection, &mut parsed, conversation_key);
+        }
         ("POST", "/v1/completions") => {
             route_completions(stream, connection, &mut parsed, conversation_key);
         }
@@ -1622,6 +1625,97 @@ fn route_responses(
 fn refuse_responses(stream: &mut TcpStream, status: u16, message: &str) {
     let envelope = crate::responses_ingress::render_response_error(status, message);
     let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
+/// `POST /v1/responses/compact`: the Responses context-compaction door.
+///
+/// Upstream capability: CLIProxyAPI serves `POST /v1/responses/compact`
+/// (`internal/api/server_routes.go:88`) and forwards the body to
+/// `<codex base>/responses/compact` with the `responses/compact` action
+/// (`sdk/api/handlers/openai/openai_responses_handlers.go:917`), refusing
+/// `stream: true` and relaying the answer byte-for-byte.
+///
+/// Unlike `POST /v1/responses` this is NOT a translation: the body is already a
+/// Responses payload and only the Codex backend can compact a Codex history.
+/// clud already called that endpoint for its own auto-compaction, so this route
+/// is the missing client-facing half -- one non-retried upstream call and the
+/// upstream's own envelope back, in the shape its client parses.
+fn route_responses_compact(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    config.turn_requests.fetch_add(1, Ordering::Release);
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    let codex_available = match &config.gateway_mode {
+        GatewayMode::Codex => true,
+        GatewayMode::Unified(unified) => unified.codex_available,
+    };
+    if !codex_available {
+        record_rejection(log, 501, "responses_compact_route_missing");
+        refuse_responses(
+            stream,
+            501,
+            "POST /v1/responses/compact needs the Codex route; start the gateway with --codex",
+        );
+        return;
+    }
+    let prepared = match crate::responses_compact::prepare_compact_request(&body) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            record_rejection(log, 400, "invalid_compact_request");
+            refuse_responses(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let client = match codex_upstream_client(config, log, conversation_key, codex_redactor(config))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            let (status, message) = compact_failure(&error);
+            record_rejection(log, status, "responses_compact_credentials");
+            refuse_responses(stream, status, message);
+            return;
+        }
+    };
+    match client.compact_body(&prepared, connection.shutdown) {
+        // The upstream's envelope is the client contract, on success and on
+        // failure alike: a Responses client parses `{"error": ...}` from a 4xx.
+        Ok(reply) => {
+            let _ = write_response(stream, reply.status, "application/json", &reply.body, false);
+        }
+        Err(UpstreamError::Cancelled) => {}
+        Err(error) => {
+            let (status, message) = compact_failure(&error);
+            record_rejection(log, status, "responses_compact_upstream_failure");
+            refuse_responses(stream, status, message);
+        }
+    }
+}
+
+/// How a failed compaction door is reported. The statuses are the ones the
+/// other Codex passthrough doors use, so a client sees one behaviour across
+/// them; a missing credential names the command that fixes it rather than
+/// reporting an upstream fault.
+fn compact_failure(error: &UpstreamError) -> (u16, &'static str) {
+    match error {
+        UpstreamError::Credentials(_) => (
+            503,
+            "Codex credentials are unavailable; run `clud auth login codex`",
+        ),
+        UpstreamError::Timeout => (
+            504,
+            "the Codex upstream timed out before returning a compaction",
+        ),
+        _ => (
+            502,
+            "the Codex upstream failed before returning a compaction",
+        ),
+    }
 }
 
 /// `POST /v1/completions`: OpenAI's legacy text-completions door.
@@ -7703,6 +7797,95 @@ Connection: close
             .expect("HTTP status")
             .parse()
             .unwrap()
+    }
+
+    /// Send one compaction body on the Responses compaction door.
+    ///
+    /// The unified token header rides along so the same helper works in both
+    /// gateway modes: a unified bridge authenticates on it before routing.
+    fn responses_compact_request(bridge: &BridgeHandle, body: &str) -> String {
+        request(
+            bridge.socket_addr(),
+            &authorized_with_headers(
+                "POST",
+                "/v1/responses/compact",
+                bridge.bearer_token(),
+                body,
+                &[
+                    (UNIFIED_GATEWAY_TOKEN_HEADER, bridge.bearer_token()),
+                    ("x-claude-code-session-id", "compact-session"),
+                    ("content-type", "application/json"),
+                ],
+            ),
+        )
+    }
+
+    /// `POST /v1/responses/compact` is a Codex passthrough: the upstream's own
+    /// answer reaches the client, and the body it received has no `stream` key.
+    #[test]
+    fn responses_compact_relays_the_codex_answer_verbatim() {
+        let codex = FakeResponses::start_with_response(Some(compact_success_response()));
+        let mut bridge = BridgeHandle::start(bridged_config(&codex)).unwrap();
+        let body = r#"{"model":"gpt-5.1-codex","input":[],"stream":false}"#;
+        let response = responses_compact_request(&bridge, body);
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(
+            response.contains("\"encrypted_content\":\"opaque-summary\""),
+            "{response}"
+        );
+        let forwarded = codex.requests();
+        assert_eq!(forwarded.len(), 1, "one attempt, never retried");
+        let upstream = captured_body(&forwarded[0]);
+        assert!(
+            upstream.contains("\"model\":\"gpt-5.1-codex\""),
+            "the client's model reaches the backend: {upstream}"
+        );
+        assert!(
+            !upstream.contains("\"stream\""),
+            "upstream deletes the stream key on this door: {upstream}"
+        );
+        bridge.shutdown().unwrap();
+    }
+
+    /// A streaming compaction is refused locally, in the Responses envelope, and
+    /// never reaches the backend.
+    #[test]
+    fn responses_compact_refuses_a_streaming_body() {
+        let codex = FakeResponses::start_with_response(Some(compact_success_response()));
+        let mut bridge = BridgeHandle::start(bridged_config(&codex)).unwrap();
+        let body = r#"{"model":"gpt-5.1-codex","input":[],"stream":true}"#;
+        let response = responses_compact_request(&bridge, body);
+        assert_eq!(status(&response), 400, "{response}");
+        assert!(
+            response.contains("Streaming not supported for compact responses"),
+            "{response}"
+        );
+        assert!(
+            codex.requests().is_empty(),
+            "a refused body must not be spent"
+        );
+        bridge.shutdown().unwrap();
+    }
+
+    /// Without `--codex` the door names the flag instead of reporting a bare 404.
+    #[test]
+    fn responses_compact_is_refused_without_the_codex_route() {
+        let upstream = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let mut bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_test_upstream_url(Some(upstream.base_url.clone()))
+                .with_unified_gateway(UnifiedGatewayConfig::new(
+                    Some("deepseek-route-canary".to_string()),
+                    false,
+                )),
+        )
+        .unwrap();
+        let body = r#"{"model":"gpt-5.1-codex","input":[]}"#;
+        let response = responses_compact_request(&bridge, body);
+        assert_eq!(status(&response), 501, "{response}");
+        assert!(response.contains("--codex"), "{response}");
+        assert!(upstream.requests().is_empty(), "{response}");
+        bridge.shutdown().unwrap();
     }
 
     /// Best-effort RSS snapshot for the opt-in bridge benchmark. It is a
