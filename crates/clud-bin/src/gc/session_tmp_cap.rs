@@ -177,14 +177,22 @@ fn is_idle(newest: Option<SystemTime>, now: SystemTime) -> bool {
 }
 
 /// Remove one unit, recording each undeletable path; `true` when it is gone.
-fn remove_unit(unit: &Unit, undeletable: &mut super::undeletable::Undeletable) -> bool {
+fn remove_unit(
+    root: &Path,
+    unit: &Unit,
+    undeletable: &mut super::undeletable::Undeletable,
+) -> bool {
     let before = undeletable.count();
     if unit.is_dir {
         crate::rm_tool::remove_dir_tree_collecting(&unit.path, &mut |p, e| {
             undeletable.record(p, e);
         });
     } else if let Err(error) = crate::rm_tool::remove_link_or_file(&unit.path) {
-        undeletable.record(&unit.path, &error);
+        if error.kind() != std::io::ErrorKind::PermissionDenied
+            || crate::platform::rm_tool::remove_owned_leaf_writable(root, &unit.path).is_err()
+        {
+            undeletable.record(&unit.path, &error);
+        }
     }
     undeletable.count() == before
 }
@@ -243,7 +251,7 @@ pub fn enforce_cap_at(
         }
         if !dry_run {
             delete_audit::record(SITE, &unit.path, "session-tmp over tmp.max_bytes");
-            if !remove_unit(unit, &mut report.undeletable) {
+            if !remove_unit(root, unit, &mut report.undeletable) {
                 report.failed += 1;
                 continue;
             }
