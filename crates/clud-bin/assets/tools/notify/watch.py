@@ -7,7 +7,11 @@
 # ///
 # managed-by: clud
 """notify/watch.py — one watcher for N clud sessions and M PRs, with a
-durable event log a chat orchestrator (Hermes) can wake on.
+durable event log, pushed to subscribers through notify/bus.py.
+
+Push: every recorded event is published to the notify/bus.py broker the
+moment it is detected; `bus.py subscribe` blocks, prints it and exits, and
+that exit is what wakes a Hermes agent. events.jsonl is the audit trail.
 
 Why: a Telegram message reaches the *user* but does not wake the *agent*.
 The agent wakes on a cron tick or a background-job completion. So this tool
@@ -23,6 +27,7 @@ Usage (all via `"$CLUD_EXE" tool run notify/watch.py -- …`):
   poll                                one pass; exit 2 if it emitted an error
   loop [--interval S]                 poll forever (until nothing is watched);
                                       with --telegram-env, typing while busy
+  emit KIND SUBJECT DETAIL            record + publish one hand-made event
   since N [--json]                    events with seq > N, then `cursor M`
   tick [--tail K]                     poll, then print the last K events
                                       (stable bytes until something changes)
@@ -61,6 +66,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from running_process import PIPE, RunningProcess, TimeoutExpired
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from bus import publish_event  # stdlib sibling: notify/bus.py
 
 SEEN_LIMIT = 4096
 TAIL_CHARS = 1500
@@ -143,6 +151,7 @@ def emit(
     with (base / "events.jsonl").open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(event, sort_keys=True) + "\n")
     data["seen"].append(key)
+    publish_event(event)  # push to subscribers now; the log is only the audit trail
     return event
 
 
@@ -590,6 +599,17 @@ def cmd_tick(args: argparse.Namespace) -> int:
     return 2 if errored else 0
 
 
+def cmd_emit(args: argparse.Namespace) -> int:
+    base = state_dir()
+    with locked(base):
+        data = load_state(base)
+        key = args.key or f"{args.kind}:{args.subject}:{time.time()}"
+        event = emit(base, data, args.kind, args.subject, args.detail, key)
+        save_state(base, data)
+    print(format_event(event) if event else "duplicate key; not emitted")
+    return 0
+
+
 def cmd_add_session(args: argparse.Namespace) -> int:
     base = state_dir()
     with locked(base):
@@ -659,6 +679,12 @@ def build_parser() -> argparse.ArgumentParser:
             help="minutes without session progress before session-stalled",
         )
         p.set_defaults(func=func)
+    p = sub.add_parser("emit", help="record and publish one hand-made event")
+    p.add_argument("kind")
+    p.add_argument("subject")
+    p.add_argument("detail")
+    p.add_argument("--key", default="")
+    p.set_defaults(func=cmd_emit)
     p = sub.add_parser("since")
     p.add_argument("cursor", type=int)
     p.add_argument("--json", action="store_true")

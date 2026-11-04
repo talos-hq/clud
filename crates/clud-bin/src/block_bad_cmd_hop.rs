@@ -15,7 +15,8 @@
 //!
 //! Deliberately narrow:
 //! * shell tools only (`sed`, `cat`, `head`, `tail`, `nl`, `less`, `bat`,
-//!   `tac`, `wc`, `awk`, `xxd`); `grep`/`git`/`gh` are searches, not reads;
+//!   `tac`, `awk`, `xxd`); `grep`/`git`/`gh` are searches, not reads, `wc` only
+//!   counts lines, and `sed -i` / `cat > file` write instead of reading;
 //! * only files that exist and are at least [`MIN_BYTES`] — hops on a small
 //!   file cost nothing;
 //! * the counter for a file expires after [`RESET_SECS`] of no hops, so
@@ -51,8 +52,12 @@ const MAX_FILES: usize = 500;
 const MAX_TRACKED: usize = 32;
 
 /// Shell verbs that read a file's contents into the transcript.
-const READ_VERBS: [&str; 11] = [
-    "sed", "cat", "head", "tail", "nl", "less", "bat", "tac", "wc", "awk", "xxd",
+///
+/// `wc` is deliberately absent: it emits a count per file, not content, so a
+/// denial telling the agent to outline the file would not answer the question.
+/// `tee`/`cp`/`mv` never read into context and are absent for the same reason.
+const READ_VERBS: [&str; 10] = [
+    "sed", "cat", "head", "tail", "nl", "less", "bat", "tac", "awk", "xxd",
 ];
 
 /// Extensions worth mapping before reading. An unknown extension is not
@@ -165,7 +170,15 @@ pub(super) fn hop_targets(command: &str) -> Vec<String> {
         if !tokens.iter().any(|token| is_read_verb(token)) {
             continue;
         }
-        for token in tokens {
+        // `sed -i` rewrites the file in place: nothing lands in the transcript,
+        // so it is a write, not a hop. Counting it would deny the seventh
+        // *edit* of a fix loop and answer it with "outline the file".
+        if is_in_place_write(&tokens) {
+            continue;
+        }
+        // A redirect ends the inputs: `cat > notes.md <<'EOF'` names a
+        // destination, while `cat a.rs > b.py` still reads `a.rs`.
+        for token in tokens.iter().take_while(|token| !is_redirect(token)) {
             if plausible_path(token) {
                 let path = token.trim_matches(|c| c == '"' || c == '\'').to_string();
                 if !out.contains(&path) {
@@ -177,14 +190,74 @@ pub(super) fn hop_targets(command: &str) -> Vec<String> {
     out
 }
 
+/// Whether this segment writes its named file in place (`sed -i`, `sed -ni`,
+/// `sed --in-place[=SUFFIX]`). Only sed has an in-place mode among
+/// [`READ_VERBS`], and an unrecognised flag cluster fails open (the segment is
+/// then treated as a read).
+fn is_in_place_write(tokens: &[&str]) -> bool {
+    // Locate `sed` anywhere in the segment so `sudo sed -i` / `env X=1 sed -i`
+    // are recognised too.
+    let Some(at) = tokens
+        .iter()
+        .position(|token| token.rsplit('/').next() == Some("sed"))
+    else {
+        return false;
+    };
+    tokens[at + 1..].iter().any(|token| {
+        if *token == "--in-place" || token.starts_with("--in-place=") {
+            return true;
+        }
+        // Short cluster: `-i`, `-ibak`, `-ni`. `i` is sed's only in-place flag.
+        token.starts_with('-') && !token.starts_with("--") && token.len() > 1 && token.contains('i')
+    })
+}
+
+/// Whether this token starts an output redirect (`>`, `>>`, `2>`, `1>>`).
+fn is_redirect(token: &str) -> bool {
+    token.contains('>') && !token.contains('<')
+}
+
 /// Existing hop targets at or above [`MIN_BYTES`], resolved against `cwd`, in
 /// the form they are stored and reported.
 pub(super) fn tracked_targets(command: &str, cwd: &Path) -> Vec<String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from);
     hop_targets(command)
         .into_iter()
-        .filter(|target| is_large_file(&cwd.join(target)))
-        .map(|target| cwd.join(&target).to_string_lossy().into_owned())
+        .filter_map(|target| resolve_target(&target, cwd, home.as_deref()))
+        .filter(|path| is_large_file(path))
+        .map(|path| path.to_string_lossy().into_owned())
         .collect()
+}
+
+/// Resolve a hop target the way the shell would: absolute paths as-is, `~/…`
+/// against the home directory, everything else against the tool's cwd. The
+/// stored form is always absolute, so `~/dev/x.rs` and `/home/u/dev/x.rs` in
+/// the same session share one count.
+fn resolve_target(target: &str, cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    if let Some(expanded) = expand_tilde(target, home) {
+        return Some(expanded);
+    }
+    let path = Path::new(target);
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        cwd.join(path)
+    };
+    Some(normalize(&resolved))
+}
+
+/// Drop `.` components so `a.rs`, `./a.rs` and `src/../a.rs` share one count.
+fn normalize(path: &Path) -> PathBuf {
+    path.components()
+        .filter(|component| !matches!(component, std::path::Component::CurDir))
+        .collect()
+}
+
+/// Expand a leading `~/` against `home`. `~user` and a bare `~` are left to the
+/// caller (they are uncommon in agent commands and must not be guessed).
+fn expand_tilde(target: &str, home: Option<&Path>) -> Option<PathBuf> {
+    let rest = target.strip_prefix("~/")?;
+    Some(home?.join(rest))
 }
 
 fn is_large_file(path: &Path) -> bool {

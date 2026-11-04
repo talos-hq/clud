@@ -35,7 +35,9 @@ fn test_loop_default_count() {
 fn test_loop_no_done_omits_contract() {
     let p = plan(&["clud", "loop", "--no-done", "task"]);
     let prompt = prompt_from_plan(&p);
-    assert_eq!(prompt, "task");
+    assert!(prompt.starts_with("task"));
+    assert!(prompt.contains("NEXT_MESSAGE.md"));
+    assert!(!prompt.contains("DONE terminates"));
     assert!(p.loop_markers.is_none());
 }
 
@@ -127,6 +129,8 @@ fn test_codex_loop_no_done_omits_contract() {
     let prompt = last_arg(&p);
     assert!(prompt.starts_with("task"));
     assert!(!prompt.contains(".clud/loop/DONE"));
+    assert!(!prompt.contains("DONE terminates"));
+    assert!(prompt.contains("NEXT_MESSAGE.md"));
     assert!(p.loop_markers.is_none());
 }
 
@@ -205,6 +209,10 @@ fn assert_routes_bounded_reads(text: &str, what: &str) {
         "{what} missing ast_grep routing: {text}"
     );
     assert!(
+        text.contains("code/slice.py"),
+        "{what} missing slice routing: {text}"
+    );
+    assert!(
         text.contains("sed -n") && text.contains("`cat` a large file whole"),
         "{what} lost the negative read guidance: {text}"
     );
@@ -243,9 +251,11 @@ fn test_interactive_session_keeps_the_short_prompt() {
     assert!(!appended.contains("github/issue_context.py"));
     assert!(!appended.contains("diagnostics/test_report.py"));
     assert!(!appended.contains("code/outline.py"));
+    assert!(!appended.contains("code/slice.py"));
     let codex = codex_instructions(&plan(&["clud", "--codex"]));
     assert!(!codex.contains("code/outline.py"));
     assert!(!codex.contains("diagnostics/test_report.py"));
+    assert!(!codex.contains("code/slice.py"));
 }
 
 #[test]
@@ -396,13 +406,12 @@ fn test_codex_loop_does_not_inject_stream_json() {
 }
 
 #[test]
-fn test_claude_plain_prompt_does_not_inject_stream_json() {
-    // Single-shot `clud -p` is short-lived and not a loop, so we keep
-    // the existing UX untouched. Stream-json injection is loop-only.
+fn test_claude_plain_prompt_uses_compact_renderer_not_loop_renderer() {
+    // Ordinary print turns share the native protocol but keep their own renderer.
     let p = plan(&["clud", "--subprocess", "-p", "hello"]);
     assert!(
-        !p.command.iter().any(|a| a == "stream-json"),
-        "plain -p must NOT receive stream-json injection; cmd={:?}",
+        p.prompt_summary && p.command.iter().any(|a| a == "stream-json"),
+        "plain -p must select compact progress; cmd={:?}",
         p.command
     );
     assert!(!p.stream_json_progress);

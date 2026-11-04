@@ -59,7 +59,7 @@ pub struct MigrationReport {
 /// Where a hook config lives, which decides whether it may be pinned to the
 /// launching executable (see the module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConfigScope {
+pub(crate) enum ConfigScope {
     /// Inside the repo; usually committed, so only portable rewrites.
     Project,
     /// Under the hook home; machine-local, so pinning is safe.
@@ -87,6 +87,10 @@ pub fn run_startup_checks(auto_fix_hooks: bool) {
     let home = hook_home_dir();
     match migrate_hook_configs_at(&repo_root, home.as_deref(), sibling_helper_present) {
         Ok(report) => {
+            if let Err(error) = crate::scanner_hook_migration::migrate(&repo_root, home.as_deref())
+            {
+                eprintln!("[clud] warning: failed to consolidate scanner hooks: {error}");
+            }
             if report.commands_changed > 0 {
                 if !sibling_helper_present {
                     eprintln!("[clud] migrated legacy hook command to the CLUD_EXE shim");
@@ -164,7 +168,10 @@ const PROJECT_CONFIGS: [(&str, &str); 3] = [
 ];
 const USER_CONFIGS: [(&str, &str); 2] = [(".claude", "settings.json"), (".codex", "hooks.json")];
 
-fn hook_config_paths(repo_root: &Path, home: Option<&Path>) -> Vec<(PathBuf, ConfigScope)> {
+pub(crate) fn hook_config_paths(
+    repo_root: &Path,
+    home: Option<&Path>,
+) -> Vec<(PathBuf, ConfigScope)> {
     let mut paths = Vec::new();
     for (dir, file) in PROJECT_CONFIGS {
         paths.push((repo_root.join(dir).join(file), ConfigScope::Project));
@@ -399,11 +406,22 @@ pub fn dangling_hook_program_warnings(repo_root: &Path, home: Option<&Path>) -> 
 /// install directory broke the Windows daemon integration tests after #1560.
 /// The helper-only directory contains exactly one program.
 pub fn ensure_helper_on_session_path() {
+    if let InstallProbe::HelperPresent { path } = probe_current_install() {
+        let path_env = std::env::var("PATH").unwrap_or_default();
+        if let Some(launcher) = crate::shim_resolve::which("clud", &path_env) {
+            if let Err(error) = expose_helper_beside_launcher(&launcher, &path) {
+                eprintln!(
+                    "[clud] warning: cannot expose scanner beside {}: {error}",
+                    launcher.display()
+                );
+            }
+        }
+    }
     let path_env = std::env::var("PATH").unwrap_or_default();
     if let Some(found) = crate::shim_resolve::which(&native_helper_name(), &path_env) {
         if let InstallProbe::HelperPresent { path } = probe_current_install() {
-            let owned = refresh_owned_helper(&found, &path, crate::home::user_home().as_deref());
-            if let Some(warning) = foreign_helper_warning(&found, &path, owned) {
+            let home = crate::home::user_home();
+            if let Some(warning) = refresh_found_helper(&found, &path, home.as_deref()) {
                 eprintln!("{warning}");
             }
         }
@@ -423,6 +441,21 @@ pub fn ensure_helper_on_session_path() {
         // before any thread that reads the environment runs.
         unsafe { std::env::set_var("PATH", updated) };
     }
+}
+
+/// Login shells can rebuild PATH and discard helper-bin. Keep the scanner
+/// beside the public launcher too, including a uv tool's symlink in local/bin.
+/// Existing aliases beside another installation remain untouched.
+fn expose_helper_beside_launcher(launcher: &Path, source: &Path) -> io::Result<()> {
+    let Some(dir) = launcher.parent() else {
+        return Ok(());
+    };
+    let scanner = dir.join(native_helper_name());
+    if scanner.exists() && !same_file::is_same_file(launcher, source).unwrap_or(false) {
+        return Ok(());
+    }
+    crate::alias_link::install_alias(source, &scanner)?;
+    Ok(())
 }
 
 /// Bring a `clud-cmd-scan` already on PATH up to the running `clud` when clud
@@ -522,6 +555,28 @@ fn expose_helper_at(home: &Path, clud: &Path) -> io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// The launch step when PATH already finds a `clud-cmd-scan`: refresh it if
+/// clud owns it, and refresh the helper-only directory too. That directory
+/// is not what PATH found, so without the second step its aliases outlive
+/// every upgrade while another `clud-cmd-scan` is first on PATH. Returns the
+/// foreign-helper warning, if any.
+fn refresh_found_helper(found: &Path, clud: &Path, home: Option<&Path>) -> Option<String> {
+    let owned = refresh_owned_helper(found, clud, home);
+    if let Some(home) = home {
+        refresh_helper_bin(home, clud);
+    }
+    foreign_helper_warning(found, clud, owned)
+}
+
+/// Bring an existing helper-only directory up to `clud`. Nothing is created:
+/// a directory clud never populated stays absent. The per-entry check is the
+/// same metadata freshness test [`expose_helper_at`] pays on every launch.
+fn refresh_helper_bin(home: &Path, clud: &Path) {
+    if home.join(HELPER_BIN_SUBDIR).is_dir() {
+        let _ = expose_helper_at(home, clud);
+    }
+}
+
 fn path_with_appended(path_env: &str, dir: &Path) -> Option<String> {
     let mut entries: Vec<PathBuf> = std::env::split_paths(path_env)
         .filter(|entry| !entry.as_os_str().is_empty())
@@ -578,6 +633,29 @@ mod tests {
             InstallProbe::NotInstalledLayout,
             "a missing file is not an install"
         );
+    }
+
+    #[test]
+    fn public_launcher_gets_a_scanner_without_exposing_other_tools() {
+        let tmp = tempdir().unwrap();
+        let source = tmp.path().join("tool-env/clud");
+        write(&source, "current-build");
+        let public = tmp.path().join("public/clud");
+        std::fs::create_dir_all(public.parent().unwrap()).unwrap();
+        crate::alias_link::install_alias(&source, &public).unwrap();
+        expose_helper_beside_launcher(&public, &source).unwrap();
+        let scanner = public.parent().unwrap().join(native_helper_name());
+        assert!(crate::alias_link::is_fresh(&source, &scanner));
+        assert!(!public.parent().unwrap().join("python").exists());
+
+        let foreign = tmp.path().join("foreign/clud");
+        write(&foreign, "other-build");
+        expose_helper_beside_launcher(&foreign, &source).unwrap();
+        assert!(foreign
+            .parent()
+            .unwrap()
+            .join(native_helper_name())
+            .exists());
     }
 
     #[test]
@@ -882,6 +960,67 @@ mod tests {
         let alias = tmp.path().join("install").join(native_helper_name());
         crate::alias_link::install_alias(&clud, &alias).unwrap();
         assert_eq!(foreign_helper_warning(&alias, &clud, false), None);
+    }
+
+    /// #2514-style regression: a foreign `clud-cmd-scan` first on PATH made
+    /// the launch skip helper-bin, so its aliases stayed on the old build.
+    #[test]
+    fn a_stale_helper_bin_is_refreshed_while_a_foreign_helper_is_first_on_path() {
+        let tmp = tempdir().unwrap();
+        let clud = tmp
+            .path()
+            .join("install")
+            .join(crate::shim_registry::file_name("clud"));
+        write(&clud, "clud-v2-current");
+        let home = tmp.path().join("home");
+        let decoy = home.join(HELPER_BIN_SUBDIR).join(native_helper_name());
+        write(&decoy, "clud-v1");
+        let foreign = tmp.path().join("venv").join(native_helper_name());
+        write(&foreign, "clud-v0");
+
+        let warning = refresh_found_helper(&foreign, &clud, Some(&home));
+
+        assert!(
+            warning.is_some(),
+            "the foreign helper is still warned about"
+        );
+        assert!(
+            crate::alias_link::is_fresh(&clud.canonicalize().unwrap(), &decoy),
+            "helper-bin entry was not refreshed"
+        );
+        assert_eq!(fs::read_to_string(&decoy).unwrap(), "clud-v2-current");
+        assert_eq!(fs::read_to_string(&foreign).unwrap(), "clud-v0");
+    }
+
+    #[test]
+    fn an_up_to_date_helper_bin_entry_is_left_untouched() {
+        let tmp = tempdir().unwrap();
+        let clud = tmp.path().join("install").join("clud");
+        write(&clud, "clud-v2");
+        let home = tmp.path().join("home");
+        let dir = expose_helper_at(&home, &clud).unwrap();
+        let entry = dir.join(native_helper_name());
+        let before = fs::symlink_metadata(&entry).unwrap();
+        let foreign = tmp.path().join("venv").join(native_helper_name());
+        write(&foreign, "clud-v0");
+
+        refresh_found_helper(&foreign, &clud, Some(&home));
+
+        let after = fs::symlink_metadata(&entry).unwrap();
+        assert_eq!(before.modified().unwrap(), after.modified().unwrap());
+        assert!(same_file::is_same_file(&clud, &entry).unwrap() || before.len() == after.len());
+    }
+
+    #[test]
+    fn a_missing_helper_bin_is_not_created_by_the_refresh() {
+        let tmp = tempdir().unwrap();
+        let clud = tmp.path().join("install").join("clud");
+        write(&clud, "clud-v2");
+        let home = tmp.path().join("home");
+        let foreign = tmp.path().join("venv").join(native_helper_name());
+        write(&foreign, "clud-v0");
+        refresh_found_helper(&foreign, &clud, Some(&home));
+        assert!(!home.join(HELPER_BIN_SUBDIR).exists());
     }
 
     #[test]

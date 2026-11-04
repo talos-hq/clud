@@ -478,11 +478,26 @@ fn doctor_is_a_dispatched_subcommand() {
     let args = parse(&["clud", "doctor"]);
     assert!(matches!(
         args.command,
-        Some(Command::Doctor { json: false })
+        Some(Command::Doctor {
+            json: false,
+            fix: false
+        })
     ));
     assert!(args.passthrough.is_empty());
     let args = parse(&["clud", "doctor", "--json"]);
-    assert!(matches!(args.command, Some(Command::Doctor { json: true })));
+    assert!(matches!(
+        args.command,
+        Some(Command::Doctor {
+            json: true,
+            fix: false
+        })
+    ));
+    assert!(args.passthrough.is_empty());
+    let args = parse(&["clud", "doctor", "--fix"]);
+    assert!(matches!(
+        args.command,
+        Some(Command::Doctor { fix: true, .. })
+    ));
     assert!(args.passthrough.is_empty());
 }
 
@@ -1876,6 +1891,43 @@ fn the_equals_form_of_an_inline_key_matches_the_space_form() {
             args.passthrough
         );
     }
+}
+
+/// Regression: a pasted command whose spaces are non-breaking reaches clud as
+/// `--openrouter\u{a0}<key>` and `--model\u{a0}<id>` single tokens. They were
+/// rejected with "did you mean '--openrouter'?" instead of parsing.
+#[test]
+fn flags_glued_to_values_by_unicode_spaces_parse_like_real_spaces() {
+    let key = "sk-or-v1-0123456789abcdef0123456789abcdef";
+    let model = "deepseek/deepseek-v4.1-flash-1017";
+    for space in ["\u{a0}", "\u{202f}", "\u{2009}"] {
+        let provider = format!("--openrouter{space}{key}");
+        let model_flag = format!("--model{space}{model}");
+        let args =
+            parse_inline_key_argv(&["clud", provider.as_str(), model_flag.as_str(), "-p", "hi"]);
+        let spaced =
+            parse_inline_key_argv(&["clud", "--openrouter", key, "--model", model, "-p", "hi"]);
+        assert!(args.explicit_model_provider().is_some(), "{space:?}");
+        assert_eq!(
+            args.explicit_model_provider(),
+            spaced.explicit_model_provider()
+        );
+        assert_eq!(
+            args.inline_api_key.as_ref().map(InlineApiKey::expose),
+            Some(key)
+        );
+        assert_eq!(args.model, spaced.model, "{space:?}");
+        assert!(args.passthrough.iter().all(|token| !token.contains(key)));
+    }
+}
+
+#[test]
+fn unicode_spaces_after_the_separator_are_forwarded_untouched() {
+    let raw: Vec<String> = ["clud", "--", "--flag\u{a0}value"]
+        .iter()
+        .map(|a| (*a).to_string())
+        .collect();
+    assert_eq!(split_unicode_space_glued_flags(&raw), raw);
 }
 
 #[test]

@@ -7480,3 +7480,60 @@ uses one code path for Claude and Codex, survives restarts, and reuses the
 lifecycle's existing idempotency and interrupt machinery. A harness that cannot
 take daemon turns (DeepSeek Harness) fails closed with its name instead of
 queueing a message that would never arrive.
+
+
+## DD-198: OpenCode is a harness with a child-local Messages adapter
+
+**Context:** OpenCode must run both native provider models and models behind
+`clud serve`. Its flags and configuration are independent of Claude Code's;
+notably, `opencode run -p` supplies a password instead of a prompt.
+
+**Decision:** model-provider resolution stays independent of the new OpenCode
+harness. The launch builder translates prompts to `opencode run`, while the
+foreground runtime renders the resolved Messages route into child-local
+`OPENCODE_CONFIG_CONTENT`. It uses a dedicated `clud` provider and selects
+that provider for both primary and small-model work. User configuration and
+permission denies are preserved outside clud's owned route keys. No auth or
+config files are written. Codex and unified routing fail explicitly until
+their adapters are supported; Claude-only hooks and slash commands are never
+forwarded to OpenCode.
+
+**Why:** one explicit wire adapter works with the existing served gateway and
+Messages-compatible providers. Reusing Claude's argv or writing OpenCode's
+global authentication would change another tool's behavior and expose state
+across launches. The acceptance test uses the real OpenCode binary, a served
+mock provider, and a complete file-read tool cycle; see
+[OpenCode](architecture/opencode.md).
+
+## DD-199: naming a metered provider on the command line is consent
+
+**Context:** #2529 and #2533 made clud subscription-first: every route to a
+pay-per-token provider needed `CLUD_ALLOW_METERED=1` and a matching
+`CLUD_METERED_PROVIDER`. The motivation was to stop clud from quietly moving a
+user off their Claude or Codex subscription onto API billing. #2533 also
+gated `--openrouter`, `--deepseek`, `--kimi` and `--provider`, so a user who
+typed `clud --openrouter <key>` was refused.
+
+**Decision:** a metered provider the user names on the command line is
+consented: it launches with the loud warning and no environment overrides.
+`clud serve --openrouter` is the same. The two overrides remain required for
+every implicit route: a provider inferred from a qualified `--model`, a saved
+provider setting, the DeepSeek-only credential fallback, unified-gateway vault
+keys, `--failover-allow-metered`, and the Codex bridge's `OPENAI_API_KEY`
+fallback.
+
+**Why:** the harm being prevented is a surprise bill from a route the user did
+not choose. Typing the provider's flag is that choice; requiring two
+environment variables on top of it only broke deliberate use.
+
+## DD-200: print turns classify native events and keep final answers on stdout
+
+Foreground Claude/Codex print turns were too verbose in native inherited-stdio
+mode. The launcher selects each harness's native JSONL protocol and renders
+classified, bounded activity on stderr; final answers remain complete on stdout.
+Explicit native output modes opt out. Tool text-line counts and edit patch
+counts replace bulky bodies. Codex omits diffs from its public exec events, so
+exact edit counts use the current thread's native patch records rather than a
+working-tree diff (which could include unrelated user changes). Named ASCII
+fallbacks plus lossy input decoding/replacement avoid encoding failures.
+The contract and limits live in [prompt-output.md](architecture/prompt-output.md).

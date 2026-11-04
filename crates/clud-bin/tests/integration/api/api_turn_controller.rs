@@ -50,6 +50,7 @@ fn plan(
         task_summary: None,
         loop_markers: None,
         stream_json_progress: false,
+        prompt_summary: false,
         codex_model: None,
         model_selection: None,
         failover: None,

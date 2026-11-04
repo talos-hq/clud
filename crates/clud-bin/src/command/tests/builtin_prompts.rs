@@ -16,6 +16,10 @@ fn test_model_flag() {
             "--dangerously-skip-permissions",
             "--model",
             "opus",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
             "-p",
             "hello"
         ]

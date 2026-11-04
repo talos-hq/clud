@@ -1397,7 +1397,7 @@ fn provider_profile_rejects_unknown_effort() {
 }
 
 #[test]
-fn provider_profile_invalid_harness_lists_deepseek_as_supported() {
+fn provider_profile_invalid_harness_lists_all_supported_harnesses() {
     let home = tempdir().unwrap();
     write_provider_settings(
         home.path(),
@@ -1407,7 +1407,7 @@ fn provider_profile_invalid_harness_lists_deepseek_as_supported() {
     assert!(
         error
             .to_string()
-            .contains("must be default, claude, codex, or deepseek"),
+            .contains("must be default, claude, codex, deepseek, or opencode"),
         "{error}"
     );
 }

@@ -422,6 +422,7 @@ pub fn save_last_launcher_harness_at(home: &Path, backend: Backend) -> Result<()
                     Backend::Claude => "claude",
                     Backend::Codex => "codex",
                     Backend::DeepSeek => "deepseek",
+                    Backend::OpenCode => "opencode",
                 }
                 .to_string(),
             ),
@@ -578,7 +579,9 @@ fn provider_profile_from_document(
             HarnessSelection::from_settings_str(value).ok_or_else(|| {
                 invalid_provider_profile(
                     provider,
-                    format!("harness '{value}' must be default, claude, codex, or deepseek"),
+                    format!(
+                        "harness '{value}' must be default, claude, codex, deepseek, or opencode"
+                    ),
                 )
             })
         })

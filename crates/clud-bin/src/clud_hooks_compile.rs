@@ -278,6 +278,80 @@ pub fn merge_hook_settings(base: &mut Value, overlay: &Value) -> Result<(), Stri
     Ok(())
 }
 
+/// Safety and declared hooks share the scanner. Collapse their registrations
+/// after composing the launch document, keeping unrelated handlers intact.
+/// The explicit event runs both policy and declared hooks in one invocation.
+pub fn consolidate_scanner_hooks(settings: &mut Value) {
+    let Some(events) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (event, groups) in events {
+        let Some(groups) = groups.as_array_mut() else {
+            continue;
+        };
+        let mut found = false;
+        let mut matchers = Vec::new();
+        for group in groups.iter_mut() {
+            let matcher = group
+                .get("matcher")
+                .and_then(Value::as_str)
+                .unwrap_or("*")
+                .to_owned();
+            let Some(handlers) = group.get_mut("hooks").and_then(Value::as_array_mut) else {
+                continue;
+            };
+            handlers.retain(|handler| {
+                if is_plain_scanner_handler(handler, event) {
+                    found = true;
+                    if !matchers.contains(&matcher) {
+                        matchers.push(matcher.clone());
+                    }
+                    false
+                } else {
+                    true
+                }
+            });
+        }
+        if found {
+            groups.retain(|group| {
+                group
+                    .get("hooks")
+                    .and_then(Value::as_array)
+                    .is_none_or(|h| !h.is_empty())
+            });
+            let matcher = if matchers.iter().any(|m| m == "*" || m.is_empty()) {
+                "*".to_owned()
+            } else {
+                matchers.join("|")
+            };
+            groups.push(json!({
+                "matcher": matcher,
+                "hooks": [{"type": "command", "command": dispatcher_command(event)}]
+            }));
+        }
+    }
+}
+
+pub(crate) fn is_plain_scanner_handler(handler: &Value, event: &str) -> bool {
+    let Some(fields) = handler.as_object() else {
+        return false;
+    };
+    if fields.keys().any(|key| key != "type" && key != "command")
+        || handler.get("type").and_then(Value::as_str) != Some("command")
+    {
+        return false;
+    }
+    let Some(command) = handler.get("command").and_then(Value::as_str) else {
+        return false;
+    };
+    command == dispatcher_command(event)
+        || (event == PRE_TOOL_USE
+            && matches!(
+                command,
+                "clud-cmd-scan" | "clud-block-bad-cmd" | "clud tool run hooks/block-bad-cmd.py"
+            ))
+}
+
 #[cfg(test)]
 #[path = "clud_hooks_compile_tests.rs"]
 mod clud_hooks_compile_tests;

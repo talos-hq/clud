@@ -4,6 +4,7 @@
 //! its own pseudo-terminal.
 
 mod input_corpus;
+mod loop_console;
 mod platform;
 mod pty_behavior;
 mod pty_pump;

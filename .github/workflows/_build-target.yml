@@ -77,6 +77,14 @@ on:
         required: false
         type: boolean
         default: false
+      sign-windows:
+        description: >-
+          Authenticode-sign every unsigned PE in the Windows wheel through
+          Azure Artifact Signing (Auto Release only; the caller grants
+          id-token: write and passes the talos-hq org AZURE_* secrets).
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build:
@@ -300,6 +308,33 @@ jobs:
           --target ${{ inputs.target }}
           --strategy ${{ inputs.strategy }}
           --profile ${{ inputs.profile }}
+
+      # Azure Artifact Signing (Authenticode), OIDC only -- no client secret.
+      # Windows wheels cross-build on Linux, so the signer is a SHA-256-pinned
+      # jsign jar (ci/sign_windows_release.py). It signs every PE in the wheel
+      # that has no signature yet (clud.exe, clud-webterm.exe, the Kitty
+      # terminal binaries) and keeps vendor-signed ones (Microsoft conpty.dll /
+      # OpenConsole.exe), then rewrites RECORD. Runs before the size/RECORD
+      # checks and the upload, so PyPI, the standalone .exe assets extracted
+      # from these wheels and SHA256SUMS all carry signed bytes. Fail-closed:
+      # any PE left unsigned fails the step. Azure trusts this repo's OIDC
+      # subject on refs/heads/main and tags only; releases run on tag pushes.
+      - name: Azure login for Authenticode signing
+        if: ${{ inputs.sign-windows && inputs.profile == 'release' && github.event_name != 'pull_request' }}
+        uses: azure/login@a457da9ea143d694b1b9c7c869ebb04ebe844ef5 # v2.3.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Authenticode-sign Windows wheel binaries
+        if: ${{ inputs.sign-windows && inputs.profile == 'release' && github.event_name != 'pull_request' }}
+        env:
+          AZURE_SIGNING_ENDPOINT: ${{ secrets.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ secrets.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ secrets.AZURE_SIGNING_PROFILE }}
+          AZURE_SIGN_PUBLISHER: ${{ secrets.AZURE_SIGN_PUBLISHER }}
+        run: '"$VENV_PY" -m ci.sign_windows_release sign --dist-dir dist/'
 
       # Issue #1017: 2.7.2, 2.7.3 and 2.7.4 were tagged and built green, and
       # none of them published -- a linux wheel had grown past PyPI's 100 MB

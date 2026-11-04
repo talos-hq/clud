@@ -169,16 +169,6 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         quiet_ok: true,
     },
     BundledTool {
-        rel_path: "notify/watch.py",
-        body: include_str!("../assets/tools/notify/watch.py"),
-        // Session/PR event watcher with a durable JSONL log; the daemon and
-        // GitHub own the watched state, so a kill loses no work.
-        kill_semantics: KillSemantics::Resumable,
-        command_timeout: Duration::from_secs(24 * 60 * 60),
-        progress_timeout: None,
-        quiet_ok: true,
-    },
-    BundledTool {
         rel_path: "github/is_meta_issue.py",
         body: include_str!("../assets/tools/github/is_meta_issue.py"),
         // Read-only GitHub query (#1404): classifies an issue as meta or
@@ -212,6 +202,16 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         body: include_str!("../assets/tools/code/outline.py"),
         // Read-only parse (#1339 item 4): definitions and headings with line
         // ranges. Killing it loses no work.
+        kill_semantics: KillSemantics::Resumable,
+        command_timeout: DEFAULT_RESUMABLE_TIMEOUT,
+        progress_timeout: None,
+        quiet_ok: false,
+    },
+    BundledTool {
+        rel_path: "code/slice.py",
+        body: include_str!("../assets/tools/code/slice.py"),
+        // Read-only bounded read (#1676): exact line ranges under a byte cap.
+        // Killing it loses no work.
         kill_semantics: KillSemantics::Resumable,
         command_timeout: DEFAULT_RESUMABLE_TIMEOUT,
         progress_timeout: None,
@@ -577,6 +577,21 @@ mod tests {
         assert!(tool.body.contains("\"tree-sitter=="));
     }
 
+    /// Issue #1676: one bounded read of several line ranges.
+    #[test]
+    fn bundled_includes_code_slice() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|t| t.rel_path == "code/slice.py")
+            .expect("BUNDLED_TOOLS must include code/slice.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
+        assert!(
+            tool.body.contains("--max-bytes") && tool.body.contains("--lines"),
+            "slice.py must expose the bounded range interface its routing promises"
+        );
+    }
+
     #[test]
     fn bundled_includes_code_patch() {
         let tool = BUNDLED_TOOLS
@@ -753,18 +768,6 @@ mod tests {
             .iter()
             .find(|t| t.rel_path == "github/run_watch.py")
             .expect("BUNDLED_TOOLS must include github/run_watch.py");
-        assert!(tool.body.contains("managed-by: clud"));
-        assert!(!tool.body.contains("import subprocess"));
-        assert_eq!(tool.kill_semantics, KillSemantics::Resumable);
-    }
-
-    /// The notify/watch.py session+PR event watcher ships in the bundle.
-    #[test]
-    fn bundled_includes_notify_watch() {
-        let tool = BUNDLED_TOOLS
-            .iter()
-            .find(|t| t.rel_path == "notify/watch.py")
-            .expect("BUNDLED_TOOLS must include notify/watch.py");
         assert!(tool.body.contains("managed-by: clud"));
         assert!(!tool.body.contains("import subprocess"));
         assert_eq!(tool.kill_semantics, KillSemantics::Resumable);
