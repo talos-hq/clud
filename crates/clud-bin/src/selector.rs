@@ -1009,6 +1009,10 @@ mod tests {
                 "self_install/picker.rs",
                 include_str!("self_install/picker.rs"),
             ),
+            (
+                "self_install/setup.rs",
+                include_str!("self_install/setup.rs"),
+            ),
         ] {
             // Only production code: tests legitimately assert on the escape
             // sequences the shared renderer emits. Colored output elsewhere in

@@ -226,6 +226,24 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
     if let Some(code) = clud_settings::authorized::handle(args) {
         return Some(code);
     }
+    if let Some(args::Command::Setup {
+        dry_run,
+        yes,
+        provider,
+        write_profile,
+    }) = &args.command
+    {
+        if !args.passthrough.is_empty() {
+            eprintln!("setup accepts no passthrough arguments");
+            return Some(2);
+        }
+        return Some(clud::setup_command::run(&clud::setup_command::Options {
+            dry_run: *dry_run,
+            yes: *yes,
+            provider: *provider,
+            write_profile: *write_profile,
+        }));
+    }
     if let Some(code) = self_install::entry::run_explicit(args) {
         return Some(code);
     }

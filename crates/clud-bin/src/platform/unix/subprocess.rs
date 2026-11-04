@@ -6,6 +6,15 @@ use std::time::Duration;
 
 use running_process::ReadStatus;
 
+/// Convert running-process signal exits to the conventional shell status.
+pub fn shell_exit_code(code: i32) -> i32 {
+    if (-127..0).contains(&code) {
+        128 - code
+    } else {
+        code
+    }
+}
+
 /// Never constructed off Windows: `crate::subprocess` only takes the
 /// suspended path when `platform::host::WINDOWS` holds.
 pub enum SuspendedSubprocess {}

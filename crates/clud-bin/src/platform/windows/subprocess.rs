@@ -10,6 +10,11 @@ use std::time::{Duration, Instant};
 
 use running_process::ReadStatus;
 
+/// Windows process exit codes are not Unix signal numbers.
+pub fn shell_exit_code(code: i32) -> i32 {
+    code
+}
+
 pub struct SuspendedSubprocess {
     pid: u32,
     child: Mutex<SuspendedChildState>,
