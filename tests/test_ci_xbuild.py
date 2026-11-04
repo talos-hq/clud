@@ -530,7 +530,7 @@ def test_bundle_stripping_uses_the_target_elf_editor(
     monkeypatch.setattr(build_wheel, "resolve_elf_objcopy", resolve)
     monkeypatch.setattr(process, "run", strip)
     bundle._strip_debug(tmp_path, target)
-    assert selected and set(selected) == {target}
+    assert set(selected) == {target}
     assert calls == [
         ["/managed/target-objcopy", "--strip-debug", str(path)] for path in (binary, harness)
     ]
