@@ -531,3 +531,21 @@ fn test_build_up_prompt_publish() {
     let prompt = build_up_prompt(None, true);
     assert!(prompt.contains("-p"));
 }
+
+#[test]
+fn agent_prompts_route_lint_and_tests_through_gate() {
+    for args in [
+        vec!["clud", "loop", "task"],
+        vec!["clud", "-p", "task"],
+        vec!["clud", "--codex", "loop", "task"],
+        vec!["clud", "--codex", "-p", "task"],
+    ] {
+        let p = plan(&args);
+        let text = if args.contains(&"--codex") {
+            codex_instructions(&p)
+        } else {
+            claude_system_prompt(&p)
+        };
+        assert!(text.contains(super::super::builder::GATE_ROUTING));
+    }
+}

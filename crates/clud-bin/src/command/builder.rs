@@ -420,6 +420,9 @@ pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refus
 /// and paid for every comment body in raw JSON (#2413).
 pub(super) const BOUNDED_DIAGNOSTIC_ROUTING: &str = "For large GitHub issue discussions, use `clud tool run github/issue_context.py -- --repo OWNER/REPO --issue N`; for a pull request with many reviews or review comments, use `clud tool run github/pr_context.py -- --repo OWNER/REPO --pr N` instead of `gh pr view --json reviews,comments` or `gh issue view --json body,comments`; follow each snapshot's continuation and refresh explicitly. If unavailable, use a bounded read and preserve access to the full issue. For noisy local test runs, use `clud tool run diagnostics/test_report.py -- -- <test command>` to keep a bounded report and private full-output artifact; inspect the artifact with its continuation. If unavailable, retain a bounded failure-focused fallback and preserve the command status.";
 
+/// Agent lint/test routing (#2603).
+pub(super) const GATE_ROUTING: &str = "Run lint and tests only through `clud gate <lane>`; the direct invocations are discouraged and will be refused after the first advisory.";
+
 /// Read-hunting is the probe's largest remaining context cost: agents `cat` or
 /// `sed -n`-slice a file they have not mapped, miss the symbol, and slice again.
 /// `code/outline.py` and `code/ast_grep.py` already ship in BUNDLED_TOOLS but
@@ -533,6 +536,7 @@ fn build_launch_plan_for_target_at(
         if agent_mode {
             append_instructions(&mut deletion_instructions, BOUNDED_DIAGNOSTIC_ROUTING);
             append_instructions(&mut deletion_instructions, BOUNDED_READ_ROUTING);
+            append_instructions(&mut deletion_instructions, GATE_ROUTING);
         }
     }
     let codex_passthrough_instructions = (backend == Backend::Codex)
@@ -682,6 +686,7 @@ fn build_launch_plan_for_target_at(
         if agent_mode {
             append_instructions(&mut instructions, BOUNDED_DIAGNOSTIC_ROUTING);
             append_instructions(&mut instructions, BOUNDED_READ_ROUTING);
+            append_instructions(&mut instructions, GATE_ROUTING);
         }
         if !instructions.is_empty() || has_user_instructions {
             cmd.extend([

@@ -533,6 +533,20 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
+    // #2603: read-only session replay; no logging or writes in the gate guard.
+    let gate_note = if event == PRE_TOOL_USE_EVENT {
+        match block_bad_cmd_gate_guard::verdict(&payload, raw_payload) {
+            block_bad_cmd_gate_guard::Verdict::Deny(replacement) => {
+                println!("{}", deny_json(&replacement));
+                return 2;
+            }
+            block_bad_cmd_gate_guard::Verdict::Advisory(note) => Some(note),
+            block_bad_cmd_gate_guard::Verdict::Silent => None,
+        }
+    } else {
+        None
+    };
+
     // #1674: deny the same call once it has run more than N times in a row
     // in this session. Fails open on any state error; see the module docs.
     if event == PRE_TOOL_USE_EVENT {
@@ -1111,6 +1125,12 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
+    if let Some(note) = gate_note {
+        // Keep the nudge read-only, including the output path: merging project
+        // hook notices can persist their deduplication state.
+        println!("{}", block_bad_cmd_verify_ratio::context_json(&note));
+        return 0;
+    }
     if let Some(note) = verify_note {
         append_log("allowed with verify-ratio note");
         let output = block_bad_cmd_verify_ratio::context_json(&note);
@@ -3988,6 +4008,9 @@ mod block_bad_cmd_stale_upstream;
 
 #[path = "block_bad_cmd_repeat.rs"]
 mod block_bad_cmd_repeat;
+
+#[path = "block_bad_cmd_gate_guard.rs"]
+mod block_bad_cmd_gate_guard;
 
 #[path = "block_bad_cmd_hop.rs"]
 mod block_bad_cmd_hop;

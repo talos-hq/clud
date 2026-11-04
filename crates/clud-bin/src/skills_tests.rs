@@ -1187,3 +1187,8 @@ fn pending_upgrade_patch_is_refreshed() {
         "alpha body\n"
     );
 }
+
+#[test]
+fn bundled_includes_gate_skill() {
+    assert!(BUNDLED_SKILLS.iter().any(|skill| skill.name == "clud-gate"));
+}

@@ -471,6 +471,11 @@ which test tier a change belongs in — lives in
   non-serialized `RuleSource` (file, layer, `/bad_commands/<index>` slot) so a
   denial can cite exactly which rule fired and where it came from (#525);
   provenance survives merge/dedupe, so a shadowing rule keeps its own origin.
+- `block_bad_cmd_gate_guard.rs` - #2603: Bash lint/test advisory on the first
+  distinct command shape, one refusal on the second, then silence. Replays up
+  to 2 MiB of the session transcript without state writes or subprocesses.
+  Missing/unsupported history or binary, parse errors, `CLUD_READ=1` and
+  `CLUD_GATE_BYPASS=1` fail open. Signatures expire after one hour of inactivity.
 - `block_bad_cmd.rs` - native `cmd-scan` PreToolUse hook binary (formerly
   `block-bad-cmd`; `clud-block-bad-cmd` is still an argv[0] alias of `clud`, see
   `multicall.rs` and `block_bad_cmd_rollout.rs`). Enforces three things per Bash command:
