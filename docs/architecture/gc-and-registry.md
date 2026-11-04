@@ -677,6 +677,15 @@ The standalone temp command also accepts `--no-daemon` and never needs a registr
 round trip. Its report distinguishes live from unknown units and names an unavailable
 liveness source; that unavailable source makes the command fail, so scheduled jobs
 cannot report success for an unperformed collection.
+
+The document portal's privileged `fusermount3` helper is also recognized, only in its
+exact portal service scope under a verified portal/manager lineage, with trusted
+program paths and the fixed portal filesystem options and `/run/user/<uid>/doc`
+mountpoint. Other FUSE mounts and privileged agent helpers remain unknown.
+An opaque census task that has since disappeared is ignored only when Linux procfs
+is verified to expose all PIDs (`hidepid=0` or its default) and its task directory
+returns `NotFound`. Restricted/hidden procfs, missing visibility evidence and denied
+reads never prove exit. The diagnostic lists up to eight unresolved task IDs/names.
 Removal goes through `rm_tool::remove_dir_tree_writable`, the shared tree deleter.
 
 **Undeletable paths are one line (#2397).** Container builds leave `root:root` trees (47 GB of CEF

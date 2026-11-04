@@ -71,6 +71,39 @@ fn manager(process: &Process, scope: &str, trusted: &impl Fn(&str) -> bool) -> b
         && process.command.first().is_some_and(|path| trusted(path))
 }
 
+fn portal_helper(
+    process: &Process,
+    parent: &Process,
+    scope: &str,
+    uid: u32,
+    read: &impl Fn(u32) -> Option<Process>,
+    trusted: &impl Fn(&str) -> bool,
+) -> bool {
+    let options = process
+        .command
+        .windows(2)
+        .find(|pair| pair[0] == "-o")
+        .map(|pair| pair[1].split(',').collect::<Vec<_>>())
+        .unwrap_or_default();
+    process.cgroup == format!("{scope}/session.slice/xdg-document-portal.service")
+        && parent.cgroup == process.cgroup
+        && program_matches(process, "fusermount3", &["fusermount3"])
+        && process.command.first().is_some_and(|path| trusted(path))
+        && process
+            .command
+            .ends_with(&["--".to_string(), format!("/run/user/{uid}/doc")])
+        && options.contains(&"fsname=portal")
+        && options.contains(&"subtype=portal")
+        && program_matches(
+            parent,
+            "xdg-document-portal",
+            &["xdg-document-po", ".xdg-document-p"],
+        )
+        && parent.command.first().is_some_and(|path| trusted(path))
+        && read(parent.parent)
+            .is_some_and(|manager_process| manager(&manager_process, scope, trusted))
+}
+
 fn verified_service(
     process: &Process,
     uid: u32,
@@ -92,6 +125,9 @@ fn verified_service(
         && process.cgroup == format!("{scope}/init.scope")
     {
         return manager(&parent, &scope, trusted);
+    }
+    if portal_helper(process, &parent, &scope, uid, read, trusted) {
+        return true;
     }
     let compositor = process.cgroup == format!("{scope}/session.slice/plasma-kwin_wayland.service")
         && program_matches(
@@ -158,6 +194,48 @@ pub fn verified_desktop_service(pid: u32) -> bool {
         .ok()
         .and_then(|status| thread_group(&status));
     verified_group(group, uid, &read_process, &trusted_program)
+}
+
+fn full_proc_visibility(mountinfo: &str) -> bool {
+    let mut found = false;
+    for line in mountinfo.lines() {
+        let Some((mount, filesystem)) = line.split_once(" - ") else {
+            continue;
+        };
+        let fields: Vec<_> = mount.split_whitespace().collect();
+        if fields.get(4) != Some(&"/proc") {
+            continue;
+        }
+        found = true;
+        let filesystem: Vec<_> = filesystem.split_whitespace().collect();
+        if filesystem.first() != Some(&"proc") {
+            return false;
+        }
+        if fields.get(5).is_none() || filesystem.get(2).is_none() {
+            return false;
+        }
+        let options = fields
+            .get(5)
+            .into_iter()
+            .chain(filesystem.get(2))
+            .flat_map(|options| options.split(','));
+        if options.into_iter().any(|option| {
+            option.starts_with("hidepid") && !matches!(option, "hidepid=0" | "hidepid=off")
+        }) {
+            return false;
+        }
+    }
+    found
+}
+
+/// A disappeared task cannot own scratch. Only unrestricted Linux procfs
+/// plus an actual NotFound answer prove this; hidden/denied reads are unknown.
+pub fn task_has_exited(pid: u32) -> bool {
+    super::host::LINUX
+        && fs::metadata("/proc/self/status").is_ok()
+        && fs::read_to_string("/proc/self/mountinfo").is_ok_and(|info| full_proc_visibility(&info))
+        && fs::metadata(format!("/proc/{pid}"))
+            .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
 }
 
 #[cfg(test)]
@@ -280,5 +358,85 @@ mod tests {
             &read,
             &|_| true
         ));
+    }
+
+    #[test]
+    fn document_portal_fuse_helper_requires_scope_parent_and_fixed_mount() {
+        let scope = "/user.slice/user-1000.slice/user@1000.service/session.slice/xdg-document-portal.service";
+        let portal = Process {
+            parent: 10,
+            comm: ".xdg-document-p".into(),
+            cgroup: scope.into(),
+            command: vec!["/usr/libexec/xdg-document-portal".into()],
+        };
+        let read = |pid| match pid {
+            1 => Some(Process {
+                parent: 0,
+                ..manager_process()
+            }),
+            10 => Some(manager_process()),
+            40 => Some(portal.clone()),
+            _ => None,
+        };
+        let helper = Process {
+            parent: 40,
+            comm: "fusermount3".into(),
+            cgroup: scope.into(),
+            command: [
+                "/usr/bin/fusermount3",
+                "-o",
+                "rw,fsname=portal,subtype=portal",
+                "--",
+                "/run/user/1000/doc",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        };
+        assert!(verified_service(&helper, 1000, &read, &|_| true));
+        let mut wrong_mount = helper.clone();
+        *wrong_mount.command.last_mut().unwrap() = "/home/u/.clud/tmp".into();
+        assert!(!verified_service(&wrong_mount, 1000, &read, &|_| true));
+        let mut wrong_parent = helper.clone();
+        wrong_parent.parent = 10;
+        assert!(!verified_service(&wrong_parent, 1000, &read, &|_| true));
+        let mut wrong_options = helper.clone();
+        wrong_options.command[2] = "rw,fsname=other,subtype=portal".into();
+        assert!(!verified_service(&wrong_options, 1000, &read, &|_| true));
+        assert!(!verified_service(&helper, 1000, &read, &|_| false));
+    }
+
+    #[test]
+    fn live_task_is_never_classified_as_exited() {
+        assert!(!task_has_exited(std::process::id()));
+        let visible = super::super::host::LINUX
+            && fs::read_to_string("/proc/self/mountinfo")
+                .is_ok_and(|info| full_proc_visibility(&info));
+        assert_eq!(task_has_exited(u32::MAX), visible);
+    }
+
+    #[test]
+    fn hidden_or_unverified_procfs_never_proves_a_missing_task_exited() {
+        let visible = "10 1 0:5 / /proc rw,nosuid,nodev - proc proc rw\n";
+        assert!(full_proc_visibility(visible));
+        for restriction in [
+            "hidepid=1",
+            "hidepid=2",
+            "hidepid=invisible",
+            "hidepid=ptraceable",
+            "hidepid=bad",
+        ] {
+            let restricted = format!("10 1 0:5 / /proc rw - proc proc rw,{restriction}\n");
+            assert!(!full_proc_visibility(&restricted), "{restriction}");
+            assert!(!full_proc_visibility(&format!("{visible}{restricted}")));
+        }
+        assert!(!full_proc_visibility(
+            "10 1 0:5 / /proc rw,hidepid=2 - proc proc rw\n"
+        ));
+        assert!(!full_proc_visibility(
+            "10 1 0:5 / /proc rw - tmpfs tmpfs rw\n"
+        ));
+        assert!(!full_proc_visibility(""));
+        assert!(!full_proc_visibility("10 1 0:5 / /proc rw - proc proc\n"));
     }
 }

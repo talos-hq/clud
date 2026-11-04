@@ -82,6 +82,7 @@ fn facts(cwd: Option<&str>, env: &[&str]) -> ProcFacts {
         zombie: false,
         same_user: true,
         desktop_service: false,
+        gone: false,
     }
 }
 
@@ -106,6 +107,17 @@ fn unavailable_cwd_covers_both_sysinfo_representations() {
     assert!(!cwd_available(None));
     assert!(!cwd_available(Some(Path::new(""))));
     assert!(cwd_available(Some(Path::new("/scratch"))));
+}
+
+#[test]
+fn an_exited_census_task_is_not_an_unreadable_live_agent() {
+    let own = facts(Some("/a"), &["X=1"]);
+    let exited = ProcFacts {
+        gone: true,
+        ..facts(None, &[])
+    };
+    assert_eq!(paths_from_facts(&own, &[exited]), Some(vec![]));
+    assert!(paths_from_facts(&own, &[facts(None, &[])]).is_none());
 }
 
 #[test]

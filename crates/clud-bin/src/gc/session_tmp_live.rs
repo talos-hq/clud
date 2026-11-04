@@ -160,6 +160,8 @@ pub struct ProcFacts {
     pub same_user: bool,
     /// Verified protected desktop infrastructure in its OS service lineage.
     pub desktop_service: bool,
+    /// Kernel-confirmed disappearance since the process table was captured.
+    pub gone: bool,
 }
 
 fn cwd_available(cwd: Option<&Path>) -> bool {
@@ -178,6 +180,7 @@ pub fn paths_from_facts(own: &ProcFacts, procs: &[ProcFacts]) -> Option<Vec<Path
     for process in procs {
         if process.same_user
             && !process.zombie
+            && !process.gone
             && !process.desktop_service
             && !cwd_available(process.cwd.as_deref())
             && process.environ.is_empty()
@@ -221,6 +224,9 @@ fn process_paths() -> Option<Vec<PathBuf>> {
             && p.user_id().cloned() == uid
             && p.status() != ProcessStatus::Zombie
             && crate::platform::session_tmp_live::verified_desktop_service(p.pid().as_u32()),
+        gone: !cwd_available(p.cwd())
+            && p.environ().is_empty()
+            && crate::platform::session_tmp_live::task_has_exited(p.pid().as_u32()),
     };
     let mut blocked = Vec::new();
     let procs: Vec<ProcFacts> = system
@@ -230,6 +236,7 @@ fn process_paths() -> Option<Vec<PathBuf>> {
             let fact = facts(process);
             if fact.same_user
                 && !fact.zombie
+                && !fact.gone
                 && !fact.desktop_service
                 && !cwd_available(fact.cwd.as_deref())
                 && fact.environ.is_empty()
