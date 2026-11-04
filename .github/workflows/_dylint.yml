@@ -49,6 +49,17 @@ jobs:
       run:
         shell: bash
     steps:
+      # The merge_group run restores the full build cache, which left the
+      # host leg under soldr's 5 GiB build-volume block threshold and failed
+      # the enforce_platform_boundary UI build (#2605). Drop SDKs no lane
+      # here uses. Best effort: a local replay without them or sudo skips.
+      - name: Free runner disk
+        run: |
+          df -h / | tail -1
+          for dir in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
+            [ -d "$dir" ] && { sudo -n rm -rf "$dir" || true; }
+          done
+          df -h / | tail -1
       - name: Checkout source
         uses: actions/checkout@v4
         with:
