@@ -1303,6 +1303,13 @@ fn route_request(
             conversation_key,
             log,
         ),
+        // Gemini's discovery doors are GETs on the same prefix. A client lists
+        // models before it calls one, so an unlisted surface leaves the
+        // generation door unreachable for a stock Gemini SDK.
+        ("GET", "/v1beta/models") => serve_gemini_models(stream, config, log),
+        ("GET", path) if path.starts_with(GEMINI_ROUTE_PREFIX) => {
+            serve_gemini_model_detail(stream, config, path, log);
+        }
         ("POST", "/v1/images/generations") => {
             route_images_generations(stream, connection, &mut parsed, conversation_key);
         }
@@ -1578,7 +1585,12 @@ const GEMINI_ROUTE_PREFIX: &str = "/v1beta/models/";
 fn parse_generate_content_route(path: &str) -> Option<GeminiCall<'_>> {
     let rest = path.strip_prefix(GEMINI_ROUTE_PREFIX)?;
     let (model, verb) = rest.rsplit_once(':')?;
+    // A Gemini client echoes the name it read from `GET /v1beta/models`,
+    // i.e. `models/<id>`. Discovery and generation must agree on the spelling,
+    // so the prefix is accepted here rather than advertised without being
+    // servable.
     let model = model.trim();
+    let model = model.strip_prefix("models/").unwrap_or(model);
     if model.is_empty() {
         return None;
     }
@@ -1690,6 +1702,113 @@ fn route_generate_content_path(
             );
         }
     }
+}
+
+/// Models this launch advertises on the Gemini surface.
+///
+/// The same provider-availability and #1257 allowlist filters
+/// [`serve_unified_catalog`] applies, because discovery may only offer rows the
+/// route would also serve. `None` means this launch has no Gemini door at all:
+/// the `generateContent` route refuses a Codex-only launch by name, so its
+/// listing must refuse too instead of advertising a surface that cannot answer.
+fn gemini_advertised_rows(
+    config: &BridgeConfig,
+) -> Option<Vec<&'static provider_catalog::CatalogModel>> {
+    let GatewayMode::Unified(unified) = &config.gateway_mode else {
+        return None;
+    };
+    Some(
+        provider_catalog::MODELS
+            .iter()
+            .filter(|entry| unified.provider_available(entry.provider))
+            .filter(|entry| {
+                entry.discovery_id.is_some_and(|id| {
+                    provider_catalog::model_allowlist_allows(&config.allowed_models, id)
+                })
+            })
+            .collect(),
+    )
+}
+
+/// `GET /v1beta/models` -- Gemini's model listing.
+///
+/// Upstream capability: CLIProxyAPI registers `v1beta.GET("/models", ...)`
+/// (`internal/api/server_routes.go:134`) and answers it from
+/// `sdk/api/handlers/gemini/gemini_handlers.go: GeminiModels`, which normalises
+/// each registry row to `models/<name>` and fills in the display fields a
+/// Gemini client reads. clud had no discovery door, so a Gemini SDK could not
+/// find a model to call even though `generateContent` answered. The row shape
+/// lives in [`crate::gemini_models`]; this function owns the mode gate, the
+/// advertisement record and the response.
+fn serve_gemini_models(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+) {
+    let Some(rows) = gemini_advertised_rows(config) else {
+        record_rejection(log, 501, "gemini_models_unsupported");
+        refuse_gemini(
+            stream,
+            501,
+            "GET /v1beta/models needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    };
+    record_catalog_advertised(
+        log,
+        &rows
+            .iter()
+            .filter_map(|entry| entry.discovery_id)
+            .collect::<Vec<_>>(),
+    );
+    let body = crate::gemini_models::list_body(&rows);
+    let _ = write_response(stream, 200, "application/json", &body, false);
+}
+
+/// `GET /v1beta/models/<model>` -- one advertised row.
+///
+/// Upstream capability: `v1beta.GET("/models/*action", ...)`
+/// (`internal/api/server_routes.go:137`) -> `GeminiGetHandler`, which matches
+/// the action with or without the `models/` prefix and answers `404` with
+/// Gemini's own error envelope for an unknown name. Only advertised rows
+/// resolve, so a client cannot read a row the listing would not offer.
+fn serve_gemini_model_detail(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    path: &str,
+    log: Option<&SharedBridgeLog>,
+) {
+    let Some(rows) = gemini_advertised_rows(config) else {
+        record_rejection(log, 501, "gemini_models_unsupported");
+        refuse_gemini(
+            stream,
+            501,
+            "GET /v1beta/models needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    };
+    let Some(crate::gemini_models::ModelQuery::Detail(requested)) =
+        crate::gemini_models::parse_model_query(path)
+    else {
+        record_rejection(log, 400, "gemini_model_missing_name");
+        refuse_gemini(
+            stream,
+            400,
+            "the path must be /v1beta/models or /v1beta/models/<model>",
+        );
+        return;
+    };
+    let Some(entry) = crate::gemini_models::find(&rows, requested) else {
+        record_rejection(log, 404, "gemini_model_not_found");
+        refuse_gemini(stream, 404, &format!("model not found: {requested}"));
+        return;
+    };
+    let Some(body) = crate::gemini_models::detail_body(entry) else {
+        record_rejection(log, 404, "gemini_model_not_found");
+        refuse_gemini(stream, 404, &format!("model not found: {requested}"));
+        return;
+    };
+    let _ = write_response(stream, 200, "application/json", &body, false);
 }
 
 /// `POST /v1/images/generations` -- OpenAI's images API on the Codex lane.
@@ -13537,6 +13656,22 @@ fn generate_content_route_reads_the_verb_out_of_the_path() {
         parse_generate_content_route("/v1beta/models/clud-claude-sonnet@high:generateContent"),
         Some(GeminiCall {
             model: "clud-claude-sonnet@high",
+            stream: false
+        })
+    );
+}
+
+/// Discovery hands a client `models/<id>`; generation must accept exactly that
+/// spelling, or the listing advertises a name the route cannot serve.
+#[test]
+fn generate_content_route_accepts_the_name_discovery_advertises() {
+    let entry = provider_catalog::model_by_discovery_id("clud-claude-codex-sol").expect("row");
+    let name = crate::gemini_models::model_name(&entry).expect("advertised name");
+    let path = format!("/v1beta/models/{name}:generateContent");
+    assert_eq!(
+        parse_generate_content_route(&path),
+        Some(GeminiCall {
+            model: "clud-claude-codex-sol",
             stream: false
         })
     );

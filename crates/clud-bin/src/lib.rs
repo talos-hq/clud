@@ -90,6 +90,7 @@ pub mod fs_private;
 pub mod gate_replay;
 pub mod gc;
 pub mod gemini_client_ingress;
+pub mod gemini_models;
 pub mod gh_broker;
 pub mod graphics;
 pub mod grind;
