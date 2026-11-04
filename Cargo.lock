@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "clud"
-version = "2.8.51"
+version = "2.8.56"
 dependencies = [
  "arboard",
  "base64",
@@ -759,6 +759,7 @@ dependencies = [
  "sha2",
  "shell-words",
  "signal-hook",
+ "similar",
  "strum",
  "sysinfo 0.37.2",
  "tempfile",
@@ -1093,7 +1094,7 @@ checksum = "f27ae1dd37df86211c42e150270f82743308803d90a6f6e6651cd730d5e1732f"
 
 [[package]]
 name = "daemon-stub"
-version = "2.8.51"
+version = "2.8.56"
 dependencies = [
  "libc",
  "running-process",
@@ -3064,7 +3065,7 @@ dependencies = [
 
 [[package]]
 name = "mock-agent"
-version = "2.8.51"
+version = "2.8.56"
 dependencies = [
  "libc",
  "serde_json",
@@ -4041,11 +4042,11 @@ dependencies = [
 
 [[package]]
 name = "probe-dll"
-version = "2.8.51"
+version = "2.8.56"
 
 [[package]]
 name = "probe-target"
-version = "2.8.51"
+version = "2.8.56"
 
 [[package]]
 name = "proc-macro-crate"
@@ -4997,6 +4998,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "similar"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2f8bec09ae8fae0f4f265a4559a9334be3929d8504e9b536df0a41302bd1733"
+dependencies = [
+ "bstr",
+]
+
+[[package]]
 name = "skrifa"
 version = "0.44.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5245,7 +5255,7 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tap-gate"
-version = "2.8.51"
+version = "2.8.56"
 dependencies = [
  "running-process",
  "tempfile",

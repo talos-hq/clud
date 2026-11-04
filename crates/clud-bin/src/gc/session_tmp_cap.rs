@@ -60,6 +60,9 @@ pub struct CapReport {
     pub reclaimed_bytes: u64,
     /// Units kept because they were, or might be, live.
     pub kept_live: usize,
+    /// Idle units retained because their liveness could not be established.
+    pub kept_unknown: usize,
+    pub liveness_unavailable: Option<&'static str>,
     /// Units whose removal failed.
     pub failed: usize,
     /// Every path that could not be removed, for one summary line (#2397).
@@ -84,15 +87,20 @@ impl CapReport {
         } else {
             "evicted"
         };
-        format!(
-            "tmp: {} over the {} cap; {verb} {} idle unit(s) ({}), kept {} live, {} failed.",
+        let mut summary = format!(
+            "tmp: {} over the {} cap; {verb} {} idle unit(s) ({}), kept {} live, {} unknown, {} failed.",
             super::cli::format_bytes(self.total_bytes),
             super::cli::format_bytes(self.cap),
             self.evicted,
             super::cli::format_bytes(self.reclaimed_bytes),
             self.kept_live,
+            self.kept_unknown,
             self.failed
-        )
+        );
+        if let Some(reason) = self.liveness_unavailable {
+            summary.push_str(&format!(" Eviction blocked: {reason}."));
+        }
+        summary
     }
 }
 
@@ -206,6 +214,7 @@ pub fn enforce_cap_at(
     }
     // Consulted only once the tree is known to be over the cap.
     let live = live();
+    report.liveness_unavailable = live.unavailable_reason();
     // Oldest first; an unmeasurable unit sorts last (it is live by default).
     units.sort_by_key(|u| (u.newest.is_none(), u.newest));
     let mut remaining = report.total_bytes;
@@ -215,6 +224,10 @@ pub fn enforce_cap_at(
         }
         if !is_idle(unit.newest, now) {
             report.kept_live += 1;
+            continue;
+        }
+        if report.liveness_unavailable.is_some() {
+            report.kept_unknown += 1;
             continue;
         }
         if live.is_live(root, &unit.path) {

@@ -21,6 +21,12 @@ fn redirect_fd(file: &File, target: i32) -> io::Result<()> {
     Ok(())
 }
 
+/// Unix streams carry bytes; locale policy is applied by the caller. Missing
+/// locale information uses the safe ASCII common subset.
+pub fn output_is_utf8() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

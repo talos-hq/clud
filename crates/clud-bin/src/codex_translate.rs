@@ -64,9 +64,10 @@ pub fn pending_input_items_as_values(
                 last
             }
         });
+    let shell_calls = shell_call_ids(&request);
     let mut items = Vec::new();
     for message in &request.messages[pending_start..] {
-        translate_message(message, &mut items);
+        translate_message(message, &mut items, &shell_calls)?;
     }
     input_items_as_values(&items)
 }
@@ -842,7 +843,77 @@ fn push_message(items: &mut Vec<InputItem>, role: &str, parts: Vec<ContentPart>)
     }
 }
 
-fn translate_message(message: &Message, items: &mut Vec<InputItem>) {
+fn shell_call_ids(request: &MessagesRequest) -> std::collections::HashSet<&str> {
+    request
+        .messages
+        .iter()
+        .flat_map(|message| match &message.content {
+            Content::Blocks(blocks) => blocks.as_slice(),
+            Content::Text(_) => &[],
+        })
+        .filter_map(|block| match block {
+            ContentBlock::ToolUse { id, name, .. }
+                if matches!(
+                    name.as_str(),
+                    "Bash" | "bash" | "Shell" | "shell" | "shell_command" | "exec_command"
+                ) =>
+            {
+                Some(id.as_str())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn capped_tool_result(
+    content: Option<&ToolResultContent>,
+    is_error: bool,
+    shell: bool,
+) -> Result<FunctionCallOutput, TranslateError> {
+    let output = tool_result_output(content, is_error);
+    if !shell {
+        return Ok(output);
+    }
+    let limit = super::tool_result_cap::configured_limit();
+    let cap = |text: &str| {
+        super::tool_result_cap::cap(text, limit)
+            .map_err(|error| invalid(format!("could not spill shell tool output: {error}")))
+    };
+    match output {
+        FunctionCallOutput::Text(text) => Ok(FunctionCallOutput::Text(cap(&text)?)),
+        FunctionCallOutput::Parts(mut parts) => {
+            let text = parts
+                .iter()
+                .filter_map(|part| match part {
+                    ContentPart::InputText { text } => Some(text.as_str()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if limit == 0 || text.len() <= limit {
+                return Ok(FunctionCallOutput::Parts(parts));
+            }
+            let capped = cap(&text)?;
+            let mut first = true;
+            parts.retain_mut(|part| match part {
+                ContentPart::InputText { text } if first => {
+                    *text = capped.clone();
+                    first = false;
+                    true
+                }
+                ContentPart::InputText { .. } => false,
+                _ => true,
+            });
+            Ok(FunctionCallOutput::Parts(parts))
+        }
+    }
+}
+
+fn translate_message(
+    message: &Message,
+    items: &mut Vec<InputItem>,
+    shell_calls: &std::collections::HashSet<&str>,
+) -> Result<(), TranslateError> {
     // A `system` role inside `messages` is not a Responses role. Wrapping it as
     // a user turn keeps the instruction rather than dropping or rejecting it.
     let (role, wrap_system) = match message.role.as_str() {
@@ -893,7 +964,11 @@ fn translate_message(message: &Message, items: &mut Vec<InputItem>) {
                         push_message(items, role, std::mem::take(&mut parts));
                         items.push(InputItem::FunctionCallOutput {
                             call_id: shorten_identifier(tool_use_id),
-                            output: tool_result_output(content.as_ref(), *is_error),
+                            output: capped_tool_result(
+                                content.as_ref(),
+                                *is_error,
+                                shell_calls.contains(tool_use_id.as_str()),
+                            )?,
                         });
                     }
                     ContentBlock::Thinking { signature } => {
@@ -917,6 +992,7 @@ fn translate_message(message: &Message, items: &mut Vec<InputItem>) {
             push_message(items, role, parts);
         }
     }
+    Ok(())
 }
 
 /// Normalise a Claude tool schema into Responses `parameters`.
@@ -1000,8 +1076,9 @@ pub fn translate_request(
         }
     };
 
+    let shell_calls = shell_call_ids(request);
     for message in &request.messages {
-        translate_message(message, &mut input);
+        translate_message(message, &mut input, &shell_calls)?;
     }
 
     let mut tool_names = HashMap::new();
@@ -2035,3 +2112,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "tool_result_cap_translate_tests.rs"]
+mod tool_result_cap_translate_tests;

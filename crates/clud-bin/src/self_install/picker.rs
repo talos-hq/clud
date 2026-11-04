@@ -91,6 +91,7 @@ pub enum ReleaseChoice {
 
 pub struct Releases {
     rows: Vec<ResolvedRelease>,
+    latest_stable: String,
     selected: usize,
 }
 
@@ -100,7 +101,11 @@ impl Releases {
             .iter()
             .position(|row| row.version == latest_stable)
             .unwrap_or(0);
-        Self { rows, selected }
+        Self {
+            rows,
+            latest_stable: latest_stable.into(),
+            selected,
+        }
     }
 
     pub fn selected(&self) -> Option<&ResolvedRelease> {
@@ -114,7 +119,14 @@ impl Selector for Releases {
     fn view(&self, _elapsed: Duration) -> View {
         View {
             title: "Choose a clud release".into(),
-            hints: vec!["Up/Down scroll, Enter select, Esc cancel".into()],
+            hints: vec![
+                format!(
+                    "Current: {}   Latest: {}",
+                    env!("CARGO_PKG_VERSION"),
+                    self.latest_stable
+                ),
+                "Up/Down scroll, Enter select, Esc cancel".into(),
+            ],
             gap: true,
             rows: self
                 .rows
@@ -124,7 +136,11 @@ impl Selector for Releases {
                     current: self.selected == index,
                     marker: if self.selected == index { "[x]" } else { "[ ]" }.into(),
                     label: format!("clud {}", row.version),
-                    note: Note::Inline(row.asset.filename.to_string()),
+                    note: Note::Release {
+                        asset: row.asset.filename.to_string(),
+                        current: row.version == env!("CARGO_PKG_VERSION"),
+                        latest: row.version == self.latest_stable,
+                    },
                 })
                 .collect(),
             footer: Vec::new(),
@@ -289,6 +305,26 @@ mod tests {
             confirm.on_key(Key::Enter),
             Step::Done(ConfirmChoice::Proceed)
         );
+    }
+
+    #[test]
+    fn release_markers_show_both_versions_and_render_trusted_colors() {
+        let current = env!("CARGO_PKG_VERSION");
+        for latest in [current, "99.0.0"] {
+            let picker = Releases::new(vec![row(current), row("99.0.0")], latest);
+            let view = picker.view(Duration::ZERO);
+            assert!(view.hints[0].contains(current));
+            assert!(view.hints[0].contains(latest));
+            let rendered = selector::render(&view, 200).text();
+            assert!(rendered.contains("\x1b[33m<-- current\x1b[0m"));
+            assert!(rendered.contains("\x1b[32m<-- latest\x1b[0m"));
+            assert_eq!(rendered.matches("<-- current").count(), 1);
+            assert_eq!(rendered.matches("<-- latest").count(), 1);
+        }
+        let picker = Releases::new(vec![row("99.0.0")], "99.0.0");
+        assert!(!selector::render(&picker.view(Duration::ZERO), 200)
+            .text()
+            .contains("<-- current"));
     }
 
     #[test]

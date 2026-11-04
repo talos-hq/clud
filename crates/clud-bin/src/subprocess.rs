@@ -64,6 +64,17 @@ impl ManagedSubprocess {
         Self::start_with_env(argv, cwd, Some(env), capture, creationflags, true)
     }
 
+    /// Headless child whose terminal input is owned by the loop dashboard.
+    pub fn start_without_stdin(
+        argv: Vec<String>,
+        cwd: Option<PathBuf>,
+        env: Vec<(String, String)>,
+        capture: bool,
+        creationflags: Option<u32>,
+    ) -> Result<Self, String> {
+        Self::start_with_env(argv, cwd, Some(env), capture, creationflags, false)
+    }
+
     pub fn start_inheriting_env(
         argv: Vec<String>,
         cwd: Option<PathBuf>,

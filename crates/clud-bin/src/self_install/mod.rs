@@ -5,4 +5,5 @@ pub mod catalog;
 pub mod entry;
 pub mod picker;
 mod result;
+pub mod setup;
 pub mod transaction;

@@ -226,6 +226,26 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
     if let Some(code) = clud_settings::authorized::handle(args) {
         return Some(code);
     }
+    if let Some(args::Command::Setup {
+        dry_run,
+        yes,
+        provider,
+        write_profile,
+        import_hermes,
+    }) = &args.command
+    {
+        if !args.passthrough.is_empty() {
+            eprintln!("setup accepts no passthrough arguments");
+            return Some(2);
+        }
+        return Some(clud::setup_command::run(&clud::setup_command::Options {
+            dry_run: *dry_run,
+            yes: *yes,
+            provider: *provider,
+            write_profile: *write_profile,
+            import_hermes: *import_hermes,
+        }));
+    }
     if let Some(code) = self_install::entry::run_explicit(args) {
         return Some(code);
     }
@@ -374,14 +394,17 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             interval_ms,
             max_poll_ms,
             refresh_stored,
-        } => clud::kimi_auth::run_seam(&clud::kimi_auth::SeamArgs {
-            domain: domain.as_deref(),
-            device_endpoint: device_endpoint.as_deref(),
-            token_endpoint: token_endpoint.as_deref(),
-            interval_ms: *interval_ms,
-            max_poll_ms: *max_poll_ms,
-            refresh_stored: *refresh_stored,
-        }),
+        } => run_kimi_device_login_seam(
+            domain.as_deref(),
+            device_endpoint.as_deref(),
+            token_endpoint.as_deref(),
+            *interval_ms,
+            *max_poll_ms,
+            *refresh_stored,
+        ),
+        // Hidden test seam for Meta Muse's device login: no session, backend or
+        // daemon, and it never prints a token or an API key.
+        args::Command::InternalMetaDeviceLogin { .. } => run_meta_device_login_seam(cmd),
         args::Command::DoPrompt { target } => command::do_prompt::run(target),
         args::Command::GrindScripts => command::grind_scripts::run(),
         args::Command::GrindFacts { args } => clud::grind_facts::run_cli(args),
@@ -398,6 +421,50 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
         _ => return None,
     };
     Some(code)
+}
+
+/// Runs the hidden Kimi Code device-login seam. Kept out of
+/// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
+fn run_kimi_device_login_seam(
+    domain: Option<&str>,
+    device_endpoint: Option<&str>,
+    token_endpoint: Option<&str>,
+    interval_ms: Option<u64>,
+    max_poll_ms: Option<u64>,
+    refresh_stored: bool,
+) -> i32 {
+    clud::kimi_auth::run_seam(&clud::kimi_auth::SeamArgs {
+        domain,
+        device_endpoint,
+        token_endpoint,
+        interval_ms,
+        max_poll_ms,
+        refresh_stored,
+    })
+}
+
+/// Runs the hidden Meta Muse device-login seam. Kept out of
+/// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
+fn run_meta_device_login_seam(cmd: Option<&args::Command>) -> i32 {
+    let Some(args::Command::InternalMetaDeviceLogin {
+        device_endpoint,
+        token_endpoint,
+        mint_url,
+        interval_ms,
+        max_poll_ms,
+        status,
+    }) = cmd
+    else {
+        return 1;
+    };
+    clud::meta_auth::run_seam(&clud::meta_auth::SeamArgs {
+        device_endpoint: device_endpoint.as_deref(),
+        token_endpoint: token_endpoint.as_deref(),
+        mint_url: mint_url.as_deref(),
+        interval_ms: *interval_ms,
+        max_poll_ms: *max_poll_ms,
+        status: *status,
+    })
 }
 
 /// Codex updates, credential management and catalog queries: self-contained,
@@ -858,12 +925,13 @@ fn resolve_launch(args: &mut args::Args) -> LaunchResolution {
     if let Err(error) = clud::metered_policy::enforce_resolved(
         &env_policy,
         launch_target.model_provider,
+        args.explicit_model_provider(),
         args.failover_allow_metered,
     ) {
         eprintln!("[clud] error: {error}");
         std::process::exit(2);
     }
-    announce_metered_route(&env_policy, launch_target);
+    announce_metered_route(&env_policy, launch_target, args.explicit_model_provider());
     if launch_target.model_provider == backend::ModelProvider::OpenRouter {
         if let Some(error) = preferences_error {
             eprintln!("[clud] cannot resolve saved OpenRouter privacy policy: {error}");
@@ -991,6 +1059,7 @@ fn resolve_env_policy(args: &args::Args) -> clud::metered_policy::EnvPolicy {
 fn announce_metered_route(
     policy: &clud::metered_policy::EnvPolicy,
     launch_target: backend::ResolvedLaunchTarget,
+    explicit_cli: Option<backend::ModelProvider>,
 ) {
     let provider = launch_target.model_provider;
     if launch_target.routing_mode == backend::RoutingMode::Unified && !policy.consented.is_empty() {
@@ -1006,6 +1075,11 @@ fn announce_metered_route(
         return;
     }
     if !policy.allows(provider) {
+        if clud::metered_policy::explicitly_selected_metered(provider, explicit_cli) {
+            let warning = clud::metered_policy::explicit_metered_warning(provider);
+            eprintln!("{warning}");
+            launch_log::set_metered_warning(warning);
+        }
         return;
     }
     // Native Codex bills the ChatGPT login; only the Claude-harness bridge
@@ -1127,6 +1201,12 @@ fn validate_launch_target(args: &args::Args, launch_target: backend::ResolvedLau
             clud::secret_redaction::policy::GATEWAY_REQUIRED
         );
         std::process::exit(2);
+    }
+    if launch_target.effective_harness == backend::Backend::OpenCode {
+        if let Some(error) = clud::opencode_harness::unsupported_option(args) {
+            eprintln!("[clud] error: {error}");
+            std::process::exit(2);
+        }
     }
     validate_provider_only(args, launch_target);
     if let Some(error) = command::grind_launch_error(args, launch_target)
@@ -1584,6 +1664,15 @@ fn dsh_needs_clud_credential(launch_target: backend::ResolvedLaunchTarget) -> bo
 /// intentionally remain vault-free -- `launch_preflight_target` returns
 /// `None` for every dry run regardless of provider.
 fn preflight_provider_credentials(args: &args::Args, launch_target: backend::ResolvedLaunchTarget) {
+    // A served OpenCode route uses the server's client token, not a key for
+    // the real provider. Never send that token to the provider's key probe.
+    if launch_target.effective_harness == backend::Backend::OpenCode
+        && clud::route_plan::Ambient::from_process()
+            .opencode_base_url
+            .is_some()
+    {
+        return;
+    }
     if launch_target.effective_harness == backend::Backend::DeepSeek
         && !dsh_needs_clud_credential(launch_target)
     {
@@ -1901,7 +1990,12 @@ fn resolve_backend_executable(args: &args::Args, backend: backend::Backend) -> S
         &mut err,
         &mut bootstrap_host,
     ) {
-        Ok(path) => path,
+        Ok(path) => {
+            if !args.dry_run && backend == backend::Backend::Claude {
+                clud::temp_home_logs::activate_if_temp_install(std::path::Path::new(&path));
+            }
+            path
+        }
         Err(error) => {
             let _ = writeln!(err, "{error}");
             std::process::exit(error.exit_code());
