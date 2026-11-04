@@ -501,6 +501,15 @@ def test_serve_codex_without_claude_key(
         ids = {row["id"] for row in json.loads(body)["data"]}
         assert "clud-claude-codex-sol" in ids
         assert all(model.startswith("clud-claude-codex-") for model in ids)
+        # CLIProxyAPI also answers `GET /v1/models/<model>` out of the same
+        # catalog (internal/api/server_routes.go:70); an OpenAI SDK client's
+        # models.retrieve() must not 404 a model this gateway advertises.
+        status, detail = call("GET", "/v1/models/clud-claude-codex-sol")
+        assert status == 200, detail
+        assert json.loads(detail)["id"] == "clud-claude-codex-sol"
+        status, missing = call("GET", "/v1/models/clud-claude-not-a-model")
+        assert status == 404, missing
+        assert json.loads(missing)["error"]["code"] == "model_not_found"
         assert not upstream.requests
         payload = {
             "model": "clud-claude-codex-sol",

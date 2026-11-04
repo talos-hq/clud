@@ -1271,6 +1271,9 @@ fn route_request(
             GatewayMode::Codex => serve_codex_catalog(stream, config, log),
             GatewayMode::Unified(_) => serve_unified_catalog(stream, config, log),
         },
+        ("GET", path) if path.starts_with(MODELS_DETAIL_PREFIX) => {
+            serve_model_detail(stream, config, log, &path[MODELS_DETAIL_PREFIX.len()..]);
+        }
         ("GET", "/_clud/route/status") => match &config.gateway_mode {
             GatewayMode::Unified(unified) => serve_route_status(stream, unified),
             GatewayMode::Codex => {
@@ -2094,17 +2097,22 @@ fn serve_route_clear(stream: &mut TcpStream, unified: &UnifiedGatewayConfig, bod
     let _ = write_response(stream, 200, "application/json", body.as_bytes(), false);
 }
 
-fn serve_unified_catalog(
-    stream: &mut TcpStream,
+/// The rows this launch advertises on `GET /v1/models`, plus that listing's
+/// `has_more` flag.
+///
+/// `serve_unified_catalog`, `serve_codex_catalog` and `serve_model_detail` all
+/// answer from this one function: a model-detail lookup that built its own row
+/// set could 404 an id the listing offers, or answer an id it never advertised.
+fn catalog_rows(
     config: &BridgeConfig,
     log: Option<&SharedBridgeLog>,
-) {
-    let GatewayMode::Unified(unified) = &config.gateway_mode else {
-        unreachable!("catalog route is guarded by the unified mode match arm");
-    };
+) -> Result<(Vec<serde_json::Value>, bool), ()> {
     let advertised = provider_catalog::MODELS
         .iter()
-        .filter(|entry| unified.provider_available(entry.provider))
+        .filter(|entry| match &config.gateway_mode {
+            GatewayMode::Codex => entry.provider == ModelProvider::Codex,
+            GatewayMode::Unified(unified) => unified.provider_available(entry.provider),
+        })
         .filter_map(|entry| entry.discovery_id.map(|id| (id, entry.display_name)))
         // #1257: a pinned launch may only be *advertised* rows it would also
         // serve. Discovery adds rows and cannot subtract them from the
@@ -2124,24 +2132,37 @@ fn serve_unified_catalog(
     );
     let mut data = advertised
         .iter()
-        .map(|(id, display_name)| {
-            serde_json::json!({
-                "id": id,
-                "display_name": display_name,
-                "type": "model",
-            })
-        })
+        .map(|(id, display_name)| catalog_row(id, display_name))
         .collect::<Vec<_>>();
     let mut has_more = false;
-    if config.standalone_claude_credential.is_some() {
-        let Ok((mut native, more)) = fetch_standalone_claude_models(config, unified) else {
-            let _ = write_error(stream, 502);
-            return;
-        };
-        native.append(&mut data);
-        data = native;
-        has_more = more;
+    if let GatewayMode::Unified(unified) = &config.gateway_mode {
+        if config.standalone_claude_credential.is_some() {
+            let (mut native, more) = fetch_standalone_claude_models(config, unified)?;
+            native.append(&mut data);
+            data = native;
+            has_more = more;
+        }
     }
+    Ok((data, has_more))
+}
+
+fn catalog_row(id: &str, display_name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "display_name": display_name,
+        "type": "model",
+    })
+}
+
+fn serve_unified_catalog(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+) {
+    let Ok((data, has_more)) = catalog_rows(config, log) else {
+        let _ = write_error(stream, 502);
+        return;
+    };
     let body = if config.standalone_client_auth {
         let first = data.first().and_then(|row| row.get("id")).cloned();
         let last = data.last().and_then(|row| row.get("id")).cloned();
@@ -2152,6 +2173,50 @@ fn serve_unified_catalog(
     .to_string();
     let _ = write_response(stream, 200, "application/json", body.as_bytes(), false);
 }
+
+/// `GET /v1/models/<id>` -- OpenAI's model-retrieve door.
+///
+/// Upstream CLIProxyAPI registers `v1.GET("/models/*model")`
+/// (internal/api/server_routes.go:70) and answers it by selecting out of the
+/// listing it would have just served, 404ing with `code="model_not_found"`
+/// otherwise (sdk/api/handlers/handlers_interceptors.go:736). clud had only the
+/// listing, so an OpenAI SDK client calling `models.retrieve()` saw a bare 404
+/// for a model the gateway serves.
+fn serve_model_detail(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+    model: &str,
+) {
+    let model = model.trim_end_matches('/');
+    let Ok((rows, _)) = catalog_rows(config, log) else {
+        let _ = write_error(stream, 502);
+        return;
+    };
+    let selected = rows
+        .iter()
+        .find(|row| row.get("id").and_then(serde_json::Value::as_str) == Some(model));
+    let Some(row) = selected else {
+        record_rejection(log, 404, "model_not_found");
+        let _ = write_response(
+            stream,
+            404,
+            "application/json",
+            MODEL_NOT_FOUND_BODY.as_bytes(),
+            false,
+        );
+        return;
+    };
+    let body = row.to_string();
+    let _ = write_response(stream, 200, "application/json", body.as_bytes(), false);
+}
+
+/// The OpenAI-shaped refusal for a model id this launch does not advertise.
+const MODEL_NOT_FOUND_BODY: &str = r#"{"error":{"message":"Model not found","type":"invalid_request_error","code":"model_not_found"}}"#;
+
+/// Path prefix of the model-retrieve door. Kept beside the refusal it feeds so
+/// the route arm and the message cannot drift.
+const MODELS_DETAIL_PREFIX: &str = "/v1/models/";
 
 /// Fetch native Claude inventory using the server's credential, not the client's.
 fn fetch_standalone_claude_models(
@@ -2234,29 +2299,10 @@ fn serve_codex_catalog(
     config: &BridgeConfig,
     log: Option<&SharedBridgeLog>,
 ) {
-    let advertised = provider_catalog::MODELS
-        .iter()
-        .filter(|entry| entry.provider == ModelProvider::Codex)
-        .filter_map(|entry| entry.discovery_id.map(|id| (id, entry.display_name)))
-        // #1257: same rule as the unified catalog -- a pinned launch is
-        // advertised only rows it would also serve (plus the route's own
-        // injected role rows, which the launch folds into this allowlist).
-        .filter(|(id, _)| provider_catalog::model_allowlist_allows(&config.allowed_models, id))
-        .collect::<Vec<_>>();
-    record_catalog_advertised(
-        log,
-        &advertised.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-    );
-    let data = advertised
-        .iter()
-        .map(|(id, display_name)| {
-            serde_json::json!({
-                "id": id,
-                "display_name": display_name,
-                "type": "model",
-            })
-        })
-        .collect::<Vec<_>>();
+    let Ok((data, _)) = catalog_rows(config, log) else {
+        let _ = write_error(stream, 502);
+        return;
+    };
     let body = serde_json::json!({"data": data, "has_more": false}).to_string();
     let _ = write_response(stream, 200, "application/json", body.as_bytes(), false);
 }
@@ -6248,6 +6294,133 @@ mod tests {
         assert_eq!(status(&response), 200, "{response}");
         assert!(response.contains("clud-claude-codex-sol"));
         assert!(!response.contains("clud-claude-openrouter"));
+    }
+
+    /// Split a raw HTTP response into (status, JSON body).
+    fn json_response(response: &str) -> serde_json::Value {
+        let body = response
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or_else(|| panic!("response has no body: {response}"));
+        serde_json::from_str(body).unwrap_or_else(|error| panic!("{error}: {body}"))
+    }
+
+    /// Upstream CLIProxyAPI answers `GET /v1/models/<model>` out of the catalog
+    /// it just listed (internal/api/server_routes.go:70). Every row a launch
+    /// advertises must therefore resolve to itself here, and to nothing else.
+    #[test]
+    fn model_detail_answers_every_advertised_row() {
+        let bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_unified_gateway(UnifiedGatewayConfig::new(None, true))
+                .with_standalone_client_auth(),
+        )
+        .unwrap();
+        let listing = request(
+            bridge.socket_addr(),
+            &authorized("GET", "/v1/models", bridge.bearer_token(), ""),
+        );
+        assert_eq!(status(&listing), 200, "{listing}");
+        let rows = json_response(&listing);
+        let ids = rows["data"]
+            .as_array()
+            .expect("catalog data array")
+            .iter()
+            .filter_map(|row| row["id"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        assert!(
+            ids.contains(&"clud-claude-codex-sol".to_string()),
+            "{ids:?}"
+        );
+        for id in &ids {
+            let detail = request(
+                bridge.socket_addr(),
+                &authorized(
+                    "GET",
+                    &format!("/v1/models/{id}"),
+                    bridge.bearer_token(),
+                    "",
+                ),
+            );
+            assert_eq!(status(&detail), 200, "{detail}");
+            let row = json_response(&detail);
+            assert_eq!(row["id"].as_str(), Some(id.as_str()), "{detail}");
+            assert_eq!(row["type"].as_str(), Some("model"), "{detail}");
+        }
+    }
+
+    #[test]
+    fn model_detail_refuses_an_unadvertised_row_in_the_openai_envelope() {
+        let bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_unified_gateway(UnifiedGatewayConfig::new(None, true))
+                .with_standalone_client_auth(),
+        )
+        .unwrap();
+        for path in ["/v1/models/clud-claude-no-such-model", "/v1/models/"] {
+            let response = request(
+                bridge.socket_addr(),
+                &authorized("GET", path, bridge.bearer_token(), ""),
+            );
+            assert_eq!(status(&response), 404, "{response}");
+            let body = json_response(&response);
+            assert_eq!(
+                body["error"]["code"].as_str(),
+                Some("model_not_found"),
+                "{body}"
+            );
+            assert_eq!(
+                body["error"]["type"].as_str(),
+                Some("invalid_request_error"),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_detail_tolerates_a_trailing_slash() {
+        let bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_unified_gateway(UnifiedGatewayConfig::new(None, true))
+                .with_standalone_client_auth(),
+        )
+        .unwrap();
+        let response = request(
+            bridge.socket_addr(),
+            &authorized(
+                "GET",
+                "/v1/models/clud-claude-codex-sol/",
+                bridge.bearer_token(),
+                "",
+            ),
+        );
+        assert_eq!(status(&response), 200, "{response}");
+        assert_eq!(
+            json_response(&response)["id"].as_str(),
+            Some("clud-claude-codex-sol")
+        );
+    }
+
+    #[test]
+    fn model_detail_is_provider_scoped_like_its_listing() {
+        let bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_unified_gateway(UnifiedGatewayConfig::new(None, true))
+                .with_standalone_client_auth(),
+        )
+        .unwrap();
+        // The Kimi/OpenRouter rows are not advertised without their routes, so
+        // the detail door must refuse them rather than resolving any catalog id.
+        let response = request(
+            bridge.socket_addr(),
+            &authorized(
+                "GET",
+                "/v1/models/clud-claude-kimi-k3",
+                bridge.bearer_token(),
+                "",
+            ),
+        );
+        assert_eq!(status(&response), 404, "{response}");
     }
 
     #[test]
