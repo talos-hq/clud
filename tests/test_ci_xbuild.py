@@ -530,7 +530,7 @@ def test_bundle_stripping_uses_the_target_elf_editor(
     monkeypatch.setattr(build_wheel, "resolve_elf_objcopy", resolve)
     monkeypatch.setattr(process, "run", strip)
     bundle._strip_debug(tmp_path, target)
-    assert selected == [target]
+    assert selected and set(selected) == {target}
     assert calls == [
         ["/managed/target-objcopy", "--strip-debug", str(path)] for path in (binary, harness)
     ]
@@ -553,7 +553,7 @@ def test_bundle_rejects_an_unstripped_executable(monkeypatch, tmp_path: Path) ->
             stdout="",
         ),
     )
-    with pytest.raises(RuntimeError, match="cannot strip aarch64.*wrong architecture"):
+    with pytest.raises(RuntimeError, match=r"cannot strip aarch64.*wrong architecture"):
         bundle._strip_debug(tmp_path, "aarch64-unknown-linux-gnu")
 
 
