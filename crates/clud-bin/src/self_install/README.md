@@ -14,7 +14,9 @@ shell plan shown before consent, updates owned Bash, zsh, or fish startup
 files, and proves fresh login and interactive name-based lookup.
 On Unix, an owned launcher symlink into a user-controlled home directory
 (such as a uv tool launcher) can be replaced with a native executable; its
-package target and hardlinked cache entries are preserved. Links outside the
+package target and hardlinked cache entries are preserved. Prior executables
+are bounded separately at 1 GiB to accommodate debug symbols without raising
+the 256 MiB new-executable limit. Links outside the
 home or through writable directories remain refused.
 The host halves live behind the platform boundary (#1953):
 `platform/unix/self_install_activation.rs` owns the Bash, zsh, and fish

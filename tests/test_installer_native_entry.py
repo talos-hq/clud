@@ -216,6 +216,9 @@ def test_upgrade_replaces_uv_launcher_and_preserves_package_target(tmp_path: Pat
     target = home / ".local/share/uv/tools/clud/bin/clud"
     target.parent.mkdir(parents=True, mode=0o700)
     shutil.copy2(clud_binary(), target)
+    # uv/debug installs may exceed the published-asset limit due to symbols.
+    with target.open("r+b") as executable:
+        executable.truncate(max(target.stat().st_size, 256 * 1024 * 1024 + 1))
     original = hashlib.sha256(target.read_bytes()).digest()
     cached = target.with_name("cached-clud")
     os.link(target, cached)
@@ -228,7 +231,9 @@ def test_upgrade_replaces_uv_launcher_and_preserves_package_target(tmp_path: Pat
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
     assert not destination.is_symlink()
-    assert hashlib.sha256(destination.read_bytes()).digest() == original
+    assert hashlib.sha256(destination.read_bytes()).digest() == hashlib.sha256(
+        clud_binary().read_bytes()
+    ).digest()
     assert hashlib.sha256(target.read_bytes()).digest() == original
     assert hashlib.sha256(cached.read_bytes()).digest() == original
     assert not destination.with_suffix(".clud-backup").exists()
