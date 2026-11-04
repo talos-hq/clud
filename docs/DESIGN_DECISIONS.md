@@ -5360,6 +5360,20 @@ pins a live value (the 60f6087b failure mode) can still go red after a refresh;
 producer's logic on fixtures, not the committed catalog itself. Revisit with a
 PR-based flow if the owner adds a bot token.
 
+**Update (2026-11-04, #2518):** the premise no longer holds. `main` now requires
+the merge queue plus a `CI OK` check, so `git push origin HEAD:main` is rejected
+(`GH013: Changes must be made through the merge queue`) and both bots had been
+failing on every scheduled run since 2026-10-22 — the assets silently froze for
+eleven days. The advertised revisit condition has arrived: the bots now push a
+`bot/refresh-*` branch, open a PR and enable auto-merge with
+`REFRESH_BOT_TOKEN` (a user or GitHub App token, never `GITHUB_TOKEN`, whose
+PRs trigger no `pull_request` workflows). CI now runs on the refresh before it
+lands, which is strictly more gating than this entry originally bought; the
+producer-test gate still runs on the regenerated file before the commit, so a
+bad refresh never even reaches the branch. A refresh is no longer instant: it
+waits for `CI OK` and the merge queue. Without the secret the job fails with an
+explicit error instead of retrying a push `main` will always reject.
+
 ## DD-128: safe-rm always allows entries under the system temp dirs, owned-by-you on Unix
 
 **Context:** #1622. An agent wrote `/tmp/clud-issue-body.md`, then could not

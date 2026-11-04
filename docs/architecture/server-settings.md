@@ -163,9 +163,10 @@ compacts far too early.
   datasheet cannot be fetched or parsed, so a run fails loudly instead of
   publishing an empty or stale map. Before committing, the job runs
   `tests/test_refresh_model_contexts.py` against the regenerated file and
-  stops on a failure. The refreshed file is committed straight to `main`;
-  installed builds see it through the normal fetch-from-`main` path in about
-  20 minutes. The Rust `server_settings::` tests are not run by the bot
+  stops on a failure. The refreshed file reaches `main` through a bot PR with
+  auto-merge — a direct push is rejected because `main` requires the merge
+  queue (#2518) — so installed builds see it through the normal
+  fetch-from-`main` path once `CI OK` passes. The Rust `server_settings::` tests are not run by the bot
   ([DD-127](../DESIGN_DECISIONS.md#dd-127-scheduled-refresh-bots-gate-their-commit-on-the-producer-tests-not-on-a-pr)).
 - **Which window.** The served window, `min(context_length,
   top_provider.context_length)`, not the maximum over endpoints, so the map
