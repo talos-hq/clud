@@ -678,6 +678,14 @@ round trip. Its report distinguishes live from unknown units and names an unavai
 liveness source; that unavailable source makes the command fail, so scheduled jobs
 cannot report success for an unperformed collection.
 
+Loose files beneath a live cwd or scratch directory strictly inside the managed
+temp root are also live. The root itself, `$HOME`, and `/` do not pin the entire
+tree. After those liveness checks, an idle loose file beneath a sealed Unix
+directory can be removed by giving only its owned parent directory owner access.
+The retry walks caller-owned directories from the managed root using handles
+that refuse symlinks, then unlinks through the same parent handle. It does not
+change shared file permissions or recursively open live sibling directories.
+
 The document portal's privileged `fusermount3` helper is also recognized, only in its
 exact portal service scope under a verified portal/manager lineage, with trusted
 program paths and the fixed portal filesystem options and `/run/user/<uid>/doc`

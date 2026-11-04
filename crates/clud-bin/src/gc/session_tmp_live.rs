@@ -6,7 +6,8 @@
 //! idle unit it asks this module whether anything points at it:
 //!
 //! - a running process whose cwd, or `TMPDIR`/`TMP`/`TEMP`/`CLAUDE_CODE_TMPDIR`
-//!   value, lies inside the unit; or
+//!   value, lies inside the unit or names its ancestor strictly inside the
+//!   managed temp root (never the global root itself); or
 //! - a unit path component equal to the Claude-encoded form of a running
 //!   process's cwd (or any ancestor of it): the whole `claude-<uid>/<project>/`
 //!   subtree is live while a process works in that project; or
@@ -85,10 +86,15 @@ impl LiveSignals {
             return true;
         };
         let canonical = fs::canonicalize(unit).unwrap_or_else(|_| unit.to_path_buf());
-        if paths
-            .iter()
-            .any(|p| p.starts_with(unit) || p.starts_with(&canonical))
-        {
+        let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        if paths.iter().any(|p| {
+            p.starts_with(unit)
+                || p.starts_with(&canonical)
+                || (p != root && p.starts_with(root) && unit.starts_with(p))
+                || (p != &canonical_root
+                    && p.starts_with(&canonical_root)
+                    && canonical.starts_with(p))
+        }) {
             return true;
         }
         let rel = unit.strip_prefix(root).unwrap_or(unit);
