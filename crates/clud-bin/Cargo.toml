@@ -145,7 +145,9 @@ tree-sitter-bash = "=0.25.1"
 tree-sitter-powershell = "=0.26.4"
 tempfile = "3"
 os_pipe = "1.2.3"
-# Read-only Hermes config detection in `clud setup` only (setup_command/hermes.rs).
+# Read-only Hermes config detection in `clud setup` only (setup_command/hermes.rs),
+# and validation of a product's `config.yaml` before and after `clud install`
+# edits it (#2609): an unparseable document is refused untouched.
 serde_yaml = "0.9"
 
 [dev-dependencies]

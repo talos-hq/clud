@@ -11,4 +11,5 @@
 //! See docs/architecture/install-products.md.
 
 pub mod command;
+pub mod configure;
 pub mod products;

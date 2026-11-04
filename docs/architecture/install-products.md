@@ -66,8 +66,8 @@ failed. Every step reports what it found, so a rerun is safe.
 1. **Resolve.** Unknown target exits `2` and lists the known targets.
 2. **Fetch.** Download the bootstrap into the cache, refusing anything larger
    than the size cap, and record its digest.
-3. **Install.** Run the bootstrap in a PTY, forwarding the caller's terminal so
-   the product's own setup wizard works, with `INSTALLER_ARGS` appended.
+3. **Install.** Run the bootstrap with the caller's terminal inherited, so the
+   product's own setup wizard sees a tty, with `INSTALLER_ARGS` appended.
    `--dir` is translated into the product's own directory variable
    (`HERMES_SLIM_DIR` / `HERMES_INSTALL_DIR`), never into a flag the product
    might not have. The child's exit status is the step's verdict; its last 40
@@ -92,11 +92,14 @@ none, the step is skipped and says so.
   — default no. With no credentials it prints
   `providers: nothing stored in clud; nothing to migrate` and asks nothing.
 - **What is written.** The product's own config format, never another file of
-  clud's: `providers.<name>.base_url`, `providers.<name>.api_key`, and
-  `model.default` when clud has a saved model for that provider. The write is
+  clud's: `providers.<name>.base_url` and `providers.<name>.api_key`. Model
+  selection stays the product's own choice: clud has no saved model to hand
+  over on this path, so guessing one would be worse than leaving it. The write is
   an edit of an existing document, not a replacement: unknown keys, comments
-  and other providers are preserved, an existing value is only replaced after
-  the user confirms it, and a parse failure aborts with the file left untouched.
+  and other providers are preserved, an existing value is replaced in place,
+  and a parse failure aborts with the file left byte-identical. The edit is
+  staged to `config.yaml.clud-new` and renamed, so a partial write cannot
+  leave a broken config.
 - **A secret is never printed.** It goes from the credential store straight into
   the written file, and the report names the file and the provider, never the
   value. `--dry-run` names the file and the keys it would set.
@@ -129,8 +132,14 @@ settings schema and its versioning into two more codebases, which is how the
 two-sided `clud setup` import (#2606) is already kept in one place. The single
 door is the clud binary the user installed.
 
-## Testing
+## Code
 
+[`install/products.rs`](../../crates/clud-bin/src/install/products.rs) (the
+registry), [`install/command.rs`](../../crates/clud-bin/src/install/command.rs)
+(resolve, fetch, run), [`install/configure.rs`](../../crates/clud-bin/src/install/configure.rs)
+(the vault read and the config editor).
+
+## Testing
 - `crates/clud-bin/tests/integration/cli/install_products.rs` drives the whole
   command against a fake bootstrap script and a fake product tree:
   unknown target, `--dry-run` writing nothing, missing `--yes` off a terminal,

@@ -167,20 +167,29 @@ fn run_at(home: &Path, options: &Options, interactive: bool, out: &mut dyn Write
     configure(home, product, options, out)
 }
 
-/// The credential-migration step. The editor lands with the rest of #2609; the
-/// boundary it must respect is in docs/architecture/install-products.md (a
-/// secret is never printed, a launch never migrates).
+/// The credential-migration step (#2609). A secret goes from the vault straight
+/// into the product's config; only the file and the providers are named.
 fn configure(home: &Path, product: &Product, options: &Options, out: &mut dyn Write) -> i32 {
-    let _ = home;
-    if options.migrate_credentials {
-        eprintln!(
-            "clud install: credential migration for {} is not implemented in this build (#2609)",
-            product.display
+    let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
+    let product_home = std::env::var_os(product.home_env)
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(product.default_home));
+    let code = super::configure::run(
+        product,
+        &product_home,
+        options.migrate_credentials,
+        options.yes,
+        interactive,
+        out,
+    );
+    if code == 0 {
+        let _ = writeln!(
+            out,
+            "install: reconfigure later with {}",
+            product.setup_hint()
         );
-        return 1;
     }
-    let _ = writeln!(out, "install: reconfigure with {}", product.setup_hint());
-    0
+    code
 }
 
 struct Failure {
