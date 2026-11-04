@@ -445,7 +445,7 @@ mod tests {
         let home = tempdir();
         let product = super::super::products::find("hermes").expect("hermes");
         let mut out = Vec::new();
-        let outcome = apply(&product, &home, &[openrouter()], &mut out);
+        let outcome = apply(product, &home, &[openrouter()], &mut out);
         match outcome {
             Outcome::Migrated { path, providers } => {
                 assert_eq!(providers, vec!["openrouter".to_string()]);
@@ -465,7 +465,7 @@ mod tests {
         std::fs::write(&path, "providers: [oops\n").expect("seed");
         let product = super::super::products::find("hermes").expect("hermes");
         let mut out = Vec::new();
-        let outcome = apply(&product, &home, &[openrouter()], &mut out);
+        let outcome = apply(product, &home, &[openrouter()], &mut out);
         assert!(matches!(outcome, Outcome::Refused(_)), "{outcome:?}");
         assert_eq!(
             std::fs::read_to_string(&path).expect("read"),
@@ -479,10 +479,7 @@ mod tests {
         let home = tempdir();
         let product = super::super::products::find("hermes").expect("hermes");
         let mut out = Vec::new();
-        assert_eq!(
-            apply(&product, &home, &[], &mut out),
-            Outcome::NothingStored
-        );
+        assert_eq!(apply(product, &home, &[], &mut out), Outcome::NothingStored);
         assert!(!home.join("config.yaml").exists());
         let _ = std::fs::remove_dir_all(home);
     }

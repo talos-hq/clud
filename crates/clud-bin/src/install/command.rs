@@ -18,8 +18,6 @@ use super::products::{self, Product};
 pub const EXIT_USAGE: i32 = 2;
 /// Largest bootstrap clud will accept from a product repository.
 const MAX_BOOTSTRAP_BYTES: usize = 512 * 1024;
-/// How many trailing lines of a failed bootstrap are reported.
-const FAILURE_TAIL: usize = 40;
 
 #[derive(Debug, Clone)]
 pub struct Options {
@@ -143,9 +141,6 @@ fn run_at(home: &Path, options: &Options, interactive: bool, out: &mut dyn Write
                 "clud install: the {} installer failed ({})",
                 product.display, failure.summary
             );
-            for line in &failure.tail {
-                eprintln!("  {line}");
-            }
             return 1;
         }
         let _ = writeln!(
@@ -195,7 +190,6 @@ fn configure(home: &Path, product: &Product, options: &Options, out: &mut dyn Wr
 #[derive(Debug)]
 struct Failure {
     summary: String,
-    tail: Vec<String>,
 }
 
 /// Download the product's bootstrap into `~/.clud/cache/install/<target>/`.
@@ -240,65 +234,80 @@ fn fetch_bootstrap(home: &Path, product: &Product, branch: &str) -> Result<PathB
 }
 
 /// Run the bootstrap with the caller's terminal inherited, so the product's own
-/// wizard sees a tty, and with its directory variable set.
+/// wizard works, and with its directory variable set.
+///
+/// `running-process` uses a cleared environment whenever `env` is `Some`, so the
+/// parent's variables are carried over explicitly rather than silently dropped.
 fn run_bootstrap(
     script: &Path,
     product: &Product,
     dir: &Path,
     options: &Options,
 ) -> Result<(), Failure> {
-    // Execute the bootstrap through its own shebang: hermes-slim's is `#!/bin/sh`
-    // and talos' is `#!/usr/bin/env bash`, so forcing one interpreter breaks the
-    // other. Windows has no shebang line, so it names bash.
-    let mut command = if cfg!(windows) {
-        let mut command = std::process::Command::new("bash");
-        command.arg(script);
-        command
-    } else {
+    use running_process::{CommandSpec, NativeProcess, ProcessConfig, StderrMode, StdinMode};
+
+    if !cfg!(windows) {
+        // Execute through the script's own shebang: hermes-slim's is `#!/bin/sh`
+        // and talos' is `#!/usr/bin/env bash`, so forcing one interpreter breaks
+        // the other. Windows has no shebang line, so it names bash.
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).map_err(
             |error| Failure {
                 summary: format!("cannot make {} executable: {error}", script.display()),
-                tail: Vec::new(),
             },
         )?;
-        std::process::Command::new(script)
-    };
-    command.env(product.dir_env, dir);
+    }
+
+    let mut argv = vec![if cfg!(windows) {
+        "bash".to_string()
+    } else {
+        script.to_string_lossy().into_owned()
+    }];
+    if cfg!(windows) {
+        argv.push(script.to_string_lossy().into_owned());
+    }
     if let Some(version) = &options.version {
-        command.arg("--version").arg(version);
+        argv.push("--version".to_string());
+        argv.push(version.clone());
     }
     // Appended as-is, not behind a `--`: hermes-slim's bootstrap treats a bare
     // `--` as "hand the rest to hermes-slim-setup", while talos' rejects any
     // argument it does not know, so a separator is one product's syntax.
-    command.args(&options.passthrough);
-    let output = command.output().map_err(|error| Failure {
-        summary: format!("cannot run {}: {error}", script.display()),
-        tail: Vec::new(),
-    })?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let combined = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stderr),
-        String::from_utf8_lossy(&output.stdout)
-    );
-    let mut lines: Vec<String> = combined
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.to_string())
+    argv.extend(options.passthrough.iter().cloned());
+
+    let dir_value = dir.to_string_lossy().into_owned();
+    let mut env: Vec<(String, String)> = std::env::vars()
+        .filter(|(key, _)| key != product.dir_env)
         .collect();
-    let start = lines.len().saturating_sub(FAILURE_TAIL);
-    lines.drain(..start);
-    Err(Failure {
-        summary: output
-            .status
-            .code()
-            .map(|code| format!("exit {code}"))
-            .unwrap_or_else(|| "killed by a signal".to_string()),
-        tail: lines,
-    })
+    env.push((product.dir_env.to_string(), dir_value));
+
+    let process = NativeProcess::new(ProcessConfig {
+        command: CommandSpec::Argv(argv),
+        // No cwd: the bootstrap only reads its directory from the environment,
+        // and the target may not exist yet.
+        cwd: None,
+        env: Some(env),
+        capture: false,
+        stderr_mode: StderrMode::Stdout,
+        creationflags: None,
+        create_process_group: false,
+        stdin_mode: StdinMode::Inherit,
+        nice: None,
+        address_space_limit_bytes: None,
+    });
+    process.start().map_err(|error| Failure {
+        summary: format!("cannot start {}: {error}", script.display()),
+    })?;
+    let code = process.wait(None).map_err(|error| Failure {
+        summary: format!("cannot wait for {}: {error}", script.display()),
+    })?;
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(Failure {
+            summary: format!("exit {code}"),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -390,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failing_bootstrap_reports_its_tail() {
+    fn a_failing_bootstrap_reports_its_exit_status() {
         let home = tempdir();
         let script = home.join("bootstrap.sh");
         std::fs::write(&script, "#!/bin/sh\necho boom >&2\nexit 3\n").expect("seed");
@@ -399,7 +408,6 @@ mod tests {
         let failure =
             run_bootstrap(&script, product, &home.join("d"), &options).expect_err("fails");
         assert_eq!(failure.summary, "exit 3");
-        assert!(failure.tail.iter().any(|line| line.contains("boom")));
         let _ = std::fs::remove_dir_all(home);
     }
 

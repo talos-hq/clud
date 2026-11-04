@@ -70,8 +70,13 @@ failed. Every step reports what it found, so a rerun is safe.
    product's own setup wizard sees a tty, with `INSTALLER_ARGS` appended.
    `--dir` is translated into the product's own directory variable
    (`HERMES_SLIM_DIR` / `HERMES_INSTALL_DIR`), never into a flag the product
-   might not have. The child's exit status is the step's verdict; its last 40
-   lines are kept for the failure report.
+   might not have. The script runs through its own shebang — hermes-slim's is
+   `#!/bin/sh`, talos' is `#!/usr/bin/env bash`, so naming one interpreter would
+   break the other — and the extra arguments are appended as-is, because a bare
+   `--` is hermes-slim's "hand the rest to setup" but an error for talos. The
+   child's exit status is the step's verdict; its output is the caller's
+   terminal, so clud reports the status and does not re-read it. The child runs
+   through `running-process`, like every other spawn in clud.
 4. **Configure.** This is clud's own work, below.
 5. **Report.** Print the product's launch command and
    `<product> setup clud` for a later reconfigure.
