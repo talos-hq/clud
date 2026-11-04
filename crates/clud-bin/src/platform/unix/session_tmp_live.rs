@@ -129,12 +129,32 @@ fn verified_service(
             .is_some_and(|manager_process| manager(&manager_process, &scope, trusted))
 }
 
+fn thread_group(status: &str) -> Option<u32> {
+    status.lines().find_map(|line| {
+        line.strip_prefix("Tgid:").and_then(|value| value.trim().parse().ok())
+    })
+}
+
+fn verified_group(
+    group: Option<u32>,
+    uid: u32,
+    read: &impl Fn(u32) -> Option<Process>,
+    trusted: &impl Fn(&str) -> bool,
+) -> bool {
+    group.and_then(read)
+        .is_some_and(|process| verified_service(&process, uid, read, trusted))
+}
+
 pub fn verified_desktop_service(pid: u32) -> bool {
     let Some(uid) = super::rm_tool::effective_uid() else {
         return false;
     };
-    read_process(pid)
-        .is_some_and(|process| verified_service(&process, uid, &read_process, &trusted_program))
+    // Sysinfo includes tasks by default. Their kernel names need not match
+    // the program (QDBusConnection, output workers, ...), but the kernel Tgid
+    // proves which service owns them. Ordinary agent tasks are never ignored.
+    let group = fs::read_to_string(format!("/proc/{pid}/status"))
+        .ok().and_then(|status| thread_group(&status));
+    verified_group(group, uid, &read_process, &trusted_program)
 }
 
 #[cfg(test)]
@@ -230,5 +250,21 @@ mod tests {
             command: vec!["/usr/libexec/polkit-kde-authentication-agent-1".into()],
         };
         assert!(verified_service(&policy, 1000, &read, &|_| true));
+    }
+
+    #[test]
+    fn protected_tasks_follow_their_kernel_group_not_their_thread_name() {
+        let read = |pid| match pid {
+            1 => Some(Process { parent: 0, ..manager_process() }),
+            10 => Some(manager_process()),
+            20 => Some(service()),
+            30 => Some(Process { comm: "claude".into(), ..service() }),
+            _ => None,
+        };
+        let group = thread_group("Name:\tQDBusConnection\nTgid:\t20\nPid:\t21\n");
+        assert!(verified_group(group, 1000, &read, &|_| true));
+        assert!(!verified_group(Some(30), 1000, &read, &|_| true));
+        assert!(!verified_group(Some(99), 1000, &read, &|_| true));
+        assert!(!verified_group(thread_group("Pid:\t21\n"), 1000, &read, &|_| true));
     }
 }
