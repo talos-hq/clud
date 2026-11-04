@@ -1823,7 +1823,11 @@ mod tests {
         ))
         .expect("utf-8");
         assert!(rendered.starts_with("event: message_start\ndata: {"));
-        assert!(rendered.contains("event: content_block_delta\ndata: {\"delta\""));
+        // Key order is insertion order (serde_json `preserve_order`, #2550), so
+        // assert on the frame's event name and payload, never on key order.
+        assert!(rendered.contains("event: content_block_delta\ndata: {"));
+        assert!(rendered.contains("\"type\":\"content_block_delta\""));
+        assert!(rendered.contains("\"delta\":{\"type\":\"text_delta\""));
         assert!(rendered.ends_with("event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n"));
     }
 }
