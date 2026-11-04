@@ -121,10 +121,8 @@ def _strip_debug(staging: Path, target: str) -> None:
     """
     if "linux" not in target:
         return
-    from ci import process
-    from ci.build_wheel import resolve_elf_objcopy
+    from ci.build_wheel import strip_elf_debug
 
-    objcopy = resolve_elf_objcopy(target)
     binaries = [
         *sorted((staging / "target").rglob("*")),
         *sorted((staging / "tests").rglob("*")),
@@ -132,10 +130,7 @@ def _strip_debug(staging: Path, target: str) -> None:
     for path in binaries:
         if not path.is_file():
             continue
-        result = process.run([objcopy, "--strip-debug", str(path)], capture_output=True, text=True)
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout).strip()
-            raise RuntimeError(f"cannot strip {target} binary {path.name}: {detail}")
+        strip_elf_debug(path, target)
 
 
 def pack(target: str, profile: str, dest: Path) -> int:  # noqa: C901

@@ -155,7 +155,16 @@ def test_candidate_build_stages_exact_head_and_dev_binary(tmp_path, monkeypatch)
     target = "x86_64-unknown-linux-musl"
     source = tmp_path / "target" / target / "debug" / "clud"
     source.parent.mkdir(parents=True)
-    source.write_bytes(native_payload("elf", "x86_64"))
+    stripped = native_payload("elf", "x86_64")
+    original = stripped + b"debug-data"
+    source.write_bytes(original)
+    stripped_paths = []
+
+    def strip_candidate(path: Path, triple: str) -> None:
+        stripped_paths.append((path, triple))
+        path.write_bytes(stripped)
+
+    monkeypatch.setattr(build_wheel, "strip_elf_debug", strip_candidate)
     monkeypatch.setattr(xbuild, "ROOT", tmp_path)
     monkeypatch.setattr(xbuild, "build_env", lambda *_args: {})
     monkeypatch.setattr(xbuild, "_project_version", lambda: "2.8.14")
@@ -167,6 +176,10 @@ def test_candidate_build_stages_exact_head_and_dev_binary(tmp_path, monkeypatch)
     assert xbuild.cmd_candidate(args) == 0
     assert ["--features", "installer-ci-fixture"] == commands[0][6:8]
     assert verify_artifact(tmp_path / "candidate", target, "a" * 40, "2.8.14")
+    assert len(stripped_paths) == 1
+    assert stripped_paths[0][1] == target
+    assert stripped_paths[0][0].read_bytes() == stripped
+    assert source.read_bytes() == original
     args.profile = "release"
     with pytest.raises(ValueError, match="dev"):
         xbuild.cmd_candidate(args)

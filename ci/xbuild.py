@@ -346,6 +346,12 @@ def cmd_candidate(args: argparse.Namespace) -> int:
     destination_dir.mkdir(parents=True, exist_ok=True)
     destination = destination_dir / filename
     destination.write_bytes(payload)
+    if kind == "elf":
+        from ci.build_wheel import strip_elf_debug
+
+        strip_elf_debug(destination, args.target)
+        payload = destination.read_bytes()
+        verify_format(payload, kind, arch)
     if os_name != "windows":
         destination.chmod(0o755)
     source_sha = process.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT).strip()
