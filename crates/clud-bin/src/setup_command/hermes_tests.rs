@@ -201,14 +201,22 @@ fn no_config_is_silent_unless_import_was_requested() {
     assert_eq!(asked.outcome, Outcome::Failed(2));
 }
 
-/// The structural half of the boundary: no source file outside this module
+/// The structural half of the boundary: no source file outside the setup paths
 /// names a Hermes config path or the Hermes environment.
+///
+/// `install/` belongs to the same boundary (#2609): installing a product has to
+/// name that product's install directory, config home and config file, and the
+/// migration writes its config. A launch, `run`, `serve`, the daemon and
+/// `doctor` stay outside it.
 #[test]
 fn only_setup_hermes_module_names_hermes_paths_or_env() {
     let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let allowed = [
         src.join("setup_command/hermes.rs"),
         src.join("setup_command/hermes_tests.rs"),
+        src.join("install/command.rs"),
+        src.join("install/configure.rs"),
+        src.join("install/products.rs"),
     ];
     let needles = [".hermes", "HERMES_HOME", "HERMES_"];
     let mut stack = vec![src.clone()];
@@ -233,7 +241,7 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
     }
     assert!(
         offenders.is_empty(),
-        "only setup_command/hermes.rs may read Hermes config or env:\n{}",
+        "only the setup and install paths may read Hermes config or env:\n{}",
         offenders.join("\n")
     );
 }
