@@ -102,7 +102,7 @@ pub fn run_explicit(args: &Args) -> Option<i32> {
         }
     };
     if !args.installer_json {
-        return finish_with_setup(args, outcome);
+        return Some(outcome.exit_code());
     }
     match outcome.write_json(io::stdout().lock()) {
         Ok(()) => Some(outcome.exit_code()),
@@ -130,59 +130,11 @@ pub fn run_auto_offer(args: &Args) -> Option<i32> {
     }
     match picker::prompt_menu(true) {
         Ok(MenuChoice::NotNow) => None,
-        Ok(choice) => {
-            let outcome = run_menu_choice(choice, InstallOptions::default());
-            finish_with_setup(args, outcome)
-        }
+        Ok(choice) => Some(run_menu_choice(choice, InstallOptions::default()).exit_code()),
         Err(error) if error.kind() == io::ErrorKind::Interrupted => Some(130),
         Err(error) => {
             eprintln!("clud installer: {error}");
             Some(1)
-        }
-    }
-}
-
-/// After a verified interactive install, run the shared provider setup
-/// ([`super::setup`], also `clud setup`'s provider step) and offer to start.
-fn finish_with_setup(args: &Args, outcome: Outcome) -> Option<i32> {
-    if !outcome.is_complete() || args.yes || !terminal_available() {
-        return Some(outcome.exit_code());
-    }
-    Some(match super::setup::run() {
-        Ok(Some(launch_args)) => match outcome.destination() {
-            Some(destination) => launch_installed(destination, launch_args),
-            None => {
-                eprintln!("clud setup: installed path cannot be represented for launch");
-                1
-            }
-        },
-        Ok(None) => 0,
-        Err(code) => code,
-    })
-}
-
-fn launch_installed(destination: &str, args: Args) -> i32 {
-    use running_process::{CommandSpec, NativeProcess, ProcessConfig, StderrMode, StdinMode};
-
-    let mut argv = args.raw_argv;
-    argv[0] = destination.to_owned();
-    let process = NativeProcess::new(ProcessConfig {
-        command: CommandSpec::Argv(argv),
-        cwd: None,
-        env: None,
-        capture: false,
-        stderr_mode: StderrMode::Stdout,
-        creationflags: None,
-        create_process_group: false,
-        stdin_mode: StdinMode::Inherit,
-        nice: None,
-        address_space_limit_bytes: None,
-    });
-    match process.start().and_then(|()| process.wait(None)) {
-        Ok(code) => crate::platform::subprocess::shell_exit_code(code),
-        Err(error) => {
-            eprintln!("clud setup: could not start installed clud: {error}");
-            1
         }
     }
 }

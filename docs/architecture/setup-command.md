@@ -7,7 +7,7 @@ another entry point already uses.
 | Step | What it does | Implementation |
 | --- | --- | --- |
 | 1. Aliases | Links the interpreter aliases (`python`, `pip`, ...) under `~/.clud/state/shims/` to the running `clud` | `shim_install::extract_shims_at`, the same call every launch makes |
-| 2. Provider | OpenRouter, Claude or Codex; stores an OpenRouter key; picks an OpenRouter model; saves the provider and native harness as defaults | `self_install::setup`, shared with the interactive installer's post-install step |
+| 2. Provider | OpenRouter, Claude or Codex; stores an OpenRouter key; picks an OpenRouter model; saves the provider and native harness as defaults | `self_install::setup` (the flow drafted in #2223) |
 | 3. Shell activation | Only with `--write-profile`: runs the native installer for this version, which owns every shell-profile and PATH edit | `self_install::entry::install_current_with_profile` |
 
 Code: [`setup_command.rs`](../../crates/clud-bin/src/setup_command.rs),
@@ -46,3 +46,11 @@ Claude and Codex keep their own subscription logins; setup stores no
 credential for them. A credential value is never printed: the OpenRouter key
 goes from the masked prompt or the environment straight into the existing
 credential store (`provider_auth`).
+
+## Why the installer does not chain into setup
+
+#2223 ran provider setup at the end of an interactive install. The
+installer's fresh-shell activation probes share the controlling terminal, so
+a selector opened after them fails with EIO. Fixing that needs the probes
+moved to isolated PTYs. Until then, the installer stays as it is, and
+provider setup has a single entry point: `clud setup`.

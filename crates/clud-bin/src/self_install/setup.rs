@@ -1,14 +1,15 @@
-//! Provider setup (#2219): pick OpenRouter, Claude or Codex, store an
-//! OpenRouter key and model, and persist the provider with the native
-//! harness. One implementation with two entry points: the interactive
-//! installer runs it after a verified install (then offers to start clud),
-//! and `clud setup` ([`crate::setup_command`]) runs it as its provider step.
+//! Provider setup (#2219, from #2223): pick OpenRouter, Claude or Codex,
+//! store an OpenRouter key and model, and persist the provider with the
+//! native harness. `clud setup` ([`crate::setup_command`]) is its entry
+//! point. The installer does not chain into it: its fresh-shell activation
+//! probes share the controlling terminal, and a selector opened after them
+//! fails with EIO (#2223 needed an isolated-PTY probe rewrite for that).
 
 use std::io::{self, Write};
 use std::path::Path;
 use std::time::Duration;
 
-use crate::args::{Args, DeepseekAuthSubcommand};
+use crate::args::DeepseekAuthSubcommand;
 use crate::backend::{HarnessSelection, ModelProvider};
 use crate::selector::{self, Key, Note, Row, Selector, Step, View};
 
@@ -157,49 +158,6 @@ pub fn save_provider(home: &Path, provider: ModelProvider) -> Result<(), String>
     .map_err(|error| error.to_string())
 }
 
-fn launch_args(provider: ModelProvider, model: Option<String>, start: bool) -> Option<Args> {
-    if !start {
-        return None;
-    }
-    let mut argv = vec!["clud".to_string()];
-    match provider {
-        ModelProvider::OpenRouter => {
-            argv.extend([
-                "--openrouter".into(),
-                "--model".into(),
-                model.expect("model"),
-            ]);
-        }
-        ModelProvider::Claude => argv.push("--claude".into()),
-        ModelProvider::Codex => argv.push("--codex".into()),
-        _ => unreachable!("setup offers only OpenRouter, Claude, and Codex"),
-    }
-    argv.extend(["--harness".into(), "default".into()]);
-    Some(Args::parse_from_raw(argv))
-}
-
-/// The installer's entry point: provider setup, then the start offer.
-/// Returns launch arguments only when setup and the start confirmation succeed.
-pub(super) fn run() -> Result<Option<Args>, i32> {
-    let provider = choose_provider()?;
-    let model = if provider == ModelProvider::OpenRouter {
-        login_openrouter()?;
-        Some(choose_openrouter_model()?)
-    } else {
-        None
-    };
-    let home = crate::home::user_home().ok_or_else(|| {
-        eprintln!("clud setup: cannot resolve the home directory");
-        1
-    })?;
-    save_provider(&home, provider).map_err(|error| {
-        eprintln!("clud setup: could not save provider: {error}");
-        1
-    })?;
-    let start = choose("Start right now?", &["Yes", "No (exits)"])? == 0;
-    Ok(launch_args(provider, model, start))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -234,7 +192,6 @@ mod tests {
         for (title, labels) in [
             ("Setup for:", PROVIDER_LABELS),
             ("Select a model:", &[DEEPSEEK, GLM, "Other:"][..]),
-            ("Start right now?", &["Yes", "No (exits)"][..]),
         ] {
             let mut choice = Choice {
                 title,
@@ -247,23 +204,5 @@ mod tests {
             assert_eq!(choice.on_key(Key::Escape), Step::Done(None));
             assert_eq!(choice.view(Duration::ZERO).rows[1].marker, "[*]");
         }
-    }
-
-    #[test]
-    fn start_choice_hands_the_selected_provider_and_model_to_normal_launch() {
-        for model in [DEEPSEEK, GLM, "example/custom"] {
-            let args = launch_args(ModelProvider::OpenRouter, Some(model.into()), true).unwrap();
-            assert!(args.openrouter);
-            assert_eq!(args.model.as_deref(), Some(model));
-            assert!(launch_args(ModelProvider::OpenRouter, Some(model.into()), false).is_none());
-        }
-        assert!(
-            launch_args(ModelProvider::Claude, None, true)
-                .unwrap()
-                .claude
-        );
-        assert!(launch_args(ModelProvider::Codex, None, true).unwrap().codex);
-        assert!(launch_args(ModelProvider::Claude, None, false).is_none());
-        assert!(launch_args(ModelProvider::Codex, None, false).is_none());
     }
 }
