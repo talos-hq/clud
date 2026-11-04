@@ -49,9 +49,26 @@ fn read_process(pid: u32) -> Option<Process> {
 
 fn trusted_program(command: &str) -> bool {
     let path = Path::new(command);
+    let Ok(resolved) = path.canonicalize() else {
+        return false;
+    };
     path.is_absolute()
-        && fs::metadata(path)
-            .is_ok_and(|meta| meta.is_file() && meta.uid() == 0 && meta.mode() & 0o022 == 0)
+        && fs::metadata(&resolved).is_ok_and(|meta| meta.is_file())
+        && path
+            .ancestors()
+            .chain(resolved.ancestors())
+            .all(root_controls_entry)
+}
+
+fn root_controls_entry(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| {
+        meta.uid() == 0
+            && (meta.file_type().is_symlink()
+            || meta.mode() & 0o022 == 0
+            // Sticky root-owned directories cannot have their existing
+            // root-owned children replaced by another user (e.g. /nix/store).
+            || (meta.is_dir() && meta.mode() & 0o1000 != 0))
+    })
 }
 
 fn program_matches(process: &Process, program: &str, comm: &[&str]) -> bool {
@@ -81,19 +98,28 @@ fn portal_helper(
 ) -> bool {
     let options = process
         .command
-        .windows(2)
-        .find(|pair| pair[0] == "-o")
-        .map(|pair| pair[1].split(',').collect::<Vec<_>>())
+        .get(2)
+        .map(|options| options.split(',').collect::<Vec<_>>())
         .unwrap_or_default();
+    let expected = [
+        "rw",
+        "nosuid",
+        "nodev",
+        "fsname=portal",
+        "auto_unmount",
+        "subtype=portal",
+    ];
     process.cgroup == format!("{scope}/session.slice/xdg-document-portal.service")
         && parent.cgroup == process.cgroup
         && program_matches(process, "fusermount3", &["fusermount3"])
         && process.command.first().is_some_and(|path| trusted(path))
+        && process.command.len() == 5
+        && process.command[1] == "-o"
         && process
             .command
             .ends_with(&["--".to_string(), format!("/run/user/{uid}/doc")])
-        && options.contains(&"fsname=portal")
-        && options.contains(&"subtype=portal")
+        && options.len() == expected.len()
+        && expected.iter().all(|option| options.contains(option))
         && program_matches(
             parent,
             "xdg-document-portal",
@@ -214,12 +240,12 @@ fn full_proc_visibility(mountinfo: &str) -> bool {
         if fields.get(5).is_none() || filesystem.get(2).is_none() {
             return false;
         }
-        let options = fields
+        let mut options = fields
             .get(5)
             .into_iter()
             .chain(filesystem.get(2))
             .flat_map(|options| options.split(','));
-        if options.into_iter().any(|option| {
+        if options.any(|option| {
             option.starts_with("hidepid") && !matches!(option, "hidepid=0" | "hidepid=off")
         }) {
             return false;
@@ -385,7 +411,7 @@ mod tests {
             command: [
                 "/usr/bin/fusermount3",
                 "-o",
-                "rw,fsname=portal,subtype=portal",
+                "rw,nosuid,nodev,fsname=portal,auto_unmount,subtype=portal",
                 "--",
                 "/run/user/1000/doc",
             ]
@@ -403,6 +429,19 @@ mod tests {
         let mut wrong_options = helper.clone();
         wrong_options.command[2] = "rw,fsname=other,subtype=portal".into();
         assert!(!verified_service(&wrong_options, 1000, &read, &|_| true));
+        for extra in [",fsname=other", ",fsname=portal", ",allow_other"] {
+            let mut injected = helper.clone();
+            injected.command[2].push_str(extra);
+            assert!(!verified_service(&injected, 1000, &read, &|_| true));
+        }
+        let mut duplicate_pair = helper.clone();
+        duplicate_pair
+            .command
+            .splice(3..3, ["-o".into(), "fsname=other,subtype=other".into()]);
+        assert!(!verified_service(&duplicate_pair, 1000, &read, &|_| true));
+        let mut extra_switch = helper.clone();
+        extra_switch.command.insert(1, "--unmount".into());
+        assert!(!verified_service(&extra_switch, 1000, &read, &|_| true));
         assert!(!verified_service(&helper, 1000, &read, &|_| false));
     }
 
@@ -438,5 +477,21 @@ mod tests {
         ));
         assert!(!full_proc_visibility(""));
         assert!(!full_proc_visibility("10 1 0:5 / /proc rw - proc proc\n"));
+    }
+
+    #[test]
+    fn writable_programs_and_parent_directories_are_not_trusted() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let parent = tmp.path().join("writable-parent");
+        fs::create_dir(&parent).unwrap();
+        fs::set_permissions(&parent, fs::Permissions::from_mode(0o777)).unwrap();
+        let program = parent.join("fusermount3");
+        fs::write(&program, "not a system executable").unwrap();
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o555)).unwrap();
+        assert!(!trusted_program(program.to_str().unwrap()));
+        fs::set_permissions(&program, fs::Permissions::from_mode(0o666)).unwrap();
+        assert!(!trusted_program(program.to_str().unwrap()));
+        assert!(!trusted_program("fusermount3"));
     }
 }
