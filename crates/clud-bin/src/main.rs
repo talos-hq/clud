@@ -227,6 +227,7 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
         return Some(code);
     }
     if let Some(args::Command::Setup {
+        product,
         dry_run,
         yes,
         provider,
@@ -234,6 +235,25 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
         import_hermes,
     }) = &args.command
     {
+        if let Some(product) = product {
+            return Some(clud::install::command::run(
+                &args::InstallArgs {
+                    product: product.clone(),
+                    dry_run: *dry_run,
+                    yes: *yes,
+                    dir: None,
+                    product_dir: None,
+                    reference: None,
+                    version: None,
+                    no_configure: false,
+                    configure_only: false,
+                    migrate_credentials: false,
+                    passthrough: Vec::new(),
+                }
+                .with_passthrough(&args.passthrough)
+                .to_options(),
+            ));
+        }
         if !args.passthrough.is_empty() {
             eprintln!("setup accepts no passthrough arguments");
             return Some(2);
@@ -245,6 +265,14 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
             write_profile: *write_profile,
             import_hermes: *import_hermes,
         }));
+    }
+    if let Some(args::Command::Install(install)) = &args.command {
+        return Some(clud::install::command::run(
+            &install
+                .clone()
+                .with_passthrough(&args.passthrough)
+                .to_options(),
+        ));
     }
     if let Some(code) = self_install::entry::run_explicit(args) {
         return Some(code);
