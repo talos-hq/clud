@@ -16,7 +16,7 @@ Code: [`setup_command.rs`](../../crates/clud-bin/src/setup_command.rs),
 ## Flags and exit codes
 
 ```
-clud setup [--dry-run] [--yes|-y] [--provider claude|codex|openrouter] [--write-profile]
+clud setup [--dry-run] [--yes|-y] [--provider claude|codex|openrouter] [--write-profile] [--import-hermes]
 ```
 
 - `--dry-run` prints every step and what is already in place, and writes
@@ -54,3 +54,35 @@ installer's fresh-shell activation probes share the controlling terminal, so
 a selector opened after them fails with EIO. Fixing that needs the probes
 moved to isolated PTYs. Until then, the installer stays as it is, and
 provider setup has a single entry point: `clud setup`.
+
+## Importing Hermes OpenRouter settings (setup only)
+
+Before any other step, setup looks for OpenRouter settings Hermes already
+has and **offers** to import them. This is a security boundary: `clud setup`
+is the only command that reads Hermes config or its environment. Launches,
+`run`, `serve`, the daemon and `doctor` never read `~/.hermes`, a Hermes
+profile, its `.env` or `HERMES_HOME`, so a normal launch cannot pick up
+someone else's credentials. The reader is the private module
+[`setup_command/hermes.rs`](../../crates/clud-bin/src/setup_command/hermes.rs);
+a unit test fails if any other `src/` file names a Hermes path or variable,
+and `hermes_config_is_invisible_to_every_command_but_setup` runs normal
+commands against an invalid-YAML Hermes config to prove none of them parse it.
+
+- Sources, read-only, first match wins: `$HERMES_HOME/config.yaml`,
+  `~/.hermes/config.yaml`, `~/.hermes/profiles/*/config.yaml`. Read:
+  `provider`/`model.provider`, `base_url`/`model.base_url`, `model.default`,
+  `model_overrides.openrouter`, `providers.openrouter`. An empty `base_url`
+  means OpenRouter's default endpoint.
+- The key: `OPENROUTER_API_KEY` from the environment, else from Hermes'
+  `.env` beside the config. It is never printed, only its source.
+- Setup prints the config path, base URL, model ids and key source, then asks
+  `Import these OpenRouter settings into clud? [y/N]` (default no).
+- `--yes` never imports unless `--import-hermes` is also given.
+  `--dry-run` shows what would be imported and writes nothing. An invalid
+  config is reported and skipped; with no Hermes config, setup is unchanged.
+- An import prints the metered pay-per-token warning and still requires
+  `CLUD_ALLOW_METERED=1` and `CLUD_METERED_PROVIDER=openrouter`. Settings
+  without a key fail with exit 2 naming `OPENROUTER_API_KEY`. Either refusal
+  writes nothing. An accepted import stores the key through the credential
+  store, saves the first model as the OpenRouter default and makes
+  OpenRouter the default provider.

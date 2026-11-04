@@ -231,6 +231,7 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
         yes,
         provider,
         write_profile,
+        import_hermes,
     }) = &args.command
     {
         if !args.passthrough.is_empty() {
@@ -242,6 +243,7 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
             yes: *yes,
             provider: *provider,
             write_profile: *write_profile,
+            import_hermes: *import_hermes,
         }));
     }
     if let Some(code) = self_install::entry::run_explicit(args) {
