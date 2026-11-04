@@ -1279,6 +1279,8 @@ fn route_request(
             }
         },
         ("POST", "/_clud/route/clear") => route_clear(stream, connection, &mut parsed),
+        ("GET", "/healthz") => serve_health(stream, false),
+        ("HEAD", "/healthz") => serve_health(stream, true),
         ("HEAD", "/v1/messages") => {
             let _ = write_response(stream, 200, "application/json", b"", true);
         }
@@ -1832,6 +1834,25 @@ fn refuse_images(stream: &mut TcpStream, status: u16, message: &str) {
 #[derive(Clone, Copy)]
 struct ChatTranslation<'a> {
     model: &'a str,
+}
+
+/// `GET|HEAD /healthz` -- liveness for a client or monitor holding the token.
+///
+/// CLIProxyAPI registers an unauthenticated `GET|HEAD /healthz`
+/// (`internal/api/server_routes.go:53-64`) that answers `{"status":"ok"}`.
+/// clud keeps one admission contract instead of carving an unauthenticated
+/// hole: a probe carries the same client token as every other request, so a
+/// refused connection still means "down" and a 401 still means "wrong token".
+/// It reads no provider, no route state and no credential, so it answers 200
+/// even while every route is cooling -- that is the point of a probe.
+fn serve_health(stream: &mut TcpStream, head_only: bool) {
+    let _ = write_response(
+        stream,
+        200,
+        "application/json",
+        br#"{"status":"ok"}"#,
+        head_only,
+    );
 }
 
 /// `GET /_clud/route/status` -- the configured ladder and each route's health.
@@ -6031,6 +6052,47 @@ mod tests {
                 "upstream-claude-canary".to_string(),
             ))
         }
+    }
+
+    #[test]
+    fn health_probe_answers_ok_behind_the_client_token() {
+        let mut bridge = BridgeHandle::start(BridgeConfig::default()).unwrap();
+        let token = bridge.bearer_token().to_owned();
+
+        let response = request(
+            bridge.socket_addr(),
+            &authorized("GET", "/healthz", &token, ""),
+        );
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(
+            response.contains("Content-Type: application/json"),
+            "{response}"
+        );
+        assert!(response.ends_with(r#"{"status":"ok"}"#), "{response}");
+
+        let head = request(
+            bridge.socket_addr(),
+            &authorized("HEAD", "/healthz", &token, ""),
+        );
+        assert_eq!(status(&head), 200, "{head}");
+        assert!(
+            !head.contains("status"),
+            "a HEAD probe carries headers only: {head}"
+        );
+
+        let refused = request(
+            bridge.socket_addr(),
+            &authorized("GET", "/healthz", "wrong-client-token", ""),
+        );
+        assert_eq!(status(&refused), 401, "{refused}");
+        assert!(!refused.contains("status"), "{refused}");
+
+        let unrouted = request(
+            bridge.socket_addr(),
+            &authorized("POST", "/healthz", &token, "{}"),
+        );
+        assert_eq!(status(&unrouted), 404, "{unrouted}");
+        bridge.shutdown().unwrap();
     }
 
     #[test]
