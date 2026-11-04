@@ -379,6 +379,9 @@ Console and terminal:
 
 Loop subsystem (`clud loop`):
 
+- `loop_console.rs` - headless loop dashboard, bottom message actions and guarded
+  restart confirmation; see [loop subsystem](../../../docs/architecture/loop-subsystem.md#interactive-loop-dashboard).
+
 - `loop_spec.rs` - task-spec resolver: classifies the positional (GH URL,
   `#42`, file, literal), fetches GH issue/PR bodies via `gh` (curl fallback),
   caches under `.clud/loop/`, locates DONE/BLOCKED marker files.
