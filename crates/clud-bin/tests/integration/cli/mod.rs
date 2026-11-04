@@ -6,3 +6,4 @@ mod codex_bridge_preflight_cli;
 mod metered_policy_cli;
 mod platform;
 mod provider_selection_cli;
+mod setup_cli;

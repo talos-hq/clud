@@ -610,6 +610,13 @@ impl Args {
     }
 }
 
+/// `clud setup --provider`: only the providers setup offers.
+fn parse_setup_provider(value: &str) -> Result<crate::backend::ModelProvider, String> {
+    crate::backend::ModelProvider::from_settings_str(value)
+        .filter(|provider| crate::self_install::setup::OFFERED.contains(provider))
+        .ok_or_else(|| format!("expected one of claude, codex, openrouter (got {value})"))
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Serve Claude or Codex and optional Anthropic-compatible provider models
@@ -647,6 +654,27 @@ pub enum Command {
     CodexUpdate,
     /// Install or confirm DeepSeek Harness in clud's private npm prefix.
     DshUpdate,
+    /// Install clud's aliases and set up a provider in one step: interpreter
+    /// aliases, then OpenRouter/Claude/Codex with its credential and saved
+    /// default. Safe to rerun. Never edits shell profiles or PATH without
+    /// --write-profile. Exits 0 on success, 2 for a refused request (no
+    /// terminal without --yes, missing OpenRouter key), 1 on a failed step.
+    Setup {
+        /// Print every step and what is already in place; change nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Run without prompts (required without a terminal). Keeps the
+        /// saved provider, or Claude, unless --provider is given.
+        #[arg(long = "yes", short = 'y')]
+        yes: bool,
+        /// Provider to configure instead of asking.
+        #[arg(long, value_parser = parse_setup_provider)]
+        provider: Option<crate::backend::ModelProvider>,
+        /// Also activate clud in new shells: runs the installer for this
+        /// version, which owns every shell-profile and PATH edit.
+        #[arg(long = "write-profile")]
+        write_profile: bool,
+    },
     /// Report hook and alias health: stale or retired aliases in clud's own
     /// alias dirs, a foreign `clud-cmd-scan` first on PATH, and the hook
     /// matcher's tool coverage (#1954). Exits 1 when anything is wrong.
@@ -1791,6 +1819,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "codex-update",
     "dsh-update",
     "doctor",
+    "setup",
     "ci",
     "codex-auth",
     "deepseek-auth",

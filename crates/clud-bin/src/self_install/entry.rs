@@ -139,6 +139,20 @@ pub fn run_auto_offer(args: &Args) -> Option<i32> {
     }
 }
 
+/// `clud setup --write-profile`: the installer's own current-version install
+/// with shell activation, so profile/PATH edits have exactly one owner.
+pub fn install_current_with_profile(yes: bool) -> i32 {
+    run_request(
+        Request::Current,
+        InstallOptions {
+            yes,
+            modify_path: true,
+        },
+        false,
+    )
+    .exit_code()
+}
+
 fn run_request(request: Request, options: InstallOptions, automatic: bool) -> Outcome {
     match request {
         Request::Menu => {

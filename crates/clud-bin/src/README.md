@@ -868,6 +868,7 @@ Diagnostics and misc:
 Quick lookup, which file owns a given subcommand:
 
 - `clud doctor` -> `doctor::run`.
+- `clud setup` -> `setup_command::run` ([setup-command.md](../../../docs/architecture/setup-command.md)).
 - `clud loop ...` -> `command::build_launch_plan_for_target` (resolved
   provider/harness, prompt, and markers) +
   `loop_spec` (task resolution) + `loop_artifacts` (artifact files) +
@@ -988,6 +989,7 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   interpretation and the shim.
 - `block_bad_cmd_rm_identity.rs` — effective-PATH byte identity and source
   resolution checks, shared by both hook entrypoints.
+- `setup_command.rs` — `clud setup` (#2219): alias install, shared provider setup (`self_install/setup.rs`), optional shell activation. See [setup-command.md](../../../docs/architecture/setup-command.md).
 - `doctor.rs` — `clud doctor [--json]` (#1954): reports stale, missing and retired aliases in clud's interpreter, session and helper alias dirs (`inspect_dir`), lists non-alias files there without deleting them, flags a foreign first `clud-cmd-scan` on PATH, and computes scanner coverage of the launch fragment and of each hook config on disk (`coverage_report`); exit 1 on an alias finding; tests in `doctor_tests.rs`. See [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md#hook-health-clud-doctor).
 - `hook_handshake.rs` — the hook build handshake (#1954): startup exports the launcher path and build fingerprint; `multicall::run_cmd_scan` relays a skewed `clud-cmd-scan` to `<launcher> __cmd-scan` and logs `HOOK-SKEW`; decision is `decide` over injected `Facts`; tests in `hook_handshake_tests.rs`; see [launch-setup.md](../../../docs/architecture/launch-setup.md).
 - `multicall.rs` — argv[0] dispatch, the first thing `main` does (#1551,

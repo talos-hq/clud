@@ -20,7 +20,9 @@ change broadcast, and OS-built user-environment proof on Windows.
 reparse-point checks `transaction.rs` applies. A binary commit alone does not
 count as installer success. Explicit `--no-modify-path` instead skips the
 activation plan entirely, preserves profiles/User Path, and reports binary
-installation with activation still required.
+installation with activation still required. `setup.rs` is the provider step of `clud setup`
+([setup-command.md](../../../../docs/architecture/setup-command.md)); the
+installer does not chain into it.
 
 `result.rs` defines the versioned `clud-installer-result/v1` outcome. Add
 `--installer-json` to an explicit current/version request to emit exactly one
