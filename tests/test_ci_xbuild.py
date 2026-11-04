@@ -489,3 +489,65 @@ def test_module_form_is_untouched_by_the_guard() -> None:
     assert xbuild.__package__ == "ci"
     # Importable as a module means the guard did not fire at import time.
     assert hasattr(xbuild, "main")
+
+
+@pytest.mark.parametrize("target", ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"])
+def test_bundle_stripping_uses_the_target_elf_editor(
+    monkeypatch, tmp_path: Path, target: str
+) -> None:
+    from ci import process
+
+    binary = tmp_path / "target/debug/clud"
+    harness = tmp_path / "tests/integration"
+    for path in (binary, harness):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"\x7fELFdebug-data")
+    selected: list[str] = []
+    calls: list[list[str]] = []
+
+    def resolve(triple: str) -> str:
+        selected.append(triple)
+        return "/managed/target-objcopy"
+
+    def strip(argv: list[str], **kwargs):
+        calls.append(argv)
+        Path(argv[-1]).write_bytes(b"\x7fELFstripped")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(build_wheel, "resolve_elf_objcopy", resolve)
+    monkeypatch.setattr(process, "run", strip)
+    bundle._strip_debug(tmp_path, target)
+    assert selected == [target]
+    assert calls == [
+        ["/managed/target-objcopy", "--strip-debug", str(path)] for path in (binary, harness)
+    ]
+    assert binary.read_bytes() == harness.read_bytes() == b"\x7fELFstripped"
+
+
+def test_bundle_rejects_an_unstripped_executable(monkeypatch, tmp_path: Path) -> None:
+    from ci import process
+
+    binary = tmp_path / "target/debug/clud"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"\x7fELFdebug-data")
+    monkeypatch.setattr(build_wheel, "resolve_elf_objcopy", lambda target: "objcopy")
+    monkeypatch.setattr(
+        process,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stderr="wrong architecture",
+            stdout="",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="cannot strip aarch64.*wrong architecture"):
+        bundle._strip_debug(tmp_path, "aarch64-unknown-linux-gnu")
+
+
+@pytest.mark.parametrize("target", ["aarch64-apple-darwin", "x86_64-pc-windows-msvc"])
+def test_bundle_leaves_non_elf_targets_untouched(monkeypatch, tmp_path: Path, target: str) -> None:
+    def unexpected(target: str) -> str:
+        pytest.fail("non-ELF bundle must not resolve an ELF editor")
+
+    monkeypatch.setattr(build_wheel, "resolve_elf_objcopy", unexpected)
+    bundle._strip_debug(tmp_path, target)

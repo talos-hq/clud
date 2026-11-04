@@ -115,13 +115,16 @@ def _strip_debug(staging: Path, target: str) -> None:
     the exec runner downloads it on the build -> unit critical path. Panic
     messages keep `file:line` (from `Location`, not DWARF); only symbolized
     backtrace lines are lost. Windows and macOS keep debug info in sidecars,
-    so only Linux is stripped. Best effort: a host `strip` that cannot read a
-    cross target leaves that binary unstripped rather than failing the pack.
+    so only Linux is stripped. Resolve a target-capable ELF editor, as wheel
+    staging does: host GNU strip cannot read ARM binaries and leaves them
+    above the installer's bounded executable size. Failed stripping is fatal.
     """
     if "linux" not in target:
         return
     from ci import process
+    from ci.build_wheel import resolve_elf_objcopy
 
+    objcopy = resolve_elf_objcopy(target)
     binaries = [
         *sorted((staging / "target").rglob("*")),
         *sorted((staging / "tests").rglob("*")),
@@ -129,10 +132,10 @@ def _strip_debug(staging: Path, target: str) -> None:
     for path in binaries:
         if not path.is_file():
             continue
-        result = process.run(["strip", "--strip-debug", str(path)], capture_output=True, text=True)
+        result = process.run([objcopy, "--strip-debug", str(path)], capture_output=True, text=True)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()
-            print(f"::warning::left {path.name} unstripped: {detail}")
+            raise RuntimeError(f"cannot strip {target} binary {path.name}: {detail}")
 
 
 def pack(target: str, profile: str, dest: Path) -> int:  # noqa: C901
