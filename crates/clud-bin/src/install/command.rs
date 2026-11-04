@@ -246,26 +246,12 @@ fn run_bootstrap(
 ) -> Result<(), Failure> {
     use running_process::{CommandSpec, NativeProcess, ProcessConfig, StderrMode, StdinMode};
 
-    if !cfg!(windows) {
-        // Execute through the script's own shebang: hermes-slim's is `#!/bin/sh`
-        // and talos' is `#!/usr/bin/env bash`, so forcing one interpreter breaks
-        // the other. Windows has no shebang line, so it names bash.
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(script, std::fs::Permissions::from_mode(0o700)).map_err(
-            |error| Failure {
-                summary: format!("cannot make {} executable: {error}", script.display()),
-            },
-        )?;
-    }
-
-    let mut argv = vec![if cfg!(windows) {
-        "bash".to_string()
-    } else {
-        script.to_string_lossy().into_owned()
-    }];
-    if cfg!(windows) {
-        argv.push(script.to_string_lossy().into_owned());
-    }
+    // The host boundary decides how a script is executed: on Unix the script
+    // runs through its own shebang (hermes-slim's is `#!/bin/sh`, talos' is
+    // `#!/usr/bin/env bash`), on Windows it runs under bash.
+    let mut argv = crate::platform::script_exec::script_argv(script).map_err(|error| Failure {
+        summary: format!("cannot prepare {}: {error}", script.display()),
+    })?;
     if let Some(version) = &options.version {
         argv.push("--version".to_string());
         argv.push(version.clone());

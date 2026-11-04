@@ -164,5 +164,11 @@ Unit tests live with the code and run in the `clud` lib target:
   refused byte-identical, the offer summary secret-free, and nothing stored
   writing nothing.
 
-Still open: a CLI-level test that drives `clud install` and `clud setup
-<product>` as processes, asserting the alias produces identical output.
+- `tests/integration/cli/install_products_cli.rs` drives the command as a
+  process: `--help` naming both products and the configure flags, `clud setup
+  hermes --dry-run` producing byte-identical output to `clud install hermes
+  --dry-run`, an unknown product refused with exit 2, a dry run writing nothing,
+  a configure-only run leaving the config alone when clud holds no credentials,
+  a migration writing `providers.openrouter` into a comment-bearing
+  `config.yaml` while never printing the key, `--yes` declining to migrate,
+  and an unparseable config left byte-identical.
