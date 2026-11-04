@@ -15,8 +15,10 @@
 //!   under `<state>/api-sessions`).
 //!
 //! Fail safe: when a source cannot be consulted (the process scan cannot read this process's own cwd or environ, or a
-//! process of ours returned neither, or the session records are unreadable) every
+//! unverified process of ours returned neither, or the session records are unreadable) every
 //! unit counts as live, so the cap simply stays exceeded.
+//! Verified protected desktop services are excluded using their OS service
+//! identity and manager lineage, never their name alone.
 
 use std::collections::HashSet;
 use std::fs;
@@ -56,6 +58,16 @@ impl LiveSignals {
     /// Both sources consulted and nothing found.
     pub fn nothing_live() -> Self {
         Self::new(Some(Vec::new()), Some(HashSet::new()))
+    }
+
+    pub fn unavailable_reason(&self) -> Option<&'static str> {
+        if self.paths.is_none() {
+            Some("process cwd/environment references unavailable")
+        } else if self.session_ids.is_none() {
+            Some("tracked session records unavailable")
+        } else {
+            None
+        }
     }
 
     /// Scan the host processes and the daemon's session records.
@@ -146,23 +158,33 @@ pub struct ProcFacts {
     pub zombie: bool,
     /// Owned by the user running this scan.
     pub same_user: bool,
+    /// Verified protected desktop infrastructure in its OS service lineage.
+    pub desktop_service: bool,
+}
+
+fn cwd_available(cwd: Option<&Path>) -> bool {
+    cwd.is_some_and(|path| !path.as_os_str().is_empty())
 }
 
 /// Turn process facts into in-use paths. `None` (unconsulted, everything
-/// live) when this process cannot read its own cwd or environ, or when any
-/// live process of ours returned neither: a denied read looks exactly like
-/// "no process here", so absence would prove nothing.
+/// live) when this process cannot read its own cwd or environ, or when an
+/// unverified live process of ours returned neither. A denied read looks
+/// exactly like absence, so it cannot authorize eviction.
 pub fn paths_from_facts(own: &ProcFacts, procs: &[ProcFacts]) -> Option<Vec<PathBuf>> {
-    let has_cwd = |p: &ProcFacts| p.cwd.as_ref().is_some_and(|c| !c.as_os_str().is_empty());
-    if !has_cwd(own) || own.environ.is_empty() {
+    if !cwd_available(own.cwd.as_deref()) || own.environ.is_empty() {
         return None;
     }
     let mut paths = Vec::new();
     for process in procs {
-        if process.same_user && !process.zombie && !has_cwd(process) && process.environ.is_empty() {
+        if process.same_user
+            && !process.zombie
+            && !process.desktop_service
+            && !cwd_available(process.cwd.as_deref())
+            && process.environ.is_empty()
+        {
             return None;
         }
-        if has_cwd(process) {
+        if cwd_available(process.cwd.as_deref()) {
             paths.extend(process.cwd.clone());
         }
         for key in SCRATCH_ENV {
@@ -194,6 +216,11 @@ fn process_paths() -> Option<Vec<PathBuf>> {
         environ: p.environ().to_vec(),
         zombie: p.status() == ProcessStatus::Zombie,
         same_user: p.user_id().cloned() == uid,
+        desktop_service: !cwd_available(p.cwd())
+            && p.environ().is_empty()
+            && p.user_id().cloned() == uid
+            && p.status() != ProcessStatus::Zombie
+            && crate::platform::session_tmp_live::verified_desktop_service(p.pid().as_u32()),
     };
     let procs: Vec<ProcFacts> = system.processes().values().map(facts).collect();
     paths_from_facts(&facts(me), &procs)

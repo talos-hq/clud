@@ -227,9 +227,9 @@ is **an error**, not a fallback — there is no read-only path in v1
 
   How verdicts are produced (issue #946):
 
-  1. The periodic tick does the one thing only the worker can — `registry.list` filtered to extern-repo and sibling-clone rows —
+  1. The periodic tick does the one thing only the worker can — `registry.list` filtered to worktree, extern-repo and sibling-clone rows —
      and hands the rows to `spawn_extern_probe` (`gc_service.rs`).
-  2. A `clud-gc-extern-probe` thread computes `extern_repo_purge_verdict` for each row and
+  2. A `clud-gc-extern-probe` thread computes `tracked_source_purge_verdict` for each row and
      sends the **complete snapshot** back as `RegistryMsg::ExternVerdicts`, reusing the same
      background-thread → worker channel that `RegistryMsg::PurgeCompletion` already uses for
      the purge pool.
@@ -244,6 +244,13 @@ is **an error**, not a fallback — there is no read-only path in v1
   checkout no probe has ever inspected, which is the data loss the extern-repo guard exists
   to prevent. The visible consequence is that a checkout becomes reclaimable on the tick
   *after* it is first seen clean.
+
+  Unverified source rows display `pinned: source verification pending`. Linked worktrees
+  check their own HEAD and dirty/untracked files, rather than every shared branch or
+  the repository-wide stash. This narrower check requires both their per-worktree Git
+  directory and their common Git directory to resolve outside the removed tree.
+  Removing such a worktree leaves the shared branches and stash intact. Standalone
+  clones keep the full-ref and stash checks because removing them also removes that data.
 
   `gc list` additionally does a `try_exists()` stat per row for the `dangling` state, and a
   verdict can be up to one tick stale (1 h by default — hence `evaluated_unix`).
@@ -632,8 +639,10 @@ Docker bind mount into a scratchpad) or any path that returns `PermissionDenied`
 first hit: the scan skips it without descending, its ancestor is kept (`Busy`) so Explore still
 reaches removable siblings, and the path goes into the pass's `foreign_owned` set instead of the
 backoff queue. A finished pass writes the list to `~/.clud/state/session-tmp-foreign-owned.json`;
-`clud gc list` prints each path with a `sudo rm -rf` and a `docker run --rm -v <parent>:/x alpine
-rm -rf /x/<name>` command. The next pass re-derives the list from disk. `daemon-events.jsonl` records per-tick examined entries, files and
+`clud gc list` prints each path with an ownership-restoration command that does not
+follow directory symlinks, followed by `clud gc prune tmp`. It does not recommend
+privileged recursive deletion, which would bypass the collector's liveness rules.
+The next pass re-derives the list from disk. `daemon-events.jsonl` records per-tick examined entries, files and
 directories removed, reclaimed apparent bytes, pending phases, retry count, work age, and the
 last error path/class, current phase/path, and cursor position. An exclusive lock prevents
 concurrent daemons from overwriting the continuation queue.
@@ -659,10 +668,14 @@ rule): a unit is evicted only if its newest mtime is at least `MIN_IDLE` (6 h) o
 oversized-walk or future-dated counts as live; re-measured right before removal) **and** no running
 process has a cwd or `TMPDIR`/`TMP`/`TEMP`/`CLAUDE_CODE_TMPDIR` inside it, and no running process has a cwd (or ancestor of it) whose Claude-encoded form (`session_history::import::project_slug`) names a path component of the unit, so the whole `claude-<uid>/<project>/` subtree is live while anything works in that project (`TMPDIR` is the tmp root and claude's cwd the project dir, so only the encoded name links them; the encoding is JS-compatible, two dashes per non-BMP char, and a component also matches when both it and a live slug are >= 100 chars sharing their first 100, or it minus a trailing `-<hex>` (>= 100 chars) prefixes the live slug, covering Claude's believed-but-unverified long-path truncation with a hash, #2400; over-sparing is deliberate) **and** no session id the
 daemon tracks (`state/sessions` not exited, `state/api-sessions` not terminated) is a component of
-its path (`gc::session_tmp_live`). An unconsultable source makes every unit live, including a process scan where this process cannot read its own cwd/environ or any non-zombie process of the same user returned neither (a denied read looks like absence). A parked session
+its path (`gc::session_tmp_live`). An unconsultable source preserves every unit, including a process scan where this process cannot read its own cwd/environ or an unverified non-zombie process of the same user returned neither (a denied read looks like absence). Protected desktop services are exempt only after `platform::session_tmp_live` verifies their kernel process name, exact user-service cgroup, root-owned non-writable command image and systemd-user-manager ancestry. This covers the manager, its PAM helper, KWin (including the NixOS wrapper) and KDE policy agent. An argv[0] or process name alone never exempts a process; mismatches and unknown agent descendants keep the fail-closed safeguard. This trusts the OS-managed service identity, not hostile same-user control of a desktop service. Unsupported hosts make no exemption. A parked session
 therefore survives however far over the cap the tree is, and `tmp.warn_bytes` (default = the cap)
 warns when live sessions keep it above. The daemon runs it right after each age pass (`daemon/session_tmp_sweep.rs`, event
 `session_tmp_cap`); `clud gc prune tmp` (and `prune all`) runs it on demand, honouring `--dry-run`.
+The standalone temp command also accepts `--no-daemon` and never needs a registry
+round trip. Its report distinguishes live from unknown units and names an unavailable
+liveness source; that unavailable source makes the command fail, so scheduled jobs
+cannot report success for an unperformed collection.
 Removal goes through `rm_tool::remove_dir_tree_writable`, the shared tree deleter.
 
 **Undeletable paths are one line (#2397).** Container builds leave `root:root` trees (47 GB of CEF
@@ -670,7 +683,7 @@ under one `*-extern`) that the owning user cannot unlink. The gc deleters (`~/.c
 trash reaping, tracked-entry removal) go through `rm_tool::remove_dir_tree_collecting`, which keeps
 going past undeletable entries and reports each failed leaf to `gc::undeletable::Undeletable`. The
 pass prints `Undeletable::summary_line()` once: `N paths could not be removed (permission denied),
-e.g. <path>; owned by root — remove with sudo` (the owner clause comes from
+e.g. <path>; owned by root — restore ownership, then retry clud gc` (the owner clause comes from
 `platform::rm_tool::file_owner`; mixed causes read `(D permission denied, O other)`). A tracked
 entry whose tree failed returns that line as its error instead of one error per file.
 

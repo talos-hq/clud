@@ -191,5 +191,9 @@ fn unconsultable_signals_fail_safe() {
     let idle = session(tmp.path(), "claude-1/p/idle", 50 * KIB, hours(30), now);
     let report = enforce_cap_at(tmp.path(), KIB, now, false, LiveSignals::default);
     assert!(idle.join("data").exists());
-    assert_eq!(report.kept_live, 1);
+    assert_eq!(report.kept_live, 0);
+    assert_eq!(report.kept_unknown, 1);
+    assert!(report
+        .summary_line()
+        .contains("Eviction blocked: process cwd/environment references unavailable"));
 }

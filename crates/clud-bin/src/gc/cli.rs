@@ -230,6 +230,11 @@ pub fn run(args: &Args, sub: Option<GcSubcommand>) -> i32 {
             kind: Some(k),
             ..
         } if k == UV_CACHE_KIND => return cmd_prune_uv_cache(*dry_run),
+        GcAction::Prune {
+            dry_run,
+            kind: Some(k),
+            ..
+        } if k == TMP_KIND => return cmd_prune_tmp(*dry_run),
         _ => {}
     }
     if args.no_daemon {
@@ -680,7 +685,7 @@ fn cmd_prune_tmp(dry_run: bool) -> i32 {
     if let Some(line) = report.undeletable.summary_line() {
         eprintln!("tmp: {line}");
     }
-    i32::from(report.failed > 0)
+    i32::from(report.failed > 0 || report.liveness_unavailable.is_some())
 }
 
 /// Repo roots clud has run in (the registry's `repo_visits`).

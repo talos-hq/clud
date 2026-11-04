@@ -281,7 +281,11 @@ fn commits_are_squash_merged(cwd: &Path) -> bool {
             "--git-dir=.git",
             "--work-tree=.",
             "log",
-            "--all",
+            if linked_metadata_is_external(cwd) {
+                "HEAD"
+            } else {
+                "--all"
+            },
             "--not",
             "--remotes",
             "--format=%H",
@@ -417,7 +421,11 @@ pub(super) fn git_work_state(cwd: &Path) -> GitWorkState {
             "--git-dir=.git",
             "--work-tree=.",
             "log",
-            "--all",
+            if linked_metadata_is_external(cwd) {
+                "HEAD"
+            } else {
+                "--all"
+            },
             "--not",
             "--remotes",
             "--format=%H",
@@ -438,6 +446,12 @@ pub(super) fn git_work_state(cwd: &Path) -> GitWorkState {
         };
     }
 
+    // A linked worktree does not own the shared branches or stash. Their
+    // metadata survives `git worktree remove`; only this checkout's HEAD
+    // and dirty/untracked source can be lost with it.
+    if linked_metadata_is_external(cwd) {
+        return GitWorkState::Clean;
+    }
     let Some(stash) = probe_git(
         cwd,
         &[
@@ -455,6 +469,43 @@ pub(super) fn git_work_state(cwd: &Path) -> GitWorkState {
     }
 
     GitWorkState::Clean
+}
+
+/// A `.git` file alone is insufficient: separate Git metadata can still
+/// live inside the source being removed. Only a linked worktree whose
+/// per-worktree and common metadata both resolve outside it qualifies.
+fn linked_metadata_is_external(cwd: &Path) -> bool {
+    let Some(root) = cwd.canonicalize().ok() else {
+        return false;
+    };
+    let Some(gitfile) = std::fs::read_to_string(root.join(".git")).ok() else {
+        return false;
+    };
+    let Some(gitdir) = gitfile.trim().strip_prefix("gitdir:") else {
+        return false;
+    };
+    let Some(gitdir) = root.join(gitdir.trim()).canonicalize().ok() else {
+        return false;
+    };
+    let Some(common) = std::fs::read_to_string(gitdir.join("commondir")).ok() else {
+        return false;
+    };
+    let Some(common) = gitdir.join(common.trim()).canonicalize().ok() else {
+        return false;
+    };
+    gitdir != common && !gitdir.starts_with(&root) && !common.starts_with(&root)
+}
+
+pub(super) fn tracked_source_purge_verdict(
+    entry: &TrackedEntry,
+    stale_after: Duration,
+) -> PurgeDecision {
+    if entry.kind == crate::gc::WORKTREE_KIND {
+        let path = Path::new(&entry.path);
+        extern_repo_purge_decision(path.is_dir(), true, true, git_work_state(path))
+    } else {
+        extern_repo_purge_verdict(entry, stale_after)
+    }
 }
 
 /// Why an extern-repo row was or was not reclaimed. The repo's reap/spare
@@ -931,6 +982,45 @@ mod tests {
     fn standalone_non_git_dir_reads_as_unknown() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(git_work_state(tmp.path()), GitWorkState::Unknown);
+    }
+
+    #[test]
+    fn linked_worktree_is_not_pinned_by_another_branch_or_shared_stash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        init_repo(&repo);
+        git(&repo, &["commit", "--allow-empty", "-m", "base"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+        git(
+            &repo,
+            &["update-ref", "refs/remotes/origin/main", base.trim()],
+        );
+        let child = tmp.path().join("child");
+        git(
+            &repo,
+            &["worktree", "add", "-b", "child", child.to_str().unwrap()],
+        );
+        git(
+            &repo,
+            &["commit", "--allow-empty", "-m", "unrelated local work"],
+        );
+        std::fs::write(repo.join("scratch"), "keep this stash").unwrap();
+        git(&repo, &["stash", "push", "--include-untracked"]);
+        assert_eq!(git_work_state(&child), GitWorkState::Clean);
+        std::fs::write(child.join("local-work"), "must survive").unwrap();
+        assert_eq!(git_work_state(&child), GitWorkState::HasLocalWork);
+        git(&child, &["add", "local-work"]);
+        git(&child, &["commit", "-m", "unpushed worktree work"]);
+        assert_eq!(git_work_state(&child), GitWorkState::HasLocalWork);
+        git(&child, &["reset", "--hard", base.trim()]);
+        assert_eq!(git_work_state(&child), GitWorkState::Clean);
+        let stash = git(&repo, &["stash", "list"]);
+        let unrelated_tip = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["worktree", "remove", child.to_str().unwrap()]);
+        assert_eq!(git(&repo, &["stash", "list"]), stash);
+        assert_eq!(git(&repo, &["rev-parse", "HEAD"]), unrelated_tip);
+        assert!(repo.join(".git").is_dir());
     }
 
     /// Regression guard for the production layout. `.extern-repos/` lives
