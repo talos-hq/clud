@@ -674,6 +674,11 @@ pub enum Command {
         /// version, which owns every shell-profile and PATH edit.
         #[arg(long = "write-profile")]
         write_profile: bool,
+        /// Import the OpenRouter settings and key found in Hermes' config.
+        /// Required for an import under --yes; OpenRouter is metered, so
+        /// CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=openrouter are too.
+        #[arg(long = "import-hermes")]
+        import_hermes: bool,
     },
     /// Report hook and alias health: stale or retired aliases in clud's own
     /// alias dirs, a foreign `clud-cmd-scan` first on PATH, and the hook

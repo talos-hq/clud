@@ -50,6 +50,7 @@ fn run(fx: &Fixture, extra_env: &[(&str, &str)], args: &[&str]) -> (i32, String)
                 && upper != "USERPROFILE"
                 && upper != "OPENROUTER_API_KEY"
                 && !upper.starts_with("CLUD_")
+                && !upper.starts_with("HERMES_")
         })
         .collect();
     let home = fx.home.to_string_lossy().into_owned();
@@ -231,4 +232,237 @@ fn setup_openrouter_yes_without_a_key_fails_with_guidance() {
     let (exit, output) = run(&fx, &[], &["setup", "--yes", "--provider", "openrouter"]);
     assert_eq!(exit, 2, "{output}");
     assert!(output.contains("OPENROUTER_API_KEY"), "{output}");
+}
+
+// ---------------------------------------------------------------------------
+// Hermes OpenRouter import: only `clud setup` may read Hermes config or env.
+// ---------------------------------------------------------------------------
+
+const HERMES_CONFIG: &str = "model:\n  default: deepseek/deepseek-v4.1-flash-1017\n  provider: openrouter\n  base_url: ''\nmodel_overrides:\n  openrouter:\n    deepseek/deepseek-v4.1-flash-1017:\n      context_window: 1048576\n    z-ai/glm-5.3-flash:\n      context_window: 200000\n";
+
+/// Not YAML at all: any parser that touches it fails loudly.
+const INVALID_YAML: &str = "model: [unclosed\n  provider: openrouter\n\t- : : :\n";
+
+fn write_hermes(fx: &Fixture, body: &str) -> PathBuf {
+    let dir = fx.home.join(".hermes");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("config.yaml");
+    fs::write(&path, body).unwrap();
+    path
+}
+
+fn metered_env(key: &str) -> Vec<(&'static str, String)> {
+    vec![
+        ("OPENROUTER_API_KEY", key.to_string()),
+        ("CLUD_ALLOW_METERED", "1".into()),
+        ("CLUD_METERED_PROVIDER", "openrouter".into()),
+    ]
+}
+
+fn borrow<'a>(env: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)> {
+    env.iter().map(|(k, v)| (*k, v.as_str())).collect()
+}
+
+fn mentions_hermes(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    lower.contains("hermes") || lower.contains("yaml") || lower.contains("config.yaml")
+}
+
+/// The security boundary: with an invalid-YAML Hermes config and a Hermes
+/// key in the environment, normal launches neither parse, warn about, nor
+/// import it. Only `clud setup` reacts to the same fixture.
+#[test]
+fn hermes_config_is_invisible_to_every_command_but_setup() {
+    let fx = fixture();
+    let hermes_dir = fx.home.join(".hermes");
+    write_hermes(&fx, INVALID_YAML);
+    let key = fake_key();
+    fs::write(
+        hermes_dir.join(".env"),
+        format!("OPENROUTER_API_KEY={key}\n"),
+    )
+    .unwrap();
+    let hermes_home = hermes_dir.to_string_lossy().into_owned();
+    let env = [
+        ("OPENROUTER_API_KEY", key.as_str()),
+        ("HERMES_HOME", hermes_home.as_str()),
+    ];
+    let assert_untouched = |args: &[&str], output: &str| {
+        assert!(
+            !mentions_hermes(output),
+            "clud {args:?} reacted to the Hermes config:\n{output}"
+        );
+        assert!(!output.contains(&key), "key echoed:\n{output}");
+        assert!(
+            snapshot(&fx.vault).values().all(|bytes| bytes == b"<dir>"),
+            "clud {args:?} imported a credential"
+        );
+    };
+    for args in [
+        &["-p", "hello", "--dry-run"][..],
+        &["-p", "hello", "--dry-run", "run"][..],
+        &["--openrouter", "-p", "hello", "--dry-run"][..],
+    ] {
+        let (exit, output) = run(&fx, &env, args);
+        assert_eq!(exit, 0, "clud {args:?} failed:\n{output}");
+        assert_untouched(args, &output);
+    }
+    // `serve --openrouter` with the key only in Hermes' .env: reading
+    // Hermes would find it; the boundary means the key is missing.
+    let serve = ["serve", "--openrouter", "--port", "0"];
+    let (exit, output) = run(
+        &fx,
+        &[
+            ("HERMES_HOME", hermes_home.as_str()),
+            (
+                "CLUD_SERVE_CLIENT_TOKEN",
+                "abcdefabcdefabcdefabcdefabcdefab",
+            ),
+        ],
+        &serve,
+    );
+    assert_eq!(exit, 2, "{output}");
+    assert!(
+        output.contains("OpenRouter credentials are missing"),
+        "{output}"
+    );
+    assert_untouched(&serve, &output);
+    // Same fixture: setup is the one command that reads it.
+    let (exit, output) = run(&fx, &env, &["setup", "--dry-run", "--provider", "claude"]);
+    assert_eq!(exit, 0, "{output}");
+    assert!(output.contains("hermes: could not parse"), "{output}");
+}
+
+#[test]
+fn setup_dry_run_shows_hermes_openrouter_settings_and_imports_nothing() {
+    let fx = fixture();
+    write_hermes(&fx, HERMES_CONFIG);
+    let key = fake_key();
+    let env = metered_env(&key);
+    let before = snapshot(fx.home.parent().unwrap());
+    let (exit, output) = run(&fx, &borrow(&env), &["setup", "--dry-run"]);
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        output.contains("base_url: https://openrouter.ai/api"),
+        "{output}"
+    );
+    assert!(
+        output.contains("deepseek/deepseek-v4.1-flash-1017"),
+        "{output}"
+    );
+    assert!(output.contains("z-ai/glm-5.3-flash"), "{output}");
+    assert!(output.contains("found in OPENROUTER_API_KEY"), "{output}");
+    assert!(output.contains("would import"), "{output}");
+    assert!(!output.contains(&key), "key echoed:\n{output}");
+    assert_eq!(before, snapshot(fx.home.parent().unwrap()), "{output}");
+}
+
+#[test]
+fn setup_yes_without_import_flag_never_imports_hermes_credentials() {
+    let fx = fixture();
+    write_hermes(&fx, HERMES_CONFIG);
+    let key = fake_key();
+    let hermes_home = fx.home.join(".hermes").to_string_lossy().into_owned();
+    let env = [
+        ("CLUD_ALLOW_METERED", "1"),
+        ("CLUD_METERED_PROVIDER", "openrouter"),
+        ("HERMES_HOME", hermes_home.as_str()),
+    ];
+    // Key lives only in Hermes' .env, so only an import could store it.
+    fs::write(
+        fx.home.join(".hermes/.env"),
+        format!("OPENROUTER_API_KEY={key}\n"),
+    )
+    .unwrap();
+    let (exit, output) = run(&fx, &env, &["setup", "--yes", "--provider", "claude"]);
+    assert_eq!(exit, 0, "{output}");
+    assert!(output.contains("pass --import-hermes"), "{output}");
+    assert!(
+        snapshot(&fx.vault).values().all(|bytes| bytes == b"<dir>"),
+        "--yes imported a Hermes credential:\n{output}"
+    );
+    assert!(
+        output.contains("provider: default set to claude"),
+        "{output}"
+    );
+}
+
+#[test]
+fn setup_import_hermes_stores_key_and_prints_metered_warning() {
+    let fx = fixture();
+    write_hermes(&fx, HERMES_CONFIG);
+    let key = fake_key();
+    let env = metered_env(&key);
+    let (exit, output) = run(&fx, &borrow(&env), &["setup", "--yes", "--import-hermes"]);
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        output.contains("METERED PROVIDER IN USE: openrouter"),
+        "{output}"
+    );
+    assert!(output.contains("API key stored"), "{output}");
+    assert!(!output.contains(&key), "key echoed:\n{output}");
+    assert!(
+        snapshot(&fx.vault).values().any(|bytes| bytes != b"<dir>"),
+        "key not written to the credential store"
+    );
+    let settings: String = snapshot(&fx.home.join(".clud"))
+        .into_iter()
+        .filter(|(path, _)| path.extension().is_some_and(|ext| ext == "json"))
+        .map(|(_, bytes)| String::from_utf8_lossy(&bytes).into_owned())
+        .collect();
+    assert!(
+        settings.contains("deepseek/deepseek-v4.1-flash-1017"),
+        "model not imported:\n{settings}"
+    );
+}
+
+#[test]
+fn setup_import_hermes_without_metered_consent_is_refused() {
+    let fx = fixture();
+    write_hermes(&fx, HERMES_CONFIG);
+    let key = fake_key();
+    let before = snapshot(fx.home.parent().unwrap());
+    let (exit, output) = run(
+        &fx,
+        &[("OPENROUTER_API_KEY", key.as_str())],
+        &["setup", "--yes", "--import-hermes"],
+    );
+    assert_eq!(exit, 2, "{output}");
+    assert!(
+        output.contains("METERED PROVIDER IN USE: openrouter"),
+        "{output}"
+    );
+    assert!(output.contains("CLUD_ALLOW_METERED=1"), "{output}");
+    assert_eq!(before, snapshot(fx.home.parent().unwrap()), "{output}");
+}
+
+#[test]
+fn setup_import_hermes_with_settings_but_no_key_names_what_is_missing() {
+    let fx = fixture();
+    write_hermes(&fx, HERMES_CONFIG);
+    let before = snapshot(fx.home.parent().unwrap());
+    let (exit, output) = run(
+        &fx,
+        &[
+            ("CLUD_ALLOW_METERED", "1"),
+            ("CLUD_METERED_PROVIDER", "openrouter"),
+        ],
+        &["setup", "--yes", "--import-hermes"],
+    );
+    assert_eq!(exit, 2, "{output}");
+    assert!(output.contains("no OpenRouter API key"), "{output}");
+    assert!(output.contains("OPENROUTER_API_KEY"), "{output}");
+    assert_eq!(
+        before,
+        snapshot(fx.home.parent().unwrap()),
+        "partial write:\n{output}"
+    );
+}
+
+#[test]
+fn setup_without_hermes_config_prints_nothing_about_hermes() {
+    let fx = fixture();
+    let (exit, output) = run(&fx, &[], &["setup", "--dry-run", "--provider", "claude"]);
+    assert_eq!(exit, 0, "{output}");
+    assert!(!mentions_hermes(&output), "{output}");
 }

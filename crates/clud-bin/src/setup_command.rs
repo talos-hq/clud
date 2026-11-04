@@ -8,6 +8,9 @@
 //! 3. edits shell profiles / PATH only with `--write-profile`, by running the
 //!    native installer for this version, which owns activation.
 //!
+//! 0. only here: offers to import OpenRouter settings Hermes already has
+//!    ([`hermes`], private to this module; no other command reads Hermes).
+//!
 //! Every step reports what it found already in place, so a rerun is safe.
 //! `--dry-run` reports the same steps and writes nothing. Without a terminal,
 //! `--yes` is required; the command never waits for input it cannot get.
@@ -20,6 +23,8 @@ use crate::backend::ModelProvider;
 use crate::self_install::setup as provider_setup;
 use crate::shim_install;
 
+mod hermes;
+
 /// Exit status for a refused or impossible request (usage-level failure).
 pub const EXIT_USAGE: i32 = 2;
 
@@ -29,6 +34,8 @@ pub struct Options {
     pub yes: bool,
     pub provider: Option<ModelProvider>,
     pub write_profile: bool,
+    /// Import Hermes' OpenRouter settings (required under `--yes`).
+    pub import_hermes: bool,
 }
 
 /// Run `clud setup` against the real home, executable and terminal.
@@ -40,9 +47,26 @@ pub fn run(options: &Options) -> i32 {
     let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
     let source = shim_install::packaged_shim().ok();
     let mut stdout = std::io::stdout().lock();
-    let code = run_at(&home, source.as_deref(), options, interactive, &mut stdout);
+    let detection = hermes::detect_from_process(&home);
+    let code = run_at(
+        &home,
+        source.as_deref(),
+        options,
+        interactive,
+        &Hermes {
+            detection,
+            metered_ok: hermes::metered_consent(),
+        },
+        &mut stdout,
+    );
     let _ = stdout.flush();
     code
+}
+
+/// What setup learned about Hermes before any step ran.
+struct Hermes {
+    detection: hermes::Detection,
+    metered_ok: bool,
 }
 
 fn run_at(
@@ -50,6 +74,7 @@ fn run_at(
     source: Option<&Path>,
     options: &Options,
     interactive: bool,
+    hermes_state: &Hermes,
     out: &mut dyn Write,
 ) -> i32 {
     if let Some(provider) = options.provider {
@@ -72,12 +97,59 @@ fn run_at(
     if options.dry_run {
         let _ = writeln!(out, "clud setup --dry-run: nothing will be changed");
     }
-    let steps = [
-        install_aliases(home, source, options.dry_run, out),
-        configure_provider(home, options, prompt, out),
-        profile_step(options, out),
-    ];
-    steps.into_iter().find(|&code| code != 0).unwrap_or(0)
+    // Before any write, so a refused import leaves nothing behind.
+    let imported = match offer_hermes(home, options, prompt, hermes_state, out) {
+        Ok(imported) => imported,
+        Err(code) => return code,
+    };
+    let code = install_aliases(home, source, options.dry_run, out);
+    if code != 0 {
+        return code;
+    }
+    let code = if imported {
+        let current = crate::clud_settings::load_launch_preferences_read_only_at(home)
+            .ok()
+            .and_then(|snapshot| snapshot.global.model_provider);
+        save_default(home, ModelProvider::OpenRouter, current, false, out)
+    } else {
+        configure_provider(home, options, prompt, out)
+    };
+    if code != 0 {
+        return code;
+    }
+    profile_step(options, out)
+}
+
+/// Step 0: offer the Hermes import. `Ok(true)` when it was imported.
+fn offer_hermes(
+    home: &Path,
+    options: &Options,
+    prompt: bool,
+    state: &Hermes,
+    out: &mut dyn Write,
+) -> Result<bool, i32> {
+    let import = options.import_hermes;
+    let mode = if options.dry_run {
+        hermes::Mode::DryRun
+    } else if prompt {
+        hermes::Mode::Interactive { import }
+    } else {
+        hermes::Mode::NonInteractive { import }
+    };
+    let mut store =
+        |found: &hermes::Found, out: &mut dyn Write| hermes::store_import(home, found, out);
+    match hermes::offer(
+        &state.detection,
+        mode,
+        &mut hermes::stdin_lock(),
+        out,
+        state.metered_ok,
+        &mut store,
+    ) {
+        hermes::Outcome::Skipped => Ok(false),
+        hermes::Outcome::Imported => Ok(true),
+        hermes::Outcome::Failed(code) => Err(code),
+    }
 }
 
 /// Step 1: interpreter aliases under `~/.clud/state/shims`.
@@ -266,6 +338,7 @@ mod tests {
             yes,
             provider,
             write_profile: false,
+            import_hermes: false,
         }
     }
 
@@ -281,7 +354,11 @@ mod tests {
 
     fn run_capture(home: &Path, source: &Path, options: &Options, tty: bool) -> (i32, String) {
         let mut out = Vec::new();
-        let code = run_at(home, Some(source), options, tty, &mut out);
+        let none = Hermes {
+            detection: hermes::Detection::None,
+            metered_ok: false,
+        };
+        let code = run_at(home, Some(source), options, tty, &none, &mut out);
         (code, String::from_utf8(out).unwrap())
     }
 
