@@ -201,11 +201,42 @@ fn no_config_is_silent_unless_import_was_requested() {
     assert_eq!(asked.outcome, Outcome::Failed(2));
 }
 
+/// This crate's `src/`: the compile-time manifest dir when it exists (the
+/// build host), else the checkout above the working directory. Native CI
+/// runners execute a bundle built on Linux from a checkout at another path,
+/// as `clud_repo_dev::this_checkout_is_detected` documents.
+fn crate_src_dir(manifest_dir: &Path, cwd: &Path) -> Option<std::path::PathBuf> {
+    let compiled = manifest_dir.join("src");
+    if compiled.is_dir() {
+        return Some(compiled);
+    }
+    cwd.ancestors()
+        .map(|dir| dir.join("crates").join("clud-bin").join("src"))
+        .find(|dir| dir.is_dir())
+}
+
+#[test]
+fn crate_src_dir_falls_back_to_the_checkout_above_cwd() {
+    let checkout = tempfile::tempdir().unwrap();
+    let src = checkout.path().join("crates").join("clud-bin").join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let nested = checkout.path().join("bundle").join("target");
+    std::fs::create_dir_all(&nested).unwrap();
+    let missing = checkout.path().join("not-the-build-host");
+    assert_eq!(crate_src_dir(&missing, &nested), Some(src.clone()));
+    let host = checkout.path().join("crates").join("clud-bin");
+    assert_eq!(crate_src_dir(&host, &missing), Some(src));
+    let empty = tempfile::tempdir().unwrap();
+    assert_eq!(crate_src_dir(&missing, empty.path()), None);
+}
+
 /// The structural half of the boundary: no source file outside this module
 /// names a Hermes config path or the Hermes environment.
 #[test]
 fn only_setup_hermes_module_names_hermes_paths_or_env() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let cwd = std::env::current_dir().unwrap();
+    let src = crate_src_dir(Path::new(env!("CARGO_MANIFEST_DIR")), &cwd)
+        .expect("no clud-bin src/ at the build path or above the working directory");
     let allowed = [
         src.join("setup_command/hermes.rs"),
         src.join("setup_command/hermes_tests.rs"),
