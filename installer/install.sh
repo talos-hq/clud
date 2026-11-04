@@ -1,8 +1,8 @@
 #!/bin/sh
 # Install the native clud binary on macOS or Linux.
 #
-#   curl -fsSL https://talosbot.ai/clud/install.sh | sh
-#   curl -fsSL https://talosbot.ai/clud/install.sh | sh -s -- --dry-run
+#   curl -fsSL https://clud.bot/install.sh | sh
+#   curl -fsSL https://clud.bot/install.sh | sh -s -- --dry-run
 #
 # Flags:
 #   --dry-run          print what would be fetched and where it would go; download nothing
