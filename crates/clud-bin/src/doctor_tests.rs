@@ -133,3 +133,66 @@ fn a_bash_only_config_reports_what_it_misses() {
     assert!(codex.uncovered.contains(&"spawn_agent"));
     assert!(!codex.uncovered.contains(&"exec_command"));
 }
+
+/// `clud doctor --fix` on a stale helper-bin alias: a finding before, none
+/// after, and the entry is now the running binary.
+#[test]
+fn fix_replaces_a_stale_helper_bin_alias() {
+    let tmp = tempfile::tempdir().unwrap();
+    let exe = tmp.path().join("install").join("clud");
+    std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+    write(&exe, 20);
+    let own = fingerprint(&exe).unwrap();
+    let home = tmp.path().join("home");
+    let helper_bin = home.join(".clud/state/helper-bin");
+    std::fs::create_dir_all(&helper_bin).unwrap();
+    for name in [
+        crate::multicall::CMD_SCAN,
+        crate::multicall::LEGACY_CMD_SCAN,
+    ] {
+        write(&helper_bin.join(crate::shim_registry::file_name(name)), 7);
+    }
+
+    let before = inspect(&exe, &own, Some(&home), "");
+    assert_eq!(i32::from(!before.findings.is_empty()), 1, "{before:?}");
+
+    let actions = repair(&exe, &before, Some(&home));
+    assert!(
+        actions.iter().all(|a| a.starts_with("fixed:")),
+        "{actions:?}"
+    );
+
+    let after = inspect(&exe, &own, Some(&home), "");
+    assert_eq!(i32::from(!after.findings.is_empty()), 0, "{after:?}");
+    let scan = helper_bin.join(crate::shim_registry::file_name(crate::multicall::CMD_SCAN));
+    assert_eq!(fingerprint(&scan).unwrap(), own);
+}
+
+/// A foreign `clud-cmd-scan` the user owns is reported, never touched.
+#[test]
+fn fix_leaves_a_foreign_scanner_outside_clud_dirs_alone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let exe = tmp.path().join("install").join("clud");
+    std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+    write(&exe, 20);
+    let own = fingerprint(&exe).unwrap();
+    let home = tmp.path().join("home");
+    let venv = tmp.path().join("venv");
+    std::fs::create_dir_all(&venv).unwrap();
+    let foreign = venv.join(crate::shim_registry::file_name(crate::multicall::CMD_SCAN));
+    write(&foreign, 7);
+    crate::platform::shim_fs::set_mode(&foreign, 0o755).unwrap();
+    let path_env = std::env::join_paths([&venv])
+        .unwrap()
+        .into_string()
+        .unwrap();
+
+    let report = inspect(&exe, &own, Some(&home), &path_env);
+    assert!(matches!(
+        report.findings.as_slice(),
+        [Finding::ForeignScanner { .. }]
+    ));
+    let actions = repair(&exe, &report, Some(&home));
+    assert!(actions[0].starts_with("left alone:"), "{actions:?}");
+    assert_eq!(std::fs::read(&foreign).unwrap(), vec![b'x'; 7]);
+}

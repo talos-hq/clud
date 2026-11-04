@@ -61,13 +61,13 @@ pub fn applies(args: &Args, default_harness: Option<HarnessSelection>) -> bool {
     let explicit_other_harness = args.codex
         || matches!(
             args.harness,
-            Some(HarnessSelection::Codex | HarnessSelection::DeepSeek)
+            Some(HarnessSelection::Codex | HarnessSelection::DeepSeek | HarnessSelection::OpenCode)
         );
     let saved_other_harness = args.harness.is_none()
         && !args.claude
         && matches!(
             default_harness,
-            Some(HarnessSelection::Codex | HarnessSelection::DeepSeek)
+            Some(HarnessSelection::Codex | HarnessSelection::DeepSeek | HarnessSelection::OpenCode)
         );
     !explicit_other_harness && !saved_other_harness
 }

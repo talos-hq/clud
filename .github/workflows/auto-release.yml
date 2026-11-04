@@ -204,12 +204,18 @@ jobs:
     # _build-target.yml enforces that with a guard on github.workflow.
     uses: ./.github/workflows/_build-target.yml
     secrets: inherit
+    # id-token: Authenticode signing of the Windows wheels via OIDC azure/login.
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
     with:
       source_ref: ${{ needs.preflight.outputs.candidate_sha }}
       target: ${{ matrix.target }}
       runs-on: ${{ matrix.runs-on }}
       strategy: ${{ matrix.strategy }}
       profile: release
+      sign-windows: ${{ contains(matrix.target, 'windows') }}
       # Release builds ship artifacts; they do not need a test bundle, and
       # clippy already ran on this commit in CI.
       bundle: false
@@ -234,6 +240,39 @@ jobs:
       runs-on: ${{ matrix.runs-on }}
       suite: wheel-smoke
       wheel-artifact: ${{ matrix.artifact }}
+
+  # The Windows wheels are signed on Linux, where only a structural check is
+  # possible; this is Windows' own chain/timestamp/hash verdict on every PE in
+  # the exact wheels PyPI and the standalone .exe release assets come from.
+  windows-signature-smoke:
+    name: Verify Authenticode (${{ matrix.artifact }})
+    needs: [preflight, build]
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: wheels-windows-x86
+            runs-on: windows-2025
+          - artifact: wheels-windows-arm
+            runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheels
+      - name: Install signing-script dependency
+        run: python -m pip install running-process==4.10.1
+      - name: Require Valid Authenticode and execute clud.exe
+        shell: pwsh
+        run: python -m ci.sign_windows_release smoke --dist-dir wheels --version '${{ needs.preflight.outputs.version }}'
 
   build-static-musl:
     name: Build static musl clud
@@ -276,7 +315,7 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [preflight, full-ci-gate, build, wheel-smoke, candidate-acceptance-gate, verify-prior-public]
+    needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, candidate-acceptance-gate, verify-prior-public]
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -300,7 +339,7 @@ jobs:
 
   publish-release:
     name: Publish final bytes as public prerelease
-    needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, build-static-musl, verify-static-musl-arm64]
+    needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, build-static-musl, verify-static-musl-arm64]
     runs-on: ubuntu-latest
     permissions:
       contents: write

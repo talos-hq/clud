@@ -106,7 +106,16 @@ def test_activation_repair_requires_separate_bounded_consent(
             profile.write_text(changed)
         os.write(terminal.master, b"\r" if decision == "decline" else b"\x1b[A\r")
         expected = 0 if decision == "approve" else 1
+        if decision == "approve" and not structured:
+            # A verified interactive install continues into the provider
+            # setup `clud setup` runs (#2219). Down+Enter selects Claude.
+            # Before #2605's follow-up, this read failed with EIO because
+            # the interactive-shell probes kept the terminal's foreground.
+            terminal.expect(b"Setup for:")
+            os.write(terminal.master, b"\x1b[B\r")
         assert terminal.finish() == expected, terminal.output.decode(errors="replace")
+        if decision == "approve" and not structured:
+            assert b"provider: default set to claude" in terminal.output
         assert terminal.output.count(b"Additional activation repair plan:") == 1
         if structured:
             report = terminal_report(terminal)

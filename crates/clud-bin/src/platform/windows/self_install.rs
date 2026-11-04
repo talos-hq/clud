@@ -58,3 +58,8 @@ pub fn make_executable(_path: &Path) -> Result<(), String> {
 pub fn gnu_eligibility(_arch: Arch) -> GnuEligibility {
     GnuEligibility::Unverified
 }
+
+/// Windows launcher reparse points remain unsupported.
+pub fn replaceable_launcher_link(_path: &Path, _meta: &fs::Metadata) -> bool {
+    false
+}

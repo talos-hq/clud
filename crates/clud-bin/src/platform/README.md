@@ -41,3 +41,5 @@ selects OpenGL.
 for explicit Windows Command Prompt windows; Unix supplies an empty adapter.
 The persistence contract is documented in
 [process-reaping.md](../../../../docs/architecture/process-reaping.md#explicit-command-prompt-windows-on-windows-2007).
+
+`stdio::output_is_utf8` supplies native console capability to [foreground print output](../../../../docs/architecture/prompt-output.md).

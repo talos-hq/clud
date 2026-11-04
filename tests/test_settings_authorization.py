@@ -288,11 +288,52 @@ def test_unsafe_claude_launch_still_delivers_settings_authority(tmp_path: Path) 
     ]
     entries = document["hooks"]["PreToolUse"]
     assert any(
-        hook["command"] == "clud-cmd-scan"
+        hook["command"] == "clud-cmd-scan --event PreToolUse"
         for entry in entries for hook in entry["hooks"]
     )
     assert "safe-rm" not in json.dumps(command)
     assert settings.read_bytes() == original
+
+
+def test_launch_folds_legacy_guard_into_one_scanner(tmp_path: Path) -> None:
+    binary, env, repo, _settings = _world(tmp_path)
+    supplied = {"hooks": {"PreToolUse": [{"matcher": "Bash", "hooks": [
+        {"type": "command", "command": "clud-block-bad-cmd"},
+        {"type": "command", "command": "clud-cmd-scan"},
+        {"type": "command", "command": "user-check"},
+    ]}]}}
+    result = process.run(
+        [binary, "--dry-run", "--claude", "--settings", json.dumps(supplied), "-p", "hello"],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    command = json.loads(result.stdout)["command"]
+    document = json.loads(command[command.index("--settings") + 1])
+    handlers = [h["command"] for g in document["hooks"]["PreToolUse"] for h in g["hooks"]]
+    assert handlers == ["user-check", "clud-cmd-scan --event PreToolUse"]
+
+
+def test_alternate_claude_config_keeps_launch_scanner(tmp_path: Path) -> None:
+    binary, env, repo, settings = _world(tmp_path)
+    default_config = settings.parent.parent / ".claude" / "settings.json"
+    default_config.parent.mkdir()
+    default_config.write_text(json.dumps({"hooks": {"PreToolUse": [{
+        "matcher": "*", "hooks": [{
+            "type": "command", "command": "clud-cmd-scan --event PreToolUse",
+        }],
+    }]}}), encoding="utf-8")
+    alternate = tmp_path / "alternate-claude"
+    alternate.mkdir()
+    env["CLAUDE_CONFIG_DIR"] = str(alternate)
+    result = process.run(
+        [binary, "--dry-run", "--claude", "-p", "hello"],
+        cwd=repo, env=env, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    command = json.loads(result.stdout)["command"]
+    document = json.loads(command[command.index("--settings") + 1])
+    handlers = [h["command"] for g in document["hooks"]["PreToolUse"] for h in g["hooks"]]
+    assert handlers == ["clud-cmd-scan --event PreToolUse"]
 
 
 def test_settings_authority_preserves_owner_command_recovery(tmp_path: Path) -> None:
