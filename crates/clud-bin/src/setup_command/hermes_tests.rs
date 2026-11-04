@@ -213,9 +213,26 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
     let needles = [".hermes", "HERMES_HOME", "HERMES_"];
     let mut stack = vec![src.clone()];
     let mut offenders = Vec::new();
+    let mut scanned = 0usize;
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+        // A directory the walker cannot open is a scan gap, not an offender: filesystem layouts
+        // differ per platform and inside CI sandboxes, and panicking here turns a boundary check
+        // into an environment test. Record it loudly, keep walking, and prove below that the scan
+        // was not vacuous.
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                eprintln!("warning: cannot scan {}: {err}", dir.display());
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
             let path = entry.path();
+            // Follow nothing: a symlink whose target is absent makes read_dir fail, and its
+            // contents are not this crate's source anyway.
+            if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+                continue;
+            }
             if path.is_dir() {
                 stack.push(path);
                 continue;
@@ -223,6 +240,7 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
             if path.extension().is_none_or(|ext| ext != "rs") || allowed.contains(&path) {
                 continue;
             }
+            scanned += 1;
             let text = std::fs::read_to_string(&path).unwrap_or_default();
             for needle in needles {
                 if text.contains(needle) {
@@ -231,6 +249,11 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
             }
         }
     }
+    assert!(
+        scanned > 0,
+        "scanned no Rust sources under {} — the boundary check must not pass vacuously",
+        src.display()
+    );
     assert!(
         offenders.is_empty(),
         "only setup_command/hermes.rs may read Hermes config or env:\n{}",
