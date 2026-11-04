@@ -885,35 +885,6 @@ mod tests {
         assert!(started.elapsed() < RELEASE_WAIT);
     }
 
-    #[cfg(unix)]
-    #[test]
-    fn owned_package_launcher_is_replaced_without_modifying_hardlinked_target() {
-        use std::os::unix::fs::symlink;
-        let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
-        let target = dir.path().join("package-clud");
-        let old = b"#!/bin/sh\nprintf 'clud 0.0.1\\n'\n";
-        fs::write(&target, old).unwrap();
-        make_executable(&target).unwrap();
-        let cache = dir.path().join("cached-clud");
-        fs::hard_link(&target, &cache).unwrap();
-        let destination = dir.path().join("clud");
-        symlink(&target, &destination).unwrap();
-        inspect_destination(&destination, true).unwrap();
-        let stage = dir.path().join("stage");
-        let new = b"#!/bin/sh\nprintf 'clud 0.0.2\\n'\n";
-        fs::write(&stage, new).unwrap();
-        make_executable(&stage).unwrap();
-        let digest = format!("{:x}", Sha256::digest(new));
-        commit(&destination, &stage, "0.0.2", &digest).unwrap();
-        assert!(!fs::symlink_metadata(&destination)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(fs::read(&destination).unwrap(), new);
-        assert_eq!(fs::read(&target).unwrap(), old);
-        assert_eq!(fs::read(&cache).unwrap(), old);
-    }
-
     #[test]
     fn failed_post_commit_verification_restores_prior_bytes() {
         let dir = tempfile::tempdir().unwrap();

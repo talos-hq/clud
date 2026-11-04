@@ -276,6 +276,7 @@ mod tests {
         let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
         let other = dir.path().join("other");
         fs::write(&other, b"owned bytes").unwrap();
+        fs::hard_link(&other, dir.path().join("cached-clud")).unwrap();
         let destination = dir.path().join("clud");
         symlink(&other, &destination).unwrap();
         assert!(inspect_destination(&destination, false).is_ok());
