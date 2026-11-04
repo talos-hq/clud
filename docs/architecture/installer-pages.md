@@ -72,14 +72,20 @@ the generated catalog.
 `navigator.userAgentData` (platform, then `architecture`/`bitness` via
 `getHighEntropyValues`), falling back to `navigator.platform` and
 `navigator.userAgent`. macOS browsers freeze the UA at "Intel Mac OS X" and the
-platform at `MacIntel`, so without client hints Apple Silicon vs Intel comes
-from the WebGL renderer (`Apple GPU`/`Apple M*` vs Intel/AMD); when that is
-unavailable the page shows "macOS · architecture unknown" and no
-recommendation. Phones, tablets (including desktop-mode iPadOS), Chrome OS,
-32-bit hosts and unknown agents also get no recommendation, only the full list.
-A detected system pre-selects the `<select id="platform-select">` entry and
-fills the primary download button with the exact asset name; the visible
-"Detected: …" note and the dropdown let the visitor override it. With
+platform at `MacIntel`, so without client hints (Safari, Firefox) the CPU is
+unknowable. The page then assumes Apple Silicon and says so: "Detected: macOS ·
+assuming Apple Silicon (aarch64) — most Macs since 2020." followed by a
+"Switch to Intel." button that swaps the recommendation to
+`x86_64-apple-darwin`. The guess is always labelled, never silent; WebGL is not
+consulted because Safari reports `Apple GPU` on Intel Macs too. A real
+client-hint answer is used as-is with no override. Phones, tablets (including
+desktop-mode iPadOS), Chrome OS, 32-bit hosts and unknown agents get no
+recommendation, only the full list. A detected system pre-selects the
+`<select id="platform-select">` entry and fills the primary download button
+with the exact asset name; the status chip and the dropdown let the visitor
+override it. The page is one self-contained HTML file (inline CSS and JS,
+system font stacks, no external fetches), dark, responsive down to 390 px, with
+visible focus rings and `prefers-reduced-motion` honoured. With
 JavaScript off, the plain list of all native downloads still works.
 
 ### `install.sh`
@@ -101,7 +107,8 @@ architecture (naming the supported four); an asset missing from
 of scope: the page links the `.exe` downloads. This is separate from the
 repository-root `install.sh` (the `uv tool` route).
 `tests/test_installer_download_page.py` holds the table-driven detection test
-(run under `node`), the page inventory test, and hermetic script tests with
+(run under `node`), a fake-DOM test that the Intel override changes the
+recommended `href`, the page inventory and self-contained tests, and hermetic script tests with
 stub `uname`/`curl`/`sha256sum` on `PATH`; the deploy job runs the live
 script's `--dry-run`.
 

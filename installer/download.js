@@ -38,14 +38,10 @@
       if (hinted === "x86") return "x86_64";
       return null;
     }
-    if (os === "darwin") {
-      // Every Mac browser freezes its UA at "Intel Mac OS X" and its platform
-      // at "MacIntel", so only the GPU tells Apple Silicon from Intel.
-      var gpu = lower(info.webglRenderer);
-      if (/apple (m\d|gpu)/.test(gpu)) return "aarch64";
-      if (/intel|amd|radeon|nvidia/.test(gpu)) return "x86_64";
-      return null;
-    }
+    // Every Mac browser freezes its UA at "Intel Mac OS X" and its platform at
+    // "MacIntel", so without client hints a Mac's CPU is unknowable here; the
+    // caller makes a labelled assumption instead.
+    if (os === "darwin") return null;
     var text = lower(info.platform) + " " + lower(info.userAgent);
     if (/aarch64|arm64|armv8/.test(text)) return "aarch64";
     if (/x86_64|x86-64|amd64|win64|wow64|\bx64\b/.test(text)) return "x86_64";
@@ -58,15 +54,55 @@
     windows: { aarch64: "ARM64 (aarch64)", x86_64: "x64 (x86_64)" },
     linux: { aarch64: "ARM64 (aarch64)", x86_64: "x64 (x86_64)" }
   };
+  var MAC_ASSUMPTION = "assuming Apple Silicon (aarch64) — most Macs since 2020";
+  var INTEL_OVERRIDE = "Switch to Intel.";
 
   function detect(info) {
-    var os = detectOs(info || {});
+    info = info || {};
+    var os = detectOs(info);
     var arch = os ? detectArch(os, info) : null;
+    var assumed = false;
+    if (os === "darwin" && !arch && !info.uaArch) {
+      // Only a missing hint is assumed; a refused or 32-bit hint stays unknown.
+      arch = "aarch64";
+      assumed = true;
+    }
     var label = null;
     if (os) {
-      label = OS_LABELS[os] + " · " + (arch ? ARCH_LABELS[os][arch] : "architecture unknown");
+      label = OS_LABELS[os] + " · " + (assumed ? MAC_ASSUMPTION
+        : arch ? ARCH_LABELS[os][arch] : "architecture unknown");
     }
-    return { os: os, arch: arch, recommended: Boolean(os && arch), label: label };
+    return {
+      os: os,
+      arch: arch,
+      recommended: Boolean(os && arch),
+      assumed: assumed,
+      label: label,
+      override: assumed ? { label: INTEL_OVERRIDE, os: "darwin", arch: "x86_64" } : null
+    };
+  }
+
+  function applyOverride(result) {
+    if (!result || !result.override) return result;
+    var os = result.override.os;
+    var arch = result.override.arch;
+    return {
+      os: os,
+      arch: arch,
+      recommended: true,
+      assumed: false,
+      label: OS_LABELS[os] + " · " + ARCH_LABELS[os][arch] + " (chosen)",
+      override: null
+    };
+  }
+
+  function statusText(result) {
+    if (!result || !result.label) {
+      return "Could not detect a supported system. Choose your download below.";
+    }
+    if (!result.recommended) return "Detected: " + result.label + ". Choose your download below.";
+    if (result.override) return "Detected: " + result.label + ".";
+    return "Detected: " + result.label + ". Not right? Pick another below.";
   }
 
   function assetFor(result, rows) {
@@ -77,24 +113,13 @@
     return null;
   }
 
-  function webglRenderer(doc) {
-    try {
-      var gl = doc.createElement("canvas").getContext("webgl");
-      var ext = gl && gl.getExtension("WEBGL_debug_renderer_info");
-      return ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : "";
-    } catch (_error) {
-      return "";
-    }
-  }
-
-  function gather(nav, doc) {
+  function gather(nav) {
     var hints = nav.userAgentData;
     var info = {
       uaPlatform: hints && hints.platform,
       platform: nav.platform,
       userAgent: nav.userAgent,
-      maxTouchPoints: nav.maxTouchPoints,
-      webglRenderer: webglRenderer(doc)
+      maxTouchPoints: nav.maxTouchPoints
     };
     if (!hints || !hints.getHighEntropyValues) return Promise.resolve(info);
     return hints.getHighEntropyValues(["architecture", "bitness"]).then(
@@ -107,22 +132,23 @@
     );
   }
 
-  function show(doc, row, note) {
+  function show(doc, row, note, override) {
     var button = doc.getElementById("recommended");
-    var detected = doc.getElementById("detected");
-    detected.textContent = note;
+    var switcher = doc.getElementById("arch-override");
+    doc.getElementById("detected-text").textContent = note;
+    switcher.hidden = !override;
+    switcher.textContent = override ? override.label : "";
     if (!row) {
       button.hidden = true;
       button.removeAttribute("href");
       return;
     }
     button.href = row.url;
-    button.textContent = "Download " + row.filename;
+    doc.getElementById("recommended-name").textContent = row.filename;
     button.hidden = false;
   }
 
-  function start(nav, doc) {
-    var select = doc.getElementById("platform-select");
+  function readRows(select) {
     var rows = [];
     for (var i = 0; i < select.options.length; i++) {
       var option = select.options[i];
@@ -130,31 +156,43 @@
       rows.push({ os: option.dataset.os, arch: option.dataset.arch, url: option.value,
         filename: option.dataset.filename, label: option.textContent });
     }
+    return rows;
+  }
+
+  function recommend(doc, select, rows, result) {
+    var row = assetFor(result, rows);
+    if (row) select.value = row.url;
+    show(doc, row, statusText(row ? result : { label: result.label }), row && result.override);
+  }
+
+  function start(nav, doc) {
+    var select = doc.getElementById("platform-select");
+    var rows = readRows(select);
+    var current = null;
     select.addEventListener("change", function () {
       var row = rows.filter(function (item) { return item.url === select.value; })[0];
-      show(doc, row || null, row ? "Selected: " + row.label : "Choose your platform below.");
+      show(doc, row || null, row ? "Selected: " + row.label : "Choose your platform below.", null);
     });
-    gather(nav, doc).then(function (info) {
-      var result = detect(info);
-      var row = assetFor(result, rows);
-      if (row) {
-        select.value = row.url;
-        show(doc, row, "Detected: " + result.label + ". Not right? Pick another below.");
-      } else if (result.label) {
-        show(doc, null, "Detected: " + result.label + ". Choose your download below.");
-      } else {
-        show(doc, null, "Could not detect a supported system. Choose your download below.");
-      }
+    doc.getElementById("arch-override").addEventListener("click", function () {
+      current = applyOverride(current);
+      recommend(doc, select, rows, current);
     });
     var copy = doc.getElementById("copy-one-liner");
     copy.addEventListener("click", function () {
       var text = doc.getElementById("one-liner").textContent;
-      var done = function () { copy.textContent = "Copied"; };
+      var done = function () {
+        copy.textContent = "Copied";
+        copy.setAttribute("data-copied", "true");
+      };
       if (nav.clipboard && nav.clipboard.writeText) {
         nav.clipboard.writeText(text).then(done, function () { fallbackCopy(doc, text, done); });
       } else {
         fallbackCopy(doc, text, done);
       }
+    });
+    return gather(nav).then(function (info) {
+      current = detect(info);
+      recommend(doc, select, rows, current);
     });
   }
 
@@ -167,7 +205,13 @@
     doc.body.removeChild(area);
   }
 
-  var api = { detect: detect, assetFor: assetFor };
+  var api = {
+    detect: detect,
+    assetFor: assetFor,
+    applyOverride: applyOverride,
+    statusText: statusText,
+    start: start
+  };
   if (typeof module === "object" && module.exports) {
     module.exports = api;
   } else if (root && root.document) {
