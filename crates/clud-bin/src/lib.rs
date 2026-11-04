@@ -62,6 +62,7 @@ pub mod command;
 pub mod config;
 pub mod scanner_hook_migration;
 pub mod temp_home_logs;
+mod tool_result_cap;
 /// The Windows native terminal-input adapter (`platform/windows/console_input.rs`);
 /// an empty module on Unix, where stdin is a byte stream.
 pub use platform::console_input;

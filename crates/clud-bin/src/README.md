@@ -140,6 +140,10 @@ Entry and orchestration:
   see `docs/architecture/provider-failover.md`.
 - `serve_gateway.rs` - foreground API-server startup and credential setup; see [standalone-gateway.md](../../../docs/architecture/standalone-gateway.md).
 - `serve_transport.rs` - tracked standalone upstream TLS sockets and shutdown cancellation.
+- `tool_result_cap.rs` — recoverable, line-aligned shell text budgets in the
+  Codex translator; `tool_result_cap_translate_tests.rs` covers normal/pending
+  translation and opt-in captured-output replay. Configuration and coverage:
+  [codex-via-claude.md](../../../docs/architecture/codex-via-claude.md#shell-tool-result-budget).
 - `codex_model.rs` - #752's Codex compatibility view over the shared provider
   catalog: the `sol`/`terra`/`luna` aliases and per-model defaults, the
   `<model>@<effort>` parser, and the provider-neutral `Effort` ladder
