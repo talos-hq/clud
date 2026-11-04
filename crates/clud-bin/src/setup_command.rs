@@ -206,6 +206,19 @@ fn install_aliases(home: &Path, source: Option<&Path>, dry_run: bool, out: &mut 
 }
 
 /// Step 2: provider, its credential, and the saved default.
+/// The interactive provider step alone, for the native installer after a
+/// verified install: the same code `clud setup` runs as its step 2.
+pub fn run_provider_step_interactive() -> i32 {
+    let Some(home) = crate::home::user_home() else {
+        eprintln!("clud setup: cannot resolve the home directory");
+        return 1;
+    };
+    let mut stdout = std::io::stdout().lock();
+    let code = configure_provider(&home, &Options::default(), true, &mut stdout);
+    let _ = stdout.flush();
+    code
+}
+
 fn configure_provider(home: &Path, options: &Options, prompt: bool, out: &mut dyn Write) -> i32 {
     let current = crate::clud_settings::load_launch_preferences_read_only_at(home)
         .ok()
