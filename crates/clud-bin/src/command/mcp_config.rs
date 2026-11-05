@@ -66,6 +66,11 @@ pub(super) fn bridge_missing_notice(exe_dir: &Path) -> Option<String> {
 }
 
 fn bridge_host() -> Option<(String, PathBuf)> {
+    // Unit tests pin exact argv and pass their own host to `config_arg_for`;
+    // a `uv` on the machine running them must not join every launch plan.
+    if cfg!(test) {
+        return None;
+    }
     let state_root = crate::home::user_home()?.join(".clud").join("state");
     Some((std::env::var("PATH").unwrap_or_default(), state_root))
 }
