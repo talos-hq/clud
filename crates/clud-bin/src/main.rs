@@ -296,6 +296,46 @@ fn session_stats(session: Option<&str>) -> i32 {
     }
 }
 
+/// The OpenAI Chat Completions ingress seam: request in, Messages body out, or
+/// the reverse with `--response`. No session, backend, or daemon.
+fn run_openai_chat_translate_seam(
+    response: bool,
+    stream: bool,
+    for_model: Option<&str>,
+    http: bool,
+) -> i32 {
+    if response {
+        return clud::openai_ingress::run_translate_response_stdin(stream, for_model, http);
+    }
+    clud::openai_ingress::run_translate_stdin()
+}
+
+/// Run the JSON-path payload-rules seam (`__apply-payload-rules`).
+///
+/// `dispatch_fast_path_command` is at the line cap, so the seam's argument
+/// plumbing lives here rather than inline.
+fn run_payload_rules_seam(cmd: &args::Command) -> i32 {
+    let args::Command::InternalApplyPayloadRules {
+        rules,
+        settings_file,
+        model,
+        protocol,
+        from_protocol,
+        headers,
+    } = cmd
+    else {
+        unreachable!("run_payload_rules_seam is only called for its own arm")
+    };
+    clud::payload_rules::run_apply_stdin(
+        rules.as_deref(),
+        settings_file.as_deref(),
+        model.as_deref().unwrap_or_default(),
+        protocol,
+        from_protocol,
+        headers.to_vec(),
+    )
+}
+
 fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
     let code = match cmd? {
         // #1189: Claude Code runs `clud statusline` as its statusLine command
@@ -339,23 +379,14 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             stream,
             for_model,
             http,
-        } => {
-            if *response {
-                clud::openai_ingress::run_translate_response_stdin(
-                    *stream,
-                    for_model.as_deref(),
-                    *http,
-                )
-            } else {
-                clud::openai_ingress::run_translate_stdin()
-            }
-        }
+        } => run_openai_chat_translate_seam(*response, *stream, for_model.as_deref(), *http),
         args::Command::InternalOpenAiCompletionsTranslate {
             response,
             stream,
             for_model,
             http,
         } => clud::completions_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
+        args::Command::InternalApplyPayloadRules { .. } => run_payload_rules_seam(cmd?),
         args::Command::InternalOpenAiResponsesTranslate {
             response,
             stream,
