@@ -8,9 +8,10 @@ a schedule, plus the pure helpers.
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
+
+from running_process import PIPE, RunningProcess
 
 TOOL = (
     Path(__file__).resolve().parents[1]
@@ -23,13 +24,13 @@ TOOL = (
 )
 
 
-def run(args: list[str], timeout: float = 30.0) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
+def run(args: list[str], timeout: float = 30.0):
+    return RunningProcess.run(
         [sys.executable, str(TOOL), *args],
         capture_output=True,
+        stderr=PIPE,
         text=True,
         timeout=timeout,
-        check=False,
     )
 
 

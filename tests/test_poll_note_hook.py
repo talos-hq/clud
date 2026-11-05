@@ -9,11 +9,11 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 from pathlib import Path
 from typing import Any
 
 import pytest
+from running_process import PIPE, RunningProcess
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -43,14 +43,15 @@ def scan(binary: str, state_dir: Path, session: str, command: str) -> dict[str, 
         "cwd": str(REPO),
         "transcript_path": str(state_dir / "transcript.jsonl"),
     }
-    proc = subprocess.run(
+    # stderr=PIPE: running-process merges stderr into stdout otherwise (#1175).
+    proc = RunningProcess.run(
         [binary, "__cmd-scan"],
         input=json.dumps(payload),
         capture_output=True,
+        stderr=PIPE,
         text=True,
         timeout=120,
         env=clean_env(state_dir),
-        check=False,
     )
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout) if proc.stdout.strip() else {}

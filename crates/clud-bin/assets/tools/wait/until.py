@@ -1,7 +1,9 @@
 #!/usr/bin/env -S uv run --script
 # /// script
 # requires-python = ">=3.10"
-# dependencies = []
+# dependencies = [
+#   "running-process==4.10.1",
+# ]
 # ///
 # managed-by: clud
 """wait/until.py — block on one command until its output changes (#2631).
@@ -31,9 +33,11 @@ from __future__ import annotations
 import argparse
 import hashlib
 import re
-import subprocess
+import shutil
 import sys
 import time
+
+from running_process import PIPE, RunningProcess, TimeoutExpired
 
 MAX_BYTES = 4096
 RUN_TIMEOUT_CEILING = 300.0
@@ -53,6 +57,19 @@ def bounded(text: str, limit: int) -> str:
     )
 
 
+def shell_words(command: str) -> list[str]:
+    """The argv that runs `command` the way the agent's shell would.
+
+    The command comes from the transcript verbatim and may be a pipeline or a
+    `for` loop, so it runs through a shell rather than being split; splitting
+    would silently change what the caller asked to watch.
+    """
+    shell = shutil.which("bash") or shutil.which("sh")
+    if shell is None:
+        return ["sh", "-c", command]
+    return [shell, "-lc", command]
+
+
 def run_once(command: str, timeout: float) -> tuple[int, str]:
     """Run `command`; return its exit code and combined output.
 
@@ -60,24 +77,20 @@ def run_once(command: str, timeout: float) -> tuple[int, str]:
     query cannot wedge the wait: the marker changes the digest like any other
     output would.
     """
-    started = time.monotonic()
     try:
-        proc = subprocess.run(
-            command,
-            shell=True,
+        # stderr=PIPE: running-process merges stderr into stdout otherwise (#1175).
+        result = RunningProcess.run(
+            shell_words(command),
             capture_output=True,
+            stderr=PIPE,
             text=True,
             timeout=timeout,
-            check=False,
         )
-    except subprocess.TimeoutExpired:
+    except (TimeoutError, TimeoutExpired):
         return EXIT_TIMEOUT, f"<command still running after {timeout:.0f}s>"
     except OSError as exc:
         return EXIT_START, f"<command failed to start: {exc}>"
-    elapsed = time.monotonic() - started
-    if elapsed > timeout:
-        return EXIT_TIMEOUT, f"<command exceeded {timeout:.0f}s>"
-    return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+    return result.returncode, (result.stdout or "") + (result.stderr or "")
 
 
 def digest(text: str) -> str:
