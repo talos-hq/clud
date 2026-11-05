@@ -444,13 +444,11 @@ fn emit_wedge_warning(
     let pct = user_pct(&tick.sample) * 100.0;
     let secs = streak_wall.as_secs();
     let backend = &cfg.backend_label;
-    if !crate::loop_console::owns_stderr() {
-        eprintln!(
-            "clud: WARNING — {backend} TUI appears wedged (1 thread at {pct:.0}% CPU, no console \
+    crate::loop_console::eprint_diagnostic(&format!(
+        "clud: WARNING — {backend} TUI appears wedged (1 thread at {pct:.0}% CPU, no console \
          output for {secs}s). The session may still be working underneath. Consider restarting \
          the TUI: Ctrl+C, then `clud -c` (or `clud --resume`) to reconnect the {backend} session."
-        );
-    }
+    ));
     crate::verbose_log::log(format_args!(
         "[clud] wedge-watchdog: WEDGED root_pid={root_pid} hot_pid={hot_pid} hot_tid={hot_tid} \
          user_pct={pct:.1} io_write_delta_bytes={io} streak_secs={secs} tick={tick_ms}ms",

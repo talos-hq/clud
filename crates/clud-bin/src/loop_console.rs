@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
@@ -18,15 +19,40 @@ const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(33);
 const PASTE_CONTINUATION: Duration = Duration::from_millis(50);
 /// Text keys in one tick that no typist produces. Windows consoles have no
 /// bracketed paste, so crossterm delivers a paste as individual key events.
-const PASTE_BURST_CHARS: usize = 4;
+const PASTE_BURST_CHARS: usize = 2;
 
 static DASHBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// True while a dashboard owns the alternate screen. Background diagnostics
 /// must not `eprintln!` then: the bytes land inside the frame, and the
 /// cell-diff renderer never repaints cells it believes are unchanged.
-pub(crate) fn owns_stderr() -> bool {
+fn owns_stderr() -> bool {
     DASHBOARD_ACTIVE.load(Ordering::SeqCst)
+}
+
+const MAX_DEFERRED_DIAGNOSTICS: usize = 1000;
+static DEFERRED_DIAGNOSTICS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Print a diagnostic now, or when the dashboard closes if one owns the screen.
+pub(crate) fn eprint_diagnostic(line: &str) {
+    if owns_stderr() {
+        if let Ok(mut deferred) = DEFERRED_DIAGNOSTICS.lock() {
+            if deferred.len() < MAX_DEFERRED_DIAGNOSTICS {
+                deferred.push(line.to_owned());
+                return;
+            }
+        }
+        return;
+    }
+    eprintln!("{line}");
+}
+
+fn flush_deferred_diagnostics() {
+    if let Ok(mut deferred) = DEFERRED_DIAGNOSTICS.lock() {
+        for line in deferred.drain(..) {
+            eprintln!("{line}");
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -328,6 +354,7 @@ impl Dashboard {
         if width == self.width {
             return;
         }
+        let (old_rows, old_scroll) = (self.lines.len(), self.scroll);
         self.width = width;
         self.lines.clear();
         for (line, count) in &mut self.logical {
@@ -335,6 +362,8 @@ impl Dashboard {
             *count = rows.len();
             self.lines.extend(rows);
         }
+        // Rewrapping changes the row count: keep the same share of history above live.
+        self.scroll = old_scroll * self.lines.len() / old_rows.max(1);
         self.scroll_up(0);
     }
 
@@ -380,9 +409,7 @@ impl Dashboard {
         total: u32,
     ) -> io::Result<()> {
         let header = format!("clud loop | iteration {iteration}/{total}");
-        queue!(out, style::SetForegroundColor(style::Color::Cyan))?;
-        write_row(out, 0, cols, &header)?;
-        queue!(out, style::ResetColor)?;
+        write_row(out, 0, cols, &header, true)?;
         let available = usize::from(rows.saturating_sub(3));
         let end = self.lines.len().saturating_sub(self.scroll);
         let start = end.saturating_sub(available);
@@ -393,6 +420,7 @@ impl Dashboard {
                 u16::try_from(n + 1).unwrap_or(u16::MAX),
                 cols,
                 line.map_or("", String::as_str),
+                false,
             )?;
         }
         if rows >= 2 {
@@ -410,22 +438,35 @@ impl Dashboard {
                     tail.chars().rev().collect::<String>().replace('\n', " / ")
                 )
             };
-            write_row(out, rows - 2, cols, &editor)?;
+            write_row(out, rows - 2, cols, &editor, false)?;
         }
-        queue!(out, style::SetForegroundColor(style::Color::Cyan))?;
-        write_row(out, rows.saturating_sub(1), cols, &self.footer())?;
-        queue!(out, style::ResetColor)?;
+        write_row(out, rows.saturating_sub(1), cols, &self.footer(), true)?;
         out.flush()
     }
 }
 
+/// Terminals disagree on how these join neighbours into one glyph. Without
+/// them each character's width is what `unicode-width` and terminals agree on.
+fn renders_alone(c: char) -> bool {
+    !c.is_control() && !matches!(c, '\u{200d}' | '\u{fe0e}' | '\u{fe0f}')
+}
+
 // Feeding only printable characters prevents child output and pastes from
 // injecting VT commands. Stopping short of the last column prevents autowrap.
-fn write_row(out: &mut impl Write, row: u16, cols: u16, text: &str) -> io::Result<()> {
+fn write_row(
+    out: &mut impl Write,
+    row: u16,
+    cols: u16,
+    text: &str,
+    accent: bool,
+) -> io::Result<()> {
     queue!(out, cursor::MoveTo(0, row))?;
+    if accent {
+        queue!(out, style::SetForegroundColor(style::Color::Cyan))?;
+    }
     let limit = usize::from(cols.saturating_sub(2));
     let mut used = 0;
-    for c in text.chars().filter(|c| !c.is_control()) {
+    for c in text.chars().filter(|c| renders_alone(*c)) {
         used += c.width().unwrap_or(0);
         if used > limit {
             break;
@@ -434,37 +475,56 @@ fn write_row(out: &mut impl Write, row: u16, cols: u16, text: &str) -> io::Resul
         out.write_all(c.encode_utf8(&mut buf).as_bytes())?;
     }
     queue!(out, terminal::Clear(terminal::ClearType::UntilNewLine))?;
+    if accent {
+        queue!(out, style::ResetColor)?;
+    }
     Ok(())
+}
+
+/// Split a drawn frame at each row's absolute `CSI <row>;1H`. Row text holds
+/// no ESC, so the only other sequences are the colors inside a row.
+fn split_rows(bytes: &[u8]) -> Vec<&[u8]> {
+    let is_row_start = |at: usize| {
+        let Some(rest) = bytes[at..].strip_prefix(b"\x1b[") else {
+            return false;
+        };
+        let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+        digits > 0 && rest[digits..].starts_with(b";1H")
+    };
+    let starts: Vec<usize> = (0..bytes.len()).filter(|at| is_row_start(*at)).collect();
+    starts
+        .iter()
+        .enumerate()
+        .map(|(n, start)| &bytes[*start..starts.get(n + 1).copied().unwrap_or(bytes.len())])
+        .collect()
 }
 
 #[derive(Default)]
 struct Frame {
-    previous: Option<vt100::Screen>,
-    last_input: Vec<u8>,
+    size: (u16, u16),
+    rows: Vec<Vec<u8>>,
 }
 
 impl Frame {
     /// The bytes that bring the terminal to this frame; empty when nothing
-    /// changed. Never clears the screen, which is what makes a terminal flash:
-    /// a new size repaints every row in place, erasing to end of line.
+    /// changed. Whole rows at absolute positions, each erased to end of line,
+    /// so a width disagreement with the terminal cannot outlive its row. It
+    /// never clears the screen, which is what makes a terminal flash.
     fn update(&mut self, bytes: &[u8], cols: u16, rows: u16) -> Vec<u8> {
-        let same_size = self
-            .previous
-            .as_ref()
-            .is_some_and(|previous| previous.size() == (rows.max(1), cols.max(1)));
-        if same_size && self.last_input == bytes {
-            return Vec::new();
+        let resized = self.size != (cols, rows);
+        let next = split_rows(bytes);
+        let mut body = Vec::new();
+        if resized {
+            // Some terminals show the cursor again after a resize.
+            body.extend_from_slice(b"\x1b[?25l");
         }
-        let mut parser = vt100::Parser::new(rows.max(1), cols.max(1), 0);
-        parser.process(b"\x1b[?25l");
-        parser.process(bytes);
-        let screen = parser.screen();
-        let body = match &self.previous {
-            Some(previous) if same_size => screen.contents_diff(previous),
-            _ => bytes.to_vec(),
-        };
-        self.previous = Some(screen.clone());
-        self.last_input = bytes.to_vec();
+        for (n, row) in next.iter().enumerate() {
+            if resized || self.rows.get(n).map(Vec::as_slice) != Some(*row) {
+                body.extend_from_slice(row);
+            }
+        }
+        self.size = (cols, rows);
+        self.rows = next.iter().map(|row| row.to_vec()).collect();
         if body.is_empty() {
             return body;
         }
@@ -511,6 +571,7 @@ impl LoopConsole {
         execute!(
             io::stderr(),
             terminal::EnterAlternateScreen,
+            terminal::DisableLineWrap,
             cursor::Hide,
             crossterm::event::EnableMouseCapture,
             crossterm::event::EnableBracketedPaste
@@ -615,6 +676,7 @@ impl Drop for LoopConsole {
             crossterm::event::DisableMouseCapture,
             crossterm::event::DisableBracketedPaste,
             cursor::Show,
+            terminal::EnableLineWrap,
             terminal::LeaveAlternateScreen
         );
         let _ = terminal::disable_raw_mode();
@@ -623,6 +685,7 @@ impl Drop for LoopConsole {
         if !transcript.is_empty() {
             eprintln!("{transcript}");
         }
+        flush_deferred_diagnostics();
     }
 }
 
@@ -676,7 +739,7 @@ mod tests {
 
     #[test]
     fn typing_is_not_a_paste_and_interrupting_keys_keep_their_order() {
-        for text in ["q", "ab", "\r"] {
+        for text in ["q", "\r"] {
             let (events, pasted) = coalesce_paste(press(text), false);
             assert!(!pasted);
             assert_eq!(events, press(text));
@@ -834,6 +897,49 @@ mod tests {
         ui.draw(&mut bytes, 70, 8, 1, 2).unwrap();
         terminal.process(&frame.update(&bytes, 70, 8));
         assert!(!terminal.screen().contents().contains("first line"));
+    }
+
+    #[test]
+    fn a_changed_row_is_rewritten_whole_and_other_rows_are_untouched() {
+        let mut ui = Dashboard::default();
+        let mut frame = Frame::default();
+        ui.push("⚠\u{fe0f} 👨\u{200d}💻 same");
+        ui.push("old");
+        let mut bytes = Vec::new();
+        ui.draw(&mut bytes, 80, 10, 1, 2).unwrap();
+        assert!(!String::from_utf8_lossy(&bytes).contains(['\u{fe0f}', '\u{200d}']));
+        frame.update(&bytes, 80, 10);
+        ui.lines.pop_back();
+        ui.push("new");
+        let mut bytes = Vec::new();
+        ui.draw(&mut bytes, 80, 10, 1, 2).unwrap();
+        let update = String::from_utf8(frame.update(&bytes, 80, 10)).unwrap();
+        assert!(update.contains("\x1b[3;1Hnew"), "{update:?}");
+        assert!(!update.contains("same"), "{update:?}");
+    }
+
+    #[test]
+    fn resizing_while_scrolled_keeps_the_share_of_history_above_live() {
+        let mut ui = Dashboard {
+            width: 10,
+            page: 2,
+            ..Dashboard::default()
+        };
+        for _ in 0..100 {
+            ui.push(&"x".repeat(10));
+        }
+        ui.scroll = 50;
+        ui.set_width(5);
+        assert_eq!(ui.scroll, 100);
+    }
+
+    #[test]
+    fn deferred_diagnostics_wait_for_the_dashboard_to_close() {
+        DASHBOARD_ACTIVE.store(true, Ordering::SeqCst);
+        eprint_diagnostic("later");
+        DASHBOARD_ACTIVE.store(false, Ordering::SeqCst);
+        let held = std::mem::take(&mut *DEFERRED_DIAGNOSTICS.lock().unwrap());
+        assert!(held.contains(&"later".to_owned()));
     }
 
     #[test]

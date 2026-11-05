@@ -29,7 +29,7 @@ pub struct Args {
 
     /// Experimental, Windows: run this launch under the named shell in the
     /// bundled WezTerm fork. Elsewhere the launch runs normally.
-    #[arg(long = "shell", value_enum, value_name = "SHELL", global = true)]
+    #[arg(long = "shell", value_enum, value_name = "SHELL")]
     pub shell: Option<ExperimentalShell>,
 
     /// Persist the web-terminal preference. With no value this enables it;

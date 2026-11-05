@@ -10,6 +10,7 @@ const ENV_CONFIG_OVERRIDE: &str = "CLUD_KITTY_TERM_CONFIG";
 
 /// Handle only an explicit Kitty terminal request before ordinary startup.
 pub fn handle(args: &Args) -> Option<i32> {
+    clear_shell_wrapper_env();
     if args.shell.is_some() {
         return handle_shell(args);
     }
@@ -42,7 +43,6 @@ pub fn handle(args: &Args) -> Option<i32> {
 /// Experimental `--shell bash`. Windows runs the launch under Git Bash in the
 /// bundled WezTerm fork; other hosts already have a native shell and PTY.
 fn handle_shell(args: &Args) -> Option<i32> {
-    // A global clap argument cannot name root-only flags in `conflicts_with`.
     if args.kitty_term || args.web_term {
         eprintln!("[clud] --shell cannot be combined with --kitty-term or --web-term");
         return Some(2);
@@ -89,7 +89,25 @@ fn launch_shell(args: &Args) -> Result<i32, String> {
 
 /// MSYS rewrites arguments that look like POSIX paths when it starts a native
 /// program, which would corrupt a prompt such as `/fix this`.
-const SHELL_EXEC: &str = "MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 exec \"$@\"";
+const SHELL_EXEC: &str =
+    "CLUD_SHELL_WRAPPED=1 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 exec \"$@\"";
+const SHELL_WRAPPER_ENV: [&str; 3] = [
+    "CLUD_SHELL_WRAPPED",
+    "MSYS2_ARG_CONV_EXCL",
+    "MSYS_NO_PATHCONV",
+];
+
+/// The wrapper's settings protect only its own exec of clud. Left set, they
+/// would turn path conversion off for the agent and all its tool calls.
+fn clear_shell_wrapper_env() {
+    if std::env::var_os(SHELL_WRAPPER_ENV[0]).is_some() {
+        for name in SHELL_WRAPPER_ENV {
+            // SAFETY: called from startup dispatch, before clud starts threads
+            // that read the environment, as `startup.rs` does.
+            unsafe { std::env::remove_var(name) };
+        }
+    }
+}
 
 fn shell_argv(
     args: &Args,
@@ -274,18 +292,15 @@ mod tests {
     }
 
     #[test]
-    fn shell_flag_parses_before_and_after_loop_and_is_stripped_from_the_forward() {
+    fn shell_flag_precedes_loop_and_is_stripped_from_the_forward() {
         for raw in [
             &[
                 "clud", "--shell", "bash", "loop", "/fix it", "--", "--shell", "x",
             ][..],
             &[
-                "clud", "loop", "--shell", "bash", "/fix it", "--", "--shell", "x",
-            ],
-            &[
                 "clud",
-                "loop",
                 "--shell=bash",
+                "loop",
                 "/fix it",
                 "--",
                 "--shell",

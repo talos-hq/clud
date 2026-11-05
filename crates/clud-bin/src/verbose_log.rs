@@ -27,7 +27,7 @@ pub fn enable_file_logging() -> io::Result<PathBuf> {
 pub fn log(message: impl std::fmt::Display) {
     let start = LAUNCH_START.get_or_init(Instant::now);
     let line = format!("{:.2} {}", start.elapsed().as_secs_f64(), message);
-    eprintln!("{line}");
+    crate::loop_console::eprint_diagnostic(&line);
     if let Some(file_slot) = LOG_FILE.get() {
         if let Ok(mut guard) = file_slot.lock() {
             if let Some(file) = guard.as_mut() {

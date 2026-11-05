@@ -5549,7 +5549,10 @@ fn warn_once_on_terminal_failure(error: &PipelineError) {
     }
     // The leading `\x07` is a terminal bell: this is the failure most likely
     // to be waiting on a user who has looked away from an unattended run.
-    eprintln!("\x07[clud] codex bridge: {}", error.client_message());
+    crate::loop_console::eprint_diagnostic(&format!(
+        "\x07[clud] codex bridge: {}",
+        error.client_message()
+    ));
 }
 
 /// Whether a `claude*` id on the direct Codex route names a built-in
