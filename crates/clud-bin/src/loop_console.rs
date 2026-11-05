@@ -59,13 +59,6 @@ struct Dashboard {
     page: usize,
 }
 
-/// Unsent input that must survive the dashboard being rebuilt per iteration.
-#[derive(Default)]
-pub(crate) struct Draft {
-    mode: Mode,
-    text: String,
-}
-
 /// Remove terminal control sequences from one child line, keeping its text.
 /// Dropping only the control characters would leave `[31m` in the chat.
 fn sanitize(line: &str) -> String {
@@ -345,11 +338,6 @@ impl Dashboard {
         self.scroll_up(0);
     }
 
-    fn restore_draft(&mut self, draft: Draft) {
-        self.mode = draft.mode;
-        self.draft = draft.text;
-    }
-
     fn save(&mut self, root: &Path, text: &str, retry_mode: Mode) -> bool {
         match crate::loop_artifacts::queue_message(root, text) {
             Ok(_) => {
@@ -431,20 +419,19 @@ impl Dashboard {
     }
 }
 
-// vt100 owns display-cell measurement, including wide and combining characters.
-// Feeding only printable characters also prevents child output/pastes from injecting VT commands.
+// Feeding only printable characters prevents child output and pastes from
+// injecting VT commands. Stopping short of the last column prevents autowrap.
 fn write_row(out: &mut impl Write, row: u16, cols: u16, text: &str) -> io::Result<()> {
     queue!(out, cursor::MoveTo(0, row))?;
-    let mut screen = vt100::Parser::new(2, cols.max(1), 0);
+    let limit = usize::from(cols.saturating_sub(2));
+    let mut used = 0;
     for c in text.chars().filter(|c| !c.is_control()) {
-        let mut buf = [0; 4];
-        let bytes = c.encode_utf8(&mut buf).as_bytes();
-        screen.process(bytes);
-        let (line, col) = screen.screen().cursor_position();
-        if line > 0 || col >= cols.saturating_sub(1) {
+        used += c.width().unwrap_or(0);
+        if used > limit {
             break;
         }
-        out.write_all(bytes)?;
+        let mut buf = [0; 4];
+        out.write_all(c.encode_utf8(&mut buf).as_bytes())?;
     }
     queue!(out, terminal::Clear(terminal::ClearType::UntilNewLine))?;
     Ok(())
@@ -453,19 +440,38 @@ fn write_row(out: &mut impl Write, row: u16, cols: u16, text: &str) -> io::Resul
 #[derive(Default)]
 struct Frame {
     previous: Option<vt100::Screen>,
+    last_input: Vec<u8>,
 }
 
 impl Frame {
+    /// The bytes that bring the terminal to this frame; empty when nothing
+    /// changed. Never clears the screen, which is what makes a terminal flash:
+    /// a new size repaints every row in place, erasing to end of line.
     fn update(&mut self, bytes: &[u8], cols: u16, rows: u16) -> Vec<u8> {
+        let same_size = self
+            .previous
+            .as_ref()
+            .is_some_and(|previous| previous.size() == (rows.max(1), cols.max(1)));
+        if same_size && self.last_input == bytes {
+            return Vec::new();
+        }
         let mut parser = vt100::Parser::new(rows.max(1), cols.max(1), 0);
         parser.process(b"\x1b[?25l");
         parser.process(bytes);
         let screen = parser.screen();
-        let output = match &self.previous {
-            Some(previous) if previous.size() == screen.size() => screen.contents_diff(previous),
-            _ => screen.contents_formatted(),
+        let body = match &self.previous {
+            Some(previous) if same_size => screen.contents_diff(previous),
+            _ => bytes.to_vec(),
         };
         self.previous = Some(screen.clone());
+        self.last_input = bytes.to_vec();
+        if body.is_empty() {
+            return body;
+        }
+        // Terminals that support it present the frame atomically; others ignore it.
+        let mut output = b"\x1b[?2026h".to_vec();
+        output.extend_from_slice(&body);
+        output.extend_from_slice(b"\x1b[?2026l");
         output
     }
 }
@@ -482,12 +488,7 @@ pub(crate) struct LoopConsole {
 }
 
 impl LoopConsole {
-    pub(crate) fn enter(
-        root: &Path,
-        iteration: u32,
-        total: u32,
-        draft: Draft,
-    ) -> io::Result<Option<Self>> {
+    pub(crate) fn enter(root: &Path, iteration: u32, total: u32) -> io::Result<Option<Self>> {
         if !crate::session::terminals_are_interactive()
             || !io::stderr().is_terminal()
             || std::env::var("TERM").is_ok_and(|s| s == "dumb")
@@ -505,7 +506,6 @@ impl LoopConsole {
             last_draw: None,
             paste_until: None,
         };
-        console.dashboard.restore_draft(draft);
         DASHBOARD_ACTIVE.store(true, Ordering::SeqCst);
         // Construct the guard first so a partial setup failure still restores the terminal.
         execute!(
@@ -528,11 +528,9 @@ impl LoopConsole {
             .join("\n")
     }
 
-    pub(crate) fn take_draft(&mut self) -> Draft {
-        Draft {
-            mode: self.dashboard.mode,
-            text: std::mem::take(&mut self.dashboard.draft),
-        }
+    pub(crate) fn set_iteration(&mut self, iteration: u32) {
+        self.iteration = iteration;
+        self.dirty = true;
     }
 
     /// Buffer one output line; the next `input` tick paints it.
@@ -620,6 +618,11 @@ impl Drop for LoopConsole {
             terminal::LeaveAlternateScreen
         );
         let _ = terminal::disable_raw_mode();
+        // The alternate screen is gone: this is the only copy left in scrollback.
+        let transcript = self.transcript();
+        if !transcript.is_empty() {
+            eprintln!("{transcript}");
+        }
     }
 }
 
@@ -798,6 +801,39 @@ mod tests {
         for c in text.chars() {
             assert_eq!(dashboard.event(key(KeyCode::Char(c))), None);
         }
+    }
+
+    #[test]
+    fn no_frame_ever_clears_the_screen_and_an_unchanged_frame_writes_nothing() {
+        let mut ui = Dashboard::default();
+        let mut frame = Frame::default();
+        ui.push("hello");
+        for (cols, rows) in [(80, 10), (80, 10), (60, 8), (100, 20)] {
+            let mut bytes = Vec::new();
+            ui.draw(&mut bytes, cols, rows, 1, 2).unwrap();
+            let update = frame.update(&bytes, cols, rows);
+            for clear in [&b"\x1b[2J"[..], b"\x1b[J", b"\x1b[0J", b"\x1b[1J"] {
+                assert!(!update.windows(clear.len()).any(|s| s == clear));
+            }
+            assert!(frame.update(&bytes, cols, rows).is_empty());
+        }
+    }
+
+    #[test]
+    fn resize_repaint_overwrites_stale_cells_without_clearing() {
+        let mut ui = Dashboard::default();
+        let mut frame = Frame::default();
+        ui.push("first line of long text");
+        let mut terminal = vt100::Parser::new(8, 80, 0);
+        let mut bytes = Vec::new();
+        ui.draw(&mut bytes, 80, 8, 1, 2).unwrap();
+        terminal.process(&frame.update(&bytes, 80, 8));
+        ui.lines.clear();
+        ui.push("x");
+        let mut bytes = Vec::new();
+        ui.draw(&mut bytes, 70, 8, 1, 2).unwrap();
+        terminal.process(&frame.update(&bytes, 70, 8));
+        assert!(!terminal.screen().contents().contains("first line"));
     }
 
     #[test]

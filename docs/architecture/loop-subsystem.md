@@ -351,13 +351,14 @@ The dashboard retains 10,000 progress lines and clips output to terminal cells.
 Use Up/Down, Page Up/Page Down, Home (oldest), End (live), or the mouse wheel
 to scroll. Page keys and the wheel also work while composing a message.
 New output preserves the viewed history until End returns to following live output.
-Only changed terminal cells are written after the first frame; shorter lines and
-resize redraws erase stale cells without clearing the screen on each update.
+Only changed terminal cells are written, an unchanged frame writes nothing, and no
+frame clears the screen: a resize repaints each row in place. One dashboard spans the
+whole loop, so iterations never leave the alternate screen and drafts carry over.
 Output repaints at most about 30 times a second, and every pending input event is
 applied per tick. Long lines wrap to the terminal width and rewrap on resize; child
 escape sequences are removed rather than shown. Assistant messages appear in full,
-and each iteration's transcript is printed to scrollback when the dashboard closes.
-Drafts remain separate from progress updates and survive iteration boundaries.
+and the transcript is printed to scrollback when the dashboard closes.
+Drafts remain separate from progress updates.
 Pasted text cannot activate actions. Windows consoles have no bracketed paste, so a
 burst of text keys in one tick (four characters, or any character followed by Enter)
 is treated as a paste on every host. Background diagnostics stay off the screen
@@ -371,3 +372,11 @@ Acceptance tests in `tests/integration/pty/loop_console.rs` launch through Bash
 and check queueing, confirmation rejection, restart with a one-iteration budget,
 delivery, and terminal restoration. The existing native PTY CI suites run them;
 unit tests cover Unicode, paste, cancellation, release events, and viewport sizes.
+
+## Experimental `--shell bash`
+
+On Windows x64, `clud loop --shell bash <task>` (or `clud --shell bash ...`) runs the
+launch under clud's pinned Git Bash inside the bundled WezTerm fork, reusing the
+[`--kitty-term` bundle](kitty-windows-parity.md). The flag is removed from the forwarded
+argv, and MSYS path conversion is disabled so a prompt like `/fix it` arrives intact.
+Windows ARM64 has no bundle and is rejected. Other hosts print a note and run normally.

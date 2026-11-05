@@ -542,11 +542,10 @@ pub(super) fn loop_console(
     session: Option<&loop_artifacts::LoopSession>,
     iteration: u32,
     total: u32,
-    draft: crate::loop_console::Draft,
 ) -> std::io::Result<Option<crate::loop_console::LoopConsole>> {
     match session {
         Some(session) => {
-            crate::loop_console::LoopConsole::enter(session.git_root(), iteration, total, draft)
+            crate::loop_console::LoopConsole::enter(session.git_root(), iteration, total)
         }
         None => Ok(None),
     }
@@ -614,30 +613,36 @@ pub(super) fn start_subprocess_runtime(
     .map_err(|error| error.to_string())
 }
 
-pub(super) fn finish_loop_console(
-    mut console: Option<crate::loop_console::LoopConsole>,
+/// Add this iteration's summary to the dashboard's chat stream.
+pub(super) fn note_iteration_summary(
+    console: Option<&mut crate::loop_console::LoopConsole>,
     captured: &str,
     iteration: u32,
-) -> crate::loop_console::Draft {
-    let draft = console
-        .as_mut()
-        .map(crate::loop_console::LoopConsole::take_draft)
-        .unwrap_or_default();
-    let transcript = console
-        .as_ref()
-        .map(crate::loop_console::LoopConsole::transcript);
-    drop(console);
-    // The alternate screen is gone: this is the only copy left in scrollback.
-    if let Some(transcript) = transcript {
-        if !transcript.is_empty() {
-            eprintln!("{transcript}");
-        }
+) {
+    if let Some(console) = console {
         let summary = stream_json::IterationSummary::from_output(captured);
         if summary != stream_json::IterationSummary::default() {
-            eprintln!("{}", summary.render_panel(iteration));
+            console.line(&summary.render_panel(iteration));
         }
     }
-    draft
+}
+
+/// True when the dashboard stays up for another child. Entering and leaving
+/// the alternate screen between iterations would flash, so it closes only
+/// where the loop ends and clud prints to the normal screen.
+pub(super) fn loop_continues(
+    outcome: &ProcessOutcome,
+    plan: &command::LaunchPlan,
+    iteration: u32,
+    captured: &str,
+) -> bool {
+    match outcome {
+        ProcessOutcome::Restart => true,
+        ProcessOutcome::Exited(0) => {
+            iteration < plan.iterations && !crate::loop_check::markers_end_loop(plan, captured)
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]

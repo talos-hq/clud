@@ -363,3 +363,43 @@ fn dashboard_wraps_strips_escapes_and_a_pasted_burst_cannot_activate_actions() {
     assert_eq!(process.wait_impl(Some(10.0)).unwrap(), 130);
     process.close_impl().unwrap();
 }
+
+#[test]
+fn multi_iteration_loop_keeps_one_alternate_screen_and_keeps_the_transcript() {
+    require_pty_or_skip!(
+        "multi_iteration_loop_keeps_one_alternate_screen_and_keeps_the_transcript"
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let env = isolated_env(root);
+    let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
+    std::fs::write(root.join("out.txt"), "chat-line\n").unwrap();
+    let process = NativePtyProcess::new(
+        vec![
+            binary.to_string_lossy().into_owned(),
+            "--no-daemon".into(),
+            "--codex".into(),
+            "--subprocess".into(),
+            "loop".into(),
+            "--loop-count".into(),
+            "3".into(),
+            "test-iterations".into(),
+            "--".into(),
+            "--mock-ansi-script".into(),
+            "out.txt".into(),
+        ],
+        Some(root.to_string_lossy().into_owned()),
+        Some(env),
+        24,
+        120,
+        None,
+    )
+    .unwrap();
+    process.set_echo(false);
+    process.start_impl().unwrap();
+    let mut screen = vt100::Parser::new(24, 120, 0);
+    let output = wait_text(&process, &mut screen, "\x1b[?1049l");
+    assert_eq!(output.matches("\x1b[?1049h").count(), 1, "{output:?}");
+    wait_text(&process, &mut screen, "chat-line");
+    process.close_impl().unwrap();
+}

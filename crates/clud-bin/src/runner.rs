@@ -784,7 +784,8 @@ pub fn run_plan_subprocess(
     let trace_enabled = stage_trace::stderr_enabled(verbose);
 
     let mut iteration = 0;
-    let mut console_draft = crate::loop_console::Draft::default();
+    // One dashboard for the whole loop: see `runner_execution::loop_continues`.
+    let mut console: Option<crate::loop_console::LoopConsole> = None;
     while iteration < plan.iterations {
         // Re-check the interrupted flag at the top of every iteration. A
         // Ctrl+C that fires between the previous child's reap and our next
@@ -800,7 +801,14 @@ pub fn run_plan_subprocess(
 
         let iter_num = iteration + 1;
         if plan.iterations > 1 {
-            eprintln!("[clud] iteration {}/{}", iter_num, plan.iterations);
+            let banner = format!("[clud] iteration {}/{}", iter_num, plan.iterations);
+            match console.as_mut() {
+                Some(ui) => {
+                    ui.set_iteration(iter_num);
+                    ui.line(&banner);
+                }
+                None => eprintln!("{banner}"),
+            }
         }
         if let Some(s) = loop_session.as_deref_mut() {
             s.on_iteration_start(iter_num);
@@ -813,18 +821,19 @@ pub fn run_plan_subprocess(
             ));
         }
 
-        let mut console = match runner_execution::loop_console(
-            loop_session.as_deref(),
-            iter_num,
-            plan.iterations,
-            std::mem::take(&mut console_draft),
-        ) {
-            Ok(console) => console,
-            Err(error) => {
-                eprintln!("[clud] loop dashboard: {error}");
-                return 1;
-            }
-        };
+        if console.is_none() {
+            console = match runner_execution::loop_console(
+                loop_session.as_deref(),
+                iter_num,
+                plan.iterations,
+            ) {
+                Ok(console) => console,
+                Err(error) => {
+                    eprintln!("[clud] loop dashboard: {error}");
+                    return 1;
+                }
+            };
+        }
         let batch_wrapped = subprocess::argv_is_batch_wrapped(&plan.command);
         // Windows pipe-owning launches use `ManagedSubprocess`'s suspended
         // spawn: the child is assigned to its Job Object before it can run.
@@ -839,7 +848,7 @@ pub fn run_plan_subprocess(
         ) {
             Ok(process) => process,
             Err(e) => {
-                drop(console);
+                drop(console.take());
                 eprintln!("[clud] failed to execute {}: {}", plan.command[0], e);
                 if verbose {
                     verbose_log::log(format_args!("[clud] subprocess: start failed: {e}"));
@@ -879,7 +888,10 @@ pub fn run_plan_subprocess(
             plan,
             console.as_mut(),
         );
-        console_draft = runner_execution::finish_loop_console(console, &captured_output, iter_num);
+        runner_execution::note_iteration_summary(console.as_mut(), &captured_output, iter_num);
+        if !runner_execution::loop_continues(&exit_code, plan, iter_num, &captured_output) {
+            drop(console.take());
+        }
 
         stage_trace::done(
             trace_enabled,

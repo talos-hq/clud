@@ -221,6 +221,7 @@ fn transcript_forces_centralized_daemon() {
         unsafe_mode: false,
         web_term: false,
         kitty_term: false,
+        shell: None,
         set_web_term: None,
         provider: None,
         unified: false,
