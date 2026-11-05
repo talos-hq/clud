@@ -1,0 +1,8 @@
+[env]
+# Debug builds put far more on the stack than release ones do, and `Args` (one
+# `Command` variant per subcommand) has grown with every gateway door: parsing a
+# long argv now overflows the 2 MiB std gives a spawned thread, which aborts the
+# whole test harness with `fatal runtime error: stack overflow`. Give every
+# thread cargo spawns during `cargo test` a 16 MiB floor so a test fails on its
+# assertion, not on the stack guard page.
+RUST_MIN_STACK = "16777216"
