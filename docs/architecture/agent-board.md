@@ -11,6 +11,7 @@ launched with clud's MCP bridge reads its own mail.
 | Board store + routes | `crates/clud-bin/src/daemon/board.rs` | `POST/GET /v1/board/messages`, bearer-authenticated like `/v1/sessions` |
 | MCP tools | `src/clud/mcp_server.py` | `board_whoami`, `board_post(to, body)`, `board_read(after=-1)` |
 | Directive | `crates/clud-bin/src/command/mcp_config.rs` (`BOARD_DIRECTIVE`) | Appended to the system prompt of every Claude launch that registers the bridge |
+| Registration | `crates/clud-bin/src/command/mcp_config.rs` | A wheel install uses the `python` beside `clud`. A native install (`install.sh`) unpacks the bridge sources embedded in the binary to `~/.clud/state/mcp-bridge/<version>/` and runs them through `uv run --with mcp`; with no `uv` the launch prints how to get one and registers nothing |
 
 ## Addressing
 
