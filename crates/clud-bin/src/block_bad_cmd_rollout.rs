@@ -392,9 +392,9 @@ pub fn dangling_hook_program_warnings(repo_root: &Path, home: Option<&Path>) -> 
         .collect()
 }
 
-/// Make the bare `clud-cmd-scan` hook command resolve for this session: when
-/// it is not already on PATH but sits next to the running clud, expose it
-/// through a helper-only directory appended to PATH, so every backend child
+/// Make the bare `clud-cmd-scan` hook command resolve for this session:
+/// expose the running clud under that name through a helper-only directory
+/// appended to PATH, so every backend child
 /// inherits it. Appended, not prepended, so it never shadows an installed
 /// helper or the session shims.
 ///
@@ -405,6 +405,11 @@ pub fn dangling_hook_program_warnings(repo_root: &Path, home: Option<&Path>) -> 
 /// `.clud/settings.json` soldr routing in daemon workers). Appending the
 /// install directory broke the Windows daemon integration tests after #1560.
 /// The helper-only directory contains exactly one program.
+///
+/// The helper-only directory is appended even when PATH already finds a
+/// `clud-cmd-scan`: that copy (a venv's, `~/.cargo/bin`'s) can be removed
+/// while the session runs, and every hook would then fail with `command not
+/// found`. Appended, it never shadows the copy PATH found first.
 pub fn ensure_helper_on_session_path() {
     if let InstallProbe::HelperPresent { path } = probe_current_install() {
         let path_env = std::env::var("PATH").unwrap_or_default();
@@ -418,29 +423,30 @@ pub fn ensure_helper_on_session_path() {
         }
     }
     let path_env = std::env::var("PATH").unwrap_or_default();
-    if let Some(found) = crate::shim_resolve::which(&native_helper_name(), &path_env) {
-        if let InstallProbe::HelperPresent { path } = probe_current_install() {
-            let home = crate::home::user_home();
-            if let Some(warning) = refresh_found_helper(&found, &path, home.as_deref()) {
-                eprintln!("{warning}");
-            }
-        }
-        return;
-    }
     let InstallProbe::HelperPresent { path } = probe_current_install() else {
         return;
     };
-    let Some(home) = crate::home::user_home() else {
+    let home = crate::home::user_home();
+    if let Some(found) = crate::shim_resolve::which(&native_helper_name(), &path_env) {
+        if let Some(warning) = refresh_found_helper(&found, &path, home.as_deref()) {
+            eprintln!("{warning}");
+        }
+    }
+    let Some(home) = home else {
         return;
     };
-    let Ok(dir) = expose_helper_at(&home, &path) else {
-        return;
-    };
-    if let Some(updated) = path_with_appended(&path_env, &dir) {
+    if let Some(updated) = session_path_with_helper(&path_env, &path, &home) {
         // SAFETY: startup-only write, before the backend is spawned and
         // before any thread that reads the environment runs.
         unsafe { std::env::set_var("PATH", updated) };
     }
+}
+
+/// `path_env` with the helper-only directory (populated for `clud`)
+/// appended, or `None` when it is already there or cannot be populated.
+fn session_path_with_helper(path_env: &str, clud: &Path, home: &Path) -> Option<String> {
+    let dir = expose_helper_at(home, clud).ok()?;
+    path_with_appended(path_env, &dir)
 }
 
 /// Login shells can rebuild PATH and discard helper-bin. Keep the scanner
@@ -1094,6 +1100,36 @@ mod tests {
             "{:?}",
             report.warnings
         );
+    }
+
+    /// A `clud-cmd-scan` found elsewhere on PATH at launch (a venv's or
+    /// `~/.cargo/bin`'s) can be removed while the session runs, for example
+    /// by reinstalling that copy. The helper-only directory must still be on
+    /// the session's PATH as a fallback, or every hook then fails with
+    /// `clud-cmd-scan: command not found`.
+    #[test]
+    fn helper_dir_is_appended_even_when_path_already_finds_a_helper() {
+        let tmp = tempdir().unwrap();
+        let clud = tmp.path().join("install").join("clud");
+        write(&clud, "clud-v2");
+        let home = tmp.path().join("home");
+        let other = tmp.path().join("cargo-bin");
+        write(&other.join(native_helper_name()), "clud-v1");
+        let base = std::env::join_paths([&other])
+            .unwrap()
+            .into_string()
+            .unwrap();
+
+        let updated = session_path_with_helper(&base, &clud, &home).unwrap();
+
+        let entries: Vec<PathBuf> = std::env::split_paths(&updated).collect();
+        // Appended after the found copy, so it never shadows it.
+        assert_eq!(entries, vec![other, home.join(HELPER_BIN_SUBDIR)]);
+        assert!(home
+            .join(HELPER_BIN_SUBDIR)
+            .join(native_helper_name())
+            .is_file());
+        assert_eq!(session_path_with_helper(&updated, &clud, &home), None);
     }
 
     #[test]
