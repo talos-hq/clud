@@ -361,8 +361,8 @@ and the transcript is printed to scrollback when the dashboard closes.
 Drafts remain separate from progress updates.
 Pasted text cannot activate actions, except a single pasted character, which cannot be told from typing it. Windows consoles have no bracketed paste, so a
 burst of text keys in one tick (two characters, or any character followed by Enter)
-is treated as a paste on every host. Diagnostics are held while the dashboard owns
-the screen and printed when it closes (`loop_console::eprint_diagnostic`).
+is treated as a paste on every host. Diagnostics from background threads appear in the chat stream while the dashboard
+owns the screen (`loop_console::eprint_diagnostic`).
 Mouse capture and bracketed paste are disabled when the dashboard exits.
 Use `clud --codex --subprocess loop <task>` for the dashboard or
 `clud --codex --pty loop <task>` for the existing PTY path. Redirected/non-terminal

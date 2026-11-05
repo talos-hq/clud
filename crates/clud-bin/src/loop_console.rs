@@ -34,7 +34,7 @@ const MAX_DEFERRED_DIAGNOSTICS: usize = 1000;
 static DEFERRED_DIAGNOSTICS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static DROPPED_DIAGNOSTICS: AtomicUsize = AtomicUsize::new(0);
 
-/// Print a diagnostic now, or when the dashboard closes if one owns the screen.
+/// Print a diagnostic now, or queue it for the chat stream if a dashboard owns the screen.
 pub(crate) fn eprint_diagnostic(line: &str) {
     if !owns_stderr() {
         eprintln!("{line}");
@@ -53,16 +53,21 @@ pub(crate) fn eprint_diagnostic(line: &str) {
 /// `eprintln!` for code that can run while a dashboard owns the screen.
 macro_rules! diagnostic {
     ($($arg:tt)*) => {
-        $crate::loop_console::eprint_diagnostic(&format!($($arg)*))
+        $crate::loop_console::eprint_diagnostic(&std::fmt::format(format_args!($($arg)*)))
     };
 }
 pub(crate) use diagnostic;
 
+fn take_deferred_diagnostics() -> Vec<String> {
+    DEFERRED_DIAGNOSTICS
+        .lock()
+        .map(|mut deferred| std::mem::take(&mut *deferred))
+        .unwrap_or_default()
+}
+
 fn flush_deferred_diagnostics() {
-    if let Ok(mut deferred) = DEFERRED_DIAGNOSTICS.lock() {
-        for line in deferred.drain(..) {
-            eprintln!("{line}");
-        }
+    for line in take_deferred_diagnostics() {
+        eprintln!("{line}");
     }
     let dropped = DROPPED_DIAGNOSTICS.swap(0, Ordering::SeqCst);
     if dropped > 0 {
@@ -590,9 +595,13 @@ impl LoopConsole {
             terminal::EnterAlternateScreen,
             terminal::DisableLineWrap,
             cursor::Hide,
-            crossterm::event::EnableMouseCapture,
-            crossterm::event::EnableBracketedPaste
+            crossterm::event::EnableMouseCapture
         )?;
+        // crossterm reads console key events on Windows and has no paste parser
+        // there, so asking for bracketed paste could only type its markers.
+        if !crate::platform::host::WINDOWS {
+            execute!(io::stderr(), crossterm::event::EnableBracketedPaste)?;
+        }
         console.draw()?;
         Ok(Some(console))
     }
@@ -622,6 +631,9 @@ impl LoopConsole {
         let mut events = Vec::new();
         while events.len() < MAX_EVENTS_PER_TICK && crossterm::event::poll(Duration::ZERO)? {
             events.push(crossterm::event::read()?);
+        }
+        for line in take_deferred_diagnostics() {
+            self.line(&line);
         }
         let now = Instant::now();
         let continuing = self.paste_until.is_some_and(|until| now < until);
@@ -688,10 +700,12 @@ impl LoopConsole {
 impl Drop for LoopConsole {
     fn drop(&mut self) {
         DASHBOARD_ACTIVE.store(false, Ordering::SeqCst);
+        if !crate::platform::host::WINDOWS {
+            let _ = execute!(io::stderr(), crossterm::event::DisableBracketedPaste);
+        }
         let _ = execute!(
             io::stderr(),
             crossterm::event::DisableMouseCapture,
-            crossterm::event::DisableBracketedPaste,
             cursor::Show,
             terminal::EnableLineWrap,
             terminal::LeaveAlternateScreen

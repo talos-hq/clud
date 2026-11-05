@@ -770,7 +770,7 @@ pub fn active() -> Option<Arc<PayloadRules>> {
     }
     if modified.is_none() {
         if source.is_env() {
-            eprintln!(
+            crate::loop_console::diagnostic!(
                 "payload rules: {} is unreadable; forwarding request bodies unchanged",
                 source.path().display()
             );
@@ -794,7 +794,9 @@ pub fn active() -> Option<Arc<PayloadRules>> {
             None
         }
         Err(reason) => {
-            eprintln!("payload rules: {reason}; forwarding request bodies unchanged");
+            crate::loop_console::diagnostic!(
+                "payload rules: {reason}; forwarding request bodies unchanged"
+            );
             *guard = None;
             None
         }
@@ -894,13 +896,13 @@ pub fn run_apply_stdin(
 
     let mut body = Vec::new();
     if std::io::stdin().read_to_end(&mut body).is_err() {
-        eprintln!("could not read stdin");
+        crate::loop_console::diagnostic!("could not read stdin");
         return 2;
     }
     let document: Value = match serde_json::from_slice(&body) {
         Ok(document) => document,
         Err(error) => {
-            eprintln!("stdin is not JSON: {error}");
+            crate::loop_console::diagnostic!("stdin is not JSON: {error}");
             return 2;
         }
     };
@@ -908,7 +910,7 @@ pub fn run_apply_stdin(
         (Some(path), _) => match from_path(path) {
             Ok(rules) => rules,
             Err(reason) => {
-                eprintln!("{reason}");
+                crate::loop_console::diagnostic!("{reason}");
                 return 2;
             }
         },
@@ -916,18 +918,21 @@ pub fn run_apply_stdin(
             let settings = match crate::clud_settings::read_settings_json_file(path) {
                 Ok(settings) => settings,
                 Err(error) => {
-                    eprintln!("{} is unreadable: {error}", path.display());
+                    crate::loop_console::diagnostic!("{} is unreadable: {error}", path.display());
                     return 2;
                 }
             };
             match from_settings_document(&settings) {
                 Ok(Some(rules)) => rules,
                 Ok(None) => {
-                    eprintln!("{} has no `{SETTINGS_KEY}` object", path.display());
+                    crate::loop_console::diagnostic!(
+                        "{} has no `{SETTINGS_KEY}` object",
+                        path.display()
+                    );
                     return 2;
                 }
                 Err(reason) => {
-                    eprintln!("{reason}");
+                    crate::loop_console::diagnostic!("{reason}");
                     return 2;
                 }
             }
@@ -936,12 +941,12 @@ pub fn run_apply_stdin(
             Some(rules) => match serde_json::from_value::<PayloadRules>(rules.clone()) {
                 Ok(rules) => rules,
                 Err(error) => {
-                    eprintln!("rules do not parse: {error}");
+                    crate::loop_console::diagnostic!("rules do not parse: {error}");
                     return 2;
                 }
             },
             None => {
-                eprintln!("stdin carries no `rules` object");
+                crate::loop_console::diagnostic!("stdin carries no `rules` object");
                 return 2;
             }
         },
@@ -951,7 +956,7 @@ pub fn run_apply_stdin(
         match parse_header(raw) {
             Ok(header) => parsed_headers.push(header),
             Err(reason) => {
-                eprintln!("{reason}");
+                crate::loop_console::diagnostic!("{reason}");
                 return 2;
             }
         }
@@ -977,7 +982,7 @@ pub fn run_apply_stdin(
     match std::io::stdout().write_all(&bytes) {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("could not write the result: {error}");
+            crate::loop_console::diagnostic!("could not write the result: {error}");
             2
         }
     }

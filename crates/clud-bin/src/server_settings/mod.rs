@@ -300,7 +300,7 @@ fn is_disabled(value: Option<&str>) -> bool {
 
 pub(crate) fn trace(message: std::fmt::Arguments<'_>) {
     if std::env::var_os(VERBOSE_ENV).is_some_and(|value| !value.is_empty() && value != "0") {
-        eprintln!("[clud] server settings: {message}");
+        crate::loop_console::diagnostic!("[clud] server settings: {message}");
     }
 }
 
