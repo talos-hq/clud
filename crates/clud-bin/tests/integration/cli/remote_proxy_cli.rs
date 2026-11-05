@@ -26,19 +26,21 @@ fn remote_proxy_launch_uses_session_bearer_without_local_provider_credentials() 
     let report = root.path().join("probe.json");
     let mut env: Vec<_> = std::env::vars()
         .filter(|(key, _)| {
-            ![
-                "HOME",
-                "USERPROFILE",
-                "PATH",
-                "ANTHROPIC",
-                "OPENAI",
-                "OPENROUTER",
-                "CLAUDE",
-                "CLUD",
-                "HERMES",
-            ]
-            .iter()
-            .any(|prefix| key.to_ascii_uppercase().starts_with(prefix))
+            // PATH is replaced, but Windows still needs PATHEXT to resolve
+            // the fixture's claude.exe from an extensionless harness name.
+            !["HOME", "USERPROFILE", "PATH"]
+                .iter()
+                .any(|name| key.eq_ignore_ascii_case(name))
+                && ![
+                    "ANTHROPIC",
+                    "OPENAI",
+                    "OPENROUTER",
+                    "CLAUDE",
+                    "CLUD",
+                    "HERMES",
+                ]
+                .iter()
+                .any(|prefix| key.to_ascii_uppercase().starts_with(prefix))
         })
         .collect();
     for (key, value) in [
