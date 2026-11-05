@@ -62,6 +62,8 @@ hmac = "0.12.1"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 webpki-roots = "0.26.11"
 url = "2"
+# Native clud.bot remote assistance; TLS uses the bundled WebPKI roots.
+tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 # Issue #73 / #110: embedded KV store for the session and tracked-entry
 # registries. `redb` is pure Rust (no bundled C toolchain), single-writer
 # at the file level, and ships its own file locking — replaces the

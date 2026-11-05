@@ -1019,3 +1019,5 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   [shim-dispatch.md](../../../docs/architecture/shim-dispatch.md).
 
 - `prompt_output.rs` / `prompt_patch.rs` — compact foreground Claude/Codex print activity and exact per-tool line accounting; see [prompt-output.md](../../../docs/architecture/prompt-output.md).
+
+- [`remote_connect/`](remote_connect/README.md): native `remote connect` operator assistance; see [remote assistance](../../../docs/architecture/remote-assistance.md).

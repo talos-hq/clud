@@ -494,6 +494,7 @@ fn run_meta_device_login_seam(cmd: Option<&args::Command>) -> i32 {
 /// and none of them may resolve a backend or start a daemon.
 fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
     let code = match args.command.as_ref()? {
+        args::Command::Remote { action } => clud::remote_connect::run(action),
         args::Command::Serve {
             claude,
             codex,
