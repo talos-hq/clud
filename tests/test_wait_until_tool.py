@@ -127,3 +127,17 @@ def test_the_tool_is_registered_as_resumable_and_quiet() -> None:
     entry = source.split('rel_path: "wait/until.py"', 1)[1].split("BundledTool {", 1)[0]
     assert "KillSemantics::Resumable" in entry
     assert "quiet_ok: true" in entry
+
+
+def test_a_short_interval_does_not_limit_the_command_itself(tmp_path: Path) -> None:
+    """CI regression: --interval 0.1 once became a 0.1 s limit on the command,
+    so every poll timed out and the wait never saw the change."""
+    counter = tmp_path / "count"
+    command = (
+        f'n=$(cat "{counter}" 2>/dev/null || echo 0); n=$((n+1)); '
+        f'printf "%s\\n" "$n" > "{counter}"; sleep 0.5; echo "value $n"'
+    )
+    result = run(["--cmd", command, "--interval", "0.1", "--timeout", "20"])
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "value 2" in result.stdout
+    assert "still running after" not in result.stdout

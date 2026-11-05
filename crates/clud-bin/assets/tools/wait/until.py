@@ -40,7 +40,10 @@ import time
 from running_process import PIPE, RunningProcess, TimeoutExpired
 
 MAX_BYTES = 4096
-RUN_TIMEOUT_CEILING = 300.0
+# One poll's own time limit. Deliberately independent of --interval: a poll
+# interval of 0.1 s must not become a 0.1 s limit on the command, or a slow
+# shell startup would look like a changed result on every tick.
+RUN_TIMEOUT = 60.0
 EXIT_CHANGED = 0
 EXIT_START = 3
 EXIT_USAGE = 64
@@ -141,7 +144,7 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     started = time.monotonic()
     polls = 1
-    code, output = run_once(args.cmd, min(args.interval, RUN_TIMEOUT_CEILING))
+    code, output = run_once(args.cmd, RUN_TIMEOUT)
     baseline = digest(output)
     if args.match is not None and args.match.search(output):
         print(f"matched on the first run (exit {code}):")
@@ -158,7 +161,7 @@ def main(argv: list[str]) -> int:
             return EXIT_TIMEOUT
         time.sleep(min(args.interval, remaining))
         polls += 1
-        code, output = run_once(args.cmd, min(args.interval, RUN_TIMEOUT_CEILING))
+        code, output = run_once(args.cmd, RUN_TIMEOUT)
         if code == EXIT_START:
             print(f"could not run the command: {bounded(output, args.max_bytes)}")
             return EXIT_START
