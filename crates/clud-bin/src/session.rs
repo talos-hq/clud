@@ -344,6 +344,16 @@ impl KeyboardEnhancementTracker {
     fn take_mode_reset(&self) -> Vec<u8> {
         self.modes.lock().expect("child modes lock").take_reset()
     }
+
+    /// Everything needed to undo what the observed output left on the terminal,
+    /// for a mirror that has no [`RawTerminalGuard`] of its own.
+    pub(crate) fn take_child_reset(&self) -> Vec<u8> {
+        let mut reset = self.take_mode_reset();
+        reset.extend(keyboard_enhancement_pop_bytes(
+            self.take_unbalanced_pushes(),
+        ));
+        reset
+    }
 }
 
 fn observe_keyboard_enhancement_byte(state: &mut KeyboardEnhancementTrackerState, byte: u8) {

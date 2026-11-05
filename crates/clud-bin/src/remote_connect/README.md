@@ -5,6 +5,8 @@ Native client for `clud remote connect clud.bot`. See
 consent boundary, protocol and executable integration check.
 
 - `mod.rs`: CLI action, foreground session, heartbeat and local consent state.
+- `console.rs`: the stdout worker: mirrors shell output to the client, prints
+  notices and restores the local terminal, never blocking the session loop.
 - `transport.rs`: bounded session creation, same-origin bearer validation and
   HTTP/WebSocket TLS with bundled plus system roots.
 - `proxy.rs`: ephemeral inference environment, credential isolation and

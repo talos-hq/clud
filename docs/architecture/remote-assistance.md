@@ -25,6 +25,18 @@ approval and closes the PTY. Disconnect, denial, expiration and Ctrl+C terminate
 the foreground client and close the PTY through its cleanup guard. Client output
 and control events are not written to files by clud.
 
+The shell's output also goes to the client's own terminal, so the person who
+consented can watch what the operator does (`remote_connect/console.rs`). Bytes
+are mirrored unchanged except terminal queries, which the operator's terminal
+answers: a local reply would land on stdin, on screen and in a consent answer.
+Only the queries `terminal_queries` knows are removed. The PTY keeps the
+operator's dimensions, so a differently sized local terminal can wrap a
+full-screen program oddly. When the shell ends or control is revoked the client
+undoes what the program left on (alternate screen, input modes, keyboard frames)
+before printing anything else. A single worker owns stdout: past 2 MiB waiting
+on a stalled local terminal, mirrored output is dropped and the gap is reported,
+while the session and the server's copy carry on unaffected.
+
 Terminal writes run on a separate bounded worker so a program that stops reading
 input cannot prevent session cancellation. Output frames are at most 16 KiB and
 the forwarding queue holds at most 128 frames (2 MiB). An overloaded input/output pump
