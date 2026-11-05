@@ -400,6 +400,10 @@ pub struct Args {
     #[arg(skip)]
     pub codex_config_overrides: Vec<String>,
 
+    /// Optional context reference resolved once before the backend launches.
+    #[arg(skip)]
+    pub optional_context: Option<String>,
+
     /// Selection normalized once before bootstrap or credential access.
     #[arg(skip)]
     pub resolved_model_selection: Option<crate::provider_catalog::ResolvedModelSelection>,
@@ -619,6 +623,11 @@ fn parse_setup_provider(value: &str) -> Result<crate::backend::ModelProvider, St
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    /// Connect to an operator for consent-gated remote assistance.
+    Remote {
+        #[command(subcommand)]
+        action: crate::remote_connect::Action,
+    },
     /// Serve Claude or Codex and optional Anthropic-compatible provider models
     /// to local API clients.
     Serve {
@@ -1166,6 +1175,21 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    #[command(name = "__gemini-client-translate", hide = true)]
+    InternalGeminiClientTranslate {
+        /// Model to serve the request with; without it the request's own model wins.
+        #[arg(long)]
+        model: Option<String>,
+        /// Translate an Anthropic Messages response into a Gemini response.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one Gemini response chunk per line.
+        #[arg(long)]
+        stream: bool,
+        /// Emit the exact HTTP body a route writes, not one JSON per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
     /// Test seam for the Claude <-> Gemini translator: read one Anthropic
     /// Messages request body on stdin, write the translated Gemini
     /// `generateContent` request body to stdout. `--model` names the target
@@ -1520,6 +1544,11 @@ pub enum TopSort {
 /// Subcommands under `clud config`.
 #[derive(Subcommand, Debug, Clone)]
 pub enum ConfigSubcommand {
+    /// Set a dotted settings key using the existing native approval flow.
+    Set {
+        /// Assignment, for example context.hermes.enabled=true.
+        assignment: String,
+    },
     /// Print global, local, and merged settings.
     Show {
         /// Emit machine-readable JSON.
@@ -1873,6 +1902,7 @@ pub enum GcSubcommand {
 }
 
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
+    "remote",
     "serve",
     "do-prompt",
     "grind-scripts",
@@ -1927,6 +1957,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__start-cmd",
     "__openai-chat-translate",
     "__openai-completions-translate",
+    "__gemini-client-translate",
     "__claude-gemini-translate",
     "__apply-payload-rules",
     "__openai-responses-translate",

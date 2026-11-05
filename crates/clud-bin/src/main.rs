@@ -393,6 +393,9 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             for_model,
             http,
         } => clud::responses_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
+        args::Command::InternalGeminiClientTranslate { .. } => {
+            run_gemini_client_translate_seam(cmd)
+        }
         // Hidden test seam for the Claude <-> Gemini translator: stdin in, the
         // translated body out. `--response` runs the ingress direction. No
         // session, backend or daemon.
@@ -446,6 +449,25 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
         _ => return None,
     };
     Some(code)
+}
+
+/// The Gemini-shaped client seam: stdin in, a Gemini request or response out.
+/// Split out of the dispatch match so that table stays under the length budget.
+fn run_gemini_client_translate_seam(cmd: Option<&args::Command>) -> i32 {
+    let Some(args::Command::InternalGeminiClientTranslate {
+        model,
+        response,
+        stream,
+        http,
+    }) = cmd
+    else {
+        return 1;
+    };
+    if *response {
+        clud::gemini_client_ingress::run_translate_response_stdin(*stream, model.as_deref(), *http)
+    } else {
+        clud::gemini_client_ingress::run_translate_stdin(model.as_deref(), *stream)
+    }
 }
 
 /// Runs the hidden Claude <-> Gemini translate seam. Kept out of
@@ -515,6 +537,7 @@ fn run_meta_device_login_seam(cmd: Option<&args::Command>) -> i32 {
 /// and none of them may resolve a backend or start a daemon.
 fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
     let code = match args.command.as_ref()? {
+        args::Command::Remote { action } => clud::remote_connect::run(action),
         args::Command::Serve {
             claude,
             codex,
@@ -1986,6 +2009,10 @@ fn build_backend_plan(args: &mut args::Args, launch: LaunchResolution) -> comman
         require_backend_version(launch_target, &backend_path);
     }
     configure_launch_setup(args, launch, backend);
+    clud::optional_context::prepare(args, backend).unwrap_or_else(|error| {
+        eprintln!("[clud] optional context: {error}");
+        std::process::exit(2);
+    });
     if matches!(backend, backend::Backend::Codex) {
         load_codex_config_overrides(args);
     }

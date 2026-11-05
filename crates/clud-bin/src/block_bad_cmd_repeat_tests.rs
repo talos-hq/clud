@@ -124,16 +124,19 @@ fn check_at_persists_only_hashes_and_counts_per_session() {
     let tmp = tempfile::tempdir().unwrap();
     for i in 0..3 {
         assert_eq!(
-            check_at(tmp.path(), "sess-1", "k", 10 + i, 3),
+            check_at(tmp.path(), "sess-1", "k", 10 + i, 3, false).0,
             Verdict::Allow
         );
     }
     assert_eq!(
-        check_at(tmp.path(), "sess-1", "k", 14, 3),
+        check_at(tmp.path(), "sess-1", "k", 14, 3, false).0,
         Verdict::Deny { count: 4 }
     );
     // Another session has its own streak.
-    assert_eq!(check_at(tmp.path(), "sess-2", "k", 14, 3), Verdict::Allow);
+    assert_eq!(
+        check_at(tmp.path(), "sess-2", "k", 14, 3, false).0,
+        Verdict::Allow
+    );
     let dir = tmp.path().join(DIR_NAME);
     let files: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().collect();
     assert_eq!(files.len(), 2);
@@ -152,16 +155,16 @@ fn state_failures_fail_open() {
     let blocked = tmp.path().join("state");
     std::fs::write(&blocked, b"not a dir").unwrap();
     for i in 0..10 {
-        assert_eq!(check_at(&blocked, "s", "k", i, 2), Verdict::Allow);
+        assert_eq!(check_at(&blocked, "s", "k", i, 2, false).0, Verdict::Allow);
     }
     // A corrupt streak file is treated as no streak.
     let ok = tmp.path().join("ok");
     let path = session_file(&ok, "s");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, b"{garbage").unwrap();
-    assert_eq!(check_at(&ok, "s", "k", 1, 1), Verdict::Allow);
+    assert_eq!(check_at(&ok, "s", "k", 1, 1, false).0, Verdict::Allow);
     // No session id: allow.
-    assert_eq!(check_at(&ok, "", "k", 1, 0), Verdict::Allow);
+    assert_eq!(check_at(&ok, "", "k", 1, 0, false).0, Verdict::Allow);
 }
 
 #[test]
@@ -174,4 +177,108 @@ fn deny_message_tells_the_model_to_stop_and_names_the_override() {
     assert!(!message.contains("sleep"), "{message}");
     assert!(message.contains("run_in_background"), "{message}");
     assert!(message.contains("pr_merge_watch"), "{message}");
+}
+
+// ---- #2631: the patient poll the burst guard deliberately ignores ---------
+
+#[test]
+fn poll_count_survives_gaps_the_burst_guard_resets() {
+    // One identical query every 10 minutes for a day: `decide` starts a new
+    // streak at every call, while `poll_count` keeps counting.
+    let mut previous: Option<Streak> = None;
+    for index in 0..12_u64 {
+        let now = 1_000 + 600 * index;
+        let (verdict, mut streak) = decide(previous.as_ref(), "k", now, DEFAULT_LIMIT);
+        assert_eq!(verdict, Verdict::Allow);
+        let (steady, steady_last) = poll_count(previous.as_ref(), "k", now);
+        streak.steady = steady;
+        streak.steady_last = steady_last;
+        assert_eq!(steady, u32::try_from(index).unwrap() + 1);
+        previous = Some(streak);
+    }
+}
+
+#[test]
+fn poll_count_resets_on_a_different_call_and_after_the_window() {
+    let previous = Streak {
+        key: "k".to_string(),
+        count: 1,
+        last: 1_000,
+        steady: 5,
+        steady_last: 1_000,
+    };
+    assert_eq!(poll_count(Some(&previous), "k", 1_600).0, 6);
+    assert_eq!(poll_count(Some(&previous), "other", 1_600).0, 1);
+    assert_eq!(
+        poll_count(Some(&previous), "k", 1_000 + POLL_WINDOW_SECS + 1).0,
+        1
+    );
+    // A legacy streak without the steady fields still counts from one.
+    let legacy = Streak {
+        key: "k".to_string(),
+        count: 7,
+        last: 2_000,
+        steady: 0,
+        steady_last: 0,
+    };
+    assert_eq!(poll_count(Some(&legacy), "k", 2_100).0, 2);
+}
+
+#[test]
+fn the_note_fires_once_at_six_and_once_at_twenty_four() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut notes = Vec::new();
+    for index in 0..30_u64 {
+        let (verdict, note) = check_at(tmp.path(), "s", "k", 1_000 + 300 * index, 200, true);
+        assert_eq!(verdict, Verdict::Allow);
+        if let Some(count) = note {
+            notes.push(count);
+        }
+    }
+    assert_eq!(notes, vec![POLL_NOTE_AT, POLL_NOTE_AGAIN_AT]);
+}
+
+#[test]
+fn a_non_query_repeat_never_produces_the_poll_note() {
+    let tmp = tempfile::tempdir().unwrap();
+    for index in 0..30_u64 {
+        let (_, note) = check_at(tmp.path(), "s", "k", 1_000 + 300 * index, 200, false);
+        assert_eq!(note, None);
+    }
+}
+
+#[test]
+fn is_query_recognises_read_only_state_queries_only() {
+    for command in [
+        "gh issue view 42 --repo o/r --json comments",
+        "for n in 1 2; do gh issue view $n --repo o/r; done",
+        "cd ~/dev/x && gh pr checks 12",
+        "git ls-remote origin",
+        "curl -fsS https://example.test/health",
+        "systemctl is-active twp-catchup",
+        "ssh root@host 'systemctl is-active x'",
+        "docker ps -q",
+    ] {
+        assert!(is_query(command), "{command}");
+    }
+    for command in [
+        "soldr cargo test -p clud",
+        "gh pr create --fill",
+        "gh issue edit 42 --add-label bug",
+        "gh api -X POST repos/o/r/issues",
+        "curl -X POST -d @body.json https://example.test/hook",
+        "git commit -m wip",
+        "",
+    ] {
+        assert!(!is_query(command), "{command}");
+    }
+}
+
+#[test]
+fn poll_message_names_the_blocking_waiter_and_no_sleep_loop() {
+    let message = poll_message(POLL_NOTE_AT);
+    assert!(message.starts_with("[clud poll-note]"));
+    assert!(message.contains("wait/until.py"));
+    assert!(message.contains("6 times"));
+    assert!(!message.contains("sleep "), "{message}");
 }

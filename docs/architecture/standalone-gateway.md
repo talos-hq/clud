@@ -72,10 +72,22 @@ clud serve --codex --claude
 Use `/v1/models` to discover the advertised Codex IDs (for example,
 `clud-claude-codex-sol`) and pass one as `model` to `/v1/messages`.
 Codex-only discovery does not contact Anthropic. This is an Anthropic-compatible
-frontend; the translated doors below (`/v1/chat/completions`, `/v1/completions`,
-`/v1/responses`,
-the Gemini `:generateContent` prefix and the images API) are exposed only when
-the launch has a unified gateway, because the relay they share lives there.
+frontend. Several client dialects are translated at the door and answered in the
+shape they were asked in. All of them run over the same ladder, credentials and
+allowlist as `/v1/messages`; nothing is duplicated and no route learns a second
+protocol:
+
+| Route | Client dialect |
+|---|---|
+| `POST /v1/chat/completions` | OpenAI Chat Completions (`openai_ingress`) |
+| `POST /v1/completions` | OpenAI legacy Completions (`completions_ingress`) |
+| `POST /v1/responses` | OpenAI Responses (`responses_ingress`) |
+| `POST /v1/responses/compact` | Responses compaction passthrough (`responses_compact`, Codex lane) |
+| `POST /v1beta/models/<model>:generateContent` | Gemini `GenerateContentResponse` (`gemini_client_ingress`) |
+| `POST /v1beta/models/<model>:streamGenerateContent` | Gemini SSE chunks |
+
+The translated doors are exposed only when the launch has a unified gateway,
+because the relay they share lives there.
 
 ## OpenAI Responses client bodies
 

@@ -13,6 +13,9 @@ another entry point already uses.
 Code: [`setup_command.rs`](../../crates/clud-bin/src/setup_command.rs),
 [`self_install/setup.rs`](../../crates/clud-bin/src/self_install/setup.rs).
 
+The private Hermes integration boundary also exposes reference-only personality
+resolution for opt-in launches; see [optional context](optional-context.md).
+
 ## Flags and exit codes
 
 ```

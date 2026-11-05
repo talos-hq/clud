@@ -347,8 +347,17 @@ existing prompt because their daemon worker does not drain this inbox.
 Queueing alone never stops a child or overrides its DONE marker; a message can
 remain queued if the current iteration completes the entire task.
 
-The dashboard retains 200 progress lines, clips output to terminal cells, and
-keeps drafts separate from progress updates. Pasted text cannot activate actions.
+The dashboard retains 10,000 progress lines and clips output to terminal cells.
+Use Up/Down, Page Up/Page Down, Home (oldest), End (live), or the mouse wheel
+to scroll. Page keys and the wheel also work while composing a message.
+New output preserves the viewed history until End returns to following live output.
+Only changed terminal cells are written after the first frame; shorter lines and
+resize redraws erase stale cells without clearing the screen on each update.
+Drafts remain separate from progress updates. Pasted text cannot activate actions.
+Mouse capture and bracketed paste are disabled when the dashboard exits.
+Use `clud --codex --subprocess loop <task>` for the dashboard or
+`clud --codex --pty loop <task>` for the existing PTY path. Redirected/non-terminal
+subprocess runs continue to produce plain output with terminal scrollback.
 Acceptance tests in `tests/integration/pty/loop_console.rs` launch through Bash
 (on Linux/macOS/Windows), cmd and Windows PowerShell (on Windows), use real PTYs,
 and check queueing, confirmation rejection, restart with a one-iteration budget,

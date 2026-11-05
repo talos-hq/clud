@@ -1,10 +1,10 @@
-//! Hermes OpenRouter import for `clud setup` (and nothing else).
+//! Hermes integration boundary: setup imports and opt-in personality references.
 //!
 //! Security boundary: this is the only code in clud that reads Hermes'
 //! config (`$HERMES_HOME/config.yaml`, `~/.hermes/config.yaml`,
 //! `~/.hermes/profiles/*/config.yaml`), its `.env`, or `HERMES_HOME`. The
-//! module is private to [`crate::setup_command`] so no launch, serve,
-//! daemon or doctor path can call it; a source-scan test below fails if a
+//! module is private to [`crate::setup_command`]. Launches can request only a
+//! reference to SOUL.md, without reading it or discovering credentials. A source-scan test fails if a
 //! Hermes path or variable appears anywhere else in `src/`.
 //!
 //! Setup only *offers* the import: it prints what it found and asks
@@ -18,6 +18,32 @@ use std::path::{Path, PathBuf};
 
 use crate::backend::ModelProvider;
 use crate::metered_policy;
+
+pub(super) fn context_reference_from_process(home: &Path) -> Result<String, String> {
+    context_reference(
+        home,
+        std::env::var_os("HERMES_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from),
+    )
+}
+
+fn context_reference(home: &Path, instance: Option<PathBuf>) -> Result<String, String> {
+    let path = instance
+        .unwrap_or_else(|| home.join(".hermes"))
+        .join("SOUL.md");
+    let path = path.canonicalize().map_err(|error| format!(
+        "cannot resolve optional Hermes personality file {}: {error}; disable with `clud config set context.hermes.enabled=false`",
+        path.display()))?;
+    if !path.is_file() {
+        return Err(format!(
+            "optional Hermes personality reference is not a file: {}",
+            path.display()
+        ));
+    }
+    let quoted = serde_json::to_string(&path.to_string_lossy()).map_err(|e| e.to_string())?;
+    Ok(format!("Optional personality context: Hermes SOUL.md is at {quoted}. You may read this file when personality or communication guidance would be useful. Reading it is optional."))
+}
 
 /// OpenRouter's endpoint, used when Hermes leaves `base_url` empty.
 pub const OPENROUTER_DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";

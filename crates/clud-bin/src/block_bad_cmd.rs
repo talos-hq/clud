@@ -534,7 +534,10 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
     }
 
     // #1674: deny the same call once it has run more than N times in a row
-    // in this session. Fails open on any state error; see the module docs.
+    // in this session. #2631: the same ledger also counts a *patient* poll —
+    // one read-only query repeated across gaps — and says so once, without
+    // denying it. Fails open on any state error; see the module docs.
+    let mut poll_note: Option<String> = None;
     if event == PRE_TOOL_USE_EVENT {
         if block_bad_cmd_repeat::opts_out(&payload.command) {
             append_log(&format!(
@@ -542,15 +545,24 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
                 block_bad_cmd_repeat::ALLOW_REPEAT_TOKEN,
                 payload.tool_name
             ));
-        } else if let Some(reason) = block_bad_cmd_repeat::reason(
-            &payload.tool_name,
-            payload.tool_input.as_ref(),
-            payload.session_id.as_deref(),
-        ) {
-            append_log(&format!("REPEAT-GUARD-BLOCKED: {reason}"));
-            println!("{}", deny_json(&reason));
-            eprintln!("{reason}");
-            return 2;
+        } else {
+            match block_bad_cmd_repeat::outcome(
+                &payload.tool_name,
+                payload.tool_input.as_ref(),
+                payload.session_id.as_deref(),
+            ) {
+                block_bad_cmd_repeat::Outcome::Deny(reason) => {
+                    append_log(&format!("REPEAT-GUARD-BLOCKED: {reason}"));
+                    println!("{}", deny_json(&reason));
+                    eprintln!("{reason}");
+                    return 2;
+                }
+                block_bad_cmd_repeat::Outcome::Note(note) => {
+                    append_log("REPEAT-GUARD-POLL-NOTE");
+                    poll_note = Some(note);
+                }
+                block_bad_cmd_repeat::Outcome::Allow => {}
+            }
         }
     }
     // #2233: count shell read-hops per file, not per command. An agent that
@@ -570,6 +582,28 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             &payload.cwd,
         ) {
             append_log(&format!("FILE-HOP-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
+    // #2233: `pgrep -a` / `ps ... args` print each match's whole command line,
+    // and a gate or build process carries its heredoc in argv. Past a few
+    // unbounded dumps per session the next distinct one is refused once with
+    // the width-bounded form of the pipeline it just wrote. Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_proc_scan::opts_out(&payload.command) {
+            append_log(&format!(
+                "PROC-SCAN-GUARD-OVERRIDE: {} in command: proc-scan guard bypassed for tool_name={:?}",
+                block_bad_cmd_proc_scan::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_proc_scan::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            append_log(&format!("PROC-SCAN-GUARD-BLOCKED: {reason}"));
             println!("{}", deny_json(&reason));
             eprintln!("{reason}");
             return 2;
@@ -1185,7 +1219,10 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
-    if let Some(note) = merge_notes(merge_notes(verify_note, image_note), ci_log_note) {
+    if let Some(note) = merge_notes(
+        merge_notes(merge_notes(verify_note, image_note), ci_log_note),
+        poll_note,
+    ) {
         append_log("allowed with an advisory note");
         let output = block_bad_cmd_verify_ratio::context_json(&note);
         println!("{}", with_hook_notice(output, event, &payload));
@@ -4076,6 +4113,8 @@ mod block_bad_cmd_slice;
 
 #[path = "block_bad_cmd_imgview.rs"]
 mod block_bad_cmd_imgview;
+#[path = "block_bad_cmd_proc_scan.rs"]
+mod block_bad_cmd_proc_scan;
 
 #[path = "block_bad_cmd_cilog.rs"]
 mod block_bad_cmd_cilog;

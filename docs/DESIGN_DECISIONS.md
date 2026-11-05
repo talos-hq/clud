@@ -7539,3 +7539,23 @@ exact edit counts use the current thread's native patch records rather than a
 working-tree diff (which could include unrelated user changes). Named ASCII
 fallbacks plus lossy input decoding/replacement avoid encoding failures.
 The contract and limits live in [prompt-output.md](architecture/prompt-output.md).
+
+## DD-201: clud.bot assistance uses its existing consent-gated WebSocket protocol
+
+The site's advertised `clud remote connect clud.bot` must speak the deployed
+operator protocol: keyword sessions, local consent and binary PTY streams. A
+paired SSH exec command cannot connect to that service. The native client reuses
+running-process's PTY boundary and negotiates its capabilities with the server;
+it neither starts a backend agent nor installs an SSH daemon. Session bearer
+credentials stay on the same origin. See
+[remote assistance](architecture/remote-assistance.md) for the contract and the
+real-executable integration test maintained with the site.
+
+## DD-202: Hermes personality integration is an optional reference
+
+`context.hermes.enabled` appends a reference to the instance's `SOUL.md` through
+Claude's append-system-prompt and Codex's developer instructions. The model may
+read the file when useful. Clud preserves the native system prompt and does not
+eagerly inject the persona or read Hermes credentials/configuration. This keeps
+the existing Hermes integration boundary narrow and gives the user one setting
+for both harnesses. See [optional context](architecture/optional-context.md).
