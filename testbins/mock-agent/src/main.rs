@@ -659,11 +659,16 @@ fn run_codex_bridge_probe(report_path: &Path) -> serde_json::Value {
     let result = (|| -> Result<(), String> {
         let base_url = base_url.as_deref().ok_or("missing bridge URL")?;
         let token = token.as_deref().ok_or("missing bridge token")?;
-        let address: SocketAddr = base_url
+        let authority_and_path = base_url
             .strip_prefix("http://")
-            .ok_or("bridge URL is not HTTP")?
+            .ok_or("bridge URL is not HTTP")?;
+        let (authority, base_path) = authority_and_path
+            .split_once('/')
+            .unwrap_or((authority_and_path, ""));
+        let address: SocketAddr = authority
             .parse()
             .map_err(|_| "bridge URL is not a socket address")?;
+        let path = format!("/{}/v1/messages", base_path.trim_matches('/')).replace("//", "/");
         report["attempted"] = true.into();
         report["loopback"] = address.ip().is_loopback().into();
         report["port"] = address.port().into();
@@ -675,7 +680,7 @@ fn run_codex_bridge_probe(report_path: &Path) -> serde_json::Value {
             .map_err(|error| format!("read timeout failed: {error}"))?;
         let body = CODEX_BRIDGE_PROBE_REQUEST.trim();
         let request = format!(
-            "POST /v1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         stream

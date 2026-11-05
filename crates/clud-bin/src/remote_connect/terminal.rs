@@ -18,6 +18,8 @@ pub(super) struct Terminal {
     output: Option<mpsc::Receiver<Message>>,
     failed: Arc<AtomicBool>,
     command: String,
+    environment: Option<Vec<(String, String)>>,
+    config: Option<tempfile::TempDir>,
 }
 
 fn dimensions(event: &Value) -> (u16, u16) {
@@ -95,7 +97,35 @@ fn output_pump(
     stop_process(&process);
 }
 
+fn shell_arguments(isolated: bool) -> Vec<String> {
+    if crate::platform::host::WINDOWS {
+        let mut argv = vec![std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())];
+        if isolated {
+            argv.push("/d".into());
+        }
+        argv
+    } else if isolated {
+        // Login/interactive rc files can reload a user's provider credentials.
+        vec!["/bin/sh".into()]
+    } else {
+        vec![
+            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
+            "-l".into(),
+        ]
+    }
+}
+
 impl Terminal {
+    pub fn configure_proxy(&mut self, proxy: super::proxy::SessionProxy) -> Result<(), String> {
+        let config = tempfile::Builder::new()
+            .prefix("clud-remote-auth-")
+            .tempdir()
+            .map_err(|_| "cannot isolate remote agent credentials")?;
+        self.environment = Some(proxy.environment(std::env::vars().collect(), config.path()));
+        self.config = Some(config);
+        Ok(())
+    }
+
     fn opened(&self) -> Result<Value, String> {
         let pid = self
             .process
@@ -119,20 +149,15 @@ impl Terminal {
             .ok_or("invalid remote terminal ID")?
             .to_owned();
         let (rows, cols) = dimensions(event);
-        let argv = if crate::platform::host::WINDOWS {
-            vec![std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".into())]
-        } else {
-            vec![
-                std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into()),
-                "-l".into(),
-            ]
-        };
+        let argv = shell_arguments(self.environment.is_some());
         self.command = argv[0].clone();
         let process = Arc::new(
             NativePtyProcess::new(
                 argv,
                 None,
-                Some(vec![("TERM".into(), "xterm-256color".into())]),
+                self.environment
+                    .clone()
+                    .or_else(|| Some(vec![("TERM".into(), "xterm-256color".into())])),
                 rows,
                 cols,
                 None,
@@ -215,5 +240,67 @@ impl Terminal {
 impl Drop for Terminal {
     fn drop(&mut self) {
         self.stop();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn isolated_shell_disables_profile_startup() {
+        let argv = shell_arguments(true);
+        if crate::platform::host::WINDOWS {
+            assert_eq!(argv.last().map(String::as_str), Some("/d"));
+        } else {
+            assert_eq!(argv, vec!["/bin/sh"]);
+        }
+    }
+
+    #[test]
+    fn isolated_pty_does_not_read_login_or_env_credential_helpers() {
+        if crate::platform::host::WINDOWS {
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let config = tempfile::tempdir().unwrap();
+        let profile = home.path().join(".profile");
+        std::fs::write(&profile, "echo STARTUP_PROFILE_RAN\n").unwrap();
+        let mut ambient: Vec<_> = std::env::vars().filter(|(key, _)| key != "HOME").collect();
+        ambient.extend([
+            ("HOME".into(), home.path().to_string_lossy().into_owned()),
+            ("ENV".into(), profile.to_string_lossy().into_owned()),
+            ("BASH_ENV".into(), profile.to_string_lossy().into_owned()),
+        ]);
+        let proxy = super::super::proxy::SessionProxy::new(
+            "http://127.0.0.1:1234",
+            "ct_profile_isolation_fixture_123456",
+            "m",
+        )
+        .unwrap();
+        let mut terminal = Terminal::default();
+        terminal.environment = Some(proxy.environment(ambient, config.path()));
+        terminal.open(&json!({"pty_id":"profile-test"})).unwrap();
+        terminal
+            .input(b"printf 'CLEAN_%s_READY\\n' SHELL\n")
+            .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut output = String::new();
+        while Instant::now() < deadline {
+            if let Some(Message::Binary(bytes)) = terminal.output().unwrap() {
+                output.push_str(&String::from_utf8_lossy(&bytes[1..]));
+                if output.contains("CLEAN_SHELL_READY") {
+                    break;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        terminal.stop();
+        assert!(output.contains("CLEAN_SHELL_READY"), "{output}");
+        assert!(
+            !output.contains("STARTUP_PROFILE_RAN"),
+            "profile reloaded credentials: {output}"
+        );
     }
 }

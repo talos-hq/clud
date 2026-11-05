@@ -79,6 +79,10 @@ fn run(mut args: args::Args) {
             std::env::set_var(clud::worktree_consent::ALLOW_ENV, "1");
         }
     }
+    if let Err(error) = clud::remote_connect::proxy::configure_launch(&mut args) {
+        eprintln!("remote: {error}");
+        std::process::exit(2);
+    }
     init_foreground_process(&args);
     if let Some(code) = dispatch_maintenance(&args) {
         std::process::exit(code);

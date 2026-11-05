@@ -1,4 +1,5 @@
 //! Native client for the clud.bot operator protocol.
+pub mod proxy;
 mod terminal;
 #[cfg(test)]
 mod tests;
@@ -91,6 +92,11 @@ fn run_session(host: &str) -> Result<i32, String> {
         .map_err(|_| "cannot install remote cancellation handler")?;
     let input = stdin_lines();
     let mut state = State::default();
+    state.terminal.configure_proxy(proxy::SessionProxy::new(
+        base.as_str(),
+        &session.client_token,
+        &session.proxy_model,
+    )?)?;
     let mut heartbeat = Instant::now();
     while !stop.load(Ordering::Relaxed) {
         state.read_consent(&input, &mut socket)?;
