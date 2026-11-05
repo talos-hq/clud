@@ -413,6 +413,11 @@ and make the producer side live on Linux.
                                                                    └────────────┘
 ```
 
+Windows bundle tests default `RUST_MIN_STACK` to 4 MiB, matching the parser
+thread in `main.rs::parse_args`. Argument-parser unit tests call Clap directly
+and need that same budget to build the complete command tree. An explicitly
+configured stack budget is preserved.
+
 Each triple gets its **own** build job and its **own** test job, rather than one
 build matrix feeding one test matrix. That is not stylistic: `needs:` on a
 matrix job is all-or-nothing in GitHub Actions, so a single `test` matrix
@@ -644,6 +649,15 @@ Two trigger-level notes:
   a behaviour change worth knowing about.
 
 ## Cross-compilation, per triple, honestly
+
+GitHub-hosted Linux builders reclaim the unused preinstalled Android and .NET
+SDK directories before provisioning cross toolchains. `ci/hosted_disk.py` uses
+a fixed allowlist and verifies GitHub-hosted Linux context before changing
+anything; the build composite also gates the step. Developer and self-hosted
+runners are excluded. This preserves Soldr's free-space guard rather than
+lowering its threshold after the full native matrix exhausted build volumes.
+The [hosted Ubuntu image inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)
+documents the preinstalled SDK layout.
 
 The workspace's cross-compile surface is small. Two crates compile native code
 (`Cargo.lock`): `ring` and `blake3` (both `cc`, routine to cross).

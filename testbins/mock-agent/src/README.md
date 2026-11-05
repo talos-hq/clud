@@ -164,3 +164,10 @@ and `forbidden_context_markers` to scan the entire parsed request for fixture
 canaries. Only a boolean result of that scan is logged; headers remain absent.
 The ordinary scripted response behavior is unchanged when these options are
 omitted.
+
+- `prompt_tools.rs` — `MOCK_AGENT_PROMPT_TOOLS` scenario: emits native events around actual file writes and native Codex patch records for [print-output tests](../../../docs/architecture/prompt-output.md).
+
+The `--mock-codex-bridge-probe` accepts an optional HTTP base path as well as a
+loopback authority, so the normal remote-session integration test can assert a
+request to `/api/proxy/v1/messages` with the ephemeral bearer. Probe reports
+contain status and response predicates, never the token.

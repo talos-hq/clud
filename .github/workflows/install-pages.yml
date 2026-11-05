@@ -6,6 +6,7 @@ on:
       - installer/**
       - tests/test_installer_catalog.py
       - tests/test_installer_verify_site.py
+      - tests/test_installer_download_page.py
       - .github/workflows/install-pages.yml
   push:
     branches: [main]
@@ -42,7 +43,7 @@ jobs:
       - name: Catalog and site unit tests
         run: |
           python -m pip install pytest running-process
-          python -m pytest -q tests/test_installer_catalog.py tests/test_installer_verify_site.py
+          python -m pytest -q tests/test_installer_catalog.py tests/test_installer_verify_site.py tests/test_installer_download_page.py
       - name: Generate every installable published version
         run: python -m installer.site site
       - name: Preserve published model document
@@ -90,6 +91,9 @@ jobs:
               actual=$(sha256sum public-site/index.html public-site/install/index.html public-site/install/manifest.json | cut -d ' ' -f 1 | sha256sum | cut -d ' ' -f 1)
               if [ "$actual" = "$expected" ]; then
                 python -m installer.verify_site public-site
+                curl -fsSL --retry 3 --retry-all-errors --retry-delay 5 https://talosbot.ai/clud/install.sh -o public-site/install.sh
+                cmp public-site/install.sh installer/install.sh
+                sh public-site/install.sh --dry-run
                 exit 0
               fi
             fi

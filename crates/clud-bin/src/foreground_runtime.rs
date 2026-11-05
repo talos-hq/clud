@@ -239,12 +239,37 @@ impl ForegroundRuntime {
     }
 
     pub fn start(plan: &LaunchPlan, mut env: Vec<(String, String)>) -> Result<Self, BridgeError> {
+        // A remote capability is the only credential source for this launch.
+        // This branch must precede even construction of a local credential store.
+        if let Some(proxy) = crate::remote_connect::proxy::SessionProxy::from_process()
+            .map_err(BridgeError::Settings)?
+        {
+            crate::remote_connect::proxy::validate_plan(plan).map_err(BridgeError::Settings)?;
+            return Ok(Self {
+                env: proxy
+                    .runtime_environment(env)
+                    .map_err(BridgeError::Settings)?,
+                bridge: None,
+                claude_settings: None,
+                startup_notices: Vec::new(),
+            });
+        }
         // The inherited-pin line leads every launch's notices: a boundary the
         // user did not type deserves to be seen first (#1257).
         let pin_notices =
             model_pin_notices(plan, std::io::IsTerminal::is_terminal(&std::io::stderr()));
         // `dsh` owns its provider configuration and credentials. A native
         // DeepSeek Harness launch needs no clud vault or bridge setup at all.
+        if plan.effective_harness() == Backend::OpenCode {
+            crate::opencode_harness::prepare_child(plan, &mut env)
+                .map_err(BridgeError::Settings)?;
+            return Ok(Self {
+                env,
+                bridge: None,
+                claude_settings: None,
+                startup_notices: pin_notices,
+            });
+        }
         if plan.effective_harness() == Backend::DeepSeek {
             apply_route_context(&mut env, plan);
             prepare_dsh_child(plan, &mut env)?;
@@ -590,6 +615,13 @@ impl ForegroundRuntime {
         status_writer: Option<&std::sync::Arc<crate::toast::statusline::StatusStateWriter>>,
     ) -> Result<(Self, bool), BridgeError> {
         let mut runtime = Self::start(plan, env)?;
+        if runtime
+            .env
+            .iter()
+            .any(|(key, _)| key == "CLUD_REMOTE_PROXY_ORIGIN")
+        {
+            return Ok((runtime, false));
+        }
         if let (Some(bridge), Some(writer)) = (runtime.bridge.as_ref(), status_writer) {
             bridge.set_status_usage_writer(std::sync::Arc::clone(writer));
         }
@@ -826,10 +858,12 @@ impl ForegroundRuntime {
         cwd: Option<PathBuf>,
         capture_stdout: bool,
         creation_flags: Option<u32>,
+        dashboard_owns_stdin: bool,
     ) -> Result<ManagedSubprocess, String> {
         let adapter = NativeSubprocessAdapter {
             capture_stdout,
             creation_flags,
+            dashboard_owns_stdin,
         };
         self.spawn_with(
             &adapter,
@@ -1626,7 +1660,23 @@ fn compose_launch_settings_document(
     plan: &LaunchPlan,
     settings: serde_json::Value,
 ) -> Result<(serde_json::Value, bool), BridgeError> {
-    compose_launch_settings_document_with(plan, settings, claude_takes_worktree_hooks(plan))
+    let (mut settings, replaces) =
+        compose_launch_settings_document_with(plan, settings, claude_takes_worktree_hooks(plan))?;
+    crate::clud_hooks_compile::consolidate_scanner_hooks(&mut settings);
+    let cwd = plan
+        .cwd
+        .as_deref()
+        .map_or_else(|| PathBuf::from("."), PathBuf::from);
+    let repo = crate::block_bad_cmd::nearest_repo_root_public(&cwd).unwrap_or(cwd);
+    let home = crate::hook_health::hook_home_dir();
+    if !plan
+        .command
+        .iter()
+        .any(|arg| arg == "--setting-sources" || arg.starts_with("--setting-sources="))
+    {
+        crate::scanner_hook_migration::remove_inherited(&mut settings, &repo, home.as_deref());
+    }
+    Ok((settings, replaces))
 }
 
 /// [`compose_launch_settings_document`] with the worktree-hook decision
@@ -1754,9 +1804,10 @@ fn merge_deletion_denies(
 }
 
 fn write_launch_scoped_settings(
-    settings: serde_json::Value,
+    mut settings: serde_json::Value,
     replaces_user_argument: bool,
 ) -> Result<ClaudeSettings, BridgeError> {
+    crate::clud_hooks_compile::consolidate_scanner_hooks(&mut settings);
     let mut file = tempfile::Builder::new()
         .prefix("clud-claude-settings-")
         .suffix(".json")
@@ -1865,6 +1916,7 @@ pub(crate) fn env_key_eq(left: &str, right: &str) -> bool {
 }
 
 struct NativeSubprocessAdapter {
+    dashboard_owns_stdin: bool,
     capture_stdout: bool,
     creation_flags: Option<u32>,
 }
@@ -1880,7 +1932,12 @@ impl SpawnAdapter<ManagedSubprocess> for NativeSubprocessAdapter {
         env: Vec<(String, String)>,
     ) -> Result<ManagedSubprocess, Self::Error> {
         debug_assert_eq!(mode, SpawnMode::Subprocess);
-        ManagedSubprocess::start(
+        let start = if self.dashboard_owns_stdin {
+            ManagedSubprocess::start_without_stdin
+        } else {
+            ManagedSubprocess::start
+        };
+        start(
             command,
             cwd.map(PathBuf::from),
             env,
@@ -1989,6 +2046,7 @@ pub(crate) mod tests {
                 Backend::Claude => HarnessSelection::Claude,
                 Backend::Codex => HarnessSelection::Codex,
                 Backend::DeepSeek => HarnessSelection::DeepSeek,
+                Backend::OpenCode => HarnessSelection::OpenCode,
             }),
             effective_harness: Some(harness),
             provider_source: Some(PreferenceSource::Cli),
@@ -2000,6 +2058,7 @@ pub(crate) mod tests {
             task_summary: None,
             loop_markers: None,
             stream_json_progress: false,
+            prompt_summary: false,
             codex_model: None,
             model_selection: None,
             failover: None,
@@ -4229,7 +4288,7 @@ pub(crate) mod tests {
         );
         assert_eq!(
             settings["hooks"]["PreToolUse"][1]["hooks"][0]["command"],
-            crate::clud_hooks_compile::DISPATCHER_BINARY
+            crate::clud_hooks_compile::dispatcher_command(crate::clud_hooks_compile::PRE_TOOL_USE)
         );
         assert_eq!(
             settings["permissions"]["deny"],

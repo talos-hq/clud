@@ -501,6 +501,15 @@ def test_serve_codex_without_claude_key(
         ids = {row["id"] for row in json.loads(body)["data"]}
         assert "clud-claude-codex-sol" in ids
         assert all(model.startswith("clud-claude-codex-") for model in ids)
+        # CLIProxyAPI also answers `GET /v1/models/<model>` out of the same
+        # catalog (internal/api/server_routes.go:70); an OpenAI SDK client's
+        # models.retrieve() must not 404 a model this gateway advertises.
+        status, detail = call("GET", "/v1/models/clud-claude-codex-sol")
+        assert status == 200, detail
+        assert json.loads(detail)["id"] == "clud-claude-codex-sol"
+        status, missing = call("GET", "/v1/models/clud-claude-not-a-model")
+        assert status == 404, missing
+        assert json.loads(missing)["error"]["code"] == "model_not_found"
         assert not upstream.requests
         payload = {
             "model": "clud-claude-codex-sol",
@@ -670,3 +679,424 @@ def test_serve_anthropic_compat_providers_route_by_model(
     finally:
         child.send_signal(signal.SIGINT)
         child.wait(timeout=15)
+
+
+def test_serve_applies_payload_rules_to_the_upstream_body(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path, api_upstreams
+) -> None:
+    """The rules file rewrites the request the upstream actually receives.
+
+    Ports CLIProxyAPI's ``requests.payload`` (``config.example.yaml:266-334``):
+    ``override`` replaces a parameter the caller sent, ``default`` fills one it
+    omitted, and ``filter`` removes one. A rule that cannot be applied must not
+    refuse the client's request.
+    """
+    import http.client
+    import json
+    from urllib.parse import urlsplit
+
+    claude, openrouter, deepseek, kimi = api_upstreams
+    rules = tmp_path / "payload-rules.json"
+    rules.write_text(
+        json.dumps(
+            {
+                "default": [{"models": [{"name": "claude-*"}], "params": {"temperature": 0.3}}],
+                "override": [
+                    {"models": [{"name": "claude-*"}], "params": {"max_tokens": 32}},
+                    # A `headers` condition (config.example.yaml:276-279): the
+                    # real request must carry the header for this rule to fire.
+                    {
+                        "models": [{"name": "claude-*", "headers": {"X-Clud-Probe": "run-*"}}],
+                        "params": {"metadata.client_tier": "probe"},
+                    },
+                    {
+                        "models": [{"name": "claude-*", "headers": {"X-Clud-Absent": "*"}}],
+                        "params": {"metadata.absent_header_rule": True},
+                    },
+                ],
+                "filter": [{"params": ["metadata.user_id", "messages.9.content"]}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    client_token = "local-client-token-payload-rules"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "clud_openrouter--api_key_v1.secret").write_text(
+        "openrouter-upstream-canary", encoding="utf-8"
+    )
+    env = mock_env.copy()
+    env.update(
+        {
+            "CLUD_INTEGRATION_TESTS": "1",
+            "CLUD_TEST_SECRET_STORE_DIR": str(vault),
+            "CLUD_SERVE_CLIENT_TOKEN": client_token,
+            "ANTHROPIC_API_KEY": "claude-upstream-canary",
+            "CLUD_TEST_GATEWAY_PLAINTEXT_TLS": "1",
+            "CLUD_PAYLOAD_RULES": str(rules),
+            # OpenRouter is pay-per-token: serving it needs the explicit consent
+            # pair main added after this branch was cut (metered_policy.rs).
+            "CLUD_ALLOW_METERED": "1",
+            "CLUD_METERED_PROVIDER": "openrouter",
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
+            "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": claude.url.replace("http://", "https://"),
+            "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": claude.url.replace("http://", "https://"),
+            # The unified seam is all-or-nothing: one missing URL sends the
+            # launch at the real providers.
+            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": deepseek.url.replace(
+                "http://", "https://"
+            ),
+            "CLUD_TEST_UNIFIED_KIMI_UPSTREAM_URL": kimi.url.replace("http://", "https://"),
+            "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": openrouter.url.replace(
+                "http://", "https://"
+            ),
+        }
+    )
+    child = process.Popen(
+        [str(clud_binary), "serve", "--claude", "--openrouter", "--port", "0"],
+        env=env,
+        stdout=process.PIPE,
+        stderr=process.PIPE,
+        text=True,
+        creationflags=process.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        line = child.next_stdout(timeout=60)
+        assert isinstance(line, str), (line, child.poll())
+        address = urlsplit(line.strip().split("listening at ", 1)[1])
+        connection = http.client.HTTPConnection(address.hostname, address.port, timeout=15)
+        connection.request(
+            "POST",
+            "/v1/messages",
+            body=json.dumps(
+                {
+                    "model": "claude-test",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 64,
+                    "metadata": {"user_id": "must-not-reach-the-upstream"},
+                }
+            ),
+            headers={
+                "x-api-key": client_token,
+                "content-type": "application/json",
+                "x-clud-probe": "run-42",
+            },
+        )
+        response = connection.getresponse()
+        status = response.status
+        response.read()
+        connection.close()
+        assert status == 200, f"status {status}"
+        assert claude.requests, "the gateway never reached the upstream"
+        forwarded = claude.requests[-1][2]
+        assert forwarded["max_tokens"] == 32, "override replaces what the caller sent"
+        assert forwarded["temperature"] == 0.3, "default fills an omitted parameter"
+        assert "user_id" not in forwarded.get("metadata", {}) or "metadata" not in forwarded, (
+            "filter removes the parameter"
+        )
+        assert forwarded["messages"] == [{"role": "user", "content": "hello"}]
+        # The header-gated rule saw the caller's real header, and the rule
+        # gated on a header nobody sent stayed out of the way.
+        forwarded_metadata = forwarded.get("metadata", {})
+        assert forwarded_metadata.get("client_tier") == "probe", forwarded
+        assert "absent_header_rule" not in forwarded_metadata, forwarded
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=15)
+
+
+def test_serve_applies_payload_rules_to_the_translated_chat_body(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path, api_upstreams
+) -> None:
+    """An OpenAI-shaped caller goes through the same rules engine.
+
+    CLIProxyAPI applies payload rules in the executor, on the body it forwards,
+    with ``protocol`` = the target protocol and ``fromProtocol`` = the shape the
+    client spoke (``payload_helpers.go``: ``ApplyPayloadConfigWithRequest``).
+    clud translates ``POST /v1/chat/completions`` into a Messages body itself, so
+    the rules must see that translated body and must be able to gate on the
+    caller's shape: a ``from-protocol: openai`` rule fires for a chat caller, a
+    ``from-protocol: claude`` rule does not.
+    """
+    import http.client
+    import json
+    from urllib.parse import urlsplit
+
+    claude, openrouter, deepseek, kimi = api_upstreams
+    rules = tmp_path / "payload-rules.json"
+    rules.write_text(
+        json.dumps(
+            {
+                "override": [
+                    {
+                        "models": [{"name": "claude-*", "from-protocol": "openai"}],
+                        "params": {"max_tokens": 32},
+                    },
+                    {
+                        "models": [{"name": "claude-*", "from-protocol": "claude"}],
+                        "params": {"metadata.via": "messages"},
+                    },
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    client_token = "local-client-token-chat-rules-0123456789"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    (vault / "clud_openrouter--api_key_v1.secret").write_text(
+        "openrouter-upstream-canary", encoding="utf-8"
+    )
+    env = mock_env.copy()
+    env.update(
+        {
+            "CLUD_INTEGRATION_TESTS": "1",
+            "CLUD_TEST_SECRET_STORE_DIR": str(vault),
+            "CLUD_SERVE_CLIENT_TOKEN": client_token,
+            "ANTHROPIC_API_KEY": "claude-upstream-canary",
+            "CLUD_TEST_GATEWAY_PLAINTEXT_TLS": "1",
+            "CLUD_PAYLOAD_RULES": str(rules),
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
+            "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": claude.url.replace("http://", "https://"),
+            "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": claude.url.replace("http://", "https://"),
+            # The unified seam is all-or-nothing: one missing URL sends the
+            # launch at the real providers.
+            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": deepseek.url.replace(
+                "http://", "https://"
+            ),
+            "CLUD_TEST_UNIFIED_KIMI_UPSTREAM_URL": kimi.url.replace("http://", "https://"),
+            "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": openrouter.url.replace(
+                "http://", "https://"
+            ),
+        }
+    )
+    child = process.Popen(
+        [str(clud_binary), "serve", "--claude", "--port", "0"],
+        env=env,
+        stdout=process.PIPE,
+        stderr=process.PIPE,
+        text=True,
+        creationflags=process.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        line = child.next_stdout(timeout=60)
+        assert isinstance(line, str), (line, child.poll())
+        address = urlsplit(line.strip().split("listening at ", 1)[1])
+        connection = http.client.HTTPConnection(address.hostname, address.port, timeout=15)
+        connection.request(
+            "POST",
+            "/v1/chat/completions",
+            body=json.dumps(
+                {
+                    "model": "claude-test",
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "max_tokens": 1024,
+                    "stream": False,
+                }
+            ),
+            headers={"x-api-key": client_token, "content-type": "application/json"},
+        )
+        response = connection.getresponse()
+        status = response.status
+        response.read()
+        connection.close()
+        assert status == 200, f"status {status}"
+        assert claude.requests, "the gateway never reached the upstream"
+        forwarded = claude.requests[-1][2]
+        assert forwarded["max_tokens"] == 32, (
+            "a from-protocol: openai rule must rewrite the translated chat body"
+        )
+        assert "via" not in forwarded.get("metadata", {}), (
+            "a from-protocol: claude rule must not fire for a chat caller"
+        )
+        assert forwarded["messages"] == [
+            {"role": "user", "content": [{"type": "text", "text": "hello"}]}
+        ], forwarded
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=15)
+
+
+def test_serve_answers_gemini_generate_content(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    """The durable serve surface accepts and answers Gemini's generateContent.
+
+    CLIProxyAPI serves `/v1beta/models/<model>:generateContent`; clud has no
+    Gemini provider, so the door opens over its own ladder: the body is
+    translated into Messages, routed, and rendered back as a Gemini response.
+    Both framings are exercised because the verb lives in the path. This test
+    brings its own fake upstream so it can answer with a well-formed text SSE
+    stream (the shared fixture streams a tool call that never stops).
+    """
+    import http.client
+    import http.server
+    import json
+    import signal
+    import threading
+    from urllib.parse import urlsplit
+
+    message = {
+        "id": "msg_test",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-test",
+        "content": [{"type": "text", "text": "claude"}],
+        "stop_reason": "end_turn",
+        "usage": {"input_tokens": 1, "output_tokens": 1},
+    }
+    stream = (
+        b'event: message_start\ndata: {"type":"message_start","message":'
+        b'{"id":"msg_test","type":"message","role":"assistant","model":"claude-test",'
+        b'"content":[],"usage":{"input_tokens":1,"output_tokens":0}}}\n\n'
+        b'event: content_block_start\ndata: {"type":"content_block_start","index":0,'
+        b'"content_block":{"type":"text","text":""}}\n\n'
+        b'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,'
+        b'"delta":{"type":"text_delta","text":"claude"}}\n\n'
+        b'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n'
+        b'event: message_delta\ndata: {"type":"message_delta",'
+        b'"delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":1}}\n\n'
+        b'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+    )
+    requests: list[dict] = []
+    owner = type("Fake", (), {})()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+        def do_POST(self) -> None:
+            size = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(size))
+            requests.append(body)
+            payload = stream if body.get("stream") else json.dumps(message).encode()
+            self.send_response(200)
+            self.send_header(
+                "Content-Type",
+                "text/event-stream" if body.get("stream") else "application/json",
+            )
+            self.send_header("Content-Length", str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+    owner.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    owner.thread = threading.Thread(target=owner.server.serve_forever, daemon=True)
+    owner.thread.start()
+    upstream = f"https://127.0.0.1:{owner.server.server_port}"
+
+    client_token = "local-client-token-0123456789abcdef"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    env = mock_env.copy()
+    env.update(
+        {
+            "CLUD_INTEGRATION_TESTS": "1",
+            "CLUD_TEST_SECRET_STORE_DIR": str(vault),
+            "CLUD_SERVE_CLIENT_TOKEN": client_token,
+            "ANTHROPIC_API_KEY": "claude-upstream-canary",
+            "CLUD_TEST_GATEWAY_PLAINTEXT_TLS": "1",
+            "NO_PROXY": "127.0.0.1,localhost",
+            "no_proxy": "127.0.0.1,localhost",
+            # The test-upstream override is all-or-nothing, so every route
+            # points at this fake even though only Claude is exercised.
+            "CLUD_TEST_CODEX_BRIDGE_UPSTREAM_URL": upstream,
+            "CLUD_TEST_UNIFIED_ANTHROPIC_UPSTREAM_URL": upstream,
+            "CLUD_TEST_UNIFIED_DEEPSEEK_UPSTREAM_URL": upstream,
+            "CLUD_TEST_UNIFIED_OPENROUTER_UPSTREAM_URL": upstream,
+        }
+    )
+    child = process.Popen(
+        [str(clud_binary), "serve", "--claude", "--port", "0"],
+        env=env,
+        stdout=process.PIPE,
+        stderr=process.PIPE,
+        text=True,
+        creationflags=process.CREATE_NEW_PROCESS_GROUP,
+    )
+    try:
+        line = child.next_stdout(timeout=60)
+        assert isinstance(line, str), (line, child.poll())
+        assert "listening at " in line, (line, child.poll())
+        assert client_token not in line
+        address = urlsplit(line.strip().split("listening at ", 1)[1])
+        assert address.hostname is not None
+
+        def call(verb: str, body: dict):
+            connection = http.client.HTTPConnection(address.hostname, address.port, timeout=20)
+            connection.request(
+                "POST",
+                f"/v1beta/models/claude-test:{verb}",
+                body=json.dumps(body),
+                headers={"x-api-key": client_token, "content-type": "application/json"},
+            )
+            response = connection.getresponse()
+            data = response.read()
+            connection.close()
+            return response, data
+
+        gemini_body = {
+            "contents": [{"role": "user", "parts": [{"text": "hello"}]}],
+            "generationConfig": {"temperature": 0.2, "maxOutputTokens": 512},
+        }
+        response, data = call("generateContent", gemini_body)
+        assert response.status == 200, data
+        payload = json.loads(data)
+        assert payload["candidates"][0]["content"]["parts"][0]["text"] == "claude", payload
+        assert payload["candidates"][0]["finishReason"] == "STOP", payload
+        assert payload["modelVersion"] == "claude-test", payload
+        # What reached the backend was a Messages request, not the Gemini shape.
+        upstream_body = requests[-1]
+        assert upstream_body["messages"][0]["role"] == "user", upstream_body
+        assert "contents" not in upstream_body, upstream_body
+        assert upstream_body["temperature"] == 0.2, upstream_body
+        assert upstream_body["max_tokens"] == 512, upstream_body
+
+        response, data = call("streamGenerateContent", gemini_body)
+        assert response.status == 200, data
+        frames = [
+            json.loads(chunk.split("data: ", 1)[1])
+            for chunk in data.decode().split("\n\n")
+            if chunk.strip().startswith("data: ")
+        ]
+        assert frames, data
+        text = "".join(
+            part["text"]
+            for frame in frames
+            for part in frame["candidates"][0]["content"].get("parts", [])
+            if "text" in part
+        )
+        assert text == "claude", frames
+        assert frames[-1]["candidates"][0].get("finishReason") == "STOP", frames
+        assert requests[-1]["stream"] is True, requests[-1]
+
+        # A verb this route does not serve is answered in Gemini's own shape,
+        # not the generic Anthropic 404 envelope.
+        connection = http.client.HTTPConnection(address.hostname, address.port, timeout=15)
+        connection.request(
+            "POST",
+            "/v1beta/models/claude-test:countTokens",
+            body=json.dumps(gemini_body),
+            headers={"x-api-key": client_token, "content-type": "application/json"},
+        )
+        response = connection.getresponse()
+        data = response.read()
+        connection.close()
+        assert response.status == 404, data
+        assert json.loads(data)["error"]["status"] == "NOT_FOUND", data
+
+        child.send_signal(signal.SIGINT)
+        assert child.wait(timeout=15) == 0
+        stderr = child.stderr.read()
+        assert client_token not in stderr
+        assert "claude-upstream-canary" not in stderr
+    finally:
+        if child.poll() is None:
+            child.terminate()
+            child.wait(timeout=15)
+        owner.server.shutdown()
+        owner.server.server_close()
+        owner.thread.join(timeout=5)

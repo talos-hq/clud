@@ -241,6 +241,7 @@ impl BackendInstallSpec {
                 },
                 fallback_location: InstallLocation::LocalAppDataCodexBin,
             },
+            (Backend::OpenCode, platform) => Self::for_opencode(platform),
             (Backend::DeepSeek, platform) => Self {
                 backend,
                 platform,
@@ -253,6 +254,32 @@ impl BackendInstallSpec {
                 fallback_location: InstallLocation::ManagedDsh {
                     windows: platform == InstallPlatform::Windows,
                 },
+            },
+        }
+    }
+
+    fn for_opencode(platform: InstallPlatform) -> Self {
+        Self {
+            backend: Backend::OpenCode,
+            platform,
+            product_name: "OpenCode",
+            vendor_name: "OpenCode",
+            installer_kind: "npm",
+            prompt_text:
+                "OpenCode is not installed. Install opencode-ai@1.19.5 with npm now? [y/N]",
+            manual_install_command: "npm install -g opencode-ai@1.19.5",
+            installer: if platform == InstallPlatform::Windows {
+                InstallerPlan::WindowsPowerShell {
+                    command: "npm install -g opencode-ai@1.19.5",
+                    cmd_fallback: None,
+                }
+            } else {
+                InstallerPlan::PosixShell {
+                    command: "npm install -g opencode-ai@1.19.5",
+                }
+            },
+            fallback_location: InstallLocation::HomeLocalBin {
+                executable: "opencode",
             },
         }
     }
@@ -358,6 +385,12 @@ pub trait BackendBootstrapHost {
     fn run_backend_installer(&mut self, spec: &BackendInstallSpec) -> Result<(), String>;
     fn native_backend_path(&self, spec: &BackendInstallSpec) -> Option<PathBuf>;
     fn verify_backend(&mut self, backend: Backend, path: &Path) -> Result<(), String>;
+    /// A binary left by clud's temp-home install fallback, consulted only
+    /// after `PATH` and the native location miss.
+    fn temp_install_path(&self, spec: &BackendInstallSpec) -> Option<PathBuf> {
+        let _ = spec;
+        None
+    }
 }
 
 pub struct ProductionBackendBootstrapHost;
@@ -381,6 +414,12 @@ impl BackendBootstrapHost for ProductionBackendBootstrapHost {
 
     fn verify_backend(&mut self, backend: Backend, path: &Path) -> Result<(), String> {
         verify_backend(backend, path)
+    }
+
+    fn temp_install_path(&self, spec: &BackendInstallSpec) -> Option<PathBuf> {
+        (spec.backend == Backend::Claude)
+            .then(crate::claude_temp_home_install::discover)
+            .flatten()
     }
 }
 
@@ -407,7 +446,9 @@ where
     if let Some(path) = host.find_backend(backend) {
         return Some(path);
     }
-    host.native_backend_path(spec).filter(|path| path.is_file())
+    host.native_backend_path(spec)
+        .filter(|path| path.is_file())
+        .or_else(|| host.temp_install_path(spec))
 }
 
 pub fn resolve_backend_path<R, W, H>(
@@ -651,14 +692,13 @@ pub(crate) fn run_verified_codex_installer_with_parent_env(
 fn run_backend_installer(spec: &BackendInstallSpec) -> Result<(), String> {
     match spec.installer {
         InstallerPlan::TrustedCodex => trusted_codex_update(),
-        InstallerPlan::PosixShell { command } => run_interactive_command(
-            CommandSpec::Argv(vec![
-                "sh".to_string(),
-                "-c".to_string(),
-                command.to_string(),
-            ]),
-            None,
-        ),
+        InstallerPlan::PosixShell { command } => match run_posix_installer(command, None) {
+            Err(first) if spec.backend == Backend::Claude => install_claude_in_temp_home(command)
+                .map_err(|second| {
+                    format!("{first}; retrying with a temporary install home also failed: {second}")
+                }),
+            other => other,
+        },
         InstallerPlan::WindowsPowerShell {
             command,
             cmd_fallback,
@@ -666,6 +706,47 @@ fn run_backend_installer(spec: &BackendInstallSpec) -> Result<(), String> {
         InstallerPlan::ManagedDsh => {
             let home = crate::dsh_harness::managed_home().ok_or("home directory unavailable")?;
             crate::dsh_harness::install(&home).map(|_| ())
+        }
+    }
+}
+
+fn run_posix_installer(
+    command: &'static str,
+    env: Option<Vec<(String, String)>>,
+) -> Result<(), String> {
+    run_interactive_command_with_env(
+        CommandSpec::Argv(vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            command.to_string(),
+        ]),
+        None,
+        env,
+    )
+}
+
+/// The home volume of a live USB is too small for Claude Code; rerun the
+/// installer with `HOME` in the (usually RAM-backed) temp dir and link the
+/// binary back. See `claude_temp_home_install`.
+fn install_claude_in_temp_home(command: &'static str) -> Result<(), String> {
+    use crate::claude_temp_home_install as temp_install;
+    let real_home = crate::home::user_home().ok_or("home directory unavailable")?;
+    let temp_home = temp_install::create_temp_home()?;
+    eprintln!("{}", temp_install::engaged_warning(&real_home, &temp_home));
+    let parent: Vec<_> = std::env::vars().collect();
+    let installed = run_posix_installer(
+        command,
+        Some(temp_install::installer_env(&parent, &temp_home)),
+    )
+    .and_then(|()| temp_install::finish(&temp_home, &real_home));
+    match installed {
+        Ok(done) => {
+            eprintln!("{}", temp_install::installed_warning(&done));
+            Ok(())
+        }
+        Err(err) => {
+            let _ = std::fs::remove_dir_all(&temp_home);
+            Err(err)
         }
     }
 }
@@ -723,10 +804,18 @@ fn run_windows_cmd_installer(command: &'static str, backend: Backend) -> Result<
 }
 
 fn run_interactive_command(command: CommandSpec, cwd: Option<PathBuf>) -> Result<(), String> {
+    run_interactive_command_with_env(command, cwd, None)
+}
+
+fn run_interactive_command_with_env(
+    command: CommandSpec,
+    cwd: Option<PathBuf>,
+    env: Option<Vec<(String, String)>>,
+) -> Result<(), String> {
     let process = NativeProcess::new(ProcessConfig {
         command,
         cwd,
-        env: None,
+        env,
         capture: false,
         stderr_mode: StderrMode::Stdout,
         creationflags: None,
@@ -1143,6 +1232,7 @@ mod tests {
         installer_creates: Option<PathBuf>,
         verified: Vec<(Backend, PathBuf)>,
         verify_result: Result<(), String>,
+        temp_install: Option<PathBuf>,
     }
 
     impl Default for MockHost {
@@ -1157,6 +1247,7 @@ mod tests {
                 installer_creates: None,
                 verified: Vec::new(),
                 verify_result: Ok(()),
+                temp_install: None,
             }
         }
     }
@@ -1190,6 +1281,48 @@ mod tests {
             self.verified.push((backend, path.to_path_buf()));
             self.verify_result.clone()
         }
+
+        fn temp_install_path(&self, _spec: &BackendInstallSpec) -> Option<PathBuf> {
+            self.temp_install.clone()
+        }
+    }
+
+    /// The temp-home fallback's binary is used, without a prompt, when
+    /// `PATH` and `~/.local/bin/claude` both miss.
+    #[test]
+    fn temp_install_is_used_when_path_and_native_location_miss() {
+        let temp = PathBuf::from("/tmp/clud-claude-home-x/.local/bin/claude");
+        let mut host = MockHost {
+            native_path: Some(PathBuf::from("/nonexistent/.local/bin/claude")),
+            temp_install: Some(temp.clone()),
+            ..Default::default()
+        };
+        let (path, err) = resolve_with(Backend::Claude, false, false, "", &mut host).expect("path");
+        assert_eq!(path, temp.to_string_lossy());
+        assert!(err.is_empty(), "no prompt: {err}");
+        assert!(host.installer_runs.is_empty());
+    }
+
+    /// After a reboot wipes tmpfs, the link dangles and no temp home is
+    /// left, so clud asks to install again.
+    #[test]
+    fn reboot_wiped_temp_install_prompts_to_install_again() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let link = home.path().join("claude");
+        if !crate::platform::host::WINDOWS {
+            crate::platform::alias_link::symlink(Path::new("/nonexistent/claude"), &link)
+                .expect("dangling link");
+        }
+        let mut host = MockHost {
+            native_path: Some(link),
+            installer_result: Err("declined in test".to_string()),
+            ..Default::default()
+        };
+        let err = resolve_with(Backend::Claude, false, true, "n\n", &mut host).unwrap_err();
+        assert!(matches!(
+            err,
+            BackendBootstrapError::BackendInstallDeclined { .. }
+        ));
     }
 
     fn resolve_with(

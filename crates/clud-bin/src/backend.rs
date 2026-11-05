@@ -111,6 +111,8 @@ pub enum HarnessSelection {
     #[serde(rename = "deepseek")]
     #[value(alias = "dsh")]
     DeepSeek,
+    #[serde(rename = "opencode")]
+    OpenCode,
 }
 
 impl HarnessSelection {
@@ -119,6 +121,7 @@ impl HarnessSelection {
             Backend::Claude => Self::Claude,
             Backend::Codex => Self::Codex,
             Backend::DeepSeek => Self::DeepSeek,
+            Backend::OpenCode => Self::OpenCode,
         }
     }
 
@@ -128,6 +131,7 @@ impl HarnessSelection {
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::DeepSeek => "deepseek",
+            Self::OpenCode => "opencode",
         }
     }
 
@@ -137,6 +141,7 @@ impl HarnessSelection {
             "claude" => Some(Self::Claude),
             "codex" => Some(Self::Codex),
             "deepseek" | "dsh" => Some(Self::DeepSeek),
+            "opencode" => Some(Self::OpenCode),
             _ => None,
         }
     }
@@ -147,6 +152,7 @@ impl HarnessSelection {
             Self::Claude => Backend::Claude,
             Self::Codex => Backend::Codex,
             Self::DeepSeek => Backend::DeepSeek,
+            Self::OpenCode => Backend::OpenCode,
         }
     }
 }
@@ -191,6 +197,10 @@ pub struct ResolvedLaunchTarget {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum LaunchTargetError {
+    #[error("unsupported launch target: unified routing requires the Claude harness")]
+    UnifiedViaOpenCodeUnsupported,
+    #[error("unsupported launch target: Codex provider cannot use the OpenCode harness")]
+    CodexViaOpenCodeUnsupported,
     #[error("unsupported launch target: Claude provider cannot use the Codex harness")]
     ClaudeViaCodexUnsupported,
     #[error("unsupported launch target: DeepSeek provider cannot use the Codex harness")]
@@ -212,6 +222,8 @@ pub enum LaunchTargetError {
 /// by this surface. See `docs/architecture/hook-dispatch.md`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSurface {
+    /// Child-local inline JSON configuration, with no clud hook adapter.
+    InlineEnvironment,
     /// `--settings <file-or-json>`: an additional source that merges with the
     /// settings files; hook entries concatenate across levels.
     ClaudeSettingsArg,
@@ -236,10 +248,11 @@ pub enum Backend {
     Claude,
     Codex,
     DeepSeek,
+    OpenCode,
 }
 
 impl Backend {
-    pub const ALL: [Self; 3] = [Self::Claude, Self::Codex, Self::DeepSeek];
+    pub const ALL: [Self; 4] = [Self::Claude, Self::Codex, Self::DeepSeek, Self::OpenCode];
 
     /// How clud hands this harness launch-scoped configuration (#977).
     /// Call sites ask this instead of matching on the harness.
@@ -248,6 +261,7 @@ impl Backend {
             Backend::Claude => SettingsSurface::ClaudeSettingsArg,
             Backend::Codex => SettingsSurface::CodexConfigOverrides,
             Backend::DeepSeek => SettingsSurface::ProfileOnly,
+            Backend::OpenCode => SettingsSurface::InlineEnvironment,
         }
     }
 
@@ -257,6 +271,7 @@ impl Backend {
             Backend::Claude => "claude",
             Backend::Codex => "codex",
             Backend::DeepSeek => "dsh",
+            Backend::OpenCode => "opencode",
         }
     }
 
@@ -267,6 +282,8 @@ impl Backend {
             Some(Backend::Codex)
         } else if value.eq_ignore_ascii_case("deepseek") || value.eq_ignore_ascii_case("dsh") {
             Some(Backend::DeepSeek)
+        } else if value.eq_ignore_ascii_case("opencode") {
+            Some(Backend::OpenCode)
         } else {
             None
         }
@@ -277,6 +294,7 @@ impl Backend {
             Self::Claude => ModelProvider::Claude,
             Self::Codex => ModelProvider::Codex,
             Self::DeepSeek => ModelProvider::DeepSeek,
+            Self::OpenCode => ModelProvider::Claude,
         }
     }
 }
@@ -399,6 +417,9 @@ pub fn resolve_routed_launch_target(
         if requested_harness == HarnessSelection::DeepSeek {
             return Err(LaunchTargetError::UnifiedViaDeepSeekUnsupported);
         }
+        if requested_harness == HarnessSelection::OpenCode {
+            return Err(LaunchTargetError::UnifiedViaOpenCodeUnsupported);
+        }
         return Ok(ResolvedLaunchTarget {
             routing_mode,
             model_provider: cli_provider.unwrap_or(ModelProvider::Claude),
@@ -432,6 +453,9 @@ pub fn resolve_routed_launch_target(
         (HarnessSelection::Default, PreferenceSource::BuiltInDefault)
     };
     let effective_harness = requested_harness.resolve(model_provider);
+    if effective_harness == Backend::OpenCode && model_provider == ModelProvider::Codex {
+        return Err(LaunchTargetError::CodexViaOpenCodeUnsupported);
+    }
     if effective_harness == Backend::Codex {
         match model_provider {
             ModelProvider::Claude => return Err(LaunchTargetError::ClaudeViaCodexUnsupported),
@@ -478,6 +502,7 @@ pub fn saved_harness_override_notice(
         Backend::Claude => "Claude",
         Backend::Codex => "Codex",
         Backend::DeepSeek => "DeepSeek",
+        Backend::OpenCode => "OpenCode",
     };
     Some(format!(
         "\x1b[32m[clud] Harness override: {name} (global setting)\x1b[0m"

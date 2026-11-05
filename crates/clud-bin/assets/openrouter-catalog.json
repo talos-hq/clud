@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-10-06T11:28:44Z",
+  "generated_at": "2026-11-04T17:05:20Z",
   "source": "https://openrouter.ai/api/v1/models",
   "pricing_estimate": {
     "label": "lowest-priced eligible models by weighted token-mix estimate; not a quality ranking",
@@ -480,6 +480,66 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "anthropic/claude-haiku-5.5",
+      "name": "Anthropic: Claude Haiku 5.5",
+      "provider": "anthropic",
+      "context_length": 1000000,
+      "input_price_per_token": 1e-07,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 1e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "anthropic/claude-haiku-5.5:batch",
+      "name": "Anthropic: Claude Haiku 5.5 (batch)",
+      "provider": "anthropic",
+      "context_length": 1000000,
+      "input_price_per_token": 5e-08,
+      "output_price_per_token": 2.5e-07,
+      "cached_input_price_per_token": 5e-09,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "anthropic/claude-opus-4.1",
       "name": "Anthropic: Claude Opus 4.1",
       "provider": "anthropic",
@@ -589,7 +649,8 @@
           "max",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": false,
@@ -617,7 +678,8 @@
           "max",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": false,
@@ -646,7 +708,8 @@
           "xhigh",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": false,
@@ -675,7 +738,8 @@
           "xhigh",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": false,
@@ -704,7 +768,8 @@
           "xhigh",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": false,
@@ -733,7 +798,8 @@
           "xhigh",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": false,
@@ -762,7 +828,8 @@
           "xhigh",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -849,33 +916,11 @@
           "xhigh",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "anthropic/claude-sonnet-4",
-      "name": "Anthropic: Claude Sonnet 4",
-      "provider": "anthropic",
-      "context_length": 200000,
-      "input_price_per_token": 3e-06,
-      "output_price_per_token": 1.5e-05,
-      "cached_input_price_per_token": 3e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
         "mandatory": false
       },
       "supports_vision": true,
@@ -946,7 +991,8 @@
           "max",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "medium",
         "default_enabled": null,
@@ -974,7 +1020,8 @@
           "max",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "medium",
         "default_enabled": null,
@@ -1003,7 +1050,8 @@
           "xhigh",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -1020,7 +1068,7 @@
       "context_length": 1000000,
       "input_price_per_token": 2e-06,
       "output_price_per_token": 1e-05,
-      "cached_input_price_per_token": 2e-07,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1049,7 +1097,7 @@
       "context_length": 1000000,
       "input_price_per_token": 1e-06,
       "output_price_per_token": 5e-06,
-      "cached_input_price_per_token": 1e-07,
+      "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1090,7 +1138,8 @@
           "xhigh",
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -1099,77 +1148,6 @@
       "supports_vision": true,
       "eligible_for_coding": true,
       "ineligibility_reasons": []
-    },
-    {
-      "id": "apodex/apodex-1.1-mini:free",
-      "name": "Apodex: Apodex 1.1 Mini (free)",
-      "provider": "apodex",
-      "context_length": 262144,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "arcee-ai/trinity-large-thinking",
-      "name": "Arcee AI: Trinity Large Thinking",
-      "provider": "arcee-ai",
-      "context_length": 262144,
-      "input_price_per_token": 2.5e-07,
-      "output_price_per_token": 8e-07,
-      "cached_input_price_per_token": 6e-08,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "baidu/ernie-4.5-vl-424b-a47b",
-      "name": "Baidu: ERNIE 4.5 VL 424B A47B",
-      "provider": "baidu",
-      "context_length": 123000,
-      "input_price_per_token": 4.2e-07,
-      "output_price_per_token": 1.25e-06,
-      "cached_input_price_per_token": 4.2e-07,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
     },
     {
       "id": "bytedance-seed/seed-1.6",
@@ -1257,7 +1235,8 @@
         "supported_efforts": [
           "high",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "medium",
         "default_enabled": null,
@@ -1285,7 +1264,8 @@
           "high",
           "medium",
           "low",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "medium",
         "default_enabled": null,
@@ -1313,7 +1293,8 @@
           "high",
           "medium",
           "low",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "medium",
         "default_enabled": null,
@@ -1587,29 +1568,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "deepseek/deepseek-r1",
-      "name": "DeepSeek: R1",
-      "provider": "deepseek",
-      "context_length": 64000,
-      "input_price_per_token": 7e-07,
-      "output_price_per_token": 2.5e-06,
-      "cached_input_price_per_token": 7e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "deepseek/deepseek-r1-0528",
       "name": "DeepSeek: R1 0528",
       "provider": "deepseek",
@@ -1660,9 +1618,9 @@
       "name": "DeepSeek: DeepSeek V3.2",
       "provider": "deepseek",
       "context_length": 163840,
-      "input_price_per_token": 2.8e-07,
-      "output_price_per_token": 4.2e-07,
-      "cached_input_price_per_token": 2.8e-08,
+      "input_price_per_token": 2.6e-07,
+      "output_price_per_token": 3.8e-07,
+      "cached_input_price_per_token": 1.3e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1706,9 +1664,9 @@
       "name": "DeepSeek: DeepSeek V4 Flash 0423",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 2.04e-08,
-      "output_price_per_token": 1.28e-06,
-      "cached_input_price_per_token": 2.04e-08,
+      "input_price_per_token": 9.1e-08,
+      "output_price_per_token": 1.82e-07,
+      "cached_input_price_per_token": 1.82e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1717,7 +1675,8 @@
       "reasoning": {
         "supported_efforts": [
           "xhigh",
-          "high"
+          "high",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": null,
@@ -1732,9 +1691,9 @@
       "name": "DeepSeek: DeepSeek V4 Flash 0731",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 6.9e-09,
-      "output_price_per_token": 1.28e-06,
-      "cached_input_price_per_token": 6.9e-09,
+      "input_price_per_token": 5.53e-08,
+      "output_price_per_token": 3e-07,
+      "cached_input_price_per_token": 3.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1744,7 +1703,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -1771,7 +1731,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -1786,9 +1747,9 @@
       "name": "DeepSeek: DeepSeek V4 Pro 0423",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 2.088e-07,
-      "output_price_per_token": 4.176e-07,
-      "cached_input_price_per_token": 1.74e-08,
+      "input_price_per_token": 1.6e-06,
+      "output_price_per_token": 3.2e-06,
+      "cached_input_price_per_token": 1.35e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1797,7 +1758,8 @@
       "reasoning": {
         "supported_efforts": [
           "xhigh",
-          "high"
+          "high",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": null,
@@ -1812,9 +1774,9 @@
       "name": "DeepSeek: DeepSeek V4 Pro 0813",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 6.6e-07,
-      "output_price_per_token": 1.98e-06,
-      "cached_input_price_per_token": 2.2e-08,
+      "input_price_per_token": 1.15e-07,
+      "output_price_per_token": 4.6e-06,
+      "cached_input_price_per_token": 1.1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1824,7 +1786,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": null,
@@ -1839,9 +1802,9 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 1.2563e-08,
-      "output_price_per_token": 1.32e-06,
-      "cached_input_price_per_token": 1.2563e-08,
+      "input_price_per_token": 4.5e-08,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 1.8e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1851,7 +1814,36 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash-1017",
+      "name": "DeepSeek: DeepSeek V4.1 Flash 1017",
+      "provider": "deepseek",
+      "context_length": 1048576,
+      "input_price_per_token": 1.5e-07,
+      "output_price_per_token": 6e-07,
+      "cached_input_price_per_token": 3e-09,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "high",
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -1866,9 +1858,9 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash (batch)",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 1.12e-07,
-      "output_price_per_token": 3.36e-07,
-      "cached_input_price_per_token": 3.36e-09,
+      "input_price_per_token": 5e-08,
+      "output_price_per_token": 1.5e-07,
+      "cached_input_price_per_token": 4e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1878,7 +1870,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -1912,6 +1905,29 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "elorian/glimpse",
+      "name": "Elorian: Glimpse",
+      "provider": "elorian",
+      "context_length": 262144,
+      "input_price_per_token": 6e-07,
+      "output_price_per_token": 3e-06,
+      "cached_input_price_per_token": 6e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "fireworks/ember-1",
       "name": "Fireworks: Ember-1",
       "provider": "fireworks",
@@ -1928,7 +1944,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "max",
         "default_enabled": true,
@@ -2010,52 +2027,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "google/gemini-2.5-flash-lite:batch",
-      "name": "Google: Gemini 2.5 Flash Lite (batch)",
-      "provider": "google",
-      "context_length": 1048576,
-      "input_price_per_token": 5e-08,
-      "output_price_per_token": 2e-07,
-      "cached_input_price_per_token": 1e-08,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "google/gemini-2.5-flash:batch",
-      "name": "Google: Gemini 2.5 Flash (batch)",
-      "provider": "google",
-      "context_length": 1048576,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 1.25e-06,
-      "cached_input_price_per_token": 3e-08,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "google/gemini-2.5-pro",
       "name": "Google: Gemini 2.5 Pro",
       "provider": "google",
@@ -2102,29 +2073,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "google/gemini-2.5-pro:batch",
-      "name": "Google: Gemini 2.5 Pro (batch)",
-      "provider": "google",
-      "context_length": 1048576,
-      "input_price_per_token": 6.25e-07,
-      "output_price_per_token": 5e-06,
-      "cached_input_price_per_token": 1.25e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "google/gemini-3-flash-preview",
       "name": "Google: Gemini 3 Flash Preview",
       "provider": "google",
@@ -2142,7 +2090,8 @@
           "high",
           "medium",
           "low",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "medium",
         "default_enabled": null,
@@ -2170,7 +2119,8 @@
           "high",
           "medium",
           "low",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "medium",
         "default_enabled": null,
@@ -2244,7 +2194,8 @@
       "reasoning": {
         "supported_efforts": [
           "high",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "minimal",
         "default_enabled": true,
@@ -2272,7 +2223,8 @@
       "reasoning": {
         "supported_efforts": [
           "high",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "minimal",
         "default_enabled": true,
@@ -2302,7 +2254,8 @@
           "high",
           "medium",
           "low",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "minimal",
         "default_enabled": true,
@@ -2328,7 +2281,8 @@
       "reasoning": {
         "supported_efforts": [
           "high",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "minimal",
         "default_enabled": true,
@@ -2358,7 +2312,8 @@
           "high",
           "medium",
           "low",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "minimal",
         "default_enabled": true,
@@ -2386,7 +2341,8 @@
           "high",
           "medium",
           "low",
-          "minimal"
+          "minimal",
+          "none"
         ],
         "default_effort": "minimal",
         "default_enabled": true,
@@ -2704,9 +2660,9 @@
       "name": "Google: Gemini 3.8 Flash",
       "provider": "google",
       "context_length": 1048576,
-      "input_price_per_token": 7.5e-07,
-      "output_price_per_token": 3.75e-06,
-      "cached_input_price_per_token": 7.5e-08,
+      "input_price_per_token": 8.25e-07,
+      "output_price_per_token": 4.125e-06,
+      "cached_input_price_per_token": 8.25e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -2748,6 +2704,87 @@
         "default_effort": "medium",
         "default_enabled": true,
         "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "google/gemini-4-argon",
+      "name": "Google: Gemini 4 Argon",
+      "provider": "google",
+      "context_length": 1048576,
+      "input_price_per_token": 2e-06,
+      "output_price_per_token": 1e-05,
+      "cached_input_price_per_token": 1e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "google/gemini-4-argon:batch",
+      "name": "Google: Gemini 4 Argon (batch)",
+      "provider": "google",
+      "context_length": 1048576,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 5e-06,
+      "cached_input_price_per_token": 5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "google/gemini-nano-banana-2.1",
+      "name": "Google: Nano Banana 2.1",
+      "provider": "google",
+      "context_length": 65536,
+      "input_price_per_token": 1.5e-06,
+      "output_price_per_token": 7.5e-06,
+      "cached_input_price_per_token": 1.5e-06,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "minimal",
+          "none"
+        ],
+        "default_effort": "minimal",
+        "default_enabled": true,
+        "mandatory": false
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -2808,7 +2845,7 @@
       "provider": "google",
       "context_length": 131072,
       "input_price_per_token": 8e-08,
-      "output_price_per_token": 4.5e-07,
+      "output_price_per_token": 3.5e-07,
       "cached_input_price_per_token": 4e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -2855,7 +2892,7 @@
       "name": "Google: Gemma 4 26B A4B",
       "provider": "google",
       "context_length": 262144,
-      "input_price_per_token": 9e-08,
+      "input_price_per_token": 1e-07,
       "output_price_per_token": 3e-07,
       "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
@@ -2901,9 +2938,9 @@
       "name": "Google: Gemma 4 31B",
       "provider": "google",
       "context_length": 262144,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 3.4e-07,
-      "cached_input_price_per_token": 5e-08,
+      "input_price_per_token": 2e-07,
+      "output_price_per_token": 4e-07,
+      "cached_input_price_per_token": 2e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3019,31 +3056,6 @@
       ]
     },
     {
-      "id": "ibm-granite/granite-4.0-h-micro",
-      "name": "IBM: Granite 4.0 Micro",
-      "provider": "ibm-granite",
-      "context_length": 131000,
-      "input_price_per_token": 1.7e-08,
-      "output_price_per_token": 1.12e-07,
-      "cached_input_price_per_token": 1.7e-08,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
-    },
-    {
       "id": "ibm-granite/granite-4.2-8b",
       "name": "IBM: Granite 4.2 8B",
       "provider": "ibm-granite",
@@ -3127,6 +3139,34 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "inception/mercury-3",
+      "name": "Inception: Mercury 3",
+      "provider": "inception",
+      "context_length": 1000000,
+      "input_price_per_token": 1e-07,
+      "output_price_per_token": 3.5e-07,
+      "cached_input_price_per_token": 1e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "default_effort": "medium",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": false,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "inclusionai/ling-3.0-flash",
       "name": "inclusionAI: Ling 3.0 Flash",
       "provider": "inclusionai",
@@ -3150,59 +3190,13 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "inclusionai/ling-3.0-flash-fin",
-      "name": "inclusionAI: Ling 3.0 Flash Fin",
-      "provider": "inclusionai",
-      "context_length": 262144,
-      "input_price_per_token": 4.2e-08,
-      "output_price_per_token": 1.232e-07,
-      "cached_input_price_per_token": 8.4e-09,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "inclusionai/ling-3.0-flash-sante:free",
-      "name": "inclusionAI: Ling 3.0 Flash Sante (free)",
-      "provider": "inclusionai",
-      "context_length": 262144,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "inclusionai/ling-3.0-flash-vl",
       "name": "inclusionAI: Ling 3.0 Flash VL",
       "provider": "inclusionai",
-      "context_length": 262144,
-      "input_price_per_token": 2.1e-08,
-      "output_price_per_token": 6.16e-08,
-      "cached_input_price_per_token": 4.2e-09,
+      "context_length": 131072,
+      "input_price_per_token": 6e-08,
+      "output_price_per_token": 1.8e-07,
+      "cached_input_price_per_token": 1.2e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3222,10 +3216,10 @@
       "id": "inclusionai/ling-3.1-flash",
       "name": "inclusionAI: Ling 3.1 Flash",
       "provider": "inclusionai",
-      "context_length": 262144,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
+      "context_length": 1000000,
+      "input_price_per_token": 7.5e-08,
+      "output_price_per_token": 2.25e-07,
+      "cached_input_price_per_token": 1.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3292,23 +3286,23 @@
       ]
     },
     {
-      "id": "kwaipilot/kat-coder-pro-v2.5",
-      "name": "Kwaipilot: KAT-Coder-Pro V2.5",
-      "provider": "kwaipilot",
-      "context_length": 262144,
-      "input_price_per_token": 7.4e-07,
-      "output_price_per_token": 2.96e-06,
-      "cached_input_price_per_token": 1.5e-07,
+      "id": "liquid/lfm-2.5-2.6b",
+      "name": "LiquidAI: LFM2.5-2.6B",
+      "provider": "liquid",
+      "context_length": 128000,
+      "input_price_per_token": 3.5e-07,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 4e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
-      "supports_reasoning": false,
+      "supports_reasoning": true,
       "supports_reasoning_effort": false,
       "reasoning": {
         "supported_efforts": null,
         "default_effort": null,
         "default_enabled": null,
-        "mandatory": null
+        "mandatory": true
       },
       "supports_vision": false,
       "eligible_for_coding": true,
@@ -3322,6 +3316,29 @@
       "input_price_per_token": 0.0,
       "output_price_per_token": 0.0,
       "cached_input_price_per_token": 0.0,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": false,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "liquid/lfm-2.5-24b-a2b",
+      "name": "LiquidAI: LFM2.5-24B-A2B",
+      "provider": "liquid",
+      "context_length": 128000,
+      "input_price_per_token": 5e-08,
+      "output_price_per_token": 7e-07,
+      "cached_input_price_per_token": 2.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3391,10 +3408,10 @@
       "name": "Meta: Llama 3.1 70B Instruct",
       "provider": "meta-llama",
       "context_length": 131072,
-      "input_price_per_token": 4e-07,
-      "output_price_per_token": 4e-07,
-      "cached_input_price_per_token": 4e-07,
-      "supports_tools": true,
+      "input_price_per_token": 7.2e-07,
+      "output_price_per_token": 7.2e-07,
+      "cached_input_price_per_token": 7.2e-07,
+      "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": false,
@@ -3406,8 +3423,10 @@
         "mandatory": null
       },
       "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
     },
     {
       "id": "meta-llama/llama-3.1-8b-instruct",
@@ -3462,9 +3481,9 @@
       "name": "Meta: Llama 3.2 3B Instruct",
       "provider": "meta-llama",
       "context_length": 131072,
-      "input_price_per_token": 5e-08,
-      "output_price_per_token": 3.3e-07,
-      "cached_input_price_per_token": 5e-08,
+      "input_price_per_token": 5.09e-08,
+      "output_price_per_token": 3.35e-07,
+      "cached_input_price_per_token": 5.09e-08,
       "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3487,9 +3506,9 @@
       "name": "Meta: Llama 3.3 70B Instruct",
       "provider": "meta-llama",
       "context_length": 131072,
-      "input_price_per_token": 2.2e-07,
-      "output_price_per_token": 5e-07,
-      "cached_input_price_per_token": 1.1e-07,
+      "input_price_per_token": 1e-07,
+      "output_price_per_token": 3.2e-07,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3509,10 +3528,10 @@
       "id": "meta-llama/llama-4-maverick",
       "name": "Meta: Llama 4 Maverick",
       "provider": "meta-llama",
-      "context_length": 1048576,
+      "context_length": 524288,
       "input_price_per_token": 1.875e-07,
       "output_price_per_token": 6.525e-07,
-      "cached_input_price_per_token": 1.875e-07,
+      "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3752,6 +3771,64 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "meta/muse-spark-open",
+      "name": "Meta: Muse Spark Open",
+      "provider": "meta",
+      "context_length": 1048576,
+      "input_price_per_token": 1.25e-06,
+      "output_price_per_token": 4.25e-06,
+      "cached_input_price_per_token": 1.5e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "meta/muse-wonder",
+      "name": "Meta: Muse Wonder",
+      "provider": "meta",
+      "context_length": 1048576,
+      "input_price_per_token": 4e-06,
+      "output_price_per_token": 2e-05,
+      "cached_input_price_per_token": 2e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "microsoft/phi-4",
       "name": "Microsoft: Phi 4",
       "provider": "microsoft",
@@ -3759,31 +3836,6 @@
       "input_price_per_token": 7e-08,
       "output_price_per_token": 1.4e-07,
       "cached_input_price_per_token": 7e-08,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
-    },
-    {
-      "id": "microsoft/wizardlm-2-8x22b",
-      "name": "WizardLM-2 8x22B",
-      "provider": "microsoft",
-      "context_length": 65535,
-      "input_price_per_token": 6.2e-07,
-      "output_price_per_token": 6.2e-07,
-      "cached_input_price_per_token": 6.2e-07,
       "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3854,9 +3906,9 @@
       "name": "MiniMax: MiniMax M2",
       "provider": "minimax",
       "context_length": 204800,
-      "input_price_per_token": 3e-07,
-      "output_price_per_token": 1.2e-06,
-      "cached_input_price_per_token": 3e-07,
+      "input_price_per_token": 2.55e-07,
+      "output_price_per_token": 1.02e-06,
+      "cached_input_price_per_token": 2.55e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3926,8 +3978,8 @@
       "provider": "minimax",
       "context_length": 204800,
       "input_price_per_token": 2.7e-07,
-      "output_price_per_token": 1.08e-06,
-      "cached_input_price_per_token": 2.7e-08,
+      "output_price_per_token": 9.5e-07,
+      "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3948,9 +4000,9 @@
       "name": "MiniMax: MiniMax M2.7",
       "provider": "minimax",
       "context_length": 204800,
-      "input_price_per_token": 2.1e-07,
-      "output_price_per_token": 8.4e-07,
-      "cached_input_price_per_token": 4.2e-08,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 1.2e-06,
+      "cached_input_price_per_token": 6e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3990,6 +4042,35 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "minimax/minimax-m3.1-flash",
+      "name": "MiniMax: MiniMax M3.1 Flash",
+      "provider": "minimax",
+      "context_length": 1048576,
+      "input_price_per_token": 7.5e-08,
+      "output_price_per_token": 3e-07,
+      "cached_input_price_per_token": 7.5e-09,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "max",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "mistralai/codestral-2508",
       "name": "Mistral: Codestral 2508",
       "provider": "mistralai",
@@ -3997,29 +4078,6 @@
       "input_price_per_token": 3e-07,
       "output_price_per_token": 9e-07,
       "cached_input_price_per_token": 3e-08,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "mistralai/codestral-2508:batch",
-      "name": "Mistral: Codestral 2508 (batch)",
-      "provider": "mistralai",
-      "context_length": 256000,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 4.5e-07,
-      "cached_input_price_per_token": 1.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4128,29 +4186,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "mistralai/ministral-8b-2512:batch",
-      "name": "Mistral: Ministral 3 8B 2512 (batch)",
-      "provider": "mistralai",
-      "context_length": 262144,
-      "input_price_per_token": 7.5e-08,
-      "output_price_per_token": 7.5e-08,
-      "cached_input_price_per_token": 7.5e-09,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "mistralai/mistral-large",
       "name": "Mistral Large",
       "provider": "mistralai",
@@ -4220,23 +4255,26 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "mistralai/mistral-large-2512:batch",
-      "name": "Mistral: Mistral Large 3 2512 (batch)",
+      "id": "mistralai/mistral-large-4-0",
+      "name": "Mistral: Mistral Large 4",
       "provider": "mistralai",
-      "context_length": 262144,
-      "input_price_per_token": 2.5e-07,
-      "output_price_per_token": 7.5e-07,
-      "cached_input_price_per_token": 2.5e-08,
+      "context_length": 1048576,
+      "input_price_per_token": 7e-07,
+      "output_price_per_token": 2.1e-06,
+      "cached_input_price_per_token": 7e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
       "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
+        "supported_efforts": [
+          "high",
+          "none"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": false
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -4341,36 +4379,13 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "mistralai/mistral-medium-3.1:batch",
-      "name": "Mistral: Mistral Medium 3.1 (batch)",
-      "provider": "mistralai",
-      "context_length": 131072,
-      "input_price_per_token": 2e-07,
-      "output_price_per_token": 1e-06,
-      "cached_input_price_per_token": 2e-08,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "mistralai/mistral-nemo",
       "name": "Mistral: Mistral Nemo",
       "provider": "mistralai",
       "context_length": 131072,
-      "input_price_per_token": 1.9e-08,
+      "input_price_per_token": 2.9e-08,
       "output_price_per_token": 3e-08,
-      "cached_input_price_per_token": 1.9e-08,
+      "cached_input_price_per_token": 2.9e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4461,32 +4476,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "mistralai/mistral-small-2603:batch",
-      "name": "Mistral: Mistral Small 4 (batch)",
-      "provider": "mistralai",
-      "context_length": 262144,
-      "input_price_per_token": 7.5e-08,
-      "output_price_per_token": 3e-07,
-      "cached_input_price_per_token": 7.5e-09,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": true,
-      "reasoning": {
-        "supported_efforts": [
-          "high",
-          "none"
-        ],
-        "default_effort": "high",
-        "default_enabled": false,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "mistralai/mistral-small-3.1-24b-instruct",
       "name": "Mistral: Mistral Small 3.1 24B",
       "provider": "mistralai",
@@ -4514,9 +4503,9 @@
       "name": "Mistral: Mistral Small 3.2 24B",
       "provider": "mistralai",
       "context_length": 256000,
-      "input_price_per_token": 9.375e-08,
-      "output_price_per_token": 2.5e-07,
-      "cached_input_price_per_token": 9.375e-08,
+      "input_price_per_token": 7.5e-08,
+      "output_price_per_token": 2e-07,
+      "cached_input_price_per_token": 7.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4579,6 +4568,56 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "moondream/moondream3-preview",
+      "name": "Moondream: Moondream 3 Preview",
+      "provider": "moondream",
+      "context_length": 32000,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 2.5e-06,
+      "cached_input_price_per_token": 3e-07,
+      "supports_tools": false,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": false,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
+    },
+    {
+      "id": "moondream/moondream3.1-9b-a2b",
+      "name": "Moondream: Moondream 3.1",
+      "provider": "moondream",
+      "context_length": 32000,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 2.5e-06,
+      "cached_input_price_per_token": 3e-07,
+      "supports_tools": false,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": false,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
+    },
+    {
       "id": "moonshotai/kimi-k2",
       "name": "MoonshotAI: Kimi K2 0711",
       "provider": "moonshotai",
@@ -4631,7 +4670,7 @@
       "context_length": 262144,
       "input_price_per_token": 6e-07,
       "output_price_per_token": 2.5e-06,
-      "cached_input_price_per_token": 6e-07,
+      "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4652,9 +4691,9 @@
       "name": "MoonshotAI: Kimi K2.5",
       "provider": "moonshotai",
       "context_length": 262144,
-      "input_price_per_token": 4.5e-07,
-      "output_price_per_token": 2.25e-06,
-      "cached_input_price_per_token": 7e-08,
+      "input_price_per_token": 5e-07,
+      "output_price_per_token": 2.5e-06,
+      "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4675,9 +4714,9 @@
       "name": "MoonshotAI: Kimi K2.6",
       "provider": "moonshotai",
       "context_length": 262144,
-      "input_price_per_token": 9.5e-07,
-      "output_price_per_token": 4e-06,
-      "cached_input_price_per_token": 1.6e-07,
+      "input_price_per_token": 6.5e-07,
+      "output_price_per_token": 3.41e-06,
+      "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4698,9 +4737,9 @@
       "name": "MoonshotAI: Kimi K2.7 Code",
       "provider": "moonshotai",
       "context_length": 262144,
-      "input_price_per_token": 6.712e-07,
-      "output_price_per_token": 3.35e-06,
-      "cached_input_price_per_token": 1.8e-07,
+      "input_price_per_token": 6e-07,
+      "output_price_per_token": 3.5e-06,
+      "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4721,9 +4760,9 @@
       "name": "MoonshotAI: Kimi K3",
       "provider": "moonshotai",
       "context_length": 1048576,
-      "input_price_per_token": 9.5e-07,
-      "output_price_per_token": 1.4e-05,
-      "cached_input_price_per_token": 3.1e-07,
+      "input_price_per_token": 1.92e-07,
+      "output_price_per_token": 1.6e-05,
+      "cached_input_price_per_token": 1.82e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4733,7 +4772,36 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
+        ],
+        "default_effort": "max",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "moonshotai/kimi-k3.1-pro",
+      "name": "MoonshotAI: Kimi K3.1 Pro",
+      "provider": "moonshotai",
+      "context_length": 1048576,
+      "input_price_per_token": 2e-06,
+      "output_price_per_token": 1e-05,
+      "cached_input_price_per_token": 2e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "high",
+          "low",
+          "none"
         ],
         "default_effort": "max",
         "default_enabled": true,
@@ -4760,7 +4828,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "max",
         "default_enabled": true,
@@ -4774,7 +4843,7 @@
       "id": "morph/morph-v3-fast",
       "name": "Morph: Morph V3 Fast",
       "provider": "morph",
-      "context_length": 81920,
+      "context_length": 262144,
       "input_price_per_token": 8e-07,
       "output_price_per_token": 1.2e-06,
       "cached_input_price_per_token": 8e-07,
@@ -4877,63 +4946,13 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "nousresearch/hermes-3-llama-3.1-405b",
-      "name": "Nous: Hermes 3 405B Instruct",
-      "provider": "nousresearch",
-      "context_length": 131072,
-      "input_price_per_token": 1e-06,
-      "output_price_per_token": 1e-06,
-      "cached_input_price_per_token": 1e-06,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
-    },
-    {
-      "id": "nousresearch/hermes-3-llama-3.1-70b",
-      "name": "Nous: Hermes 3 70B Instruct",
-      "provider": "nousresearch",
-      "context_length": 131072,
-      "input_price_per_token": 7e-07,
-      "output_price_per_token": 7e-07,
-      "cached_input_price_per_token": 7e-07,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
-    },
-    {
       "id": "nousresearch/hermes-4-405b",
       "name": "Nous: Hermes 4 405B",
       "provider": "nousresearch",
       "context_length": 131072,
       "input_price_per_token": 1e-06,
       "output_price_per_token": 3e-06,
-      "cached_input_price_per_token": 1e-06,
+      "cached_input_price_per_token": 2e-07,
       "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4956,9 +4975,9 @@
       "name": "NVIDIA: Nemotron 3 Nano 30B A3B",
       "provider": "nvidia",
       "context_length": 262144,
-      "input_price_per_token": 5e-08,
-      "output_price_per_token": 2e-07,
-      "cached_input_price_per_token": 3e-08,
+      "input_price_per_token": 6e-08,
+      "output_price_per_token": 2.4e-07,
+      "cached_input_price_per_token": 1.2e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -5001,10 +5020,10 @@
       "id": "nvidia/nemotron-3-super-120b-a12b",
       "name": "NVIDIA: Nemotron 3 Super",
       "provider": "nvidia",
-      "context_length": 262144,
-      "input_price_per_token": 8e-08,
-      "output_price_per_token": 4.5e-07,
-      "cached_input_price_per_token": 8e-08,
+      "context_length": 1048576,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 2.4e-06,
+      "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -5013,33 +5032,8 @@
       "reasoning": {
         "supported_efforts": [
           "medium",
-          "low"
-        ],
-        "default_effort": "medium",
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "nvidia/nemotron-3-super-120b-a12b:free",
-      "name": "NVIDIA: Nemotron 3 Super (free)",
-      "provider": "nvidia",
-      "context_length": 262144,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": true,
-      "reasoning": {
-        "supported_efforts": [
-          "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "medium",
         "default_enabled": true,
@@ -5054,9 +5048,9 @@
       "name": "NVIDIA: Nemotron 3 Ultra",
       "provider": "nvidia",
       "context_length": 262144,
-      "input_price_per_token": 5e-07,
-      "output_price_per_token": 2.2e-06,
-      "cached_input_price_per_token": 1e-07,
+      "input_price_per_token": 6e-07,
+      "output_price_per_token": 2.4e-06,
+      "cached_input_price_per_token": 1.2e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -5065,7 +5059,8 @@
       "reasoning": {
         "supported_efforts": [
           "high",
-          "medium"
+          "medium",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -5091,7 +5086,8 @@
       "reasoning": {
         "supported_efforts": [
           "high",
-          "medium"
+          "medium",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -5156,9 +5152,9 @@
       "name": "NVIDIA: Nemotron 3.5 Lightning",
       "provider": "nvidia",
       "context_length": 262144,
-      "input_price_per_token": 6e-08,
-      "output_price_per_token": 1.6e-07,
-      "cached_input_price_per_token": 3e-08,
+      "input_price_per_token": 7e-08,
+      "output_price_per_token": 2e-07,
+      "cached_input_price_per_token": 4e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -5198,6 +5194,52 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "nvidia/nemotron-3.5-super-vl",
+      "name": "NVIDIA: Nemotron 3.5 Super VL",
+      "provider": "nvidia",
+      "context_length": 1048576,
+      "input_price_per_token": 1.5e-07,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 2e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "nvidia/nemotron-3.5-super-vl:free",
+      "name": "NVIDIA: Nemotron 3.5 Super VL (free)",
+      "provider": "nvidia",
+      "context_length": 1000000,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "nvidia/switchyard",
       "name": "NVIDIA: Switchyard",
       "provider": "nvidia",
@@ -5222,29 +5264,6 @@
         "requires tools and tool_choice support",
         "requires known input and output prices"
       ]
-    },
-    {
-      "id": "openai/gpt-3.5-turbo",
-      "name": "OpenAI: GPT-3.5 Turbo",
-      "provider": "openai",
-      "context_length": 16385,
-      "input_price_per_token": 5e-07,
-      "output_price_per_token": 1.5e-06,
-      "cached_input_price_per_token": 5e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
     },
     {
       "id": "openai/gpt-3.5-turbo-0613",
@@ -5295,55 +5314,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "openai/gpt-3.5-turbo-instruct",
-      "name": "OpenAI: GPT-3.5 Turbo Instruct",
-      "provider": "openai",
-      "context_length": 4095,
-      "input_price_per_token": 1.5e-06,
-      "output_price_per_token": 2e-06,
-      "cached_input_price_per_token": 1.5e-06,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support",
-        "requires at least 16000 context tokens"
-      ]
-    },
-    {
-      "id": "openai/gpt-3.5-turbo:batch",
-      "name": "OpenAI: GPT-3.5 Turbo (batch)",
-      "provider": "openai",
-      "context_length": 16385,
-      "input_price_per_token": 2.5e-07,
-      "output_price_per_token": 7.5e-07,
-      "cached_input_price_per_token": 2.5e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "openai/gpt-4",
       "name": "OpenAI: GPT-4",
       "provider": "openai",
@@ -5367,29 +5337,6 @@
       "ineligibility_reasons": [
         "requires at least 16000 context tokens"
       ]
-    },
-    {
-      "id": "openai/gpt-4-turbo",
-      "name": "OpenAI: GPT-4 Turbo",
-      "provider": "openai",
-      "context_length": 128000,
-      "input_price_per_token": 1e-05,
-      "output_price_per_token": 3e-05,
-      "cached_input_price_per_token": 1e-05,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
     },
     {
       "id": "openai/gpt-4-turbo:batch",
@@ -5490,7 +5437,7 @@
       "context_length": 1047576,
       "input_price_per_token": 1e-07,
       "output_price_per_token": 4e-07,
-      "cached_input_price_per_token": 2.5e-08,
+      "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -5996,8 +5943,8 @@
           "low",
           "none"
         ],
-        "default_effort": "none",
-        "default_enabled": true,
+        "default_effort": "medium",
+        "default_enabled": false,
         "mandatory": false
       },
       "supports_vision": true,
@@ -6080,7 +6027,7 @@
         ],
         "default_effort": "medium",
         "default_enabled": null,
-        "mandatory": false
+        "mandatory": true
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -6106,8 +6053,8 @@
           "low",
           "none"
         ],
-        "default_effort": "none",
-        "default_enabled": true,
+        "default_effort": "medium",
+        "default_enabled": false,
         "mandatory": false
       },
       "supports_vision": true,
@@ -6802,9 +6749,9 @@
       "name": "OpenAI: GPT-5.6 Sol",
       "provider": "openai",
       "context_length": 1050000,
-      "input_price_per_token": 2e-06,
-      "output_price_per_token": 1e-05,
-      "cached_input_price_per_token": 2e-07,
+      "input_price_per_token": 4e-06,
+      "output_price_per_token": 2e-05,
+      "cached_input_price_per_token": 4e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -6832,9 +6779,9 @@
       "name": "OpenAI: GPT-5.6 Sol Pro",
       "provider": "openai",
       "context_length": 1050000,
-      "input_price_per_token": 2e-06,
-      "output_price_per_token": 1e-05,
-      "cached_input_price_per_token": 2e-07,
+      "input_price_per_token": 4e-06,
+      "output_price_per_token": 2e-05,
+      "cached_input_price_per_token": 4e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -6862,9 +6809,9 @@
       "name": "OpenAI: GPT-5.6 Sol Pro (batch)",
       "provider": "openai",
       "context_length": 1050000,
-      "input_price_per_token": 1e-06,
-      "output_price_per_token": 5e-06,
-      "cached_input_price_per_token": 1e-07,
+      "input_price_per_token": 2e-06,
+      "output_price_per_token": 1e-05,
+      "cached_input_price_per_token": 2e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -6892,9 +6839,9 @@
       "name": "OpenAI: GPT-5.6 Sol (batch)",
       "provider": "openai",
       "context_length": 1050000,
-      "input_price_per_token": 1e-06,
-      "output_price_per_token": 5e-06,
-      "cached_input_price_per_token": 1e-07,
+      "input_price_per_token": 2e-06,
+      "output_price_per_token": 1e-05,
+      "cached_input_price_per_token": 2e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -7480,6 +7427,182 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "openai/gpt-6.1-sol-pro:batch",
+      "name": "OpenAI: GPT-6.1 Sol Pro (batch)",
+      "provider": "openai",
+      "context_length": 1050000,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 5e-06,
+      "cached_input_price_per_token": 5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "openai/gpt-6.1-sol:batch",
+      "name": "OpenAI: GPT-6.1 Sol (batch)",
+      "provider": "openai",
+      "context_length": 1050000,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 5e-06,
+      "cached_input_price_per_token": 5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "openai/gpt-6.1-terra",
+      "name": "OpenAI: GPT-6.1 Terra",
+      "provider": "openai",
+      "context_length": 1050000,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 5e-06,
+      "cached_input_price_per_token": 5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "default_effort": "medium",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "openai/gpt-6.1-terra-pro",
+      "name": "OpenAI: GPT-6.1 Terra Pro",
+      "provider": "openai",
+      "context_length": 1050000,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 5e-06,
+      "cached_input_price_per_token": 5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "openai/gpt-6.1-terra-pro:batch",
+      "name": "OpenAI: GPT-6.1 Terra Pro (batch)",
+      "provider": "openai",
+      "context_length": 1050000,
+      "input_price_per_token": 5e-07,
+      "output_price_per_token": 2.5e-06,
+      "cached_input_price_per_token": 2.5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "openai/gpt-6.1-terra:batch",
+      "name": "OpenAI: GPT-6.1 Terra (batch)",
+      "provider": "openai",
+      "context_length": 1050000,
+      "input_price_per_token": 5e-07,
+      "output_price_per_token": 2.5e-06,
+      "cached_input_price_per_token": 2.5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "default_effort": "medium",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "openai/gpt-audio",
       "name": "OpenAI: GPT Audio",
       "provider": "openai",
@@ -7553,9 +7676,9 @@
       "name": "OpenAI: gpt-oss-120b",
       "provider": "openai",
       "context_length": 131072,
-      "input_price_per_token": 3.7e-08,
-      "output_price_per_token": 1.7e-07,
-      "cached_input_price_per_token": 3.7e-08,
+      "input_price_per_token": 1.5e-07,
+      "output_price_per_token": 6e-07,
+      "cached_input_price_per_token": 7.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -7680,54 +7803,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "openai/o1",
-      "name": "OpenAI: o1",
-      "provider": "openai",
-      "context_length": 200000,
-      "input_price_per_token": 1.5e-05,
-      "output_price_per_token": 6e-05,
-      "cached_input_price_per_token": 7.5e-06,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "openai/o1-pro",
-      "name": "OpenAI: o1-pro",
-      "provider": "openai",
-      "context_length": 200000,
-      "input_price_per_token": 0.00015,
-      "output_price_per_token": 0.0006,
-      "cached_input_price_per_token": 0.00015,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
-    },
-    {
       "id": "openai/o3",
       "name": "OpenAI: o3",
       "provider": "openai",
@@ -7744,57 +7819,9 @@
         "supported_efforts": null,
         "default_effort": null,
         "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "openai/o3-mini",
-      "name": "OpenAI: o3 Mini",
-      "provider": "openai",
-      "context_length": 200000,
-      "input_price_per_token": 1.1e-06,
-      "output_price_per_token": 4.4e-06,
-      "cached_input_price_per_token": 5.5e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "openai/o3-mini-high",
-      "name": "OpenAI: o3 Mini High",
-      "provider": "openai",
-      "context_length": 200000,
-      "input_price_per_token": 1.1e-06,
-      "output_price_per_token": 4.4e-06,
-      "cached_input_price_per_token": 5.5e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": true,
-      "reasoning": {
-        "supported_efforts": [
-          "high"
-        ],
-        "default_effort": "high",
-        "default_enabled": null,
         "mandatory": true
       },
-      "supports_vision": false,
+      "supports_vision": true,
       "eligible_for_coding": true,
       "ineligibility_reasons": []
     },
@@ -7815,7 +7842,7 @@
         "supported_efforts": null,
         "default_effort": null,
         "default_enabled": null,
-        "mandatory": false
+        "mandatory": true
       },
       "supports_vision": false,
       "eligible_for_coding": true,
@@ -7838,7 +7865,7 @@
         "supported_efforts": null,
         "default_effort": null,
         "default_enabled": null,
-        "mandatory": false
+        "mandatory": true
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -7860,54 +7887,6 @@
       "reasoning": {
         "supported_efforts": null,
         "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "openai/o4-mini",
-      "name": "OpenAI: o4 Mini",
-      "provider": "openai",
-      "context_length": 200000,
-      "input_price_per_token": 1.1e-06,
-      "output_price_per_token": 4.4e-06,
-      "cached_input_price_per_token": 2.75e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "openai/o4-mini-high",
-      "name": "OpenAI: o4 Mini High",
-      "provider": "openai",
-      "context_length": 200000,
-      "input_price_per_token": 1.1e-06,
-      "output_price_per_token": 4.4e-06,
-      "cached_input_price_per_token": 2.75e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": true,
-      "reasoning": {
-        "supported_efforts": [
-          "high"
-        ],
-        "default_effort": "high",
         "default_enabled": null,
         "mandatory": true
       },
@@ -7932,7 +7911,7 @@
         "supported_efforts": null,
         "default_effort": null,
         "default_enabled": null,
-        "mandatory": false
+        "mandatory": true
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -8071,11 +8050,11 @@
       "input_price_per_token": null,
       "output_price_per_token": null,
       "cached_input_price_per_token": null,
-      "supports_tools": false,
+      "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
       "reasoning": {
         "supported_efforts": null,
         "default_effort": null,
@@ -8085,9 +8064,39 @@
       "supports_vision": false,
       "eligible_for_coding": false,
       "ineligibility_reasons": [
-        "requires tools and tool_choice support",
         "requires known input and output prices"
       ]
+    },
+    {
+      "id": "particle-ai/particle-1",
+      "name": "Particle AI: Particle-1",
+      "provider": "particle-ai",
+      "context_length": 1048576,
+      "input_price_per_token": 5e-08,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 3e-09,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal",
+          "none"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "perceptron/perceptron-mk1",
@@ -8185,7 +8194,7 @@
         "supported_efforts": null,
         "default_effort": null,
         "default_enabled": null,
-        "mandatory": false
+        "mandatory": true
       },
       "supports_vision": false,
       "eligible_for_coding": false,
@@ -8260,105 +8269,13 @@
         "supported_efforts": null,
         "default_effort": null,
         "default_enabled": null,
-        "mandatory": false
+        "mandatory": true
       },
       "supports_vision": true,
       "eligible_for_coding": false,
       "ineligibility_reasons": [
         "requires tools and tool_choice support"
       ]
-    },
-    {
-      "id": "poolside/laguna-s-2.1",
-      "name": "Poolside: Laguna S 2.1",
-      "provider": "poolside",
-      "context_length": 1048576,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 1.8e-07,
-      "cached_input_price_per_token": 9e-09,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "poolside/laguna-s-2.1:free",
-      "name": "Poolside: Laguna S 2.1 (free)",
-      "provider": "poolside",
-      "context_length": 262144,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "poolside/laguna-xs-2.1",
-      "name": "Poolside: Laguna XS 2.1",
-      "provider": "poolside",
-      "context_length": 262144,
-      "input_price_per_token": 6e-08,
-      "output_price_per_token": 1.2e-07,
-      "cached_input_price_per_token": 3e-08,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "poolside/laguna-xs-2.1:free",
-      "name": "Poolside: Laguna XS 2.1 (free)",
-      "provider": "poolside",
-      "context_length": 262144,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
     },
     {
       "id": "prism-ml/ternary-bonsai-2-27b",
@@ -8376,9 +8293,33 @@
       "reasoning": {
         "supported_efforts": [
           "xhigh",
-          "medium"
+          "medium",
+          "none"
         ],
         "default_effort": "xhigh",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "prism-ml/ternary-bonsai-2-9b",
+      "name": "PrismML: Ternary Bonsai 2 9B",
+      "provider": "prism-ml",
+      "context_length": 262144,
+      "input_price_per_token": 8e-08,
+      "output_price_per_token": 1.3e-07,
+      "cached_input_price_per_token": 4e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
         "default_enabled": true,
         "mandatory": false
       },
@@ -8481,29 +8422,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "qwen/qwen-plus-2025-07-28",
-      "name": "Qwen: Qwen Plus 0728",
-      "provider": "qwen",
-      "context_length": 1000000,
-      "input_price_per_token": 2.6e-07,
-      "output_price_per_token": 7.8e-07,
-      "cached_input_price_per_token": 2.6e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "qwen/qwen2.5-vl-72b-instruct",
       "name": "Qwen: Qwen2.5 VL 72B Instruct",
       "provider": "qwen",
@@ -8532,33 +8450,10 @@
       "id": "qwen/qwen3-14b",
       "name": "Qwen: Qwen3 14B",
       "provider": "qwen",
-      "context_length": 131072,
+      "context_length": 40960,
       "input_price_per_token": 1.2e-07,
       "output_price_per_token": 2.4e-07,
       "cached_input_price_per_token": 1.2e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "qwen/qwen3-235b-a22b",
-      "name": "Qwen: Qwen3 235B A22B",
-      "provider": "qwen",
-      "context_length": 131072,
-      "input_price_per_token": 4.55e-07,
-      "output_price_per_token": 1.82e-06,
-      "cached_input_price_per_token": 4.55e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -8579,9 +8474,9 @@
       "name": "Qwen: Qwen3 235B A22B Instruct 2507",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 5.5e-07,
-      "cached_input_price_per_token": 9e-08,
+      "input_price_per_token": 1.4e-07,
+      "output_price_per_token": 8e-07,
+      "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -8601,10 +8496,10 @@
       "id": "qwen/qwen3-235b-a22b-thinking-2507",
       "name": "Qwen: Qwen3 235B A22B Thinking 2507",
       "provider": "qwen",
-      "context_length": 131072,
-      "input_price_per_token": 2.3e-07,
-      "output_price_per_token": 2.3e-06,
-      "cached_input_price_per_token": 2.3e-07,
+      "context_length": 128000,
+      "input_price_per_token": 4.5e-07,
+      "output_price_per_token": 3.5e-06,
+      "cached_input_price_per_token": 4.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -8624,7 +8519,7 @@
       "id": "qwen/qwen3-30b-a3b",
       "name": "Qwen: Qwen3 30B A3B",
       "provider": "qwen",
-      "context_length": 131072,
+      "context_length": 40960,
       "input_price_per_token": 1.2e-07,
       "output_price_per_token": 5e-07,
       "cached_input_price_per_token": 1.2e-07,
@@ -8667,29 +8562,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "qwen/qwen3-30b-a3b-thinking-2507",
-      "name": "Qwen: Qwen3 30B A3B Thinking 2507",
-      "provider": "qwen",
-      "context_length": 81920,
-      "input_price_per_token": 2e-07,
-      "output_price_per_token": 2.4e-06,
-      "cached_input_price_per_token": 2e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "qwen/qwen3-32b",
       "name": "Qwen: Qwen3 32B",
       "provider": "qwen",
@@ -8706,29 +8578,6 @@
         "supported_efforts": null,
         "default_effort": null,
         "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "qwen/qwen3-8b",
-      "name": "Qwen: Qwen3 8B",
-      "provider": "qwen",
-      "context_length": 131072,
-      "input_price_per_token": 1.17e-07,
-      "output_price_per_token": 4.55e-07,
-      "cached_input_price_per_token": 1.17e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
         "mandatory": false
       },
       "supports_vision": false,
@@ -8763,9 +8612,9 @@
       "name": "Qwen: Qwen3 Coder 30B A3B Instruct",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 7e-08,
-      "output_price_per_token": 2.8e-07,
-      "cached_input_price_per_token": 7e-08,
+      "input_price_per_token": 1.5e-07,
+      "output_price_per_token": 6e-07,
+      "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -8828,75 +8677,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "qwen/qwen3-coder-plus",
-      "name": "Qwen: Qwen3 Coder Plus",
-      "provider": "qwen",
-      "context_length": 1000000,
-      "input_price_per_token": 6.5e-07,
-      "output_price_per_token": 3.25e-06,
-      "cached_input_price_per_token": 1.3e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "qwen/qwen3-max",
-      "name": "Qwen: Qwen3 Max",
-      "provider": "qwen",
-      "context_length": 262144,
-      "input_price_per_token": 7.8e-07,
-      "output_price_per_token": 3.9e-06,
-      "cached_input_price_per_token": 1.56e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "qwen/qwen3-max-thinking",
-      "name": "Qwen: Qwen3 Max Thinking",
-      "provider": "qwen",
-      "context_length": 262144,
-      "input_price_per_token": 7.8e-07,
-      "output_price_per_token": 3.9e-06,
-      "cached_input_price_per_token": 7.8e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "qwen/qwen3-next-80b-a3b-instruct",
       "name": "Qwen: Qwen3 Next 80B A3B Instruct",
       "provider": "qwen",
@@ -8920,29 +8700,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "qwen/qwen3-next-80b-a3b-thinking",
-      "name": "Qwen: Qwen3 Next 80B A3B Thinking",
-      "provider": "qwen",
-      "context_length": 262144,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 1.2e-06,
-      "cached_input_price_per_token": 1.5e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "qwen/qwen3-vl-235b-a22b-instruct",
       "name": "Qwen: Qwen3 VL 235B A22B Instruct",
       "provider": "qwen",
@@ -8960,29 +8717,6 @@
         "default_effort": null,
         "default_enabled": null,
         "mandatory": null
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "qwen/qwen3-vl-235b-a22b-thinking",
-      "name": "Qwen: Qwen3 VL 235B A22B Thinking",
-      "provider": "qwen",
-      "context_length": 131072,
-      "input_price_per_token": 4e-07,
-      "output_price_per_token": 4e-06,
-      "cached_input_price_per_token": 4e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -9016,9 +8750,9 @@
       "name": "Qwen: Qwen3 VL 30B A3B Thinking",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 2e-07,
-      "output_price_per_token": 2.4e-06,
-      "cached_input_price_per_token": 2e-07,
+      "input_price_per_token": 2.9e-07,
+      "output_price_per_token": 1e-06,
+      "cached_input_price_per_token": 2.9e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9029,29 +8763,6 @@
         "default_effort": null,
         "default_enabled": null,
         "mandatory": true
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "qwen/qwen3-vl-32b-instruct",
-      "name": "Qwen: Qwen3 VL 32B Instruct",
-      "provider": "qwen",
-      "context_length": 131072,
-      "input_price_per_token": 1.04e-07,
-      "output_price_per_token": 4.16e-07,
-      "cached_input_price_per_token": 1.04e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -9062,9 +8773,9 @@
       "name": "Qwen: Qwen3 VL 8B Instruct",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 1.17e-07,
-      "output_price_per_token": 4.55e-07,
-      "cached_input_price_per_token": 1.17e-07,
+      "input_price_per_token": 2.5e-07,
+      "output_price_per_token": 7.5e-07,
+      "cached_input_price_per_token": 1.2e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9075,29 +8786,6 @@
         "default_effort": null,
         "default_enabled": null,
         "mandatory": null
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "qwen/qwen3-vl-8b-thinking",
-      "name": "Qwen: Qwen3 VL 8B Thinking",
-      "provider": "qwen",
-      "context_length": 131072,
-      "input_price_per_token": 1.8e-07,
-      "output_price_per_token": 2.1e-06,
-      "cached_input_price_per_token": 1.8e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -9131,9 +8819,9 @@
       "name": "Qwen: Qwen3.5-27B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 1.95e-07,
-      "output_price_per_token": 1.56e-06,
-      "cached_input_price_per_token": 1.95e-07,
+      "input_price_per_token": 2.6e-07,
+      "output_price_per_token": 2.6e-06,
+      "cached_input_price_per_token": 2.6e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9154,9 +8842,9 @@
       "name": "Qwen: Qwen3.5-35B-A3B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 8e-08,
-      "output_price_per_token": 7.5e-07,
-      "cached_input_price_per_token": 4e-08,
+      "input_price_per_token": 1.4e-07,
+      "output_price_per_token": 1e-06,
+      "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9177,9 +8865,9 @@
       "name": "Qwen: Qwen3.5 397B A17B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 4.5e-07,
-      "output_price_per_token": 3e-06,
-      "cached_input_price_per_token": 2.2e-07,
+      "input_price_per_token": 5e-07,
+      "output_price_per_token": 3.6e-06,
+      "cached_input_price_per_token": 3e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9200,9 +8888,9 @@
       "name": "Qwen: Qwen3.5-9B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 1e-07,
-      "output_price_per_token": 1.5e-07,
-      "cached_input_price_per_token": 1e-07,
+      "input_price_per_token": 1.7e-07,
+      "output_price_per_token": 2.5e-07,
+      "cached_input_price_per_token": 1.7e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9292,9 +8980,9 @@
       "name": "Qwen: Qwen3.6 27B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 3.2e-07,
-      "output_price_per_token": 3.25e-06,
-      "cached_input_price_per_token": 3e-08,
+      "input_price_per_token": 4.5e-07,
+      "output_price_per_token": 2.7e-06,
+      "cached_input_price_per_token": 4.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9315,9 +9003,9 @@
       "name": "Qwen: Qwen3.6 35B A3B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 1e-06,
-      "cached_input_price_per_token": 5e-08,
+      "input_price_per_token": 1e-07,
+      "output_price_per_token": 9e-07,
+      "cached_input_price_per_token": 2.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9353,29 +9041,6 @@
         "mandatory": false
       },
       "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "qwen/qwen3.6-max-preview",
-      "name": "Qwen: Qwen3.6 Max Preview",
-      "provider": "qwen",
-      "context_length": 262144,
-      "input_price_per_token": 1.027e-06,
-      "output_price_per_token": 6.162e-06,
-      "cached_input_price_per_token": 1.027e-06,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
       "eligible_for_coding": true,
       "ineligibility_reasons": []
     },
@@ -9472,6 +9137,29 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "qwen/qwen3.7-plus:batch",
+      "name": "Qwen: Qwen3.7 Plus (batch)",
+      "provider": "qwen",
+      "context_length": 262144,
+      "input_price_per_token": 2.3e-07,
+      "output_price_per_token": 9.2e-07,
+      "cached_input_price_per_token": 2.3e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "qwen/qwen3.8-2.4t-a95b",
       "name": "Qwen: Qwen3.8 2.4T A95B",
       "provider": "qwen",
@@ -9502,10 +9190,10 @@
       "id": "qwen/qwen3.8-27b",
       "name": "Qwen: Qwen3.8 27B",
       "provider": "qwen",
-      "context_length": 1000000,
-      "input_price_per_token": 4.25e-07,
-      "output_price_per_token": 2.55e-06,
-      "cached_input_price_per_token": 8.5e-08,
+      "context_length": 1024000,
+      "input_price_per_token": 1.5e-07,
+      "output_price_per_token": 1.875e-06,
+      "cached_input_price_per_token": 3.75e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9515,7 +9203,8 @@
         "supported_efforts": [
           "xhigh",
           "medium",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "xhigh",
         "default_enabled": true,
@@ -9626,6 +9315,60 @@
         "mandatory": false
       },
       "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "recursive/flint-v1.0:free",
+      "name": "Recursive: Flint (free)",
+      "provider": "recursive",
+      "context_length": 262144,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": false,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": false,
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
+    },
+    {
+      "id": "reflection/beam-1.0-501b-a23b",
+      "name": "Reflection: Beam 1.0 501B A23B",
+      "provider": "reflection",
+      "context_length": 1048576,
+      "input_price_per_token": 2.5e-07,
+      "output_price_per_token": 1e-06,
+      "cached_input_price_per_token": 5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "max",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": false,
       "eligible_for_coding": true,
       "ineligibility_reasons": []
     },
@@ -9866,29 +9609,6 @@
       "input_price_per_token": 8.5e-07,
       "output_price_per_token": 8.5e-07,
       "cached_input_price_per_token": 8.5e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "sao10k/l3.3-euryale-70b",
-      "name": "Sao10K: Llama 3.3 Euryale 70B",
-      "provider": "sao10k",
-      "context_length": 131072,
-      "input_price_per_token": 6.5e-07,
-      "output_price_per_token": 7.5e-07,
-      "cached_input_price_per_token": 6.5e-07,
       "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9905,6 +9625,86 @@
       "ineligibility_reasons": [
         "requires tools and tool_choice support"
       ]
+    },
+    {
+      "id": "scaledown/extract",
+      "name": "ScaleDown: Extract",
+      "provider": "scaledown",
+      "context_length": 1000000,
+      "input_price_per_token": 4e-08,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 4e-08,
+      "supports_tools": false,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": false,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": null
+      },
+      "supports_vision": true,
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
+    },
+    {
+      "id": "scaledown/summarize",
+      "name": "ScaleDown: Summarize",
+      "provider": "scaledown",
+      "context_length": 1000000,
+      "input_price_per_token": 4e-08,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 4e-08,
+      "supports_tools": false,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": false,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": null
+      },
+      "supports_vision": true,
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
+    },
+    {
+      "id": "stealth/crouton-alpha",
+      "name": "Crouton Alpha",
+      "provider": "stealth",
+      "context_length": 1048576,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal"
+        ],
+        "default_effort": "max",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "stepfun/step-3.5-flash",
@@ -9937,6 +9737,33 @@
       "input_price_per_token": 2e-07,
       "output_price_per_token": 1.15e-06,
       "cached_input_price_per_token": 4e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "stepfun/step-5-preview",
+      "name": "StepFun: Step 5 Preview",
+      "provider": "stepfun",
+      "context_length": 1048576,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 2.7e-06,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10064,9 +9891,9 @@
       "name": "Tencent: Hy3",
       "provider": "tencent",
       "context_length": 262144,
-      "input_price_per_token": 1.32e-07,
-      "output_price_per_token": 5.28e-07,
-      "cached_input_price_per_token": 3.3e-08,
+      "input_price_per_token": 8.25e-08,
+      "output_price_per_token": 3.3e-07,
+      "cached_input_price_per_token": 2.0625e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10114,13 +9941,40 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "tencent/hy4",
+      "name": "Tencent: Hy4",
+      "provider": "tencent",
+      "context_length": 1048576,
+      "input_price_per_token": 4.17e-07,
+      "output_price_per_token": 1.2505e-06,
+      "cached_input_price_per_token": 2.1e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "low",
+          "none"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "tencent/hy4-preview",
       "name": "Tencent: Hy4 preview",
       "provider": "tencent",
       "context_length": 1048576,
-      "input_price_per_token": 8.34e-07,
-      "output_price_per_token": 2.501e-06,
-      "cached_input_price_per_token": 4.2e-08,
+      "input_price_per_token": 7.506e-07,
+      "output_price_per_token": 2.2509e-06,
+      "cached_input_price_per_token": 3.78e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10220,9 +10074,9 @@
       "name": "Thinking Machines: Inkling",
       "provider": "thinkingmachines",
       "context_length": 524288,
-      "input_price_per_token": 9.5e-07,
+      "input_price_per_token": 1e-06,
       "output_price_per_token": 4.05e-06,
-      "cached_input_price_per_token": 1.6e-07,
+      "cached_input_price_per_token": 1.7e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10276,70 +10130,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "thinkingmachines/inkling-small:free",
-      "name": "Thinking Machines: Inkling Small (free)",
-      "provider": "thinkingmachines",
-      "context_length": 1048576,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": true,
-      "reasoning": {
-        "supported_efforts": [
-          "max",
-          "high",
-          "medium",
-          "low",
-          "minimal",
-          "none"
-        ],
-        "default_effort": "high",
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
-    },
-    {
-      "id": "thinkingmachines/inkling:free",
-      "name": "Thinking Machines: Inkling (free)",
-      "provider": "thinkingmachines",
-      "context_length": 1048576,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": false,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": true,
-      "reasoning": {
-        "supported_efforts": [
-          "max",
-          "high",
-          "medium",
-          "low",
-          "minimal",
-          "none"
-        ],
-        "default_effort": "high",
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": true,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
-    },
-    {
       "id": "typesafe/jev-router",
       "name": "TypeSafe: Jev Router",
       "provider": "typesafe",
@@ -10365,13 +10155,13 @@
       ]
     },
     {
-      "id": "unbiased/pareto",
-      "name": "Pareto",
+      "id": "unbiased/pareto-26.10",
+      "name": "Pareto 26.10",
       "provider": "unbiased",
-      "context_length": 262144,
-      "input_price_per_token": 2.5e-06,
-      "output_price_per_token": 7.5e-06,
-      "cached_input_price_per_token": 2.5e-07,
+      "context_length": 1048576,
+      "input_price_per_token": 8e-07,
+      "output_price_per_token": 3.2e-06,
+      "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10388,13 +10178,13 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "unbiased/pareto-26.10-preview",
-      "name": "Pareto 26.10 Preview",
+      "id": "unbiased/pareto-26.9",
+      "name": "Pareto 26.9",
       "provider": "unbiased",
-      "context_length": 1048576,
-      "input_price_per_token": 8e-07,
-      "output_price_per_token": 3.2e-06,
-      "cached_input_price_per_token": 3e-08,
+      "context_length": 262144,
+      "input_price_per_token": 2.5e-06,
+      "output_price_per_token": 7.5e-06,
+      "cached_input_price_per_token": 2.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10468,42 +10258,13 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "upstage/solar-pro-3",
-      "name": "Upstage: Solar Pro 3",
-      "provider": "upstage",
-      "context_length": 131072,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 6e-07,
-      "cached_input_price_per_token": 1.5e-08,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": true,
-      "reasoning": {
-        "supported_efforts": [
-          "high",
-          "medium",
-          "low",
-          "minimal",
-          "none"
-        ],
-        "default_effort": "medium",
-        "default_enabled": false,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "upstage/solar-pro4",
       "name": "Upstage: Solar Pro 4",
       "provider": "upstage",
       "context_length": 524288,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 3.6e-07,
-      "cached_input_price_per_token": 1.8e-08,
+      "input_price_per_token": 1.5e-07,
+      "output_price_per_token": 6e-07,
+      "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10717,6 +10478,34 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "x-ai/grok-4.6:batch",
+      "name": "SpaceXAI: Grok 4.6 (batch)",
+      "provider": "x-ai",
+      "context_length": 500000,
+      "input_price_per_token": 1.6e-06,
+      "output_price_per_token": 4.8e-06,
+      "cached_input_price_per_token": 4e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "x-ai/grok-4.7",
       "name": "SpaceXAI: Grok 4.7",
       "provider": "x-ai",
@@ -10724,6 +10513,34 @@
       "input_price_per_token": 2e-06,
       "output_price_per_token": 6e-06,
       "cached_input_price_per_token": 5e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "x-ai/grok-4.7:batch",
+      "name": "SpaceXAI: Grok 4.7 (batch)",
+      "provider": "x-ai",
+      "context_length": 500000,
+      "input_price_per_token": 1.6e-06,
+      "output_price_per_token": 4.8e-06,
+      "cached_input_price_per_token": 4e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10771,10 +10588,10 @@
       "id": "xiaomi/mimo-v2.5",
       "name": "Xiaomi: MiMo-V2.5",
       "provider": "xiaomi",
-      "context_length": 1050000,
-      "input_price_per_token": 1.4e-07,
-      "output_price_per_token": 2.8e-07,
-      "cached_input_price_per_token": 2.8e-09,
+      "context_length": 1000000,
+      "input_price_per_token": 4e-07,
+      "output_price_per_token": 2e-06,
+      "cached_input_price_per_token": 8e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10795,9 +10612,9 @@
       "name": "Xiaomi: MiMo-V2.5-Pro",
       "provider": "xiaomi",
       "context_length": 1050000,
-      "input_price_per_token": 4.35e-07,
-      "output_price_per_token": 8.7e-07,
-      "cached_input_price_per_token": 3.6e-09,
+      "input_price_per_token": 4.8e-07,
+      "output_price_per_token": 1.8e-06,
+      "cached_input_price_per_token": 9.6e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10883,6 +10700,29 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "xingchen-agi/xing4.0-29b-a4b:free",
+      "name": "XingChen: Xing4.0 29B A4B (free)",
+      "provider": "xingchen-agi",
+      "context_length": 262144,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": false,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "z-ai/glm-4.5",
       "name": "Z.ai: GLM 4.5",
       "provider": "z-ai",
@@ -10956,9 +10796,9 @@
       "name": "Z.ai: GLM 4.6",
       "provider": "z-ai",
       "context_length": 204800,
-      "input_price_per_token": 4.3e-07,
-      "output_price_per_token": 1.75e-06,
-      "cached_input_price_per_token": 8e-08,
+      "input_price_per_token": 5e-07,
+      "output_price_per_token": 2e-06,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10981,7 +10821,7 @@
       "context_length": 131072,
       "input_price_per_token": 3e-07,
       "output_price_per_token": 9e-07,
-      "cached_input_price_per_token": 5e-08,
+      "cached_input_price_per_token": 5.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11048,9 +10888,9 @@
       "name": "Z.ai: GLM 5",
       "provider": "z-ai",
       "context_length": 204800,
-      "input_price_per_token": 6e-07,
-      "output_price_per_token": 1.92e-06,
-      "cached_input_price_per_token": 1.2e-07,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 3.2e-06,
+      "cached_input_price_per_token": 2e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11117,9 +10957,9 @@
       "name": "Z.ai: GLM 5.2",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 1.52e-07,
-      "output_price_per_token": 1.2e-05,
-      "cached_input_price_per_token": 1.5e-07,
+      "input_price_per_token": 6e-09,
+      "output_price_per_token": 6.8e-06,
+      "cached_input_price_per_token": 5e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11128,7 +10968,8 @@
       "reasoning": {
         "supported_efforts": [
           "xhigh",
-          "high"
+          "high",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -11143,9 +10984,9 @@
       "name": "Z.ai: GLM 5.3",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 7e-08,
-      "output_price_per_token": 7e-06,
-      "cached_input_price_per_token": 6.5e-08,
+      "input_price_per_token": 6.99e-08,
+      "output_price_per_token": 1.4e-06,
+      "cached_input_price_per_token": 6.89e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11170,9 +11011,9 @@
       "name": "Z.ai: GLM 5.3 Flash",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 5e-07,
-      "cached_input_price_per_token": 3e-08,
+      "input_price_per_token": 2.69e-08,
+      "output_price_per_token": 9.96e-08,
+      "cached_input_price_per_token": 2.69e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11197,9 +11038,9 @@
       "name": "Z.ai: GLM 5.3 Flash (batch)",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 6e-08,
-      "output_price_per_token": 2e-07,
-      "cached_input_price_per_token": 1.2e-08,
+      "input_price_per_token": 5e-08,
+      "output_price_per_token": 1.8e-07,
+      "cached_input_price_per_token": 1e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11226,7 +11067,34 @@
       "context_length": 1048576,
       "input_price_per_token": 3.7e-07,
       "output_price_per_token": 1.25e-06,
-      "cached_input_price_per_token": 9e-08,
+      "cached_input_price_per_token": 7.5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "high",
+          "low"
+        ],
+        "default_effort": "max",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "z-ai/glm-5.3-flashx-legal",
+      "name": "Z.ai: GLM 5.3 FlashX Legal",
+      "provider": "z-ai",
+      "context_length": 1048576,
+      "input_price_per_token": 3.7e-07,
+      "output_price_per_token": 1.25e-06,
+      "cached_input_price_per_token": 7.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11356,18 +11224,25 @@
       "id": "~anthropic/claude-haiku-latest",
       "name": "Anthropic: Claude Haiku Latest",
       "provider": "anthropic",
-      "context_length": 200000,
-      "input_price_per_token": 1e-06,
-      "output_price_per_token": 5e-06,
-      "cached_input_price_per_token": 1e-07,
+      "context_length": 1000000,
+      "input_price_per_token": 1e-07,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 1e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": true,
-      "supports_reasoning_effort": false,
+      "supports_reasoning_effort": true,
       "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "default_effort": "medium",
         "default_enabled": null,
         "mandatory": false
       },
@@ -11411,7 +11286,7 @@
       "context_length": 1000000,
       "input_price_per_token": 2e-06,
       "output_price_per_token": 1e-05,
-      "cached_input_price_per_token": 2e-07,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11438,9 +11313,9 @@
       "name": "DeepSeek: DeepSeek Flash Latest",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 1.2563e-08,
-      "output_price_per_token": 1.32e-06,
-      "cached_input_price_per_token": 1.2563e-08,
+      "input_price_per_token": 2.2e-08,
+      "output_price_per_token": 4e-07,
+      "cached_input_price_per_token": 4e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11450,7 +11325,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -11465,9 +11341,9 @@
       "name": "DeepSeek: DeepSeek Pro Latest",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 2.597e-07,
-      "output_price_per_token": 4.2e-06,
-      "cached_input_price_per_token": 2.6e-07,
+      "input_price_per_token": 1.035e-07,
+      "output_price_per_token": 8e-06,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11477,7 +11353,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": null,
@@ -11492,9 +11369,9 @@
       "name": "DeepSeek: DeepSeek V4 Flash Latest",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 6.9e-09,
-      "output_price_per_token": 1.28e-06,
-      "cached_input_price_per_token": 6.9e-09,
+      "input_price_per_token": 5.53e-08,
+      "output_price_per_token": 3e-07,
+      "cached_input_price_per_token": 3.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11504,7 +11381,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "high",
         "default_enabled": true,
@@ -11547,8 +11425,8 @@
       "provider": "google",
       "context_length": 1048576,
       "input_price_per_token": 2e-06,
-      "output_price_per_token": 1.2e-05,
-      "cached_input_price_per_token": 2e-07,
+      "output_price_per_token": 1e-05,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11573,9 +11451,9 @@
       "name": "MoonshotAI: Kimi Latest",
       "provider": "moonshotai",
       "context_length": 1048576,
-      "input_price_per_token": 8.3e-07,
-      "output_price_per_token": 1.3e-05,
-      "cached_input_price_per_token": 4.5e-07,
+      "input_price_per_token": 1.529e-07,
+      "output_price_per_token": 9.3388e-06,
+      "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11585,7 +11463,8 @@
         "supported_efforts": [
           "max",
           "high",
-          "low"
+          "low",
+          "none"
         ],
         "default_effort": "max",
         "default_enabled": true,
@@ -11717,9 +11596,9 @@
       "name": "OpenAI: GPT Terra Latest",
       "provider": "openai",
       "context_length": 1050000,
-      "input_price_per_token": 2e-06,
-      "output_price_per_token": 1.2e-05,
-      "cached_input_price_per_token": 2e-07,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 5e-06,
+      "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11737,6 +11616,29 @@
         "default_effort": "medium",
         "default_enabled": true,
         "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "~unbiased/pareto-latest",
+      "name": "Pareto Latest",
+      "provider": "unbiased",
+      "context_length": 1048576,
+      "input_price_per_token": 8e-07,
+      "output_price_per_token": 3.2e-06,
+      "cached_input_price_per_token": 3e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": false,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": null
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -11775,9 +11677,9 @@
       "name": "Z.ai: GLM Flash Latest",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 2.78e-08,
-      "output_price_per_token": 5e-07,
-      "cached_input_price_per_token": 2.78e-08,
+      "input_price_per_token": 2.69e-08,
+      "output_price_per_token": 9.96e-08,
+      "cached_input_price_per_token": 2.69e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11802,9 +11704,9 @@
       "name": "Z.ai: GLM Latest",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 3e-08,
-      "output_price_per_token": 1.2e-05,
-      "cached_input_price_per_token": 3e-08,
+      "input_price_per_token": 6.99e-08,
+      "output_price_per_token": 1.4e-06,
+      "cached_input_price_per_token": 6.89e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11827,10 +11729,6 @@
   ],
   "cheapest_programming": [
     {
-      "id": "apodex/apodex-1.1-mini:free",
-      "weighted_usd_per_million_tokens": 0.0
-    },
-    {
       "id": "cohere/north-mini-code:free",
       "weighted_usd_per_million_tokens": 0.0
     },
@@ -11847,23 +11745,11 @@
       "weighted_usd_per_million_tokens": 0.0
     },
     {
-      "id": "inclusionai/ling-3.0-flash-sante:free",
-      "weighted_usd_per_million_tokens": 0.0
-    },
-    {
-      "id": "inclusionai/ling-3.1-flash",
-      "weighted_usd_per_million_tokens": 0.0
-    },
-    {
       "id": "liquid/lfm-2.5-2.6b:free",
       "weighted_usd_per_million_tokens": 0.0
     },
     {
       "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
-      "weighted_usd_per_million_tokens": 0.0
-    },
-    {
-      "id": "nvidia/nemotron-3-super-120b-a12b:free",
       "weighted_usd_per_million_tokens": 0.0
     },
     {
@@ -11875,36 +11761,52 @@
       "weighted_usd_per_million_tokens": 0.0
     },
     {
+      "id": "nvidia/nemotron-3.5-super-vl:free",
+      "weighted_usd_per_million_tokens": 0.0
+    },
+    {
       "id": "openrouter/free",
       "weighted_usd_per_million_tokens": 0.0
     },
     {
-      "id": "poolside/laguna-s-2.1:free",
+      "id": "stealth/crouton-alpha",
       "weighted_usd_per_million_tokens": 0.0
     },
     {
-      "id": "poolside/laguna-xs-2.1:free",
+      "id": "xingchen-agi/xing4.0-29b-a4b:free",
       "weighted_usd_per_million_tokens": 0.0
-    },
-    {
-      "id": "mistralai/mistral-nemo",
-      "weighted_usd_per_million_tokens": 0.0212
-    },
-    {
-      "id": "inclusionai/ling-3.0-flash-vl",
-      "weighted_usd_per_million_tokens": 0.02744
     },
     {
       "id": "inclusionai/ling-3.0-flash",
       "weighted_usd_per_million_tokens": 0.02772
     },
     {
+      "id": "mistralai/mistral-nemo",
+      "weighted_usd_per_million_tokens": 0.0292
+    },
+    {
       "id": "openai/gpt-oss-20b",
       "weighted_usd_per_million_tokens": 0.0315
     },
     {
+      "id": "z-ai/glm-5.3-flash",
+      "weighted_usd_per_million_tokens": 0.04144
+    },
+    {
+      "id": "~z-ai/glm-flash-latest",
+      "weighted_usd_per_million_tokens": 0.04144
+    },
+    {
       "id": "openai/gpt-oss-20b:batch",
       "weighted_usd_per_million_tokens": 0.0416
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "weighted_usd_per_million_tokens": 0.0476
+    },
+    {
+      "id": "openai/gpt-oss-120b:batch",
+      "weighted_usd_per_million_tokens": 0.05088
     }
   ]
 }

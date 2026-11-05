@@ -4,7 +4,7 @@ clud answers to many names ([DD-121](../DESIGN_DECISIONS.md#dd-121-helper-execut
 The names clud owns under `~/.clud/state` — `helper-bin/{clud-cmd-scan,clud-block-bad-cmd}`,
 `shims/*` and `rm-shim/*` — point into a content-addressed store instead of at
 whichever file the launcher is. Code: `crates/clud-bin/src/toolstore.rs`.
-Rationale: [DD-198](../DESIGN_DECISIONS.md#dd-198-clud-owned-names-point-into-a-content-addressed-toolstore).
+Rationale: [DD-203](../DESIGN_DECISIONS.md#dd-203-clud-owned-names-point-into-a-content-addressed-toolstore).
 
 ```text
 ~/.clud/toolstore/<build-id>/clud        one immutable binary per build

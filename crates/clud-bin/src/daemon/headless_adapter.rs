@@ -56,6 +56,7 @@ pub(super) fn parse_backend_event(backend: Backend, line: &str) -> BackendEvent 
             .filter(|kind| *kind == "thread.started")
             .and_then(|_| value.get("thread_id").and_then(Value::as_str)),
         Backend::DeepSeek => None,
+        Backend::OpenCode => value.get("sessionID").and_then(Value::as_str),
     };
     identity
         .filter(|id| !id.is_empty())
@@ -65,7 +66,6 @@ pub(super) fn parse_backend_event(backend: Backend, line: &str) -> BackendEvent 
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
 
     use super::*;
     use crate::backend::{HarnessSelection, PreferenceSource, RoutingMode};

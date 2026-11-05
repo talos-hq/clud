@@ -292,6 +292,7 @@ fn transcript_forces_centralized_daemon() {
         command: None,
         passthrough: Vec::new(),
         codex_config_overrides: Vec::new(),
+        optional_context: None,
         resolved_model_selection: None,
         raw_argv: Vec::new(),
         continue_index: None,

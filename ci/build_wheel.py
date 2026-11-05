@@ -148,6 +148,15 @@ def resolve_elf_objcopy(target: str | None = None) -> str:
     )
 
 
+def strip_elf_debug(path: Path, target: str) -> None:
+    """Strip a staged ELF with the same target-aware resolver used for wheels."""
+    objcopy = resolve_elf_objcopy(target)
+    result = process.run([objcopy, "--strip-debug", str(path)], capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(f"cannot strip {target} binary {path.name}: {detail}")
+
+
 def remove_elf_debug_metadata(wheel: Path, *, target: str | None = None) -> bool:
     """Remove the residual ELF debug-GDB section from release wheel scripts.
 

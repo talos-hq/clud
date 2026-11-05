@@ -275,15 +275,37 @@ fn missing_codex_subscription_never_falls_back_to_openai_api_key() {
     assert!(!output.contains("sk-test-metered-key"), "{output}");
 }
 
+/// Naming a metered provider on the command line is consent: it launches with
+/// the loud warning and no environment overrides.
 #[test]
-fn cli_flags_reaching_a_metered_provider_need_consent() {
-    let routes: &[&[&str]] = &[
-        &["--openrouter"],
-        &["--deepseek"],
-        &["--kimi"],
-        &["--provider", "openrouter"],
-        &["--failover-allow-metered"],
-    ];
+fn an_explicit_metered_provider_flag_launches_with_the_warning() {
+    for (route, provider) in [
+        (
+            &["--openrouter"][..],
+            clud::backend::ModelProvider::OpenRouter,
+        ),
+        (
+            &["--provider", "openrouter"][..],
+            clud::backend::ModelProvider::OpenRouter,
+        ),
+        (&["--deepseek"][..], clud::backend::ModelProvider::DeepSeek),
+    ] {
+        let fx = fixture();
+        let mut args: Vec<&str> = route.to_vec();
+        args.extend(["--dry-run", "-p", "hello"]);
+        let (exit, output) = run(&fx, &[], &args);
+        assert_eq!(exit, 0, "{route:?}: {output}");
+        assert!(
+            output.contains(&clud::metered_policy::explicit_metered_warning(provider)),
+            "{route:?}: {output}"
+        );
+    }
+}
+
+/// Implicit routes onto metered billing still need the environment consent.
+#[test]
+fn implicit_metered_routes_need_consent() {
+    let routes: &[&[&str]] = &[&["--failover-allow-metered"]];
     for route in routes {
         let fx = fixture();
         let mut args: Vec<String> = route.iter().map(|arg| (*arg).to_string()).collect();
@@ -312,23 +334,5 @@ fn a_saved_metered_provider_needs_consent() {
     assert!(
         !output.contains("\"program\":"),
         "a child spawned:\n{output}"
-    );
-}
-
-#[test]
-fn serve_openrouter_needs_consent() {
-    let fx = fixture();
-    let (exit, output) = run(
-        &fx,
-        &[(
-            "CLUD_SERVE_CLIENT_TOKEN",
-            "client-token-0123456789abcdef0123456789",
-        )],
-        &["serve", "--claude", "--openrouter", "--port", "0"],
-    );
-    assert_ne!(exit, 0, "{output}");
-    assert!(
-        output.contains("CLUD_METERED_PROVIDER=openrouter"),
-        "{output}"
     );
 }

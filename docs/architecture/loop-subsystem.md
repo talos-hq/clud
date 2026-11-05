@@ -125,7 +125,18 @@ similar). The default paths are `<git-root>/.clud/loop/DONE` and
 BLOCKED path is derived via `blocked_path_from_done` (`DONE.md` →
 `BLOCKED.md`).
 
-A PR accepted into a merge queue counts as complete: the contract tells the agent to write DONE with the PR URL as soon as the enqueue succeeds rather than waiting for the merge, so the loop moves on to the next item (#2471).
+`DONE` terminates the entire loop; it never means just “this iteration is done”.
+The original task's explicit completion conditions govern when to write it.
+Queue acceptance satisfies an individual item's criterion only when the task
+explicitly says so. A multi-item task records cumulative progress and evidence
+in its working files, then ends the iteration without DONE so the next
+invocation continues. For “stop after 50 issues”, all 50 distinct issues must
+meet the requested criterion before DONE. The iteration count is a maximum
+invocation budget, not an issue counter or proof of completion (#2576).
+
+The runner trusts the agent's marker; it does not infer numerical targets or
+verify GitHub outcomes from arbitrary task prose. The prompt contract and its
+launch-plan regressions enforce this distinction at the instruction boundary.
 
 The contract also documents a token fallback for agents that cannot
 write files: a line that starts with `<<<CLUD_LOOP_DONE:` and ends with
@@ -312,3 +323,43 @@ re-enters cold. The unified gateway keeps it warm out of band
 ## Restarting a finished loop (#2471)
 
 When an interactive `clud loop` ends (stdin and stderr are terminals, not `--dry-run`, not interrupted), clud offers **Restart loop / Exit** through the shared selector (`loop_restart.rs`). Restart moves the run artifacts (`info.json`, `log.txt`, `NEXT_MESSAGE.md`, `motivation.md`, root `LOOP_DONE.md`, DONE/BLOCKED markers) into `.clud/loop/history/<millis>/`, keeps `loop.json` and `inbox/`, and re-runs the same argv.
+
+
+## Interactive loop dashboard
+
+Headless subprocess loops show a dashboard when stdin, stdout and stderr are terminals
+and `TERM` is not `dumb`. `loop_console.rs` owns the alternate screen, raw input,
+and restoration through a drop guard. It uses crossterm events on all hosts;
+its captured child has null stdin so the child cannot consume operator input.
+Explicit PTY launches continue to show the harness's own interactive UI.
+Redirected runs retain the existing plain progress output.
+
+The fixed bottom bar offers `q` **Queue message**, `i` **Interrupt with message**,
+and Ctrl+C **Stop**. Enter saves a queued message for the next iteration;
+Esc discards the draft. The interrupt editor opens a confirmation:
+“This will restart the loop. Are you sure?” Only `y` confirms; Enter or `n`
+returns to editing. Confirmation persists the message before stopping the child.
+The runner reaps the child synchronously, clears its completion markers, and
+relaunches the same iteration without spending another iteration from the budget.
+Both actions use the existing inbox and `NEXT_MESSAGE.md` delivery contract,
+including `--no-done` loops. Cron-style repeats without markers keep their
+existing prompt because their daemon worker does not drain this inbox.
+Queueing alone never stops a child or overrides its DONE marker; a message can
+remain queued if the current iteration completes the entire task.
+
+The dashboard retains 10,000 progress lines and clips output to terminal cells.
+Use Up/Down, Page Up/Page Down, Home (oldest), End (live), or the mouse wheel
+to scroll. Page keys and the wheel also work while composing a message.
+New output preserves the viewed history until End returns to following live output.
+Only changed terminal cells are written after the first frame; shorter lines and
+resize redraws erase stale cells without clearing the screen on each update.
+Drafts remain separate from progress updates. Pasted text cannot activate actions.
+Mouse capture and bracketed paste are disabled when the dashboard exits.
+Use `clud --codex --subprocess loop <task>` for the dashboard or
+`clud --codex --pty loop <task>` for the existing PTY path. Redirected/non-terminal
+subprocess runs continue to produce plain output with terminal scrollback.
+Acceptance tests in `tests/integration/pty/loop_console.rs` launch through Bash
+(on Linux/macOS/Windows), cmd and Windows PowerShell (on Windows), use real PTYs,
+and check queueing, confirmation rejection, restart with a one-iteration budget,
+delivery, and terminal restoration. The existing native PTY CI suites run them;
+unit tests cover Unicode, paste, cancellation, release events, and viewport sizes.

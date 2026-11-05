@@ -382,6 +382,7 @@ pub fn display_name(backend: Backend) -> &'static str {
         Backend::Claude => "Claude Code",
         Backend::Codex => "Codex CLI",
         Backend::DeepSeek => "DeepSeek Harness",
+        Backend::OpenCode => "OpenCode",
     }
 }
 
@@ -526,7 +527,10 @@ mod tests {
     #[test]
     fn discovery_is_stably_ordered() {
         let installed = discover_installed_with(|backend| backend != Backend::Codex);
-        assert_eq!(installed, vec![Backend::Claude, Backend::DeepSeek]);
+        assert_eq!(
+            installed,
+            vec![Backend::Claude, Backend::DeepSeek, Backend::OpenCode]
+        );
     }
 
     #[test]

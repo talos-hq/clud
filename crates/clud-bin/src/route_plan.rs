@@ -92,6 +92,8 @@ pub const CODEX_BRIDGE_SONNET_MODEL: &str = "clud-claude-codex-terra";
 /// route stays a pure function of its inputs.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Ambient {
+    /// Explicit OpenCode endpoint override (Anthropic-compatible Messages API).
+    pub opencode_base_url: Option<String>,
     /// An inherited `CLAUDE_CODE_SUBAGENT_MODEL`. It wins the subagent slot
     /// only on a constrained launch and only when the allowlist admits it
     /// (#1257): clud owns the boundary, the user chooses inside it.
@@ -122,6 +124,10 @@ impl Ambient {
     /// one the precedence rule has to be evaluated against.
     pub fn from_child_env(env: &[(String, String)]) -> Self {
         Self {
+            opencode_base_url: env
+                .iter()
+                .find(|(key, _)| key == "ANTHROPIC_BASE_URL")
+                .map(|(_, value)| value.clone()),
             subagent_model: env
                 .iter()
                 .find(|(key, _)| key.eq_ignore_ascii_case("CLAUDE_CODE_SUBAGENT_MODEL"))
@@ -138,6 +144,7 @@ impl Ambient {
     /// Read the ambient values from this process.
     pub fn from_process() -> Self {
         Self {
+            opencode_base_url: std::env::var("ANTHROPIC_BASE_URL").ok(),
             subagent_model: std::env::var("CLAUDE_CODE_SUBAGENT_MODEL")
                 .ok()
                 .map(|value| value.trim().to_string())
@@ -162,6 +169,8 @@ pub enum RouteBackend {
     CodexBridge,
     /// The `dsh` harness, which owns its own provider configuration.
     DeepSeekNative,
+    /// OpenCode calling a Messages-compatible provider directly.
+    OpenCodeNative,
 }
 
 impl RouteBackend {
@@ -172,6 +181,7 @@ impl RouteBackend {
             Self::Unified => "unified",
             Self::CodexBridge => "codex_bridge",
             Self::DeepSeekNative => "deepseek_native",
+            Self::OpenCodeNative => "opencode_native",
         }
     }
 }
@@ -481,6 +491,8 @@ pub fn backend_for(plan: &LaunchPlan) -> RouteBackend {
         RouteBackend::CodexBridge
     } else if is_direct(plan) {
         RouteBackend::Direct
+    } else if plan.effective_harness() == Backend::OpenCode {
+        RouteBackend::OpenCodeNative
     } else if plan.effective_harness() == Backend::DeepSeek {
         RouteBackend::DeepSeekNative
     } else {
@@ -490,7 +502,7 @@ pub fn backend_for(plan: &LaunchPlan) -> RouteBackend {
 
 /// The wire model a direct launch starts on: the selection's, else the
 /// provider's reviewed catalog default.
-fn direct_wire_model(
+pub(crate) fn direct_wire_model(
     provider: ModelProvider,
     selection: Option<&crate::provider_catalog::ResolvedModelSelection>,
 ) -> Option<&str> {
@@ -653,7 +665,9 @@ fn scrub_list(backend: RouteBackend, provider: ModelProvider) -> Vec<ScrubKey> {
             ScrubKey::os_semantics("ANTHROPIC_BASE_URL"),
             ScrubKey::os_semantics("ANTHROPIC_CUSTOM_HEADERS"),
         ],
-        RouteBackend::Native | RouteBackend::DeepSeekNative => Vec::new(),
+        RouteBackend::Native | RouteBackend::DeepSeekNative | RouteBackend::OpenCodeNative => {
+            Vec::new()
+        }
     };
     // The direct route additionally drops this provider's own ambient key:
     // an OpenRouter child must never inherit one from the parent shell.
@@ -706,9 +720,11 @@ fn request_path_verdict(backend: RouteBackend) -> CheckVerdict {
         RouteBackend::DeepSeekNative => Applicability::NotApplicable(
             "the DeepSeek harness owns its own request path".to_string(),
         ),
-        RouteBackend::Direct | RouteBackend::Native => Applicability::NotApplicable(
-            "clud is not in the request path on a direct route".to_string(),
-        ),
+        RouteBackend::Direct | RouteBackend::Native | RouteBackend::OpenCodeNative => {
+            Applicability::NotApplicable(
+                "clud is not in the request path on a direct route".to_string(),
+            )
+        }
     };
     let verdict = match applicability {
         Applicability::Applies => {
@@ -1037,6 +1053,46 @@ fn deepseek_native_plan(
     }
 }
 
+/// OpenCode shares the Messages wire protocol with the descriptor-backed routes.
+fn opencode_native_plan(
+    provider: ModelProvider,
+    selection: Option<&crate::provider_catalog::ResolvedModelSelection>,
+    ambient: &Ambient,
+) -> BackendPlan {
+    let descriptor = crate::provider_registry::descriptor_for(provider);
+    let base = ambient
+        .opencode_base_url
+        .as_deref()
+        .or(ambient.direct_upstream_url.as_deref())
+        .unwrap_or_else(|| {
+            descriptor.map_or(
+                crate::codex_bridge::ANTHROPIC_MESSAGES_BASE_URL,
+                |descriptor| descriptor.anthropic_base_url,
+            )
+        });
+    BackendPlan {
+        upstreams: vec![upstream_for(
+            provider,
+            base,
+            descriptor.map_or(CredentialSource::Harness, |_| {
+                CredentialSource::Vault(provider)
+            }),
+        )],
+        slots: SlotModels {
+            main: crate::opencode_harness::wire_model(provider, selection).and_then(SlotModel::of),
+            ..SlotModels::default()
+        },
+        allowlist: Vec::new(),
+        discovery: DiscoveryPolicy::Off,
+        context: crate::opencode_harness::wire_model(provider, selection).map(|wire| {
+            ContextPolicy {
+                max_tokens: crate::opencode_harness::context_window(wire),
+                ..context_policy(Some(wire))
+            }
+        }),
+    }
+}
+
 /// Resolve the route from explicit inputs, so a test never needs the daemon's
 /// catalog cache or the served server settings.
 pub fn resolve_with_catalog(
@@ -1057,6 +1113,7 @@ pub fn resolve_with_catalog(
         }
         RouteBackend::CodexBridge => codex_bridge_plan(plan),
         RouteBackend::DeepSeekNative => deepseek_native_plan(provider, selection),
+        RouteBackend::OpenCodeNative => opencode_native_plan(provider, selection, ambient),
         RouteBackend::Native => BackendPlan {
             upstreams: Vec::new(),
             slots: SlotModels::default(),
@@ -1112,7 +1169,9 @@ pub fn resolve_with_catalog(
         timeout_ms: match backend {
             RouteBackend::Direct => DIRECT_TIMEOUT_MS.parse().ok(),
             RouteBackend::Unified | RouteBackend::CodexBridge => BRIDGE_TIMEOUT_MS.parse().ok(),
-            RouteBackend::Native | RouteBackend::DeepSeekNative => None,
+            RouteBackend::Native | RouteBackend::DeepSeekNative | RouteBackend::OpenCodeNative => {
+                None
+            }
         },
         scrub: scrub_list(backend, provider),
         checks: Vec::new(),

@@ -126,7 +126,7 @@ pub fn has_noninteractive_prompt(args: &Args, backend: Backend) -> bool {
             target
                 .as_deref()
                 .is_some_and(|value| !value.trim().is_empty())
-                && matches!(backend, Backend::DeepSeek)
+                && matches!(backend, Backend::DeepSeek | Backend::OpenCode)
         }
         Some(Command::Up { .. }) | Some(Command::Rebase) | Some(Command::Fix { .. }) => {
             !matches!(backend, Backend::Codex)
@@ -268,6 +268,9 @@ pub(crate) fn build_headless_turn_plan(
     turn_args.passthrough.clear();
 
     let mut plan = build_launch_plan_for_target_at(&turn_args, target, backend_path, &request.cwd);
+    if plan.prompt_summary {
+        crate::prompt_output::remove_auto_flags(&mut plan.command, backend);
+    }
     match (backend, &request.session) {
         (Backend::Claude, HeadlessSession::Initial { claude_session_id }) => {
             let id = claude_session_id
@@ -305,6 +308,7 @@ pub(crate) fn build_headless_turn_plan(
     // This flag means the foreground renderer owns the stream; daemon callers
     // keep raw JSONL for event storage instead.
     plan.stream_json_progress = false;
+    plan.prompt_summary = false;
     plan.launch_mode = LaunchMode::Subprocess;
     Ok(plan)
 }
@@ -382,6 +386,23 @@ enum LandBias {
     Off,
 }
 
+/// #2570: when the land bias resolves to Merge, [`land_instructions`] already
+/// appends [`super::do_prompt::LAND_CONTRACT`] to the appended system prompt.
+/// `do_procedure` embeds the same contract text, so this drops that copy
+/// (with the blank line that separated it) instead of shipping ~1.6 KB twice
+/// on every request of the session. Pr and Off biases append different, or no,
+/// text, so the procedure's copy stays.
+fn strip_duplicate_land_contract(procedure: String, land: &str) -> String {
+    if land != super::do_prompt::LAND_CONTRACT {
+        return procedure;
+    }
+    let separated = format!("{}\n\n", super::do_prompt::LAND_CONTRACT);
+    match procedure.contains(&separated) {
+        true => procedure.replace(&separated, ""),
+        false => procedure.replace(super::do_prompt::LAND_CONTRACT, ""),
+    }
+}
+
 fn resolve_land_bias(no_land: bool, env: Option<&str>, setting: Option<&str>) -> LandBias {
     if no_land {
         return LandBias::Off;
@@ -437,12 +458,16 @@ fn append_instructions(target: &mut String, text: &str) {
     }
 }
 
-fn merge_claude_append_prompt(passthrough: &[String], unsafe_mode: bool) -> (String, Vec<String>) {
-    let mut prompt = if unsafe_mode {
+fn merge_claude_append_prompt(args: &Args) -> (String, Vec<String>) {
+    let passthrough = &args.passthrough;
+    let mut prompt = if args.unsafe_mode {
         String::new()
     } else {
         crate::deletion_rules::generated().instructions
     };
+    if let Some(reference) = &args.optional_context {
+        append_instructions(&mut prompt, reference);
+    }
     let mut remaining = Vec::new();
     let mut index = 0;
     while index < passthrough.len() {
@@ -494,6 +519,20 @@ fn take_codex_developer_instructions(passthrough: &mut Vec<String>) -> Option<St
     found
 }
 
+fn configured_codex_instructions(
+    args: &Args,
+    cwd: &Path,
+    explicit: Option<String>,
+) -> (String, bool) {
+    let existing = explicit.or_else(|| existing_codex_instructions(args, cwd));
+    let has_existing = existing.is_some();
+    let mut instructions = existing.unwrap_or_default();
+    if let Some(reference) = &args.optional_context {
+        append_instructions(&mut instructions, reference);
+    }
+    (instructions, has_existing)
+}
+
 fn parse_codex_instruction_override(raw: &str) -> Option<String> {
     format!("value = {raw}")
         .parse::<toml::Table>()
@@ -517,7 +556,7 @@ fn build_launch_plan_for_target_at(
     let backend = target.effective_harness;
     let mut cmd = vec![backend_path.to_string()];
     let (mut deletion_instructions, mut passthrough) = if backend == Backend::Claude {
-        merge_claude_append_prompt(&args.passthrough, args.unsafe_mode)
+        merge_claude_append_prompt(args)
     } else {
         (String::new(), args.passthrough.clone())
     };
@@ -583,6 +622,7 @@ fn build_launch_plan_for_target_at(
     // callers safe by preserving the picker and withholding the prompt.
     let seed_interactive_builtin = !(codex_uses_resume && matches!(args.resume, Some(None)));
 
+    crate::opencode_harness::append_launch_args(args, target, model_selection.as_ref(), &mut cmd);
     if matches!(backend, Backend::DeepSeek) {
         if has_noninteractive_prompt(args, backend) {
             cmd.extend(["--profile".to_string(), "headless".to_string()]);
@@ -631,7 +671,14 @@ fn build_launch_plan_for_target_at(
         if !deletion_instructions.is_empty() {
             deletion_instructions.push_str("\n\n");
         }
-        deletion_instructions.push_str(do_procedure(args.do_rendered_prompt.as_deref()));
+        // #2570: `land` is already in the appended instructions when the bias
+        // resolves to Merge. The rendered procedure carries the same contract
+        // text, so strip that copy instead of shipping 1.6 KB twice.
+        let procedure = strip_duplicate_land_contract(
+            do_procedure(args.do_rendered_prompt.as_deref()).to_string(),
+            land,
+        );
+        deletion_instructions.push_str(&procedure);
     }
 
     let mcp_bridge = claude_mcp_bridge_arg(backend, target);
@@ -660,16 +707,8 @@ fn build_launch_plan_for_target_at(
         let matcher = CODEX_HOOK_MATCHER;
         cmd.extend(["-c".into(), format!("hooks.PreToolUse=[{{matcher=\"{matcher}\",hooks=[{{type=\"command\",command=\"{scan}\"}}]}}]")]);
         cmd.extend(["-c".into(), format!("hooks.state={{\"/<session-flags>/config.toml:pre_tool_use:0:0\"={{trusted_hash=\"{}\"}}}}", codex_hook_hash(scan))]);
-        let has_passthrough_instructions = codex_passthrough_instructions.is_some();
-        let existing_instructions = if has_passthrough_instructions {
-            None
-        } else {
-            existing_codex_instructions(args, cwd)
-        };
-        let has_user_instructions = has_passthrough_instructions || existing_instructions.is_some();
-        let mut instructions = codex_passthrough_instructions
-            .or(existing_instructions)
-            .unwrap_or_default();
+        let (mut instructions, has_user_instructions) =
+            configured_codex_instructions(args, cwd, codex_passthrough_instructions);
         if !args.unsafe_mode {
             if !instructions.is_empty() {
                 instructions.push_str("\n\n");
@@ -697,7 +736,7 @@ fn build_launch_plan_for_target_at(
         match backend {
             Backend::Claude => cmd.push("--dangerously-skip-permissions".to_string()),
             Backend::Codex => cmd.push("--dangerously-bypass-approvals-and-sandbox".to_string()),
-            Backend::DeepSeek => {}
+            Backend::DeepSeek | Backend::OpenCode => {}
         }
     }
 
@@ -783,7 +822,7 @@ fn build_launch_plan_for_target_at(
                 cmd.push("-m".to_string());
                 cmd.push(emitted);
             }
-            Backend::DeepSeek => {}
+            Backend::DeepSeek | Backend::OpenCode => {}
         }
     }
     // Effort is harness-owned session state and travels independently from
@@ -843,21 +882,17 @@ fn build_launch_plan_for_target_at(
             if let Some(ref t) = task {
                 let prompt_text = resolve_loop_task(t, &git_root, *refresh);
                 task_summary = Some(summarize_task_name(&prompt_text, 50));
-                let final_prompt = if let Some(markers) = marker_paths.as_ref() {
-                    // Issue #95: feed absolute paths into the contract so the
-                    // model writes to the exact path clud is polling, not
-                    // some invented alternative like `~/.loop/LOOP.md`.
-                    format!(
-                        "{}{}{}",
-                        prompt_text,
-                        done_marker_contract(&markers.done, &markers.blocked),
-                        crate::loop_spec::next_message_contract(
-                            &crate::loop_artifacts::next_message_path(&git_root)
-                        )
+                let done_contract = marker_paths.as_ref().map_or_else(String::new, |markers| {
+                    done_marker_contract(&markers.done, &markers.blocked)
+                });
+                let message_contract = if marker_paths.is_some() || repeat_schedule.is_none() {
+                    crate::loop_spec::next_message_contract(
+                        &crate::loop_artifacts::next_message_path(&git_root),
                     )
                 } else {
-                    prompt_text
+                    String::new()
                 };
+                let final_prompt = format!("{prompt_text}{done_contract}{message_contract}");
                 push_prompt(&mut cmd, backend, final_prompt);
             }
             if let Some(markers) = marker_paths {
@@ -898,6 +933,9 @@ fn build_launch_plan_for_target_at(
                             .as_deref()
                             .is_some_and(|text| !text.trim().is_empty()),
                     ),
+                    (Backend::OpenCode, _, _) => {
+                        do_procedure(args.do_rendered_prompt.as_deref()).to_string()
+                    }
                     _ => build_do_prompt(args.do_rendered_prompt.as_deref()),
                 };
                 push_prompt_interactive(&mut cmd, prompt);
@@ -947,13 +985,15 @@ fn build_launch_plan_for_target_at(
                 push_prompt_interactive(&mut cmd, crate::video::seed_prompt(&checkout));
             }
         }
-        Some(Command::Serve { .. })
+        Some(Command::Remote { .. })
+        | Some(Command::Serve { .. })
         | Some(Command::Secret(_))
         | Some(Command::Auth { .. })
         | Some(Command::Models { .. })
         | Some(Command::CodexUpdate)
         | Some(Command::DshUpdate)
         | Some(Command::Doctor { .. })
+        | Some(Command::Setup { .. })
         | Some(Command::Ci { .. })
         | Some(Command::CodexAuth { .. })
         | Some(Command::DeepseekAuth { .. })
@@ -979,8 +1019,13 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Inject { .. })
         | Some(Command::InternalStartCmd)
         | Some(Command::InternalOpenAiChatTranslate { .. })
-        | Some(Command::InternalOpenAiResponsesTranslate)
+        | Some(Command::InternalOpenAiCompletionsTranslate { .. })
+        | Some(Command::InternalGeminiClientTranslate { .. })
+        | Some(Command::InternalClaudeGeminiTranslate { .. })
+        | Some(Command::InternalApplyPayloadRules { .. })
+        | Some(Command::InternalOpenAiResponsesTranslate { .. })
         | Some(Command::InternalKimiDeviceLogin { .. })
+        | Some(Command::InternalMetaDeviceLogin { .. })
         | Some(Command::InternalXaiDeviceLogin { .. })
         | Some(Command::InternalDaemon { .. })
         | Some(Command::Statusline { .. })
@@ -1012,8 +1057,7 @@ fn build_launch_plan_for_target_at(
                     }
                     // Codex's session selector was emitted before the command
                     // arm so generated built-in prompts follow it in argv.
-                    Backend::Codex => {}
-                    Backend::DeepSeek => {}
+                    Backend::Codex | Backend::DeepSeek | Backend::OpenCode => {}
                 }
             }
         }
@@ -1022,12 +1066,11 @@ fn build_launch_plan_for_target_at(
     cmd.extend(passthrough);
 
     let is_loop_cmd = matches!(&args.command, Some(Command::Loop { .. }));
-    // Headless: Claude `-p`/`--print` (from clud or passthrough), `codex exec`,
-    // DeepSeek's headless profile.
+    // Headless: Claude print, Codex exec, dsh headless, or OpenCode run.
     let headless = match backend {
         Backend::Claude => cmd.iter().any(|a| a == "-p" || a == "--print"),
         Backend::Codex => codex_uses_exec,
-        Backend::DeepSeek => has_noninteractive_prompt(args, backend),
+        Backend::DeepSeek | Backend::OpenCode => has_noninteractive_prompt(args, backend),
     };
     let launch_mode = crate::backend::resolve_launch_mode(
         args.pty,
@@ -1036,18 +1079,16 @@ fn build_launch_plan_for_target_at(
         crate::session::terminals_are_interactive(),
     );
 
-    // Issue: subprocess-mode loops on claude went silent until the iteration
-    // finished, because `claude -p` buffers its single final response. Inject
-    // `--output-format stream-json --verbose` so claude emits one JSON event
-    // per turn step, and let the runtime render those into progress lines.
-    // PTY-mode loops already stream the live TUI; codex doesn't expose this
-    // flag at all.
-    //
-    // The flags MUST be inserted BEFORE the prompt (`-p <prompt>`) so that
-    // `command[-1]` remains the prompt — downstream tooling, dry-run JSON
-    // consumers, and integration tests rely on that contract.
+    // The loop renderer keeps its existing contract. Ordinary foreground
+    // print turns opt into the shared compact renderer unless native output
+    // was requested explicitly.
     let stream_json_progress =
         matches!(backend, Backend::Claude) && is_loop_cmd && launch_mode == LaunchMode::Subprocess;
+    let prompt_summary = !crate::daemon::experimental_enabled(args)
+        && !is_loop_cmd
+        && headless
+        && launch_mode == LaunchMode::Subprocess
+        && crate::prompt_output::configure_command(&mut cmd, backend, &args.passthrough);
     if stream_json_progress {
         // For Claude, `push_prompt` emits `-p` then the prompt body. Find that
         // `-p` and slot the stream-json flags in just before it. This keeps
@@ -1087,6 +1128,7 @@ fn build_launch_plan_for_target_at(
         task_summary,
         loop_markers,
         stream_json_progress,
+        prompt_summary,
         codex_model,
         model_selection,
         failover: args.failover.clone(),
@@ -1100,9 +1142,7 @@ fn build_launch_plan_for_target_at(
         pinned_from_previous_selection: args.model_pin_is_from_previous_selection(),
         route: None,
     };
-    // #1855: the route is resolved once, here, from the plan it describes --
-    // so every backend renderer and `--dry-run` read one decision instead of
-    // re-deriving their own copy of it.
+    // Resolve once for every runtime renderer and dry run.
     plan.route = Some(crate::route_plan::resolve(
         &plan,
         &crate::route_plan::Ambient::from_process(),
@@ -1373,6 +1413,54 @@ mod codex_hook_hash_tests {
             codex_hook_hash("/tmp/clud cmd-scan --event PreToolUse"),
             "sha256:f1e8926650feac924e61dd910ad96a3fc22466eedd26e245743f739989ca27b5"
         );
+    }
+}
+
+#[cfg(test)]
+mod land_contract_tests {
+    use super::super::do_prompt::LAND_CONTRACT;
+    use super::strip_duplicate_land_contract;
+
+    /// A real procedure for a single-issue target, as `clud do` renders it.
+    fn rendered_procedure() -> String {
+        crate::command::do_prompt::render(
+            "https://github.com/zackees/clud/issues/900",
+            &Ok(crate::command::do_kind::DoKind::Single),
+            &Ok(crate::command::do_prompt::BranchFacts {
+                branch: Some("main".into()),
+                default_branch: "main".into(),
+                ..Default::default()
+            }),
+        )
+    }
+
+    #[test]
+    fn merge_bias_drops_the_second_copy_from_the_rendered_procedure() {
+        let procedure = rendered_procedure();
+        assert_eq!(procedure.matches("Land the work").count(), 1);
+        let out = strip_duplicate_land_contract(procedure, LAND_CONTRACT);
+        assert_eq!(out.matches("Land the work").count(), 0);
+        // The rest of the procedure survives, and no blank-line run is left
+        // where the contract used to be.
+        assert!(out.contains("## Starting point"));
+        assert!(out.contains("## What to do"));
+        assert!(out.contains("## Finish"));
+        assert!(!out.contains("\n\n\n\n"));
+    }
+
+    #[test]
+    fn pr_bias_keeps_the_procedure_copy() {
+        let procedure = rendered_procedure();
+        let shorter = "Land the work: deliver a validated and pushed PR.";
+        let out = strip_duplicate_land_contract(procedure, shorter);
+        assert_eq!(out.matches("Land the work").count(), 1);
+    }
+
+    #[test]
+    fn empty_land_keeps_the_procedure_copy() {
+        let procedure = rendered_procedure();
+        let out = strip_duplicate_land_contract(procedure, "");
+        assert_eq!(out.matches("Land the work").count(), 1);
     }
 }
 

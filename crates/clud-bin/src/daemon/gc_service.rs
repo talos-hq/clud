@@ -675,23 +675,18 @@ fn reverify_before_delete_with(
     entry: &TrackedEntry,
     source_probe: &dyn Fn(&Path) -> Option<&'static str>,
 ) -> Option<&'static str> {
+    if entry.kind == WORKTREE_KIND {
+        if let Some(reason) = source_probe(Path::new(&entry.path)) {
+            return Some(reason);
+        }
+        let decision = extern_repo::tracked_source_purge_verdict(entry, extern_repo_stale_after());
+        return (!decision.purge).then_some(decision.reason);
+    }
     if entry_is_cacheable(entry) {
         let decision = extern_repo_purge_verdict(entry, extern_repo_stale_after());
         if !decision.purge {
             return Some(decision.reason);
         }
-    } else if entry.kind == WORKTREE_KIND {
-        let path = Path::new(&entry.path);
-        if let Some(reason) = source_probe(path) {
-            return Some(reason);
-        }
-        let decision = extern_repo::extern_repo_purge_decision(
-            path.is_dir(),
-            true,
-            true,
-            extern_repo::git_work_state(path),
-        );
-        return (!decision.purge).then_some(decision.reason);
     } else {
         return None;
     }
@@ -1449,7 +1444,7 @@ fn spawn_extern_probe(
             let verdicts = entries
                 .into_iter()
                 .map(|entry| {
-                    let decision = extern_repo_purge_verdict(&entry, stale_after);
+                    let decision = extern_repo::tracked_source_purge_verdict(&entry, stale_after);
                     (entry.path, decision)
                 })
                 .collect();
@@ -1688,6 +1683,13 @@ fn process_op(
                         let live_locked = (r.kind == "worktree" && live_locks.contains(&r.path))
                             || entry_path_contains_live_cwd_path(&r.path, &live_cwds);
                         let cached = spare_reasons.get(&r.path);
+                        let pending = list_state::CachedDecision {
+                            class: extern_repo::PurgeClass::Pinned,
+                            reason: "pinned: source verification pending",
+                            evaluated_unix: 0,
+                        };
+                        let display_verdict =
+                            cached.or_else(|| entry_is_cacheable(&r).then_some(&pending));
                         // Issue #896. Deliberately no git probe here — the
                         // verdict comes from the tick's cache; see
                         // `list_state` and #946.
@@ -1701,7 +1703,7 @@ fn process_op(
                                 Path::new(&r.path).try_exists().unwrap_or(true),
                                 live_locked,
                                 spare_reasons.delete_spare(&r.path),
-                                cached,
+                                display_verdict,
                             );
                         ListRow {
                             live_locked,
