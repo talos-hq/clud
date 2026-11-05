@@ -272,7 +272,10 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
                 continue;
             }
             scanned += 1;
-            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            // The public setting spelling is not a filesystem path or an environment read.
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .replace("context.hermes.enabled", "context-setting");
             for needle in needles {
                 if text.contains(needle) {
                     offenders.push(format!("{} names {needle}", path.display()));
@@ -290,4 +293,35 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
         "only setup_command/hermes.rs may read Hermes config or env:\n{}",
         offenders.join("\n")
     );
+}
+
+#[test]
+fn optional_personality_reference_does_not_read_or_inject_the_file() {
+    let home = tempfile::tempdir().unwrap();
+    let instance = home.path().join(".hermes");
+    std::fs::create_dir(&instance).unwrap();
+    std::fs::write(
+        instance.join("SOUL.md"),
+        "PERSONA_CONTENT_MUST_NOT_BE_INJECTED",
+    )
+    .unwrap();
+    std::fs::write(instance.join("config.yaml"), "not: [valid yaml").unwrap();
+    let reference = context_reference(home.path(), None).unwrap();
+    assert!(reference.contains("SOUL.md"));
+    assert!(reference.contains("Reading it is optional"));
+    assert!(!reference.contains("PERSONA_CONTENT_MUST_NOT_BE_INJECTED"));
+    let other = tempfile::tempdir().unwrap();
+    std::fs::write(other.path().join("SOUL.md"), "other personality").unwrap();
+    let reference = context_reference(home.path(), Some(other.path().into())).unwrap();
+    let path = other.path().join("SOUL.md").canonicalize().unwrap();
+    let quoted = serde_json::to_string(&path.to_string_lossy()).unwrap();
+    assert!(reference.contains(&quoted));
+}
+
+#[test]
+fn missing_optional_personality_file_is_an_actionable_error() {
+    let home = tempfile::tempdir().unwrap();
+    let error = context_reference(home.path(), None).unwrap_err();
+    assert!(error.contains("context.hermes.enabled=false"));
+    assert!(error.contains("SOUL.md"));
 }

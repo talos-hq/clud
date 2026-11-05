@@ -7550,3 +7550,12 @@ it neither starts a backend agent nor installs an SSH daemon. Session bearer
 credentials stay on the same origin. See
 [remote assistance](architecture/remote-assistance.md) for the contract and the
 real-executable integration test maintained with the site.
+
+## DD-202: Hermes personality integration is an optional reference
+
+`context.hermes.enabled` appends a reference to the instance's `SOUL.md` through
+Claude's append-system-prompt and Codex's developer instructions. The model may
+read the file when useful. Clud preserves the native system prompt and does not
+eagerly inject the persona or read Hermes credentials/configuration. This keeps
+the existing Hermes integration boundary narrow and gives the user one setting
+for both harnesses. See [optional context](architecture/optional-context.md).

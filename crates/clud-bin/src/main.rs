@@ -1988,6 +1988,10 @@ fn build_backend_plan(args: &mut args::Args, launch: LaunchResolution) -> comman
         require_backend_version(launch_target, &backend_path);
     }
     configure_launch_setup(args, launch, backend);
+    clud::optional_context::prepare(args, backend).unwrap_or_else(|error| {
+        eprintln!("[clud] optional context: {error}");
+        std::process::exit(2);
+    });
     if matches!(backend, backend::Backend::Codex) {
         load_codex_config_overrides(args);
     }

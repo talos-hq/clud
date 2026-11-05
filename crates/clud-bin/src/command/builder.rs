@@ -458,12 +458,16 @@ fn append_instructions(target: &mut String, text: &str) {
     }
 }
 
-fn merge_claude_append_prompt(passthrough: &[String], unsafe_mode: bool) -> (String, Vec<String>) {
-    let mut prompt = if unsafe_mode {
+fn merge_claude_append_prompt(args: &Args) -> (String, Vec<String>) {
+    let passthrough = &args.passthrough;
+    let mut prompt = if args.unsafe_mode {
         String::new()
     } else {
         crate::deletion_rules::generated().instructions
     };
+    if let Some(reference) = &args.optional_context {
+        append_instructions(&mut prompt, reference);
+    }
     let mut remaining = Vec::new();
     let mut index = 0;
     while index < passthrough.len() {
@@ -522,7 +526,11 @@ fn configured_codex_instructions(
 ) -> (String, bool) {
     let existing = explicit.or_else(|| existing_codex_instructions(args, cwd));
     let has_existing = existing.is_some();
-    (existing.unwrap_or_default(), has_existing)
+    let mut instructions = existing.unwrap_or_default();
+    if let Some(reference) = &args.optional_context {
+        append_instructions(&mut instructions, reference);
+    }
+    (instructions, has_existing)
 }
 
 fn parse_codex_instruction_override(raw: &str) -> Option<String> {
@@ -548,7 +556,7 @@ fn build_launch_plan_for_target_at(
     let backend = target.effective_harness;
     let mut cmd = vec![backend_path.to_string()];
     let (mut deletion_instructions, mut passthrough) = if backend == Backend::Claude {
-        merge_claude_append_prompt(&args.passthrough, args.unsafe_mode)
+        merge_claude_append_prompt(args)
     } else {
         (String::new(), args.passthrough.clone())
     };

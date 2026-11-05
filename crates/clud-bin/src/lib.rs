@@ -61,6 +61,7 @@ pub mod codex_translate;
 pub mod codex_upstream;
 pub mod command;
 pub mod config;
+pub mod optional_context;
 pub mod scanner_hook_migration;
 pub mod temp_home_logs;
 mod tool_result_cap;
