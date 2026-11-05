@@ -587,6 +587,35 @@ Evidence (24 h probe, 2026-10-31): 308 of 1,035 `Read` calls repeated a
 call already made in the same session, re-supplying 1,029,780 bytes, led by
 one 2,142-line file read 23 times.
 
+### Persisted-output read bound (#2233)
+
+When one tool result is too large, Claude Code writes it to
+`~/.claude/projects/<project>/<session>/tool-results/<id>.txt` and leaves a
+~2 KB preview in the transcript. A `Read` of that file with no range re-injects
+the artifact, and every later request in the session re-sends it.
+
+Evidence (probe rows, 2026-10-27..11-05): this is the largest single exposure
+cell on most days, in five different projects — 35,988 B read once and re-sent
+62 times (2.2 MB) on 2026-11-04 and again on 11-05, 34,277 B re-sent 1,079
+times (37 MB) on 2026-11-02, 60,108 B re-sent 149 times on 11-01. On a
+`clud __cmd-scan` replay the whole-file `cat` budget, the ranged-read budget
+and the unchanged-re-read guard all allow it, because it is a *first* read.
+
+- **Only a whole-file read counts:** `Read`/`read_file`/`readfile` whose
+  `tool_input` names no `offset`, `limit`, `start_line`, `end_line`,
+  `line_offset` or `max_lines`. A ranged read — the bounded habit this guard
+  wants — always passes.
+- **Only harness spills count:** the parent directory must be `tool-results`
+  *and* an ancestor `.claude`, so a repository that keeps its own
+  `tool-results/` directory is never touched. Files under 8 KiB pass.
+- **Refused once:** the first whole read is refused with `offset`+`limit`,
+  `Grep`, and the exact `clud tool run code/slice.py <path> --lines A-B` call
+  (8 KiB cap); the identical retry passes, so a session can never be wedged.
+- **State:** `<clud state dir>/persisted-read-guard/<hash>.json`, one file per
+  session, at most 64 paths, a refusal forgotten after 24 h. **Fails open** on
+  a missing session id, an unreadable state dir, or a file that cannot be
+  `stat`ed. `CLUD_PERSISTED_READ_GUARD=0` turns it off.
+
 ### Image-view budget (#2233)
 
 A screenshot is not retained like text: every frame an agent opens stays in the
