@@ -7573,3 +7573,28 @@ read the file when useful. Clud preserves the native system prompt and does not
 eagerly inject the persona or read Hermes credentials/configuration. This keeps
 the existing Hermes integration boundary narrow and gives the user one setting
 for both harnesses. See [optional context](architecture/optional-context.md).
+
+## DD-203: clud-owned names point into a content-addressed toolstore
+
+**Context (#2558).** A hardlink is a second name for one inode, so it has no
+version of its own. pip and `uv tool` each replace their `clud` by rename; on a
+real machine 13 clud-owned names shared one inode of an older build than the
+launcher, and `clud doctor` said `aliases: all current` because the
+size/mtime/version fingerprint could not tell two 51,183,480-byte builds apart.
+One inode also means no rollback: every name changes at once.
+
+**Decision.** Each build is published once, immutably, to
+`~/.clud/toolstore/<build-id>/clud` (temp dir + rename). The names under
+`~/.clud/state` are symlinks to the absolute store path, re-pointed by staged
+symlink + rename; the hardlink/copy ladder survives only as a fallback where
+symlinks are unavailable, with a sidecar recording the build. Freshness is the
+resolved build id, exactly. GC keeps the launcher's build, any named or live-
+pinned build, and the newest two. See [toolstore.md](architecture/toolstore.md).
+
+**Why not relink harder.** Relinking on launch is a repair loop that must win
+after every upgrade by either installer, forever, and still cannot detect a
+same-size skew or keep an older build alive for a running session.
+
+**Scope.** Additive: no existing `~/.clud` path moved (#1963 is the layout meta
+issue). Foreign installs are never rewritten. **Amends DD-121** for the names
+clud owns under `~/.clud/state`.

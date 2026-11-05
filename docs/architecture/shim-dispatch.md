@@ -3,7 +3,8 @@
 `clud-shim` is the personality of the one `clud` binary behind every PATH alias
 clud installs: `python` and `python3` in `~/.clud/state/shims`, and `rm`, `gh`, `git`, <!-- python-name-lint: allow -->
 `safe-rm`, `safe-mktemp` in `~/.clud/state/rm-shim`. Each alias is a hardlink, symlink or copy of `clud`
-(hardlink first; [DD-121](../DESIGN_DECISIONS.md#dd-121-helper-executables-are-argv0-aliases-of-the-one-clud-binary))
+(hardlink first; [DD-121](../DESIGN_DECISIONS.md#dd-121-helper-executables-are-argv0-aliases-of-the-one-clud-binary);
+since #2558 a symlink into the versioned [toolstore](toolstore.md))
 that `multicall::maybe_run` routes here by argv\[0\] before any other startup
 work. The code is `shim_main.rs` and `shim_main/dispatch.rs`. This doc owns the contract every alias shares (#1546). What an
 alias does *inside* a session is owned elsewhere:

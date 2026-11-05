@@ -761,6 +761,9 @@ fn run_periodic_purge_tick(
 ) -> usize {
     let config = GcDiskWatchdogConfig::from_env();
     let repo_worktrees = RepoWorktreeGcConfig::from_env_and_settings();
+    // #2558: unreferenced toolstore builds beyond the newest two. Cheap
+    // (one dir listing per owned dir) and never touches a referenced build.
+    let _ = crate::toolstore::prune_current();
     run_periodic_purge_tick_with_free_space(
         registry,
         pool_tx,

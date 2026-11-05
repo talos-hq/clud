@@ -204,6 +204,7 @@ pub mod tool_tee;
 pub mod tool_termination;
 pub mod tool_watchdog;
 pub mod tools;
+pub mod toolstore;
 pub mod trampoline;
 pub mod trash;
 pub mod ui;

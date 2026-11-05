@@ -18,6 +18,12 @@
 //! symlink that resolves to it, or a copy with the source's size and mtime.
 //! An upgrade replaces `clud`, so every alias goes stale at once and the next
 //! launch relinks it.
+//!
+//! Size plus mtime cannot tell two builds of the same size apart (#2558), so
+//! the names under `~/.clud/state` no longer use this test: they point into
+//! the content-addressed [`crate::toolstore`], which decides freshness by the
+//! build a name resolves to. This module stays the link/copy ladder for it
+//! and for aliases beside a build output (`clud __link-aliases`).
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -53,6 +59,13 @@ pub fn install_alias_with(source: &Path, target: &Path, order: &[Method]) -> io:
     if is_fresh(&source, target) {
         return Ok(Placed::Unchanged);
     }
+    place(&source, target, order).map(Placed::Made)
+}
+
+/// Make `target` a fresh alias of `source` with the first method in `order`
+/// that works, staged and renamed over `target`, with no freshness check.
+/// [`crate::toolstore`] decides freshness itself (#2558).
+pub fn place(source: &Path, target: &Path, order: &[Method]) -> io::Result<Method> {
     let dir = target
         .parent()
         .ok_or_else(|| io::Error::other("alias path has no parent"))?;
@@ -61,8 +74,8 @@ pub fn install_alias_with(source: &Path, target: &Path, order: &[Method]) -> io:
     for &method in order {
         let staging = staging_path(dir, target);
         let _ = std::fs::remove_file(&staging);
-        match stage(method, &source, &staging).and_then(|()| std::fs::rename(&staging, target)) {
-            Ok(()) => return Ok(Placed::Made(method)),
+        match stage(method, source, &staging).and_then(|()| std::fs::rename(&staging, target)) {
+            Ok(()) => return Ok(method),
             Err(error) => {
                 let _ = std::fs::remove_file(&staging);
                 // A failed hardlink or symlink is routine: the next method

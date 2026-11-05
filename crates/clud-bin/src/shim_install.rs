@@ -56,7 +56,9 @@ pub fn extract_shims_at(home_root: &Path, shim_source: &Path) -> std::io::Result
     let mut installed = 0;
     for alias in alias_names() {
         let target = shims_dir.join(&alias);
-        if let alias_link::Placed::Made(_) = alias_link::install_alias(shim_source, &target)? {
+        if let alias_link::Placed::Made(_) =
+            crate::toolstore::install_owned(home_root, shim_source, &target)?
+        {
             installed += 1;
         }
     }
@@ -204,7 +206,7 @@ fn purge_stale_aliases(dir: &Path, expected: &[String]) -> std::io::Result<()> {
 /// Python relays off PATH. A separate directory also avoids activating
 /// previously extracted Python aliases.
 pub fn install_rm_at(home: &Path, source: &Path) -> std::io::Result<PathBuf> {
-    install_rm_with(home, source, &alias_link::DEFAULT_ORDER, &|_| true)
+    install_rm_with(home, source, &crate::toolstore::OWNED_ORDER, &|_| true)
         .map(|installed| installed.unwrap_or_else(|| home.join(shim_registry::SESSION_SUBDIR)))
 }
 
@@ -246,7 +248,7 @@ fn install_rm_with(
     for name in expected {
         // A stale or replaced entry is renamed over atomically, so concurrent
         // installers never see a partial alias and never write through one.
-        alias_link::install_alias_with(source, &dir.join(name), order)?;
+        crate::toolstore::install_owned_with(home, source, &dir.join(name), order)?;
     }
     Ok(Some(dir))
 }
@@ -316,7 +318,7 @@ pub fn refresh_running_session_aliases_at(
         return Ok(false);
     }
     let source_modified = std::fs::metadata(&source)?.modified()?;
-    let behind = |dir: &Path| aliases_behind(dir, &source, source_modified);
+    let behind = |dir: &Path| aliases_behind(home, dir, &source, source_modified);
     if !behind(&dir) {
         return Ok(false);
     }
@@ -324,7 +326,7 @@ pub fn refresh_running_session_aliases_at(
     let installed = install_rm_with(
         home,
         &source,
-        &[alias_link::Method::Hardlink, alias_link::Method::Symlink],
+        &[alias_link::Method::Symlink, alias_link::Method::Hardlink],
         &behind,
     )?;
     Ok(installed.is_some())
@@ -332,11 +334,16 @@ pub fn refresh_running_session_aliases_at(
 
 /// Whether some session alias in `dir` is not `source` and none of those is
 /// as new as `source` (mtime): the dir belongs to an older install.
-fn aliases_behind(dir: &Path, source: &Path, source_modified: std::time::SystemTime) -> bool {
+fn aliases_behind(
+    home: &Path,
+    dir: &Path,
+    source: &Path,
+    source_modified: std::time::SystemTime,
+) -> bool {
     let mut stale = false;
     for name in rm_alias_names() {
         let alias = dir.join(name);
-        if alias_link::is_fresh(source, &alias) {
+        if crate::toolstore::is_current(home, source, &alias) {
             continue;
         }
         stale = true;
@@ -505,8 +512,9 @@ mod tests {
         refresh_running_session_aliases_at(home, clud, &var).unwrap()
     }
 
-    fn links_to(source: &Path, alias: &Path) -> bool {
-        alias_link::is_fresh(&fs::canonicalize(source).unwrap(), alias)
+    /// The alias resolves to `source`'s toolstore build (#2558).
+    fn links_to(home: &Path, source: &Path, alias: &Path) -> bool {
+        crate::toolstore::is_current(home, source, alias)
     }
 
     fn set_mtime(path: &Path, when: std::time::SystemTime) {
@@ -535,7 +543,7 @@ mod tests {
 
         assert!(refresh(home.path(), &clud, &vars));
         for name in rm_alias_names() {
-            assert!(links_to(&clud, &dir.join(&name)), "{name}");
+            assert!(links_to(home.path(), &clud, &dir.join(&name)), "{name}");
         }
         assert!(!refresh(home.path(), &clud, &vars), "fresh aliases stay");
     }
@@ -563,7 +571,7 @@ mod tests {
             !refresh(home.path(), &clud, &vars),
             "a newer install's aliases are not replaced by an older clud"
         );
-        assert!(links_to(&newer, &alias));
+        assert!(links_to(home.path(), &newer, &alias));
 
         // Make `clud` the newest so only the gate under test can refuse.
         set_mtime(
@@ -590,13 +598,13 @@ mod tests {
             ("a session dir that is not the shared one", other_dir),
         ] {
             assert!(!refresh(home.path(), &clud, &vars), "{label}");
-            assert!(links_to(&newer, &alias), "{label}");
+            assert!(links_to(home.path(), &newer, &alias), "{label}");
         }
         assert!(
             refresh(home.path(), &clud, &running_session(home.path(), &clud)),
             "the control: every gate open"
         );
-        assert!(links_to(&clud, &alias));
+        assert!(links_to(home.path(), &clud, &alias));
 
         let empty = TempDir::new().unwrap();
         let vars = running_session(empty.path(), &clud);

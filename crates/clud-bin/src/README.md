@@ -999,6 +999,11 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   hidden `clud __cmd-scan`, `clud __shim <name>` and `clud __link-aliases <dir>`.
   `alias_link.rs` creates an alias: hardlink, then symlink, then copy, never
   failing a launch, with a freshness check that relinks after an upgrade.
+  `toolstore.rs` (#2558) publishes each build to `~/.clud/toolstore/<build-id>/clud`
+  and points the names under `~/.clud/state` at it (symlink, ladder fallback
+  with a build sidecar), with exact freshness, doctor `wrong_build` findings and
+  GC from the daemon tick; tests in `toolstore_tests.rs`. See
+  [toolstore.md](../../../docs/architecture/toolstore.md).
 - `shim_main.rs` also owns the session-local GitHub CLI relay and PR-watch translation;
   see [gh-watch-shim.md](../../../docs/architecture/gh-watch-shim.md).
 - `gh_broker/` — the session `gh api` read broker (#1743): `classify.rs`
