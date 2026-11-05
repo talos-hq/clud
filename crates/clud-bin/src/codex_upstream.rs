@@ -3021,7 +3021,7 @@ mod live_probe {
     #[ignore = "requires real credentials and network access"]
     fn a_real_upstream_request_streams_back() {
         let credentials = ResolvedCredentials::resolve_default().expect("credentials");
-        eprintln!("credential source = {}", credentials.describe());
+        crate::loop_console::diagnostic!("credential source = {}", credentials.describe());
         let target = credentials.resolve().expect("target");
         assert!(target.responses_url().ends_with("/responses"));
 
@@ -3094,9 +3094,12 @@ mod live_probe {
         }
         assert_eq!(usage.len(), MAX_REQUESTS, "canary request-count ceiling");
 
-        eprintln!(
+        crate::loop_console::diagnostic!(
             "live cache canary: first input={} cached={}; second input={} cached={}",
-            usage[0].0, usage[0].1, usage[1].0, usage[1].1
+            usage[0].0,
+            usage[0].1,
+            usage[1].0,
+            usage[1].1
         );
         assert!(
             usage[0].1 == 0,

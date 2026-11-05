@@ -634,7 +634,7 @@ pub fn run_seam(args: &SeamArgs<'_>) -> i32 {
 }
 
 fn seam_failure(error: &str) -> i32 {
-    eprintln!("xai device login: {error}");
+    crate::loop_console::diagnostic!("xai device login: {error}");
     1
 }
 

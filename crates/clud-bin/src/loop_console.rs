@@ -2,7 +2,7 @@
 use std::collections::VecDeque;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -32,26 +32,41 @@ fn owns_stderr() -> bool {
 
 const MAX_DEFERRED_DIAGNOSTICS: usize = 1000;
 static DEFERRED_DIAGNOSTICS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static DROPPED_DIAGNOSTICS: AtomicUsize = AtomicUsize::new(0);
 
 /// Print a diagnostic now, or when the dashboard closes if one owns the screen.
 pub(crate) fn eprint_diagnostic(line: &str) {
-    if owns_stderr() {
-        if let Ok(mut deferred) = DEFERRED_DIAGNOSTICS.lock() {
-            if deferred.len() < MAX_DEFERRED_DIAGNOSTICS {
-                deferred.push(line.to_owned());
-                return;
-            }
-        }
+    if !owns_stderr() {
+        eprintln!("{line}");
         return;
     }
-    eprintln!("{line}");
+    match DEFERRED_DIAGNOSTICS.lock() {
+        Ok(mut deferred) if deferred.len() < MAX_DEFERRED_DIAGNOSTICS => {
+            deferred.push(line.to_owned());
+        }
+        _ => {
+            DROPPED_DIAGNOSTICS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
 }
+
+/// `eprintln!` for code that can run while a dashboard owns the screen.
+macro_rules! diagnostic {
+    ($($arg:tt)*) => {
+        $crate::loop_console::eprint_diagnostic(&format!($($arg)*))
+    };
+}
+pub(crate) use diagnostic;
 
 fn flush_deferred_diagnostics() {
     if let Ok(mut deferred) = DEFERRED_DIAGNOSTICS.lock() {
         for line in deferred.drain(..) {
             eprintln!("{line}");
         }
+    }
+    let dropped = DROPPED_DIAGNOSTICS.swap(0, Ordering::SeqCst);
+    if dropped > 0 {
+        eprintln!("[clud] {dropped} more diagnostic lines were dropped");
     }
 }
 
@@ -511,7 +526,9 @@ impl Frame {
     /// so a width disagreement with the terminal cannot outlive its row. It
     /// never clears the screen, which is what makes a terminal flash.
     fn update(&mut self, bytes: &[u8], cols: u16, rows: u16) -> Vec<u8> {
-        let resized = self.size != (cols, rows);
+        // Below three rows, several drawn rows share one screen row, so the
+        // last writer wins only if all of them are written.
+        let resized = self.size != (cols, rows) || rows < 3;
         let next = split_rows(bytes);
         let mut body = Vec::new();
         if resized {
@@ -940,6 +957,20 @@ mod tests {
         DASHBOARD_ACTIVE.store(false, Ordering::SeqCst);
         let held = std::mem::take(&mut *DEFERRED_DIAGNOSTICS.lock().unwrap());
         assert!(held.contains(&"later".to_owned()));
+    }
+
+    #[test]
+    fn tiny_terminals_write_every_row_because_rows_share_a_screen_line() {
+        let ui = Dashboard::default();
+        let mut frame = Frame::default();
+        let mut bytes = Vec::new();
+        ui.draw(&mut bytes, 80, 2, 1, 2).unwrap();
+        frame.update(&bytes, 80, 2);
+        let mut next = Vec::new();
+        ui.draw(&mut next, 80, 2, 2, 2).unwrap();
+        let mut terminal = vt100::Parser::new(2, 80, 0);
+        terminal.process(&frame.update(&next, 80, 2));
+        assert!(!terminal.screen().contents().contains("iteration"));
     }
 
     #[test]

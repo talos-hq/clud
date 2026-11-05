@@ -88,9 +88,12 @@ fn launch_shell(args: &Args) -> Result<i32, String> {
 }
 
 /// MSYS rewrites arguments that look like POSIX paths when it starts a native
-/// program, which would corrupt a prompt such as `/fix this`.
-const SHELL_EXEC: &str =
-    "CLUD_SHELL_WRAPPED=1 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 exec \"$@\"";
+/// program, which would corrupt a prompt such as `/fix this`. WezTerm closes a
+/// pane on a clean exit, so the script holds it for the closing transcript.
+const SHELL_SCRIPT: &str =
+    "CLUD_SHELL_WRAPPED=1 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 \"$@\"; \
+     status=$?; printf '\\n[clud] finished with exit code %s. Press Enter to close.' \"$status\"; \
+     read -r _; exit \"$status\"";
 const SHELL_WRAPPER_ENV: [&str; 3] = [
     "CLUD_SHELL_WRAPPED",
     "MSYS2_ARG_CONV_EXCL",
@@ -131,18 +134,21 @@ fn shell_argv(
         "--noprofile".into(),
         "--norc".into(),
         "-c".into(),
-        SHELL_EXEC.into(),
+        SHELL_SCRIPT.into(),
         "clud".into(),
         executable.to_string_lossy().into_owned(),
     ];
+    // The flag precedes the subcommand, so only its first spelling is clud's;
+    // a later `--shell` belongs to the prompt or a backend.
     let mut items = args.raw_argv.iter().skip(1);
+    let mut stripped = false;
     while let Some(item) = items.next() {
-        if item == "--" {
-            argv.push(item.clone());
-            argv.extend(items.by_ref().cloned());
-        } else if item == "--shell" {
+        if !stripped && item == "--shell" {
+            stripped = true;
             items.next();
-        } else if !item.starts_with("--shell=") {
+        } else if !stripped && item.starts_with("--shell=") {
+            stripped = true;
+        } else {
             argv.push(item.clone());
         }
     }

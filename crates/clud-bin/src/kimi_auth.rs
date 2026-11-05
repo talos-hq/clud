@@ -794,7 +794,7 @@ pub fn run_seam(args: &SeamArgs<'_>) -> i32 {
     match run_seam_inner(args) {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("kimi device login: {error}");
+            crate::loop_console::diagnostic!("kimi device login: {error}");
             1
         }
     }

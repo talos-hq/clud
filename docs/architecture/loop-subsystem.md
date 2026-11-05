@@ -379,4 +379,5 @@ On Windows x64, `clud --shell bash loop <task>` runs the
 launch under clud's pinned Git Bash inside the bundled WezTerm fork, reusing the
 [`--kitty-term` bundle](kitty-windows-parity.md). The flag is removed from the forwarded
 argv, and MSYS path conversion is disabled so a prompt like `/fix it` arrives intact.
+The pane stays open after the run until Enter, so the closing transcript can be read.
 Windows ARM64 has no bundle and is rejected. Other hosts print a note and run normally.

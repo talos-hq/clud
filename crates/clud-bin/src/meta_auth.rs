@@ -771,7 +771,7 @@ pub fn run_seam(args: &SeamArgs<'_>) -> i32 {
     match run_seam_inner(args) {
         Ok(()) => 0,
         Err(error) => {
-            eprintln!("meta device login: {error}");
+            crate::loop_console::diagnostic!("meta device login: {error}");
             1
         }
     }
