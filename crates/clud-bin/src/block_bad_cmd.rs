@@ -692,6 +692,23 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: a `Read` of a persisted tool output (Claude's
+    // `tool-results/<id>.txt` spill) re-injects an artifact the transcript
+    // deliberately kept as a 2 KB preview. The first whole-file read of one is
+    // refused once with the bounded alternatives; a ranged read or a retry
+    // passes. Fail open.
+    if event == PRE_TOOL_USE_EVENT {
+        if let Some(reason) = block_bad_cmd_persisted::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            append_log(&format!("PERSISTED-READ-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
     // #2233: an image read is retained forever, so N views of one screenshot
     // path cost N frames on every later request. Past half the limit the call
     // gets an advisory note; past the limit one refusal, then the retry runs.
@@ -4112,6 +4129,8 @@ mod block_bad_cmd_repeat;
 mod block_bad_cmd_hop;
 #[path = "block_bad_cmd_hunt.rs"]
 mod block_bad_cmd_hunt;
+#[path = "block_bad_cmd_persisted.rs"]
+mod block_bad_cmd_persisted;
 #[path = "block_bad_cmd_reread.rs"]
 mod block_bad_cmd_reread;
 #[path = "block_bad_cmd_slice.rs"]
@@ -4329,6 +4348,7 @@ mod tests {
         for tool in candidates {
             let ruled = block_bad_cmd_gate::gates_tool(tool)
                 || block_bad_cmd_reread::applies_to(tool)
+                || block_bad_cmd_persisted::applies_to(tool)
                 || tool == "EnterPlanMode"
                 || creates_agents(tool)
                 || tool == block_bad_cmd_loop_stop::SCHEDULE_WAKEUP
