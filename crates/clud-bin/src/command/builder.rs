@@ -1009,6 +1009,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::InternalStartCmd)
         | Some(Command::InternalOpenAiChatTranslate { .. })
         | Some(Command::InternalOpenAiCompletionsTranslate { .. })
+        | Some(Command::InternalClaudeGeminiTranslate { .. })
         | Some(Command::InternalApplyPayloadRules { .. })
         | Some(Command::InternalOpenAiResponsesTranslate { .. })
         | Some(Command::InternalKimiDeviceLogin { .. })
