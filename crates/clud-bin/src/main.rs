@@ -35,20 +35,11 @@ fn main() {
 }
 
 fn parse_args() -> args::Args {
-    if !clud::platform::host::WINDOWS {
-        return args::Args::parse_with_passthrough();
-    }
-    // Clap builds the complete nested command tree while parsing argv. Keep
-    // only that work off Windows' small default main-thread stack so adding a
-    // maintenance command cannot make even `clud --help` overflow, while the
-    // rest of clud remains on the process main thread for console/OLE APIs.
-    std::thread::Builder::new()
-        .name("clud-arg-parser".to_string())
-        .stack_size(4 * 1024 * 1024)
-        .spawn(args::Args::parse_with_passthrough)
-        .expect("spawn clud argument parser")
-        .join()
-        .expect("clud argument parser panicked")
+    // `Args::parse_with_passthrough` already runs clap on its own parser-stack
+    // thread (see `args::ARG_PARSER_STACK_BYTES`), so the whole launch — Windows
+    // included — keeps the rest of clud on the process main thread for
+    // console/OLE APIs.
+    args::Args::parse_with_passthrough()
 }
 
 /// The whole `clud` launch, as an ordered list of phases.

@@ -5,11 +5,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clap::CommandFactory;
 use running_process::{NativeProcess, ProcessConfig, StderrMode, StdinMode};
 use serde_json::{json, Value};
 
-use crate::args::{Args, ConfigSubcommand};
+use crate::args::{parser_command, Args, ConfigSubcommand};
 use crate::{clud_settings, loop_spec, subprocess};
 
 const REPO_SETTINGS_DIR: &str = ".clud";
@@ -263,7 +262,7 @@ fn run_editor(argv: Vec<String>) -> Result<(), String> {
 }
 
 fn print_help_and_exit_zero() -> i32 {
-    let mut command = Args::command();
+    let mut command = parser_command();
     if let Some(config) = command.find_subcommand_mut("config") {
         let _ = config.print_help();
         println!();

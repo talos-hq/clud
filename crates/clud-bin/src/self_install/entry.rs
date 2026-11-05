@@ -629,8 +629,6 @@ mod tests {
 
     #[test]
     fn install_only_is_claimed_for_current_exact_and_menu_requests() {
-        use clap::Parser;
-
         for (flags, expected) in [
             (vec!["--installer", "--no-modify-path"], Request::Menu),
             (
@@ -711,7 +709,6 @@ mod tests {
 
     #[test]
     fn invalid_installer_combinations_fail_in_clap() {
-        use clap::Parser;
         assert!(Args::try_parse_from(["clud", "--install-current"]).is_err());
         assert!(Args::try_parse_from(["clud", "--install-version", "2.8.14"]).is_err());
         assert!(Args::try_parse_from([
@@ -726,7 +723,6 @@ mod tests {
 
     #[test]
     fn structured_output_is_scoped_and_never_leaks_to_the_backend() {
-        use clap::Parser;
         let current = parse(&[
             "clud",
             "--installer",

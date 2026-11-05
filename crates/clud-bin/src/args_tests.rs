@@ -173,9 +173,8 @@ fn whole_args_debug_masks_raw_and_passthrough_keys_without_changing_execution_va
 
 #[test]
 fn every_top_level_clap_long_option_is_claimed_by_the_splitter() {
-    use clap::CommandFactory;
     let mut missing = Vec::new();
-    for argument in Args::command().get_arguments() {
+    for argument in parser_command().get_arguments() {
         let Some(long) = argument.get_long() else {
             continue;
         };
