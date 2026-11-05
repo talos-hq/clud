@@ -18,6 +18,14 @@ to finish its own timeout and cleanup before the wrapper's cap.
 Stdout over 32 KB truncates visibly with an artifact path; see
 [bounded-output.md](../../../../docs/architecture/bounded-output.md).
 
+To wait for something instead of polling for it, use
+`clud tool run wait/until.py -- --cmd '<command>' [--interval SECS] [--timeout SECS]`.
+It runs the command once as a baseline, then blocks and prints only the delta
+when its output changes (`--match REGEX` returns on a pattern instead); exit
+`124` means the timeout expired and the state never moved. Each polling turn an
+agent spends re-sends the whole conversation, so one blocking call is cheaper
+than N ticks of the same query.
+
 For a large issue, use `clud tool run github/issue_context.py -- --repo OWNER/REPO --issue N`.
 It returns a bounded overview and a private snapshot path. Read saved material with
 `--artifact PATH --section body`, `--section comments --offset N`, or
