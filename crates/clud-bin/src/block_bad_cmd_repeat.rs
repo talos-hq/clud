@@ -30,6 +30,15 @@ pub(super) const ALLOW_REPEAT_TOKEN: &str = "CLUD_ALLOW_REPEAT=1";
 pub(super) const LIMIT_ENV: &str = "CLUD_REPEAT_CALL_LIMIT";
 /// Directory under the clud state dir.
 pub(super) const DIR_NAME: &str = "repeat-guard";
+/// Gap-independent repeats of one read-only query before the poll note (#2631).
+/// The burst guard above resets after [`IDLE_RESET_SECS`], so an agent that
+/// polls one query every few minutes for hours never trips it; this second
+/// counter ignores the gap and speaks once.
+pub(super) const POLL_NOTE_AT: u32 = 6;
+/// Repeat count for the second, shorter reminder of the same note.
+pub(super) const POLL_NOTE_AGAIN_AT: u32 = 24;
+/// Identical query calls further apart than this start a new poll count.
+pub(super) const POLL_WINDOW_SECS: u64 = 6 * 60 * 60;
 const HASH_DOMAIN: &str = "clud-repeat-guard-v1\0";
 const MAX_AGE: Duration = Duration::from_secs(2 * 24 * 60 * 60);
 const MAX_FILES: usize = 500;
@@ -40,6 +49,13 @@ pub(super) struct Streak {
     pub key: String,
     pub count: u32,
     pub last: u64,
+    /// Gap-independent repeat count for one read-only query (#2631). `0` in
+    /// files written before this counter existed.
+    #[serde(default)]
+    pub steady: u32,
+    /// When the steady count last advanced.
+    #[serde(default)]
+    pub steady_last: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +83,8 @@ pub(super) fn decide(
         key: key.to_string(),
         count,
         last: now,
+        steady: 0,
+        steady_last: 0,
     };
     let verdict = if limit > 0 && count > limit {
         Verdict::Deny { count }
@@ -74,6 +92,173 @@ pub(super) fn decide(
         Verdict::Allow
     };
     (verdict, streak)
+}
+
+/// The gap-independent repeat count for one read-only query. A different call
+/// resets it; a gap shorter than [`POLL_WINDOW_SECS`] does not, because the
+/// whole point is the patient poll the burst guard deliberately ignores.
+pub(super) fn poll_count(previous: Option<&Streak>, key: &str, now: u64) -> (u32, u64) {
+    let continues = previous.is_some_and(|prev| {
+        let last = prev.steady_last.max(prev.last);
+        prev.key == key && now.saturating_sub(last) <= POLL_WINDOW_SECS
+    });
+    let count = if continues {
+        previous.map_or(1, |prev| prev.steady.max(1).saturating_add(1))
+    } else {
+        1
+    };
+    (count, now)
+}
+
+/// Words a shell puts in front of a program without changing what runs.
+const PREFIX_WORDS: &[&str] = &[
+    "do", "then", "else", "if", "while", "until", "time", "sudo", "command", "exec", "env", "nice",
+    "nohup", "xargs", "watch",
+];
+
+/// `gh` verbs that only read.
+const GH_READ: &[&str] = &[
+    "view", "list", "status", "search", "diff", "checks", "download",
+];
+
+/// `gh` nouns that come before the verb.
+const GH_NOUNS: &[&str] = &[
+    "pr", "issue", "run", "release", "workflow", "label", "cache",
+];
+
+/// Remote verbs that only read, for an `ssh` poll (`ssh host 'systemctl
+/// is-active x'`). The remote command is quoted, so it arrives as loose words.
+const REMOTE_READ: &[&str] = &[
+    "is-active",
+    "is-enabled",
+    "status",
+    "show",
+    "ps",
+    "inspect",
+    "logs",
+    "cat",
+    "tail",
+    "journalctl",
+    "get",
+    "describe",
+];
+
+/// Flags that make a request write instead of read.
+const WRITE_FLAGS: &[&str] = &[
+    "-X",
+    "-d",
+    "-F",
+    "-T",
+    "-D",
+    "--method",
+    "--data",
+    "--field",
+    "--raw-field",
+    "--upload-file",
+    "--input",
+    "-f",
+];
+
+/// Whether one word is a write flag, including the `--data-name value` family.
+fn is_write_flag(word: &str) -> bool {
+    let word = word.trim_matches(&['\'', '"'][..]);
+    WRITE_FLAGS.contains(&word)
+        || word.starts_with("--data-")
+        || word.starts_with("--field=")
+        || word.starts_with("--raw-field=")
+}
+
+/// Whether any word in the simple command turns it into a write.
+fn writes(words: &[String]) -> bool {
+    words.iter().any(|word| is_write_flag(word))
+}
+
+/// Whether one simple command only reads external state. Used solely to decide
+/// whether a repeat deserves an advisory note: a false negative costs nothing
+/// and a false positive is one line of advice.
+fn reads_state(words: &[String]) -> bool {
+    let mut index = 0;
+    while index < words.len() {
+        let word = words[index].trim_matches(&['\'', '"'][..]);
+        let assignment = word.contains('=') && !word.contains(['/', ' ', '\t']);
+        if PREFIX_WORDS.contains(&word) || assignment {
+            index += 1;
+            continue;
+        }
+        let arg = |offset: usize| -> &str {
+            words
+                .get(index + offset)
+                .map_or("", |w| w.trim_matches(&['\'', '"'][..]))
+        };
+        let next = arg(1);
+        return match word {
+            "gh" => {
+                if GH_READ.contains(&next) {
+                    return true;
+                }
+                if GH_NOUNS.contains(&next) {
+                    return GH_READ.contains(&arg(2));
+                }
+                next == "api" && !writes(words)
+            }
+            "git" => next == "ls-remote",
+            "curl" => !writes(words),
+            "ssh" => words
+                .iter()
+                .any(|word| REMOTE_READ.contains(&word.as_str())),
+            "systemctl" | "docker" | "kubectl" => matches!(
+                next,
+                "" | "status"
+                    | "is-active"
+                    | "is-enabled"
+                    | "show"
+                    | "ps"
+                    | "inspect"
+                    | "logs"
+                    | "get"
+                    | "describe"
+                    | "cat"
+                    | "tail"
+            ),
+            _ => false,
+        };
+    }
+    false
+}
+
+/// Whether `command` contains a read-only query of external state, split the
+/// way a shell would split it.
+pub(super) fn is_query(command: &str) -> bool {
+    let mut segment = String::with_capacity(command.len());
+    let mut segments: Vec<String> = Vec::new();
+    for ch in command.chars() {
+        if ";&|\n(){}".contains(ch) {
+            if !segment.trim().is_empty() {
+                segments.push(std::mem::take(&mut segment));
+            }
+        } else {
+            segment.push(ch);
+        }
+    }
+    if !segment.trim().is_empty() {
+        segments.push(segment);
+    }
+    segments.iter().any(|text| {
+        let words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
+        reads_state(&words)
+    })
+}
+
+/// The one advisory line the poll note carries (#2631).
+pub(super) fn poll_message(count: u32) -> String {
+    format!(
+        "[clud poll-note] this exact read-only query has now run {count} times in this session, \
+         and every repeat re-sends the whole conversation before the same answer comes back. If \
+         you are waiting for external state, block once instead of polling: \
+         `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120 --timeout 3600` \
+         returns as soon as its output changes. Otherwise read the last answer and decide. One \
+         note per command per session."
+    )
 }
 
 /// Canonical JSON: object keys sorted at every depth, so key order in the
@@ -222,54 +407,82 @@ pub(super) fn write_fast(path: &Path, bytes: &[u8], create_dir: bool) -> std::io
     result
 }
 
-/// Record this call against the session's streak in `state_dir` and return
-/// the verdict. Every failure allows.
+/// What the hook should do with this call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Outcome {
+    Allow,
+    /// Advisory only: the call runs, with one line added to the agent's context.
+    Note(String),
+    Deny(String),
+}
+
+/// Record this call against the session's ledger in `state_dir` and return
+/// the burst verdict plus the poll-note count. Every failure allows.
 pub(super) fn check_at(
     state_dir: &Path,
     session_id: &str,
     key: &str,
     now: u64,
     limit: u32,
-) -> Verdict {
+    is_query: bool,
+) -> (Verdict, Option<u32>) {
     if limit == 0 || session_id.is_empty() {
-        return Verdict::Allow;
+        return (Verdict::Allow, None);
     }
     let path = session_file(state_dir, session_id);
     let existing = std::fs::read(&path).ok();
     let previous = existing
         .as_deref()
         .and_then(|bytes| serde_json::from_slice::<Streak>(bytes).ok());
-    let (verdict, streak) = decide(previous.as_ref(), key, now, limit);
+    let (verdict, mut streak) = decide(previous.as_ref(), key, now, limit);
+    let (steady, steady_last) = if is_query {
+        poll_count(previous.as_ref(), key, now)
+    } else {
+        (0, 0)
+    };
+    streak.steady = steady;
+    streak.steady_last = steady_last;
     let Ok(bytes) = serde_json::to_vec(&streak) else {
-        return Verdict::Allow;
+        return (verdict, None);
     };
     if write_fast(&path, &bytes, existing.is_none()).is_err() {
-        return Verdict::Allow;
+        return (verdict, None);
     }
     if existing.is_none() {
         if let Some(dir) = path.parent() {
             prune(dir, SystemTime::now());
         }
     }
-    verdict
+    let note = matches!(steady, POLL_NOTE_AT | POLL_NOTE_AGAIN_AT).then_some(steady);
+    (verdict, note)
 }
 
-/// Hook entry: the denial reason for this call, or `None` to allow.
-pub(super) fn reason(
+/// Hook entry: deny, an advisory note, or allow.
+pub(super) fn outcome(
     tool_name: &str,
     tool_input: Option<&Value>,
     session_id: Option<&str>,
-) -> Option<String> {
-    let session_id = session_id?;
+) -> Outcome {
+    let Some(session_id) = session_id else {
+        return Outcome::Allow;
+    };
     let limit = effective_limit();
     if limit == 0 {
-        return None;
+        return Outcome::Allow;
     }
-    let state_dir = crate::daemon::default_state_dir().ok()?;
+    let Ok(state_dir) = crate::daemon::default_state_dir() else {
+        return Outcome::Allow;
+    };
     let key = call_key(tool_name, tool_input);
-    match check_at(&state_dir, session_id, &key, now_secs(), limit) {
-        Verdict::Allow => None,
-        Verdict::Deny { count } => Some(deny_message(tool_name, count, limit)),
+    let command = tool_input
+        .and_then(|input| input.get("command"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let query = is_query(command);
+    match check_at(&state_dir, session_id, &key, now_secs(), limit, query) {
+        (Verdict::Deny { count }, _) => Outcome::Deny(deny_message(tool_name, count, limit)),
+        (Verdict::Allow, Some(count)) => Outcome::Note(poll_message(count)),
+        (Verdict::Allow, None) => Outcome::Allow,
     }
 }
 
