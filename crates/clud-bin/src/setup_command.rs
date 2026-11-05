@@ -25,6 +25,11 @@ use crate::shim_install;
 
 mod hermes;
 
+/// Resolve an opt-in personality reference without importing credentials or reading its contents.
+pub(crate) fn hermes_context_reference(home: &Path) -> Result<String, String> {
+    hermes::context_reference_from_process(home)
+}
+
 /// Exit status for a refused or impossible request (usage-level failure).
 pub const EXIT_USAGE: i32 = 2;
 

@@ -1086,3 +1086,54 @@ fn managed_print_sessions_keep_their_native_log_protocol() {
         }
     }
 }
+
+#[test]
+fn optional_personality_reference_is_additive_for_both_harnesses() {
+    for (backend, extra) in [
+        (
+            Backend::Claude,
+            vec!["--append-system-prompt", "existing instruction"],
+        ),
+        (
+            Backend::Codex,
+            vec!["-c", "developer_instructions=\"existing instruction\""],
+        ),
+    ] {
+        let mut args = parse(&["clud", "-p", "do the task"]);
+        args.passthrough = extra.into_iter().map(str::to_string).collect();
+        let reference = "Optional personality context: read /example/SOUL.md when useful.";
+        args.optional_context = Some(reference.into());
+        let plan = build_launch_plan(&args, backend, backend.executable_name());
+        let instructions = match backend {
+            Backend::Claude => {
+                assert!(!plan.command.iter().any(|s| s == "--system-prompt"));
+                let n = plan
+                    .command
+                    .iter()
+                    .position(|s| s == "--append-system-prompt")
+                    .unwrap();
+                plan.command[n + 1].clone()
+            }
+            Backend::Codex => {
+                assert!(!plan
+                    .command
+                    .iter()
+                    .any(|s| s.starts_with("model_instructions_file=")));
+                let value = plan
+                    .command
+                    .iter()
+                    .find_map(|s| s.strip_prefix("developer_instructions="))
+                    .unwrap();
+                format!("value={value}").parse::<toml::Table>().unwrap()["value"]
+                    .as_str()
+                    .unwrap()
+                    .into()
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(instructions.matches(reference).count(), 1);
+        assert!(instructions.contains("existing instruction"));
+        assert!(instructions.contains(&crate::deletion_rules::generated().instructions));
+        assert!(plan.command.iter().any(|s| s.contains("do the task")));
+    }
+}

@@ -400,6 +400,10 @@ pub struct Args {
     #[arg(skip)]
     pub codex_config_overrides: Vec<String>,
 
+    /// Optional context reference resolved once before the backend launches.
+    #[arg(skip)]
+    pub optional_context: Option<String>,
+
     /// Selection normalized once before bootstrap or credential access.
     #[arg(skip)]
     pub resolved_model_selection: Option<crate::provider_catalog::ResolvedModelSelection>,
@@ -1504,6 +1508,11 @@ pub enum TopSort {
 /// Subcommands under `clud config`.
 #[derive(Subcommand, Debug, Clone)]
 pub enum ConfigSubcommand {
+    /// Set a dotted settings key using the existing native approval flow.
+    Set {
+        /// Assignment, for example context.hermes.enabled=true.
+        assignment: String,
+    },
     /// Print global, local, and merged settings.
     Show {
         /// Emit machine-readable JSON.
