@@ -208,7 +208,9 @@ fn send(target: &Target) {
         request = request.set(name, value);
     }
     if let Err(error) = request.send_bytes(&body) {
-        eprintln!("[clud] cache heartbeat failed, next turn may be cold: {error}");
+        if !crate::loop_console::owns_stderr() {
+            eprintln!("[clud] cache heartbeat failed, next turn may be cold: {error}");
+        }
     }
 }
 

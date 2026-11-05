@@ -30,6 +30,22 @@ const MAX_TEXT_CHARS: usize = 160;
 /// * `Some(rendered)` — print this line to stderr (one line of progress).
 /// * `None` — drop the event (uninteresting / noise).
 pub fn render_line(line: &str) -> Option<String> {
+    render_with(line, TextDetail::FirstLine)
+}
+
+/// Like [`render_line`], but assistant prose keeps every line untruncated,
+/// for a view that wraps and scrolls.
+pub fn render_chat_line(line: &str) -> Option<String> {
+    render_with(line, TextDetail::Full)
+}
+
+#[derive(Clone, Copy)]
+enum TextDetail {
+    FirstLine,
+    Full,
+}
+
+fn render_with(line: &str, detail: TextDetail) -> Option<String> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
         return None;
@@ -46,7 +62,7 @@ pub fn render_line(line: &str) -> Option<String> {
     let msg_type = value.get("type").and_then(Value::as_str)?;
     match msg_type {
         "system" => render_system(&value),
-        "assistant" => render_assistant(&value),
+        "assistant" => render_assistant(&value, detail),
         "result" => render_result(&value),
         // An Anthropic-shaped error was previously skipped by the catch-all
         // below, so a turn that failed for a nameable reason -- a drained
@@ -85,7 +101,7 @@ fn render_system(value: &Value) -> Option<String> {
     Some(format!("[claude] session start · model={model}"))
 }
 
-fn render_assistant(value: &Value) -> Option<String> {
+fn render_assistant(value: &Value, detail: TextDetail) -> Option<String> {
     let content = value
         .get("message")
         .and_then(|m| m.get("content"))
@@ -96,7 +112,11 @@ fn render_assistant(value: &Value) -> Option<String> {
         match item_type {
             "text" => {
                 if let Some(text) = item.get("text").and_then(Value::as_str) {
-                    if let Some(first_line) = first_nonempty_line(text) {
+                    if matches!(detail, TextDetail::Full) {
+                        if !text.trim().is_empty() {
+                            lines.push(format!("[claude] {}", text.trim()));
+                        }
+                    } else if let Some(first_line) = first_nonempty_line(text) {
                         lines.push(format!(
                             "[claude] {}",
                             truncate(&first_line, MAX_TEXT_CHARS)
@@ -370,6 +390,20 @@ mod tests {
             render_line(line).as_deref(),
             Some("[claude] Step 1: read file")
         );
+    }
+
+    #[test]
+    fn chat_rendering_keeps_the_whole_message_and_plain_rendering_stays_one_line() {
+        let long = "word ".repeat(100);
+        let event = serde_json::json!({
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": format!("first\n\n{long}")}]}
+        })
+        .to_string();
+        let chat = render_chat_line(&event).unwrap();
+        assert!(chat.starts_with("[claude] first\n\n"));
+        assert!(chat.contains(long.trim()));
+        assert_eq!(render_line(&event).unwrap().lines().count(), 1);
     }
 
     #[test]

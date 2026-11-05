@@ -784,6 +784,7 @@ pub fn run_plan_subprocess(
     let trace_enabled = stage_trace::stderr_enabled(verbose);
 
     let mut iteration = 0;
+    let mut console_draft = crate::loop_console::Draft::default();
     while iteration < plan.iterations {
         // Re-check the interrupted flag at the top of every iteration. A
         // Ctrl+C that fires between the previous child's reap and our next
@@ -816,6 +817,7 @@ pub fn run_plan_subprocess(
             loop_session.as_deref(),
             iter_num,
             plan.iterations,
+            std::mem::take(&mut console_draft),
         ) {
             Ok(console) => console,
             Err(error) => {
@@ -877,7 +879,7 @@ pub fn run_plan_subprocess(
             plan,
             console.as_mut(),
         );
-        runner_execution::finish_loop_console(console, &captured_output, iter_num);
+        console_draft = runner_execution::finish_loop_console(console, &captured_output, iter_num);
 
         stage_trace::done(
             trace_enabled,

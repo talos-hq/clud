@@ -353,7 +353,15 @@ to scroll. Page keys and the wheel also work while composing a message.
 New output preserves the viewed history until End returns to following live output.
 Only changed terminal cells are written after the first frame; shorter lines and
 resize redraws erase stale cells without clearing the screen on each update.
-Drafts remain separate from progress updates. Pasted text cannot activate actions.
+Output repaints at most about 30 times a second, and every pending input event is
+applied per tick. Long lines wrap to the terminal width and rewrap on resize; child
+escape sequences are removed rather than shown. Assistant messages appear in full,
+and each iteration's transcript is printed to scrollback when the dashboard closes.
+Drafts remain separate from progress updates and survive iteration boundaries.
+Pasted text cannot activate actions. Windows consoles have no bracketed paste, so a
+burst of text keys in one tick (four characters, or any character followed by Enter)
+is treated as a paste on every host. Background diagnostics stay off the screen
+while the dashboard owns it (`loop_console::owns_stderr`).
 Mouse capture and bracketed paste are disabled when the dashboard exits.
 Use `clud --codex --subprocess loop <task>` for the dashboard or
 `clud --codex --pty loop <task>` for the existing PTY path. Redirected/non-terminal

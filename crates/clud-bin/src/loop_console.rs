@@ -2,9 +2,32 @@
 use std::collections::VecDeque;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseEventKind};
 use crossterm::{cursor, execute, queue, style, terminal};
+use unicode_width::UnicodeWidthChar;
+
+const MAX_LOGICAL_LINES: usize = 10_000;
+/// Bounds one tick so a mouse-motion flood cannot starve the child's output.
+const MAX_EVENTS_PER_TICK: usize = 4096;
+/// Output can arrive far faster than a terminal can usefully repaint.
+const MIN_DRAW_INTERVAL: Duration = Duration::from_millis(33);
+/// Later chunks of one paste can land on the next ticks.
+const PASTE_CONTINUATION: Duration = Duration::from_millis(50);
+/// Text keys in one tick that no typist produces. Windows consoles have no
+/// bracketed paste, so crossterm delivers a paste as individual key events.
+const PASTE_BURST_CHARS: usize = 4;
+
+static DASHBOARD_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+/// True while a dashboard owns the alternate screen. Background diagnostics
+/// must not `eprintln!` then: the bytes land inside the frame, and the
+/// cell-diff renderer never repaints cells it believes are unchanged.
+pub(crate) fn owns_stderr() -> bool {
+    DASHBOARD_ACTIVE.load(Ordering::SeqCst)
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Mode {
@@ -27,9 +50,151 @@ struct Dashboard {
     mode: Mode,
     draft: String,
     notice: String,
+    /// Display rows, wrapped to `width`; `scroll` counts these.
     lines: VecDeque<String>,
+    /// Sanitized source lines with their display-row count, for rewrap and transcript.
+    logical: VecDeque<(String, usize)>,
+    width: usize,
     scroll: usize,
     page: usize,
+}
+
+/// Unsent input that must survive the dashboard being rebuilt per iteration.
+#[derive(Default)]
+pub(crate) struct Draft {
+    mode: Mode,
+    text: String,
+}
+
+/// Remove terminal control sequences from one child line, keeping its text.
+/// Dropping only the control characters would leave `[31m` in the chat.
+fn sanitize(line: &str) -> String {
+    let mut out = String::with_capacity(line.len());
+    let mut chars = line.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => skip_escape(&mut chars),
+            '\u{9b}' => skip_csi(&mut chars),
+            '\t' => out.push_str("    "),
+            // A carriage return redraws the line: the text after it is what shows.
+            '\r' if chars.peek().is_some() => out.clear(),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn skip_csi(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    for c in chars.by_ref() {
+        if ('\u{40}'..='\u{7e}').contains(&c) {
+            break;
+        }
+    }
+}
+
+fn skip_escape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) {
+    match chars.next() {
+        Some('[') => skip_csi(chars),
+        // OSC, DCS, SOS, PM and APC run to BEL or ST.
+        Some(']' | 'P' | 'X' | '^' | '_') => {
+            while let Some(c) = chars.next() {
+                if c == '\u{7}' {
+                    break;
+                }
+                if c == '\u{1b}' {
+                    chars.next();
+                    break;
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Hard-wrap to `width` display cells. Zero means no wrapping is known yet.
+fn wrap(line: &str, width: usize) -> Vec<String> {
+    if width == 0 {
+        return vec![line.to_owned()];
+    }
+    let mut rows = Vec::new();
+    let mut row = String::new();
+    let mut used = 0;
+    for c in line.chars() {
+        let cells = c.width().unwrap_or(0);
+        if used + cells > width && !row.is_empty() {
+            rows.push(std::mem::take(&mut row));
+            used = 0;
+        }
+        row.push(c);
+        used += cells;
+    }
+    rows.push(row);
+    rows
+}
+
+fn is_text_key(key: &KeyEvent) -> bool {
+    let plain = !key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT);
+    matches!(key.code, KeyCode::Enter | KeyCode::Tab) && plain
+        || matches!(key.code, KeyCode::Char(c) if plain || is_altgr_text(*key, c))
+}
+
+/// AltGr reads as Ctrl+Alt on Windows; it types `@` or `€` on many layouts.
+/// ASCII letters and digits stay shortcuts, so Ctrl+Alt+Y cannot confirm.
+fn is_altgr_text(key: KeyEvent, c: char) -> bool {
+    key.modifiers
+        .contains(KeyModifiers::CONTROL | KeyModifiers::ALT)
+        && !c.is_control()
+        && !c.is_ascii_alphanumeric()
+}
+
+/// Turn text keys that arrived faster than typing into one paste, so pasted
+/// text cannot trigger hotkeys or submit a draft where the terminal has no
+/// bracketed paste. Returns the events and whether a paste was recognized.
+fn coalesce_paste(events: Vec<Event>, continuing: bool) -> (Vec<Event>, bool) {
+    let mut out = Vec::with_capacity(events.len());
+    let mut run: Vec<Event> = Vec::new();
+    let mut found = false;
+    for event in events {
+        match &event {
+            Event::Key(key) if key.kind == KeyEventKind::Release => {}
+            Event::Key(key) if is_text_key(key) => run.push(event),
+            _ => {
+                found |= flush_run(&mut run, &mut out, continuing);
+                out.push(event);
+            }
+        }
+    }
+    found |= flush_run(&mut run, &mut out, continuing);
+    (out, found)
+}
+
+fn flush_run(run: &mut Vec<Event>, out: &mut Vec<Event>, continuing: bool) -> bool {
+    let keys = || {
+        run.iter().filter_map(|event| match event {
+            Event::Key(key) => Some(key.code),
+            _ => None,
+        })
+    };
+    let chars = keys().filter(|c| matches!(c, KeyCode::Char(_))).count();
+    let submits = chars > 0 && keys().any(|c| c == KeyCode::Enter);
+    if !(continuing || chars >= PASTE_BURST_CHARS || submits) || run.is_empty() {
+        out.append(run);
+        return false;
+    }
+    let text = keys()
+        .filter_map(|code| match code {
+            KeyCode::Char(c) => Some(c),
+            KeyCode::Enter => Some('\n'),
+            KeyCode::Tab => Some(' '),
+            _ => None,
+        })
+        .collect();
+    run.clear();
+    out.push(Event::Paste(text));
+    true
 }
 
 impl Dashboard {
@@ -45,6 +210,8 @@ impl Dashboard {
                 None
             }
             Event::Paste(text) if matches!(self.mode, Mode::Queue | Mode::Interrupt) => {
+                // Terminals disagree on paste newlines: CRLF, LF or a bare CR.
+                let text = text.replace("\r\n", "\n").replace('\r', "\n");
                 self.draft
                     .extend(text.chars().filter(|c| !c.is_control() || *c == '\n'));
                 None
@@ -54,13 +221,17 @@ impl Dashboard {
     }
 
     fn key(&mut self, key: KeyEvent) -> Option<Action> {
-        if key.modifiers.contains(KeyModifiers::CONTROL) && key.code == KeyCode::Char('c') {
+        let is_ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        if is_ctrl
+            && !key.modifiers.contains(KeyModifiers::ALT)
+            && matches!(key.code, KeyCode::Char('c' | 'C'))
+        {
             return Some(Action::Quit);
         }
-        if key
-            .modifiers
-            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-        {
+        if matches!(key.code, KeyCode::Char(c) if is_altgr_text(key, c)) {
+            return self.mode_key(KeyEvent::new(key.code, KeyModifiers::NONE));
+        }
+        if is_ctrl || key.modifiers.contains(KeyModifiers::ALT) {
             return None;
         }
         if key.code == KeyCode::Esc {
@@ -143,18 +314,40 @@ impl Dashboard {
     }
 
     fn push(&mut self, line: &str) {
-        for line in line.lines() {
-            self.lines.push_back(line.to_owned());
+        for line in line.trim_end_matches(['\r', '\n']).split('\n') {
+            let clean = sanitize(line);
+            let rows = wrap(&clean, self.width);
+            self.logical.push_back((clean, rows.len()));
             if self.scroll > 0 {
-                self.scroll = self.scroll.saturating_add(1);
+                self.scroll = self.scroll.saturating_add(rows.len());
+            }
+            self.lines.extend(rows);
+        }
+        while self.logical.len() > MAX_LOGICAL_LINES {
+            if let Some((_, rows)) = self.logical.pop_front() {
+                self.lines.drain(..rows.min(self.lines.len()));
             }
         }
-        while self.lines.len() > 10_000 {
-            self.lines.pop_front();
+        self.scroll_up(0);
+    }
+
+    fn set_width(&mut self, width: usize) {
+        if width == self.width {
+            return;
         }
-        self.scroll = self
-            .scroll
-            .min(self.lines.len().saturating_sub(self.page.max(1)));
+        self.width = width;
+        self.lines.clear();
+        for (line, count) in &mut self.logical {
+            let rows = wrap(line, width);
+            *count = rows.len();
+            self.lines.extend(rows);
+        }
+        self.scroll_up(0);
+    }
+
+    fn restore_draft(&mut self, draft: Draft) {
+        self.mode = draft.mode;
+        self.draft = draft.text;
     }
 
     fn save(&mut self, root: &Path, text: &str, retry_mode: Mode) -> bool {
@@ -283,10 +476,18 @@ pub(crate) struct LoopConsole {
     iteration: u32,
     total: u32,
     frame: Frame,
+    dirty: bool,
+    last_draw: Option<Instant>,
+    paste_until: Option<Instant>,
 }
 
 impl LoopConsole {
-    pub(crate) fn enter(root: &Path, iteration: u32, total: u32) -> io::Result<Option<Self>> {
+    pub(crate) fn enter(
+        root: &Path,
+        iteration: u32,
+        total: u32,
+        draft: Draft,
+    ) -> io::Result<Option<Self>> {
         if !crate::session::terminals_are_interactive()
             || !io::stderr().is_terminal()
             || std::env::var("TERM").is_ok_and(|s| s == "dumb")
@@ -300,7 +501,12 @@ impl LoopConsole {
             iteration,
             total,
             frame: Frame::default(),
+            dirty: false,
+            last_draw: None,
+            paste_until: None,
         };
+        console.dashboard.restore_draft(draft);
+        DASHBOARD_ACTIVE.store(true, Ordering::SeqCst);
         // Construct the guard first so a partial setup failure still restores the terminal.
         execute!(
             io::stderr(),
@@ -315,43 +521,83 @@ impl LoopConsole {
 
     pub(crate) fn transcript(&self) -> String {
         self.dashboard
-            .lines
+            .logical
             .iter()
-            .map(|line| line.chars().filter(|c| !c.is_control()).collect::<String>())
+            .map(|(line, _)| line.as_str())
             .collect::<Vec<_>>()
             .join("\n")
     }
 
-    pub(crate) fn line(&mut self, line: &str) -> io::Result<()> {
-        self.dashboard.push(line);
-        self.draw()
+    pub(crate) fn take_draft(&mut self) -> Draft {
+        Draft {
+            mode: self.dashboard.mode,
+            text: std::mem::take(&mut self.dashboard.draft),
+        }
     }
 
+    /// Buffer one output line; the next `input` tick paints it.
+    pub(crate) fn line(&mut self, line: &str) {
+        self.dashboard.push(line);
+        self.dirty = true;
+    }
+
+    /// One UI tick: apply every pending input event, then repaint if due.
     pub(crate) fn input(&mut self) -> io::Result<Option<Action>> {
-        if !crossterm::event::poll(std::time::Duration::ZERO)? {
-            return Ok(None);
+        let mut events = Vec::new();
+        while events.len() < MAX_EVENTS_PER_TICK && crossterm::event::poll(Duration::ZERO)? {
+            events.push(crossterm::event::read()?);
         }
-        let action = self.dashboard.event(crossterm::event::read()?);
-        let result = match action {
-            Some(Action::Queue(text)) => {
+        let now = Instant::now();
+        let continuing = self.paste_until.is_some_and(|until| now < until);
+        let (events, pasted) = coalesce_paste(events, continuing);
+        if pasted {
+            self.paste_until = Some(now + PASTE_CONTINUATION);
+        }
+        for event in events {
+            if let Some(action) = self.apply(event) {
+                return Ok(Some(action));
+            }
+        }
+        if self.dirty
+            && self
+                .last_draw
+                .is_none_or(|last| now.duration_since(last) >= MIN_DRAW_INTERVAL)
+        {
+            self.draw()?;
+        }
+        Ok(None)
+    }
+
+    fn apply(&mut self, event: Event) -> Option<Action> {
+        let moved = matches!(
+            &event,
+            Event::Mouse(mouse) if !matches!(
+                mouse.kind,
+                MouseEventKind::ScrollUp | MouseEventKind::ScrollDown
+            )
+        );
+        self.dirty |= !moved;
+        match self.dashboard.event(event)? {
+            Action::Queue(text) => {
                 self.dashboard.save(&self.root, &text, Mode::Queue);
                 None
             }
-            Some(Action::Restart(text)) => self
+            Action::Restart(text) => self
                 .dashboard
                 .save(&self.root, &text, Mode::Interrupt)
                 .then_some(Action::Restart(text)),
-            other => other,
-        };
-        if result.is_none() {
-            self.draw()?;
+            Action::Quit => Some(Action::Quit),
         }
-        Ok(result)
     }
 
     fn draw(&mut self) -> io::Result<()> {
         let (cols, rows) = terminal::size()?;
+        self.dirty = false;
+        self.last_draw = Some(Instant::now());
         self.dashboard.page = usize::from(rows.saturating_sub(3)).max(1);
+        // `write_row` stops before the cell that would reach the last column.
+        self.dashboard
+            .set_width(usize::from(cols.saturating_sub(2)).max(1));
         self.dashboard.scroll_up(0);
         let mut bytes = Vec::new();
         self.dashboard
@@ -365,6 +611,7 @@ impl LoopConsole {
 
 impl Drop for LoopConsole {
     fn drop(&mut self) {
+        DASHBOARD_ACTIVE.store(false, Ordering::SeqCst);
         let _ = execute!(
             io::stderr(),
             crossterm::event::DisableMouseCapture,
@@ -379,6 +626,169 @@ impl Drop for LoopConsole {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn press(text: &str) -> Vec<Event> {
+        text.chars()
+            .map(|c| match c {
+                '\r' => key(KeyCode::Enter),
+                c => key(KeyCode::Char(c)),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn key_burst_is_a_paste_so_it_cannot_activate_actions_without_bracketed_paste() {
+        for (mode, text) in [
+            (Mode::Watching, "qiy\r"),
+            (Mode::Confirm, "yes\r"),
+            (Mode::Confirm, "y\r"),
+        ] {
+            let mut ui = Dashboard {
+                mode,
+                draft: "keep".into(),
+                ..Dashboard::default()
+            };
+            let (events, pasted) = coalesce_paste(press(text), false);
+            assert!(pasted, "{text:?}");
+            for event in events {
+                assert_eq!(ui.event(event), None);
+            }
+            assert_eq!(ui.mode, mode);
+        }
+    }
+
+    #[test]
+    fn multiline_key_burst_stays_in_the_draft_instead_of_submitting() {
+        let (events, _) = coalesce_paste(press("first\rsecond\r"), false);
+        let mut ui = Dashboard {
+            mode: Mode::Queue,
+            ..Dashboard::default()
+        };
+        for event in events {
+            assert_eq!(ui.event(event), None);
+        }
+        assert_eq!(ui.draft, "first\nsecond\n");
+        assert_eq!(ui.mode, Mode::Queue);
+    }
+
+    #[test]
+    fn typing_is_not_a_paste_and_interrupting_keys_keep_their_order() {
+        for text in ["q", "ab", "\r"] {
+            let (events, pasted) = coalesce_paste(press(text), false);
+            assert!(!pasted);
+            assert_eq!(events, press(text));
+        }
+        let mut events = press("abcdef");
+        events.push(Event::Key(KeyEvent::new(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL,
+        )));
+        let (events, pasted) = coalesce_paste(events, false);
+        assert!(pasted);
+        assert!(matches!(events[0], Event::Paste(_)));
+        assert_eq!(
+            Dashboard::default().event(events[1].clone()),
+            Some(Action::Quit)
+        );
+    }
+
+    #[test]
+    fn paste_continuation_and_release_events_do_not_leak_keys() {
+        let mut burst = press("y");
+        let mut release = KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE);
+        release.kind = KeyEventKind::Release;
+        burst.push(Event::Key(release));
+        let (events, pasted) = coalesce_paste(burst, true);
+        assert!(pasted);
+        assert_eq!(events, vec![Event::Paste("y".into())]);
+    }
+
+    #[test]
+    fn altgr_text_is_typed_but_ctrl_alt_letters_stay_inert() {
+        let altgr = KeyModifiers::CONTROL | KeyModifiers::ALT;
+        let mut ui = Dashboard {
+            mode: Mode::Queue,
+            ..Dashboard::default()
+        };
+        for c in ['@', '€', '{'] {
+            assert_eq!(
+                ui.event(Event::Key(KeyEvent::new(KeyCode::Char(c), altgr))),
+                None
+            );
+        }
+        assert_eq!(ui.draft, "@€{");
+        ui.mode = Mode::Confirm;
+        for c in ['y', 'c'] {
+            assert_eq!(
+                ui.event(Event::Key(KeyEvent::new(KeyCode::Char(c), altgr))),
+                None
+            );
+        }
+        assert_eq!(ui.mode, Mode::Confirm);
+    }
+
+    #[test]
+    fn caps_lock_ctrl_c_still_stops() {
+        let event = Event::Key(KeyEvent::new(KeyCode::Char('C'), KeyModifiers::CONTROL));
+        assert_eq!(Dashboard::default().event(event), Some(Action::Quit));
+    }
+
+    #[test]
+    fn sanitize_keeps_text_and_removes_every_sequence_family() {
+        for (raw, clean) in [
+            ("\x1b[31mred\x1b[0m", "red"),
+            ("\x1b]0;title\x07after", "after"),
+            ("\x1b]8;;http://x\x1b\\link", "link"),
+            ("\x1bPdata\x1b\\x", "x"),
+            ("\u{9b}2Jx", "x"),
+            ("a\tb", "a    b"),
+            ("10%\r20%", "20%"),
+            ("done\r", "done"),
+            ("truncated\x1b[3", "truncated"),
+        ] {
+            assert_eq!(sanitize(raw), clean, "{raw:?}");
+        }
+    }
+
+    #[test]
+    fn long_lines_wrap_and_rewrap_on_resize_without_losing_text() {
+        let mut ui = Dashboard {
+            width: 10,
+            page: 4,
+            ..Dashboard::default()
+        };
+        ui.push(&"x".repeat(25));
+        assert_eq!(ui.lines.len(), 3);
+        ui.set_width(5);
+        assert_eq!(ui.lines.len(), 5);
+        assert_eq!(ui.logical[0].0.len(), 25);
+        ui.push("");
+        assert_eq!(ui.lines.back().unwrap(), "");
+    }
+
+    #[test]
+    fn wide_characters_wrap_on_cell_widths() {
+        assert_eq!(wrap("界界界", 4), vec!["界界", "界"]);
+        assert_eq!(wrap("界", 1), vec!["界"]);
+    }
+
+    #[test]
+    fn scroll_position_is_stable_when_wrapped_output_arrives_and_history_evicts() {
+        let mut ui = Dashboard {
+            width: 10,
+            page: 2,
+            ..Dashboard::default()
+        };
+        for _ in 0..MAX_LOGICAL_LINES {
+            ui.push(&"y".repeat(15));
+        }
+        ui.scroll_up(5);
+        let scroll = ui.scroll;
+        ui.push(&"z".repeat(15));
+        assert_eq!(ui.scroll, scroll + 2);
+        assert_eq!(ui.logical.len(), MAX_LOGICAL_LINES);
+        assert_eq!(ui.lines.len(), MAX_LOGICAL_LINES * 2);
+    }
 
     fn key(code: KeyCode) -> Event {
         Event::Key(KeyEvent::new(code, KeyModifiers::NONE))

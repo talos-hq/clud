@@ -773,6 +773,7 @@ dependencies = [
  "tree-sitter-bash",
  "tree-sitter-powershell",
  "tungstenite",
+ "unicode-width 0.2.2",
  "ureq",
  "url",
  "vt100",

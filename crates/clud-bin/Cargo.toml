@@ -115,6 +115,7 @@ toml_edit = "0.25.11"
 # disabling default features avoids pulling bzip2/zstd C deps.
 zip = { version = "9.0.3", default-features = false, features = ["deflate"] }
 vt100 = "0.16"
+unicode-width = "0.2"
 vte = "0.15"
 wasmi = "0.40.0"
 # Embedded QuickJS engine for `clud workflow` scripts (Anthropic workflow
