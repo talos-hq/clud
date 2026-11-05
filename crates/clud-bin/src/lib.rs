@@ -106,6 +106,7 @@ pub mod hook_handshake;
 pub mod hook_health;
 pub mod hook_trust;
 pub mod images_ingress;
+pub mod install;
 pub mod job_orphan_reaper;
 pub mod large_file_guard;
 pub mod launch_context;

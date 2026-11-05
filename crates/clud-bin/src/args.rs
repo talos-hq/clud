@@ -621,6 +621,72 @@ fn parse_setup_provider(value: &str) -> Result<crate::backend::ModelProvider, St
         .ok_or_else(|| format!("expected one of claude, codex, openrouter (got {value})"))
 }
 
+/// `clud install <product>` (#2609): install another agent product and offer to
+/// migrate clud's provider credentials into it. `clud setup <product>` is an
+/// exact alias; a bare `clud setup` keeps setting up clud itself.
+#[derive(clap::Args, Debug, Clone)]
+pub struct InstallArgs {
+    /// Product to install: hermes (hermes-slim) or talos.
+    pub product: String,
+    /// Print the resolved product, bootstrap and target, and change nothing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    /// Run without prompts (required without a terminal). Never migrates
+    /// credentials on its own.
+    #[arg(long = "yes", short = 'y')]
+    pub yes: bool,
+    /// Install directory; passed to the product's own installer.
+    #[arg(long)]
+    pub dir: Option<std::path::PathBuf>,
+    /// Existing install to configure; mutually exclusive with --dir.
+    #[arg(long = "target")]
+    pub product_dir: Option<std::path::PathBuf>,
+    /// Repository ref the product's bootstrap is fetched from.
+    #[arg(long = "ref")]
+    pub reference: Option<String>,
+    /// Product version, passed to the product's own installer.
+    #[arg(long)]
+    pub version: Option<String>,
+    /// Install and stop without the configure step.
+    #[arg(long = "no-configure")]
+    pub no_configure: bool,
+    /// Skip the install and only configure an existing product.
+    #[arg(long = "configure-only")]
+    pub configure_only: bool,
+    /// Migrate clud's stored provider credentials without asking.
+    #[arg(long = "migrate-credentials")]
+    pub migrate_credentials: bool,
+    /// Arguments after `--`, which belong to the product's own installer.
+    #[arg(skip)]
+    pub passthrough: Vec<String>,
+}
+
+impl InstallArgs {
+    /// Attach the arguments given after `--`, which belong to the product's own
+    /// installer.
+    pub fn with_passthrough(mut self, passthrough: &[String]) -> Self {
+        self.passthrough = passthrough.to_vec();
+        self
+    }
+
+    /// The runner's options, with `--no-configure` inverted.
+    pub fn to_options(&self) -> crate::install::command::Options {
+        crate::install::command::Options {
+            target: self.product.clone(),
+            dry_run: self.dry_run,
+            yes: self.yes,
+            dir: self.dir.clone(),
+            product_dir: self.product_dir.clone(),
+            reference: self.reference.clone(),
+            version: self.version.clone(),
+            configure: !self.no_configure,
+            configure_only: self.configure_only,
+            migrate_credentials: self.migrate_credentials,
+            passthrough: self.passthrough.clone(),
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Connect to an operator for consent-gated remote assistance.
@@ -669,6 +735,9 @@ pub enum Command {
     /// --write-profile. Exits 0 on success, 2 for a refused request (no
     /// terminal without --yes, missing OpenRouter key), 1 on a failed step.
     Setup {
+        /// A product to install: hermes (hermes-slim) or talos. Equivalent to
+        /// `clud install <product>`; a bare `clud setup` sets up clud itself.
+        product: Option<String>,
         /// Print every step and what is already in place; change nothing.
         #[arg(long = "dry-run")]
         dry_run: bool,
@@ -689,6 +758,10 @@ pub enum Command {
         #[arg(long = "import-hermes")]
         import_hermes: bool,
     },
+    /// Install another agent product (`hermes` = hermes-slim, `talos`) and offer
+    /// to migrate clud's provider credentials into it (#2609). `clud setup
+    /// <product>` is an exact alias. See docs/architecture/install-products.md.
+    Install(InstallArgs),
     /// Report hook and alias health: stale or retired aliases in clud's own
     /// alias dirs, a foreign `clud-cmd-scan` first on PATH, and the hook
     /// matcher's tool coverage (#1954). Exits 1 when anything is wrong.
@@ -1945,6 +2018,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "dsh-update",
     "doctor",
     "setup",
+    "install",
     "ci",
     "codex-auth",
     "deepseek-auth",
