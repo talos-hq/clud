@@ -164,9 +164,9 @@ fn detect_ignores_a_missing_file_and_a_range_past_the_end() {
 fn detect_resolves_relative_targets_against_the_declared_cwd() {
     let dir = tempdir().expect("dir");
     std::fs::create_dir_all(dir.path().join("crates")).expect("nested");
-    source(&dir.path().join("crates"), "deep.rs", 400, 60);
+    let expected = source(&dir.path().join("crates"), "deep.rs", 400, 60);
     let slice = detect("sed -n '1,400p' crates/deep.rs", dir.path()).expect("detected");
-    assert!(slice.path.ends_with("crates/deep.rs"));
+    assert_eq!(Path::new(&slice.path), expected.as_path());
 }
 
 #[test]
