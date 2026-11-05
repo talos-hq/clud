@@ -557,6 +557,12 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
                     eprintln!("{reason}");
                     return 2;
                 }
+                block_bad_cmd_repeat::Outcome::PollDeny(reason) => {
+                    append_log(&format!("POLL-GUARD-BLOCKED: {reason}"));
+                    println!("{}", deny_json(&reason));
+                    eprintln!("{reason}");
+                    return 2;
+                }
                 block_bad_cmd_repeat::Outcome::Note(note) => {
                     append_log("REPEAT-GUARD-POLL-NOTE");
                     poll_note = Some(note);

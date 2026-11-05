@@ -423,13 +423,23 @@ window 6 h, reset by a different call) for read-only queries only: a `gh` read
 verb (`view`/`list`/`status`/`checks`/`diff`/`api` without a write flag),
 `git ls-remote`, `curl` without a write flag, `ssh` whose remote command reads,
 `docker ps|logs|inspect`, `kubectl get|describe|logs`, and
-`systemctl status|is-active|show`. At the 6th and the 25th repeat the hook adds
-one `hookSpecificOutput.additionalContext` line — it never denies, so no
-workflow changes shape — naming the bundled waiter:
+`systemctl status|is-active|show`. At the 6th and the 24th repeat the hook adds
+one `hookSpecificOutput.additionalContext` line naming the bundled waiter:
 `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120
---timeout 3600`, which blocks and prints only the delta. One note per command
-per session; a non-query command is never counted (`CLUD_REPEAT_CALL_LIMIT=0`
-still disables the whole module).
+--timeout 3600`, which blocks and prints only the delta.
+
+Those two notes are advisory, and the measured session above ignored both: 127
+more identical polls in the next 24 h. So the ladder ends. Repeat
+`POLL_DENY_AT + 1 = 97` of the *same read-only query* in one session is refused
+with `[clud poll-guard]`, the same waiter command, and the deliberate-repeat
+escape `CLUD_ALLOW_REPEAT=1` (any different call resets the count, and the
+refusal is per exact call signature). Nothing that is not a read-only query is
+ever counted, so builds, tests and writes keep the burst guard's own 200-call
+limit; `CLUD_REPEAT_CALL_LIMIT=0` still disables the whole module.
+`CLUD_POLL_CALL_LIMIT=<n>` or `hooks.poll_call_limit` moves the poll limit alone
+(`0` turns just the poll stop off). Evidence: the same 24 h window recorded
+151 avoidable requests (20 % of all requests, 30 % of input tokens), 126 of
+them from that one session's poll loop.
 
 ### Per-file shell read-hop guard (#2233)
 

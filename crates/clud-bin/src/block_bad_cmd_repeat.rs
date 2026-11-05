@@ -37,6 +37,15 @@ pub(super) const DIR_NAME: &str = "repeat-guard";
 pub(super) const POLL_NOTE_AT: u32 = 6;
 /// Repeat count for the second, shorter reminder of the same note.
 pub(super) const POLL_NOTE_AGAIN_AT: u32 = 24;
+/// Identical read-only queries allowed in one session before the poll guard
+/// refuses the next one; call `POLL_DENY_AT + 1` is denied. The two notes above
+/// are advisory, and on 2026-11-05 one session ignored both and issued the same
+/// `gh issue view` query 127 times in 24 h (618 across five days), re-sending
+/// its whole 270 kB conversation on every tick. Normal waiting resolves well
+/// below this; anything above it is a wait, not a check.
+pub(super) const POLL_DENY_AT: u32 = 96;
+/// Session-wide poll limit override; `0` disables the poll guard.
+pub(super) const POLL_LIMIT_ENV: &str = "CLUD_POLL_CALL_LIMIT";
 /// Identical query calls further apart than this start a new poll count.
 pub(super) const POLL_WINDOW_SECS: u64 = 6 * 60 * 60;
 const HASH_DOMAIN: &str = "clud-repeat-guard-v1\0";
@@ -61,7 +70,15 @@ pub(super) struct Streak {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum Verdict {
     Allow,
-    Deny { count: u32 },
+    /// Burst guard: the same call more than `limit` times in a row (#1674).
+    Deny {
+        count: u32,
+    },
+    /// Poll guard: one read-only query repeated past its own, gap-independent
+    /// limit (a patient wait rather than a burst).
+    PollDeny {
+        count: u32,
+    },
 }
 
 /// The decision table, over injected facts only. Returns the verdict and the
@@ -256,8 +273,9 @@ pub(super) fn poll_message(count: u32) -> String {
          and every repeat re-sends the whole conversation before the same answer comes back. If \
          you are waiting for external state, block once instead of polling: \
          `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120 --timeout 3600` \
-         returns as soon as its output changes. Otherwise read the last answer and decide. One \
-         note per command per session."
+         returns as soon as its output changes. Otherwise read the last answer and decide. This \
+         note is advisory; identical repeats stop being allowed past {POLL_DENY_AT} in a \
+         session."
     )
 }
 
@@ -332,6 +350,28 @@ pub(super) fn limit_from(env: Option<&str>, settings: Option<&Value>) -> u32 {
         .map_or(DEFAULT_LIMIT, |v| u32::try_from(v).unwrap_or(u32::MAX))
 }
 
+/// The poll limit: [`POLL_LIMIT_ENV`] wins, then `hooks.poll_call_limit` in
+/// `~/.clud/settings.json`, then [`POLL_DENY_AT`]. `0` disables the poll guard
+/// only; the burst guard keeps its own limit.
+pub(super) fn poll_limit_from(env: Option<&str>, settings: Option<&Value>) -> u32 {
+    if let Some(value) = env.and_then(|v| v.trim().parse::<u32>().ok()) {
+        return value;
+    }
+    settings
+        .and_then(|doc| doc.get("hooks"))
+        .and_then(|hooks| hooks.get("poll_call_limit"))
+        .and_then(Value::as_u64)
+        .map_or(POLL_DENY_AT, |v| u32::try_from(v).unwrap_or(u32::MAX))
+}
+
+/// `~/.clud/settings.json`, parsed, or `None` when it is absent or malformed.
+fn settings_doc() -> Option<Value> {
+    crate::clud_settings::home_dir_path()
+        .ok()
+        .and_then(|home| std::fs::read(crate::clud_settings::settings_path_at(&home)).ok())
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+}
+
 fn effective_limit() -> u32 {
     let env = std::env::var(LIMIT_ENV).ok();
     if env
@@ -340,11 +380,18 @@ fn effective_limit() -> u32 {
     {
         return limit_from(env.as_deref(), None);
     }
-    let settings = crate::clud_settings::home_dir_path()
-        .ok()
-        .and_then(|home| std::fs::read(crate::clud_settings::settings_path_at(&home)).ok())
-        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
-    limit_from(None, settings.as_ref())
+    limit_from(None, settings_doc().as_ref())
+}
+
+fn effective_poll_limit() -> u32 {
+    let env = std::env::var(POLL_LIMIT_ENV).ok();
+    if env
+        .as_deref()
+        .is_some_and(|v| v.trim().parse::<u32>().is_ok())
+    {
+        return poll_limit_from(env.as_deref(), None);
+    }
+    poll_limit_from(None, settings_doc().as_ref())
 }
 
 fn now_secs() -> u64 {
@@ -414,6 +461,9 @@ pub(super) enum Outcome {
     /// Advisory only: the call runs, with one line added to the agent's context.
     Note(String),
     Deny(String),
+    /// The patient-poll stop: one read-only query repeated past
+    /// [`POLL_DENY_AT`].
+    PollDeny(String),
 }
 
 /// Record this call against the session's ledger in `state_dir` and return
@@ -425,6 +475,7 @@ pub(super) fn check_at(
     now: u64,
     limit: u32,
     is_query: bool,
+    poll_limit: u32,
 ) -> (Verdict, Option<u32>) {
     if limit == 0 || session_id.is_empty() {
         return (Verdict::Allow, None);
@@ -453,6 +504,11 @@ pub(super) fn check_at(
             prune(dir, SystemTime::now());
         }
     }
+    // The poll guard speaks after the burst guard: a burst deny already stops
+    // the call, and its message names the same waiter.
+    if verdict == Verdict::Allow && poll_limit > 0 && steady > poll_limit {
+        return (Verdict::PollDeny { count: steady }, None);
+    }
     let note = matches!(steady, POLL_NOTE_AT | POLL_NOTE_AGAIN_AT).then_some(steady);
     (verdict, note)
 }
@@ -479,11 +535,35 @@ pub(super) fn outcome(
         .and_then(Value::as_str)
         .unwrap_or("");
     let query = is_query(command);
-    match check_at(&state_dir, session_id, &key, now_secs(), limit, query) {
+    let poll_limit = effective_poll_limit();
+    match check_at(
+        &state_dir,
+        session_id,
+        &key,
+        now_secs(),
+        limit,
+        query,
+        poll_limit,
+    ) {
         (Verdict::Deny { count }, _) => Outcome::Deny(deny_message(tool_name, count, limit)),
+        (Verdict::PollDeny { count }, _) => Outcome::PollDeny(poll_deny_message(count, poll_limit)),
         (Verdict::Allow, Some(count)) => Outcome::Note(poll_message(count)),
         (Verdict::Allow, None) => Outcome::Allow,
     }
+}
+
+/// The poll guard's refusal: the same read-only query, repeated far past what
+/// any check needs. Names the waiter and the deliberate-repeat override.
+pub(super) fn poll_deny_message(count: u32, limit: u32) -> String {
+    format!(
+        "[clud poll-guard] this exact read-only query has now run {count} times in this session \
+         (limit {limit}), and every repeat re-sent the whole conversation before the same answer \
+         came back. Stop polling and block once instead: \
+         `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120 --timeout 3600` \
+         runs it once as a baseline and returns as soon as its output changes. To re-read this \
+         identical command deliberately anyway, prefix it with `{ALLOW_REPEAT_TOKEN}` (audited in \
+         the hook log)."
+    )
 }
 
 pub(super) fn deny_message(tool_name: &str, count: u32, limit: u32) -> String {
