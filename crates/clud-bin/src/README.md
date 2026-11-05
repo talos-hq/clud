@@ -482,6 +482,11 @@ which test tier a change belongs in — lives in
   non-serialized `RuleSource` (file, layer, `/bad_commands/<index>` slot) so a
   denial can cite exactly which rule fired and where it came from (#525);
   provenance survives merge/dedupe, so a shadowing rule keeps its own origin.
+- `block_bad_cmd_gate_guard.rs` - #2603: Bash lint/test advisory on the first
+  distinct command shape, one refusal on the second, then silence. Replays up
+  to 2 MiB of the session transcript without state writes or subprocesses.
+  Missing/unsupported history or binary, parse errors, `CLUD_READ=1` and
+  `CLUD_GATE_BYPASS=1` fail open. Signatures expire after one hour of inactivity.
 - `block_bad_cmd.rs` - native `cmd-scan` PreToolUse hook binary (formerly
   `block-bad-cmd`; `clud-block-bad-cmd` is still an argv[0] alias of `clud`, see
   `multicall.rs` and `block_bad_cmd_rollout.rs`). Enforces three things per Bash command:
@@ -656,6 +661,10 @@ which test tier a change belongs in — lives in
   command by how much restating it needs; `gate_replay.rs` and the
   `clud-bench-gate-replay` bench binary use it to measure the gate's cost
   over recorded transcripts (#1067 step 2).
+- `gate/` - `clud gate lint|test|both`: detects Rust, Python and JavaScript tools,
+  streams per-element logs to `~/.clud/gate/<run-id>/`, ranks diagnostics and emits
+  one compact JSON object. `both` fails fast by default; `--no-fast-fail` continues.
+  Green results use `passed_elements` with an empty `elements` list.
 - `gate_replay.rs` - content-safe aggregation for that replay: extracts Bash
   commands from Claude Code transcript lines and counts gate classes, never
   command text.

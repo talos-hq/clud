@@ -689,6 +689,15 @@ impl InstallArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    /// Run detected lint/test tools and emit one compact JSON result.
+    Gate {
+        #[arg(value_enum)]
+        lane: crate::gate::Lane,
+        #[arg(long, default_value = ".")]
+        repo: std::path::PathBuf,
+        #[arg(long)]
+        no_fast_fail: bool,
+    },
     /// Connect to an operator for consent-gated remote assistance.
     Remote {
         #[command(subcommand)]
@@ -1975,6 +1984,7 @@ pub enum GcSubcommand {
 }
 
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
+    "gate",
     "remote",
     "serve",
     "do-prompt",
@@ -2431,6 +2441,7 @@ fn split_inline_key_assignments(raw: &[String]) -> Result<Vec<String>, String> {
 }
 
 const SPLITTER_VALUE_FLAGS: &[&str] = &[
+    "--repo",
     "--install-version",
     "--prompt",
     "--message",
@@ -2490,6 +2501,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
     let value_flags: &[&str] = SPLITTER_VALUE_FLAGS;
     let short_value_flags: &[&str] = SPLITTER_SHORT_VALUE_FLAGS;
     let bool_flags: &[&str] = &[
+        "--no-fast-fail",
         // `clud workflow --reuse` (#2471).
         "--reuse",
         "--zdr",

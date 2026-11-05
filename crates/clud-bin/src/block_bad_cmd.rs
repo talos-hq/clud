@@ -533,6 +533,20 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
+    // #2603: read-only session replay; no logging or writes in the gate guard.
+    let gate_note = if event == PRE_TOOL_USE_EVENT {
+        match block_bad_cmd_gate_guard::verdict(&payload, raw_payload) {
+            block_bad_cmd_gate_guard::Verdict::Deny(replacement) => {
+                println!("{}", deny_json(&replacement));
+                return 2;
+            }
+            block_bad_cmd_gate_guard::Verdict::Advisory(note) => Some(note),
+            block_bad_cmd_gate_guard::Verdict::Silent => None,
+        }
+    } else {
+        None
+    };
+
     // #1674: deny the same call once it has run more than N times in a row
     // in this session. #2631: the same ledger also counts a *patient* poll —
     // one read-only query repeated across gaps — and says so once, without
@@ -1242,12 +1256,27 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
-    if let Some(note) = merge_notes(
+    let advisory_note = merge_notes(
         merge_notes(merge_notes(verify_note, image_note), ci_log_note),
         poll_note,
-    ) {
+    );
+    if let Some(note) = gate_note {
+        // Keep the nudge read-only, including the output path: merging project
+        // hook notices can persist their deduplication state. Other advisories
+        // ride along because their own ledgers have already recorded them.
+        let note = merge_notes(Some(note), advisory_note).unwrap_or_default();
+        println!("{}", block_bad_cmd_verify_ratio::context_json(&note));
+        return 0;
+    }
+    if let Some(note) = advisory_note {
         append_log("allowed with an advisory note");
         let output = block_bad_cmd_verify_ratio::context_json(&note);
+        println!("{}", with_hook_notice(output, event, &payload));
+        return 0;
+    }
+    // Spike: use the existing post-output context channel; never deny a finished call.
+    if let Some(note) = block_bad_cmd_hunt::spike_note(event, raw_payload, &payload) {
+        let output = block_bad_cmd_hook_notice::merge(Value::Null, event, &note);
         println!("{}", with_hook_notice(output, event, &payload));
         return 0;
     }
@@ -4124,6 +4153,9 @@ mod block_bad_cmd_stale_upstream;
 
 #[path = "block_bad_cmd_repeat.rs"]
 mod block_bad_cmd_repeat;
+
+#[path = "block_bad_cmd_gate_guard.rs"]
+mod block_bad_cmd_gate_guard;
 
 #[path = "block_bad_cmd_hop.rs"]
 mod block_bad_cmd_hop;

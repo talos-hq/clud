@@ -90,6 +90,7 @@ pub mod dnd;
 pub mod failover;
 pub mod foreground_runtime;
 pub mod fs_private;
+pub mod gate;
 pub mod gate_replay;
 pub mod gc;
 pub mod gemini_client_ingress;

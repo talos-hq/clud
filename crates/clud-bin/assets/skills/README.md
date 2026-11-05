@@ -17,6 +17,8 @@ every backend's skills dir on launch. `clud-loop` was retired once
 
 ## Skills
 
+- [clud-gate/](clud-gate/SKILL.md) - Compact lint/test validation and failure logs.
+
 - [grind/](grind/SKILL.md) - Router for the `/grind` DAG: intake, mode,
   per-role models and local-CI questions, then the bundled `grind-run` workflow.
   Leaves: [grind-intake/](grind-intake/SKILL.md),
