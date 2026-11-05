@@ -76,5 +76,6 @@ def test_bot_lands_through_a_merge_queue_pr(workflow: str) -> None:
     steps = _steps((WORKFLOWS / workflow).read_text(encoding="utf-8"))
     commit = steps[_index(steps, "git commit")]
     assert "REFRESH_BOT_TOKEN" in commit, "the commit step needs a bot token"
-    assert "gh pr merge" in commit and "--auto" in commit, "the PR must auto-enqueue"
+    assert "gh pr merge" in commit, "the PR must auto-enqueue"
+    assert "--auto" in commit, "the PR must auto-enqueue"
     assert "HEAD:main" not in commit, "main requires the merge queue; never push to it"
