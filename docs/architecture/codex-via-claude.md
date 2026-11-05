@@ -183,6 +183,56 @@ route's explicit `prompt_cache_key`, when supplied, remains authoritative.
 DeepSeek and other Anthropic-shaped proxy routes do not construct this Codex
 client and therefore do not receive these headers or this identity policy.
 
+## Shell tool-result budget
+
+The Claude-to-Codex translator applies a shell text budget before constructing
+Responses function-call outputs (`codex_translate::capped_tool_result`). This is
+the clud-owned outbound boundary for the Bash output observed by #2593's
+PostToolUse hook; that hook only observes `tool_response.stdout`/`stderr` and
+cannot replace the harness-owned result. Native Codex tool execution and direct
+Claude/other-provider routes do not pass through this boundary.
+
+`CLUD_TOOL_RESULT_MAX_BYTES` defaults to **4096**; **0 disables** the budget.
+Set it in the environment that launches clud/the bridge. Invalid or negative
+values use the default. Exactly-at-budget and smaller results pass unchanged.
+Known shell call IDs (`Bash`, `bash`, `Shell`, `shell`, `shell_command`,
+`exec_command`) are matched against the request's tool-use blocks. Unknown IDs
+and other tools pass unchanged. Both ordinary translation and pending-input
+translation after compaction use the budget.
+
+Oversized text retains complete lines within each half of the configured byte
+budget (2048 bytes per edge by default). A line longer than an edge is omitted
+whole; UTF-8 characters and lines are never split. The marker reports omitted
+lines and UTF-8 bytes and gives an executable `clud tool run code/slice.py`
+command with the full-output path and omitted line range. As in the Round 6
+prototype, the marker is **additional** to the payload budget. Even for a tiny
+budget, neither the marker nor retained edge lines are clipped to fit; the
+marker explicitly says it may exceed the cap.
+
+Oversized outputs are written to private temporary files before clipping.
+Spills retain the complete translated text, not an independent capture of the
+shell's OS byte streams. Structured text blocks share one budget, separated by
+newlines; image parts survive. Spill errors reject translation rather than send
+unrecoverable clipped text. Content hashes reuse spill paths across replayed
+turns in the bridge process, preserving identical history. Deleted/changed
+artifacts are recreated. Files remain available after the request and process
+exit, until temporary-directory cleanup; there is no added retention policy.
+Only oversized results spill. Persisted text can contain sensitive command
+output, just like the original result.
+
+The opt-in `codex_translate::tool_result_cap_translate_tests::replay_shell_results`
+test feeds captured UTF-8 outputs through the production `translate_bytes`
+entrypoint. Supply a JSON array of strings in `CLUD_CAP_REPLAY_INPUT` and an
+output filename in `CLUD_CAP_REPLAY_OUTPUT`, then run:
+
+```bash
+SOLDR_PORCELAIN=1 soldr cargo test -p clud --lib replay_shell_results -- --ignored --nocapture
+```
+
+This exercises real request translation without making a model/provider call.
+It does not establish autonomous task completion, cache-hit rates, net savings
+through recovery reads, native harness coverage, or corpus-wide recall.
+
 ## Cache-health safety fuse
 
 For direct and unified Codex traffic, the bridge retains a bounded, in-memory

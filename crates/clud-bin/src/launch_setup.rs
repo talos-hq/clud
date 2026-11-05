@@ -120,6 +120,7 @@ impl Selector for ScopeSelector {
 
 pub fn should_prompt_for_scope(args: &Args, interactive_terminal: bool) -> bool {
     interactive_terminal
+        && !crate::remote_connect::proxy::active()
         && (args.explicit_model_provider().is_some() || args.harness.is_some())
         && !args.dry_run
         && args.prompt.is_none()

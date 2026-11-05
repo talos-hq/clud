@@ -23,7 +23,7 @@ impl Drop for Fixture {
     }
 }
 
-fn git_bash() -> PathBuf {
+pub(super) fn git_bash() -> PathBuf {
     ["ProgramFiles", "ProgramW6432"]
         .into_iter()
         .filter_map(std::env::var_os)

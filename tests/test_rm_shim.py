@@ -93,7 +93,12 @@ def test_new_launch_does_not_inherit_unsafe_from_parent(tmp_path: Path) -> None:
     bin_dir.mkdir()
     codex = bin_dir / "codex"
     codex.write_text(
-        '#!/bin/sh\nprintf "unsafe=%s\\n" "${CLUD_UNSAFE_MODE:-unset}"\n',
+        # A JSON-mode Codex returns its final answer as an agent_message event.
+        "#!/bin/sh\n"
+        'printf \'{"type":"item.completed","item":{"id":"probe",'
+        '"type":"agent_message","text":"unsafe=%s"}}\\n\' '
+        '"${CLUD_UNSAFE_MODE:-unset}"\n'
+        'printf \'{"type":"turn.completed","usage":{}}\\n\'\n',
         encoding="utf-8",
     )
     codex.chmod(0o755)
@@ -246,9 +251,24 @@ def test_launcher_restores_shim_path_in_codex_login_shell(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     codex = bin_dir / "codex"
+    bash = shutil.which("bash")
+    assert bash is not None, "Bash is required for the login-shell probe"
+    encoder = (
+        "import json,sys;"
+        "print(json.dumps({'type':'item.completed','item':{'id':'probe',"
+        "'type':'agent_message','text':sys.stdin.read()}}));"
+        "print(json.dumps({'type':'turn.completed','usage':{}}))"
+    )
     codex.write_text(
-        '#!/bin/sh\n/bin/bash -lc \'printf "%s|%s|%s\\n" "${CLUD_RM_SHIM_DIR:-}" '
-        '"$(command -v safe-rm)" "${UNSET_FOR_TEST:-}"\'\n',
+        "#!/bin/sh\nprobe=$("
+        + shlex.quote(bash)
+        + ' -lc \'printf "%s|%s|%s\\n" "${CLUD_RM_SHIM_DIR:-}" '
+        '"$(command -v safe-rm)" "${UNSET_FOR_TEST:-}"\') || exit $?\n'
+        'printf "%s\\n" "$probe" | '
+        + shlex.quote(sys.executable)
+        + " -c "
+        + shlex.quote(encoder)
+        + "\n",
         encoding="utf-8",
     )
     codex.chmod(0o755)

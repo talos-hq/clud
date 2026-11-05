@@ -5,6 +5,7 @@ where a host may be named. Rules and rationale:
 [`docs/architecture/platform-boundary.md`](../../../../docs/architecture/platform-boundary.md).
 
 - `stdio` (#2386): `redirect_stderr_to(&File)` points the process stderr at a file (`dup2` / `SetStdHandle`); used by the daemon entry.
+- `session_tmp_live`: verifies protected desktop-service identity and manager lineage for temp GC; unsupported hosts retain the unknown-process safeguard.
 - `mod.rs` is the selector. It declares `unix` or `windows` and re-exports
   the selected tree, so `crate::platform::<area>` resolves to the current
   host's implementation.
@@ -41,3 +42,5 @@ selects OpenGL.
 for explicit Windows Command Prompt windows; Unix supplies an empty adapter.
 The persistence contract is documented in
 [process-reaping.md](../../../../docs/architecture/process-reaping.md#explicit-command-prompt-windows-on-windows-2007).
+
+`stdio::output_is_utf8` supplies native console capability to [foreground print output](../../../../docs/architecture/prompt-output.md).

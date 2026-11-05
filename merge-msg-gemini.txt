@@ -1,0 +1,21 @@
+merge(parity): bring feat/cliproxy-gemini-request up to date with main
+
+origin/main moved a long way since this branch was cut (xAI device login
+#2499, Kimi device login #2514, the OpenAI Responses seam in #2539's
+predecessors, the release bump). Three conflicts, all in the additive
+registration sites and all resolved as a union:
+
+  * crates/clud-bin/src/args.rs - keep InternalClaudeGeminiTranslate and add
+    InternalOpenAiResponsesTranslate / InternalXaiDeviceLogin /
+    InternalKimiDeviceLogin beside it; the hidden-seam name list keeps all
+    four names.
+  * crates/clud-bin/src/main.rs - keep the Gemini translate arm and add the
+    Responses / xAI / Kimi arms.
+  * crates/clud-bin/src/command/builder.rs - same union in the "does this
+    command touch a session" match.
+
+No behavior change to any sibling seam and no deletion of main's work.
+
+Gates: bash lint --static-only -> All checks passed!; soldr cargo fmt
+--check clean; soldr cargo clippy -p clud --all-targets -- -D warnings ->
+exit 0.

@@ -240,6 +240,11 @@ impl LoopSession {
         let _ = write_root_summary(&self.git_root, &self.info, summary);
     }
 
+    /// Checkout owning the message inbox.
+    pub fn git_root(&self) -> &Path {
+        &self.git_root
+    }
+
     /// Borrow the current task info — exposed for tests that want to
     /// peek at iteration history without going through the JSON file.
     #[cfg(test)]

@@ -769,39 +769,22 @@ pub fn run_plan_subprocess(
     crate::toast::launch::publish_demo_toast(&banner_sink);
     let mut cpu_banner = cpu_banner::BannerWatcher::spawn(cpu_banner_cfg, banner_sink);
 
-    let statusline = toast_cfg
-        .claude_statusline
-        .then(|| {
-            status_writer
-                .as_deref()
-                .and_then(crate::toast::launch::injection_for)
-        })
-        .flatten();
-    let (runtime, _) = match crate::foreground_runtime::ForegroundRuntime::start_with_statusline(
-        plan,
-        child_env_for_backend(plan.backend),
-        statusline.as_ref(),
-        status_writer.as_ref(),
-    ) {
-        Ok(runtime) => runtime,
-        Err(error) => {
-            // #998: this is one of the failures clud names itself, and until
-            // now the launch record kept only the bare exit code. Same text
-            // the user just saw, so record and terminal agree.
-            crate::launch_log::record_failure_reason(format_args!(
-                "failed to start provider bridge: {error}"
-            ));
-            eprintln!("[clud] failed to start provider bridge: {error}");
-            if verbose {
-                verbose_log::log("[clud] provider bridge startup failed");
+    let runtime =
+        match runner_execution::start_subprocess_runtime(plan, toast_cfg, status_writer.as_ref()) {
+            Ok(runtime) => runtime,
+            Err(error) => {
+                crate::launch_log::record_failure_reason(format_args!(
+                    "failed to start provider bridge: {error}"
+                ));
+                eprintln!("[clud] failed to start provider bridge: {error}");
+                return 1;
             }
-            return 1;
-        }
-    };
+        };
     let mut last_exit = 0i32;
     let trace_enabled = stage_trace::stderr_enabled(verbose);
 
-    for iteration in 0..plan.iterations {
+    let mut iteration = 0;
+    while iteration < plan.iterations {
         // Re-check the interrupted flag at the top of every iteration. A
         // Ctrl+C that fires between the previous child's reap and our next
         // spawn would otherwise be silently swallowed and we'd cheerfully
@@ -829,6 +812,17 @@ pub fn run_plan_subprocess(
             ));
         }
 
+        let mut console = match runner_execution::loop_console(
+            loop_session.as_deref(),
+            iter_num,
+            plan.iterations,
+        ) {
+            Ok(console) => console,
+            Err(error) => {
+                eprintln!("[clud] loop dashboard: {error}");
+                return 1;
+            }
+        };
         let batch_wrapped = subprocess::argv_is_batch_wrapped(&plan.command);
         // Windows pipe-owning launches use `ManagedSubprocess`'s suspended
         // spawn: the child is assigned to its Job Object before it can run.
@@ -837,11 +831,13 @@ pub fn run_plan_subprocess(
         let process = match runtime.spawn_subprocess(
             plan.command.clone(),
             plan.cwd.as_ref().map(PathBuf::from),
-            plan.stream_json_progress,
+            plan.stream_json_progress || plan.prompt_summary || console.is_some(),
             win_creation_flags::user_facing_backend_creationflags(),
+            console.is_some(),
         ) {
             Ok(process) => process,
             Err(e) => {
+                drop(console);
                 eprintln!("[clud] failed to execute {}: {}", plan.command[0], e);
                 if verbose {
                     verbose_log::log(format_args!("[clud] subprocess: start failed: {e}"));
@@ -866,34 +862,23 @@ pub fn run_plan_subprocess(
             plan.backend.executable_name(),
         );
 
-        // Issue #95: in stream-json mode we also accumulate the rendered
-        // output so we can fall back to scanning for the
-        // `<<<CLUD_LOOP_DONE: ...>>>` token if the agent skipped the
-        // marker file. In inherited-stdio mode the child writes directly
-        // to the user's terminal and we never see the bytes — the token
-        // fallback is unavailable there.
+        // Captured headless output supports the completion-token fallback.
         let mut captured_output = String::new();
-        // #1168: a wedged `clud -p` on the Windows lanes left an empty stage
-        // trace with the backend already finished, so the wait and the
-        // per-iteration teardown get breadcrumbs. `child_wait` covers polling
-        // the backend to exit (and, on Windows, its Job Object closing);
-        // `child_teardown` covers joining the wedge watchdog and dropping the
-        // process handle, which is where a descendant-held pipe would hold
-        // us. An unmatched `begin` in the harness's rendering of the trace
-        // names the one that did not come back.
+        // Trace both waiting and teardown: descendant-held pipes can wedge
+        // either phase on Windows (#1168).
         let wait_started =
             stage_trace::begin(trace_enabled, stage_trace::Phase::Launch, "child_wait");
-        let exit_code = if plan.stream_json_progress {
-            run_with_stream_json_renderer(
-                &process,
-                interrupted,
-                &mut captured_output,
-                batch_wrapped,
-                iter_num,
-            )
-        } else {
-            run_with_inherited_stdio(&process, interrupted, batch_wrapped)
-        };
+        let exit_code = runner_execution::wait_loop_child(
+            &process,
+            interrupted,
+            &mut captured_output,
+            batch_wrapped,
+            iter_num,
+            plan,
+            console.as_mut(),
+        );
+        runner_execution::finish_loop_console(console, &captured_output, iter_num);
+
         stage_trace::done(
             trace_enabled,
             stage_trace::Phase::Launch,
@@ -927,6 +912,17 @@ pub fn run_plan_subprocess(
                     return last_exit;
                 }
             }
+            ProcessOutcome::Restart => {
+                if let Some(s) = loop_session.as_deref_mut() {
+                    s.on_iteration_end(
+                        iter_num,
+                        130,
+                        Some("Restarted with operator message".to_owned()),
+                    );
+                }
+                runner_execution::clear_restart_markers(plan);
+                continue;
+            }
             ProcessOutcome::Interrupted => {
                 if verbose {
                     verbose_log::log("[clud] interrupted via Ctrl+C");
@@ -947,6 +943,7 @@ pub fn run_plan_subprocess(
             }
         }
 
+        iteration += 1;
         if let Some(code) = check_loop_markers_with_output(plan, iter_num, &captured_output) {
             return code;
         }
@@ -1000,6 +997,7 @@ fn note_silent_bridge(runtime: &crate::foreground_runtime::ForegroundRuntime, ex
 enum ProcessOutcome {
     Exited(i32),
     Interrupted,
+    Restart,
     Error,
 }
 
@@ -1064,4 +1062,3 @@ fn teardown_interrupted_child(process: &subprocess::ManagedSubprocess, batch_wra
 /// non-streaming control flow.
 #[path = "runner_execution.rs"]
 mod runner_execution;
-use runner_execution::{run_with_inherited_stdio, run_with_stream_json_renderer};

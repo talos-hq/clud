@@ -75,3 +75,13 @@ Ignored Windows probes (`wedge_watchdog_e2e`, `win32_hooking_probe`, `tier_refre
 
 All `cargo`/`rustc`/`rustfmt` invocations must go through `soldr` (see root `CLAUDE.md`). The mock-agent is auto-built on first run via `cargo build -p mock-agent --message-format json`.
 - `tier_refresh_probe.rs` � Ignored #687 premise probe. Times `ProcessesToUpdate::All` against `Some([pid])` and against clud's direct `OpenProcess`/`GetProcessTimes` path. **On Windows a targeted sysinfo refresh is not cheaper than the host walk** (ratio ~1.0), while the direct per-PID call is ~4 orders of magnitude cheaper � which is why #687's `T1 / Pids(set)` targets must split into *identity* (direct OS call) versus *topology* (needs `parent_pid`, hence the daemon service). Platform-specific: re-run before trusting the conclusion on Linux/macOS.
+
+Loop dashboard acceptance lives in `integration/pty/loop_console.rs`: real PTYs
+through Bash, cmd and PowerShell cover message queueing, confirmed restart and
+terminal restoration. See [loop dashboard](../../../docs/architecture/loop-subsystem.md#interactive-loop-dashboard).
+
+`cli/remote_proxy_cli.rs` migrates the credential-empty Bosn proof into the normal
+integration harness: actual clud starts mock-agent with only a session bearer,
+and the mock makes a real HTTP Messages request to the session proxy fixture.
+No provider account or Docker daemon is required. See
+[remote assistance](../../../docs/architecture/remote-assistance.md).

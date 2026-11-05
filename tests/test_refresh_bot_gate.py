@@ -1,8 +1,9 @@
 """The scheduled refresh bots must test what they are about to commit (#1635).
 
-Both bots push straight to `main`. 60f6087b showed that a refresh can land a
-commit that turns `main` red, so each workflow runs the producer's own tests
-against the regenerated file between the refresh and the commit (DD-127).
+Both bots land their refresh on `main` through a bot PR with auto-merge
+(`main` requires the merge queue, #2518). 60f6087b showed that a refresh can
+land a commit that turns `main` red, so each workflow runs the producer's own
+tests against the regenerated file between the refresh and the commit (DD-127).
 """
 
 from __future__ import annotations
@@ -65,3 +66,16 @@ def test_bot_never_syncs_the_project(workflow: str) -> None:
     lines = (WORKFLOWS / workflow).read_text(encoding="utf-8").splitlines()
     code = [line for line in lines if not line.lstrip().startswith("#")]
     assert not any("uv run" in line for line in code)
+
+
+@pytest.mark.parametrize("workflow", sorted(BOTS))
+def test_bot_lands_through_a_merge_queue_pr(workflow: str) -> None:
+    """A direct push to `main` is always rejected, and a `GITHUB_TOKEN` PR
+    triggers no `pull_request` workflows, so the commit step must push a branch
+    and open the PR with a bot token (#2518)."""
+    steps = _steps((WORKFLOWS / workflow).read_text(encoding="utf-8"))
+    commit = steps[_index(steps, "git commit")]
+    assert "REFRESH_BOT_TOKEN" in commit, "the commit step needs a bot token"
+    assert "gh pr merge" in commit, "the PR must auto-enqueue"
+    assert "--auto" in commit, "the PR must auto-enqueue"
+    assert "HEAD:main" not in commit, "main requires the merge queue; never push to it"

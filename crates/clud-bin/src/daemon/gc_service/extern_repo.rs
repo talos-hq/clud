@@ -274,19 +274,7 @@ fn commits_are_squash_merged(cwd: &Path) -> bool {
 
     // Every unpushed commit, and the subset reachable from HEAD. `git cherry`
     // speaks only for HEAD, so anything outside it must veto.
-    let Some(all_unpushed) = probe_git(
-        cwd,
-        &[
-            "--no-optional-locks",
-            "--git-dir=.git",
-            "--work-tree=.",
-            "log",
-            "--all",
-            "--not",
-            "--remotes",
-            "--format=%H",
-        ],
-    ) else {
+    let Some(all_unpushed) = unpublished_ref_log(cwd, false) else {
         return false;
     };
     let Some(head_unpushed) = probe_git(
@@ -410,20 +398,7 @@ pub(super) fn git_work_state(cwd: &Path) -> GitWorkState {
     // only expands `refs/heads` and would report such a repo as clean and
     // let it be deleted. With no remotes configured every commit qualifies
     // → HasLocalWork, which is the conservative (spare) answer we want.
-    let Some(unpushed) = probe_git(
-        cwd,
-        &[
-            "--no-optional-locks",
-            "--git-dir=.git",
-            "--work-tree=.",
-            "log",
-            "--all",
-            "--not",
-            "--remotes",
-            "--format=%H",
-            "--max-count=1",
-        ],
-    ) else {
+    let Some(unpushed) = unpublished_ref_log(cwd, true) else {
         return GitWorkState::ProbeFailed;
     };
     if !unpushed.trim().is_empty() {
@@ -438,6 +413,12 @@ pub(super) fn git_work_state(cwd: &Path) -> GitWorkState {
         };
     }
 
+    // A linked worktree does not own the shared branches or stash. Their
+    // metadata survives `git worktree remove`; only this checkout's HEAD
+    // and dirty/untracked source can be lost with it.
+    if linked_metadata_is_external(cwd) {
+        return GitWorkState::Clean;
+    }
     let Some(stash) = probe_git(
         cwd,
         &[
@@ -455,6 +436,69 @@ pub(super) fn git_work_state(cwd: &Path) -> GitWorkState {
     }
 
     GitWorkState::Clean
+}
+
+/// A `.git` file alone is insufficient: separate Git metadata can still
+/// live inside the source being removed. Only a linked worktree whose
+/// per-worktree and common metadata both resolve outside it qualifies.
+fn linked_metadata_is_external(cwd: &Path) -> bool {
+    let Some(root) = cwd.canonicalize().ok() else {
+        return false;
+    };
+    let Some(gitfile) = std::fs::read_to_string(root.join(".git")).ok() else {
+        return false;
+    };
+    let Some(gitdir) = gitfile.trim().strip_prefix("gitdir:") else {
+        return false;
+    };
+    let Some(gitdir) = root.join(gitdir.trim()).canonicalize().ok() else {
+        return false;
+    };
+    let Some(common) = std::fs::read_to_string(gitdir.join("commondir")).ok() else {
+        return false;
+    };
+    let Some(common) = gitdir.join(common.trim()).canonicalize().ok() else {
+        return false;
+    };
+    gitdir != common && !gitdir.starts_with(&root) && !common.starts_with(&root)
+}
+
+fn unpublished_ref_log(cwd: &Path, first_only: bool) -> Option<String> {
+    let mut args = vec![
+        "--no-optional-locks",
+        "--git-dir=.git",
+        "--work-tree=.",
+        "log",
+    ];
+    if linked_metadata_is_external(cwd) {
+        // These refs live in this worktree's private Git directory and are
+        // removed with it. Shared refs and stash live in the common directory.
+        args.extend([
+            "HEAD",
+            "--glob=refs/worktree/*",
+            "--glob=refs/bisect/*",
+            "--glob=refs/rewritten/*",
+        ]);
+    } else {
+        args.push("--all");
+    }
+    args.extend(["--not", "--remotes", "--format=%H"]);
+    if first_only {
+        args.push("--max-count=1");
+    }
+    probe_git(cwd, &args)
+}
+
+pub(super) fn tracked_source_purge_verdict(
+    entry: &TrackedEntry,
+    stale_after: Duration,
+) -> PurgeDecision {
+    if entry.kind == crate::gc::WORKTREE_KIND {
+        let path = Path::new(&entry.path);
+        extern_repo_purge_decision(path.is_dir(), true, true, git_work_state(path))
+    } else {
+        extern_repo_purge_verdict(entry, stale_after)
+    }
 }
 
 /// Why an extern-repo row was or was not reclaimed. The repo's reap/spare
@@ -931,6 +975,81 @@ mod tests {
     fn standalone_non_git_dir_reads_as_unknown() {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(git_work_state(tmp.path()), GitWorkState::Unknown);
+    }
+
+    #[test]
+    fn linked_worktree_is_not_pinned_by_another_branch_or_shared_stash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        init_repo(&repo);
+        git(&repo, &["commit", "--allow-empty", "-m", "base"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+        git(
+            &repo,
+            &["update-ref", "refs/remotes/origin/main", base.trim()],
+        );
+        let child = tmp.path().join("child");
+        git(
+            &repo,
+            &["worktree", "add", "-b", "child", child.to_str().unwrap()],
+        );
+        git(
+            &repo,
+            &["commit", "--allow-empty", "-m", "unrelated local work"],
+        );
+        std::fs::write(repo.join("scratch"), "keep this stash").unwrap();
+        git(&repo, &["stash", "push", "--include-untracked"]);
+        assert_eq!(git_work_state(&child), GitWorkState::Clean);
+        std::fs::write(child.join("local-work"), "must survive").unwrap();
+        assert_eq!(git_work_state(&child), GitWorkState::HasLocalWork);
+        git(&child, &["add", "local-work"]);
+        git(&child, &["commit", "-m", "unpushed worktree work"]);
+        assert_eq!(git_work_state(&child), GitWorkState::HasLocalWork);
+        git(&child, &["reset", "--hard", base.trim()]);
+        assert_eq!(git_work_state(&child), GitWorkState::Clean);
+        let stash = git(&repo, &["stash", "list"]);
+        let unrelated_tip = git(&repo, &["rev-parse", "HEAD"]);
+        git(&repo, &["worktree", "remove", child.to_str().unwrap()]);
+        assert_eq!(git(&repo, &["stash", "list"]), stash);
+        assert_eq!(git(&repo, &["rev-parse", "HEAD"]), unrelated_tip);
+        assert!(repo.join(".git").is_dir());
+    }
+
+    #[test]
+    fn linked_worktree_preserves_unpublished_private_refs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir(&repo).unwrap();
+        init_repo(&repo);
+        git(&repo, &["commit", "--allow-empty", "-m", "base"]);
+        let base = git(&repo, &["rev-parse", "HEAD"]);
+        git(
+            &repo,
+            &["update-ref", "refs/remotes/origin/main", base.trim()],
+        );
+        let child = tmp.path().join("child");
+        git(
+            &repo,
+            &["worktree", "add", "-b", "child", child.to_str().unwrap()],
+        );
+        git(
+            &child,
+            &["commit", "--allow-empty", "-m", "private unpublished work"],
+        );
+        let private = git(&child, &["rev-parse", "HEAD"]);
+        git(&child, &["reset", "--hard", base.trim()]);
+        for name in [
+            "refs/worktree/private",
+            "refs/bisect/private",
+            "refs/rewritten/private",
+        ] {
+            git(&child, &["update-ref", name, private.trim()]);
+            assert_eq!(git_work_state(&child), GitWorkState::HasLocalWork, "{name}");
+            assert_eq!(git(&child, &["rev-parse", name]).trim(), private.trim());
+            git(&child, &["update-ref", "-d", name]);
+        }
+        assert_eq!(git_work_state(&child), GitWorkState::Clean);
     }
 
     /// Regression guard for the production layout. `.extern-repos/` lives

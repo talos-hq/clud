@@ -273,6 +273,7 @@ fn backend_prompt_launch_plan(
         command: None,
         passthrough: args.passthrough.clone(),
         codex_config_overrides: args.codex_config_overrides.clone(),
+        optional_context: args.optional_context.clone(),
         resolved_model_selection: args.resolved_model_selection.clone(),
         raw_argv: Vec::new(),
         continue_index: None,

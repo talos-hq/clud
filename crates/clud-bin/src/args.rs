@@ -400,6 +400,10 @@ pub struct Args {
     #[arg(skip)]
     pub codex_config_overrides: Vec<String>,
 
+    /// Optional context reference resolved once before the backend launches.
+    #[arg(skip)]
+    pub optional_context: Option<String>,
+
     /// Selection normalized once before bootstrap or credential access.
     #[arg(skip)]
     pub resolved_model_selection: Option<crate::provider_catalog::ResolvedModelSelection>,
@@ -610,6 +614,79 @@ impl Args {
     }
 }
 
+/// `clud setup --provider`: only the providers setup offers.
+fn parse_setup_provider(value: &str) -> Result<crate::backend::ModelProvider, String> {
+    crate::backend::ModelProvider::from_settings_str(value)
+        .filter(|provider| crate::self_install::setup::OFFERED.contains(provider))
+        .ok_or_else(|| format!("expected one of claude, codex, openrouter (got {value})"))
+}
+
+/// `clud install <product>` (#2609): install another agent product and offer to
+/// migrate clud's provider credentials into it. `clud setup <product>` is an
+/// exact alias; a bare `clud setup` keeps setting up clud itself.
+#[derive(clap::Args, Debug, Clone)]
+pub struct InstallArgs {
+    /// Product to install: hermes (hermes-slim) or talos.
+    pub product: String,
+    /// Print the resolved product, bootstrap and target, and change nothing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    /// Run without prompts (required without a terminal). Never migrates
+    /// credentials on its own.
+    #[arg(long = "yes", short = 'y')]
+    pub yes: bool,
+    /// Install directory; passed to the product's own installer.
+    #[arg(long)]
+    pub dir: Option<std::path::PathBuf>,
+    /// Existing install to configure; mutually exclusive with --dir.
+    #[arg(long = "target")]
+    pub product_dir: Option<std::path::PathBuf>,
+    /// Repository ref the product's bootstrap is fetched from.
+    #[arg(long = "ref")]
+    pub reference: Option<String>,
+    /// Product version, passed to the product's own installer.
+    #[arg(long)]
+    pub version: Option<String>,
+    /// Install and stop without the configure step.
+    #[arg(long = "no-configure")]
+    pub no_configure: bool,
+    /// Skip the install and only configure an existing product.
+    #[arg(long = "configure-only")]
+    pub configure_only: bool,
+    /// Migrate clud's stored provider credentials without asking.
+    #[arg(long = "migrate-credentials")]
+    pub migrate_credentials: bool,
+    /// Arguments after `--`, which belong to the product's own installer.
+    #[arg(skip)]
+    pub passthrough: Vec<String>,
+}
+
+impl InstallArgs {
+    /// Attach the arguments given after `--`, which belong to the product's own
+    /// installer.
+    pub fn with_passthrough(mut self, passthrough: &[String]) -> Self {
+        self.passthrough = passthrough.to_vec();
+        self
+    }
+
+    /// The runner's options, with `--no-configure` inverted.
+    pub fn to_options(&self) -> crate::install::command::Options {
+        crate::install::command::Options {
+            target: self.product.clone(),
+            dry_run: self.dry_run,
+            yes: self.yes,
+            dir: self.dir.clone(),
+            product_dir: self.product_dir.clone(),
+            reference: self.reference.clone(),
+            version: self.version.clone(),
+            configure: !self.no_configure,
+            configure_only: self.configure_only,
+            migrate_credentials: self.migrate_credentials,
+            passthrough: self.passthrough.clone(),
+        }
+    }
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Run detected lint/test tools and emit one compact JSON result.
@@ -620,6 +697,11 @@ pub enum Command {
         repo: std::path::PathBuf,
         #[arg(long)]
         no_fast_fail: bool,
+    },
+    /// Connect to an operator for consent-gated remote assistance.
+    Remote {
+        #[command(subcommand)]
+        action: crate::remote_connect::Action,
     },
     /// Serve Claude or Codex and optional Anthropic-compatible provider models
     /// to local API clients.
@@ -656,6 +738,39 @@ pub enum Command {
     CodexUpdate,
     /// Install or confirm DeepSeek Harness in clud's private npm prefix.
     DshUpdate,
+    /// Install clud's aliases and set up a provider in one step: interpreter
+    /// aliases, then OpenRouter/Claude/Codex with its credential and saved
+    /// default. Safe to rerun. Never edits shell profiles or PATH without
+    /// --write-profile. Exits 0 on success, 2 for a refused request (no
+    /// terminal without --yes, missing OpenRouter key), 1 on a failed step.
+    Setup {
+        /// A product to install: hermes (hermes-slim) or talos. Equivalent to
+        /// `clud install <product>`; a bare `clud setup` sets up clud itself.
+        product: Option<String>,
+        /// Print every step and what is already in place; change nothing.
+        #[arg(long = "dry-run")]
+        dry_run: bool,
+        /// Run without prompts (required without a terminal). Keeps the
+        /// saved provider, or Claude, unless --provider is given.
+        #[arg(long = "yes", short = 'y')]
+        yes: bool,
+        /// Provider to configure instead of asking.
+        #[arg(long, value_parser = parse_setup_provider)]
+        provider: Option<crate::backend::ModelProvider>,
+        /// Also activate clud in new shells: runs the installer for this
+        /// version, which owns every shell-profile and PATH edit.
+        #[arg(long = "write-profile")]
+        write_profile: bool,
+        /// Import the OpenRouter settings and key found in Hermes' config.
+        /// Required for an import under --yes; OpenRouter is metered, so
+        /// CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=openrouter are too.
+        #[arg(long = "import-hermes")]
+        import_hermes: bool,
+    },
+    /// Install another agent product (`hermes` = hermes-slim, `talos`) and offer
+    /// to migrate clud's provider credentials into it (#2609). `clud setup
+    /// <product>` is an exact alias. See docs/architecture/install-products.md.
+    Install(InstallArgs),
     /// Report hook and alias health: stale or retired aliases in clud's own
     /// alias dirs, a foreign `clud-cmd-scan` first on PATH, and the hook
     /// matcher's tool coverage (#1954). Exits 1 when anything is wrong.
@@ -1142,8 +1257,113 @@ pub enum Command {
         #[arg(long, requires = "response")]
         http: bool,
     },
+    #[command(name = "__gemini-client-translate", hide = true)]
+    InternalGeminiClientTranslate {
+        /// Model to serve the request with; without it the request's own model wins.
+        #[arg(long)]
+        model: Option<String>,
+        /// Translate an Anthropic Messages response into a Gemini response.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one Gemini response chunk per line.
+        #[arg(long)]
+        stream: bool,
+        /// Emit the exact HTTP body a route writes, not one JSON per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
+    /// Test seam for the Claude <-> Gemini translator: read one Anthropic
+    /// Messages request body on stdin, write the translated Gemini
+    /// `generateContent` request body to stdout. `--model` names the target
+    /// Gemini model; without it the request's own model is kept. With
+    /// `--response` it runs the other direction instead (a Gemini
+    /// `generateContent` response in, the Anthropic Messages response out).
+    /// Never used by a launched session.
+    #[command(name = "__claude-gemini-translate", hide = true)]
+    InternalClaudeGeminiTranslate {
+        /// Target Gemini model id.
+        #[arg(long)]
+        model: Option<String>,
+        /// Translate a Gemini response, not an Anthropic request.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one Anthropic event per line.
+        #[arg(long, requires = "response")]
+        stream: bool,
+        /// Emit the exact HTTP body a route writes (a Messages body, or
+        /// `event: <kind>` frames), not one JSON object per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
+    /// Test seam for the JSON-path payload rules: read `{"rules": ..., "payload": ...}`
+    /// on stdin (or the rules from `--rules` and the payload on stdin), write the
+    /// rewritten payload and what each rule kind did to stdout. Never used by a
+    /// launched session.
+    #[command(name = "__apply-payload-rules", hide = true)]
+    InternalApplyPayloadRules {
+        /// Read the rules from this file instead of the stdin document. This is
+        /// the same loader `CLUD_PAYLOAD_RULES` uses at gateway time.
+        #[arg(long = "rules")]
+        rules: Option<PathBuf>,
+        /// Model the rules select on. Absent matches no `models` entry, so only
+        /// model-agnostic rules fire.
+        #[arg(long)]
+        model: Option<String>,
+        /// Protocol the rules select on (`claude` for `POST /v1/messages`).
+        #[arg(long, default_value = "claude")]
+        protocol: String,
+        /// Protocol the *client* spoke (`openai` for `POST /v1/chat/completions`),
+        /// which a rule's `from-protocol` selector matches. Empty means unknown.
+        #[arg(long = "from-protocol", default_value = "")]
+        from_protocol: String,
+        /// A request header the rules can select on, as `Name: value`.
+        /// Repeatable; mirrors the headers a real request carries.
+        #[arg(long = "header", value_name = "NAME: VALUE")]
+        headers: Vec<String>,
+        /// Read the rules from `requests.payload` in this settings file instead
+        /// of the stdin document — the owner the gateway uses when
+        /// `CLUD_PAYLOAD_RULES` is unset.
+        #[arg(long = "settings-file", conflicts_with = "rules")]
+        settings_file: Option<PathBuf>,
+    },
+    /// Hidden test seam for the legacy completions ingress. Without
+    /// `--response` it translates a `/v1/completions` request into a Messages
+    /// request; with it, the reverse: an upstream Messages body into a
+    /// `text_completion` body or chunk stream.
+    #[command(name = "__openai-completions-translate", hide = true)]
+    InternalOpenAiCompletionsTranslate {
+        /// Translate an Anthropic Messages response, not an OpenAI request.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one chunk per line.
+        #[arg(long, requires = "response")]
+        stream: bool,
+        /// Model to report when the response body carries none.
+        #[arg(long = "for-model")]
+        for_model: Option<String>,
+        /// Emit the exact HTTP body the route writes, not one JSON per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
+    /// Hidden test seam for the Responses ingress. Without `--response` it
+    /// translates a Responses request into a Messages request; with it, the
+    /// reverse: an upstream Messages body into a Responses `response` object or
+    /// event stream.
     #[command(name = "__openai-responses-translate", hide = true)]
-    InternalOpenAiResponsesTranslate,
+    InternalOpenAiResponsesTranslate {
+        /// Translate an Anthropic Messages response, not an OpenAI request.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one `response.*` event per line.
+        #[arg(long, requires = "response")]
+        stream: bool,
+        /// Model to report when the response body carries none.
+        #[arg(long = "for-model")]
+        for_model: Option<String>,
+        /// Emit the exact HTTP body the route writes, not one JSON per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
     /// Hidden test seam for xAI's RFC 8628 device login: run discovery, request
     /// a device code, poll until authorized, and print progress as JSON lines.
     /// Never used by a launched session.
@@ -1189,6 +1409,32 @@ pub enum Command {
         /// Refresh the login stored in the OS vault instead of starting a new one.
         #[arg(long = "refresh-stored")]
         refresh_stored: bool,
+    },
+    /// Hidden test seam for Meta Muse's RFC 8628 device login: request a device
+    /// code, poll until the account authorizes it, mint the Meta Model API key,
+    /// store the credential in the OS vault and print progress as JSON lines.
+    /// `--status` prints the stored (non-secret) record without a network call.
+    /// Never used by a launched session.
+    #[command(name = "__meta-device-login", hide = true)]
+    InternalMetaDeviceLogin {
+        /// Device authorization endpoint, overriding the compiled-in one.
+        #[arg(long = "device-endpoint", requires = "token_endpoint")]
+        device_endpoint: Option<String>,
+        /// Token endpoint, overriding the compiled-in one.
+        #[arg(long = "token-endpoint", requires = "device_endpoint")]
+        token_endpoint: Option<String>,
+        /// API-key mint endpoint, overriding the compiled-in one.
+        #[arg(long = "mint-url")]
+        mint_url: Option<String>,
+        /// Minimum poll interval in milliseconds.
+        #[arg(long = "interval-ms")]
+        interval_ms: Option<u64>,
+        /// Bound on the whole polling wait, in milliseconds.
+        #[arg(long = "max-poll-ms")]
+        max_poll_ms: Option<u64>,
+        /// Print the stored credential summary instead of starting a login.
+        #[arg(long)]
+        status: bool,
     },
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
@@ -1380,6 +1626,11 @@ pub enum TopSort {
 /// Subcommands under `clud config`.
 #[derive(Subcommand, Debug, Clone)]
 pub enum ConfigSubcommand {
+    /// Set a dotted settings key using the existing native approval flow.
+    Set {
+        /// Assignment, for example context.hermes.enabled=true.
+        assignment: String,
+    },
     /// Print global, local, and merged settings.
     Show {
         /// Emit machine-readable JSON.
@@ -1734,6 +1985,7 @@ pub enum GcSubcommand {
 
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "gate",
+    "remote",
     "serve",
     "do-prompt",
     "grind-scripts",
@@ -1775,6 +2027,8 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "codex-update",
     "dsh-update",
     "doctor",
+    "setup",
+    "install",
     "ci",
     "codex-auth",
     "deepseek-auth",
@@ -1786,9 +2040,14 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__worker",
     "__start-cmd",
     "__openai-chat-translate",
+    "__openai-completions-translate",
+    "__gemini-client-translate",
+    "__claude-gemini-translate",
+    "__apply-payload-rules",
     "__openai-responses-translate",
     "__kimi-device-login",
     "__xai-device-login",
+    "__meta-device-login",
 ];
 
 /// Quote `token` for a copy-pasteable shell example.
@@ -1814,8 +2073,7 @@ fn subtree_has_long(cmd: &clap::Command, name: &str) -> bool {
 /// reported with the reordered call instead of clap's bare usage dump
 /// (#2521). `None` when every flag is where clap accepts it.
 pub(crate) fn misplaced_global_flag(raw: &[String]) -> Option<String> {
-    use clap::CommandFactory;
-    let root = Args::command();
+    let root = parser_command();
     let root_arg = |name: &str| {
         root.get_arguments()
             .find(|arg| arg.get_long() == Some(name))
@@ -1870,42 +2128,94 @@ pub(crate) fn misplaced_global_flag(raw: &[String]) -> Option<String> {
     None
 }
 
+/// Stack floor for clap's derived parse entry point.
+///
+/// Both halves of a parse are big single frames in a debug build: clap's
+/// derived `CommandFactory::command()` builds the whole nested command tree,
+/// and the derived `from_arg_matches` frame grows with every `Command`
+/// variant. A test-harness thread only gets 2 MiB, so the shard aborted with
+/// `fatal runtime error: stack overflow` before a single test reported (issue
+/// #2629). The whole parse therefore runs on a dedicated thread with this
+/// explicit floor on every platform, so neither a growing `Command` enum nor a
+/// small caller stack can abort the process mid-parse.
+const ARG_PARSER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+fn on_arg_parser_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .name("clud-arg-parser".to_string())
+        .stack_size(ARG_PARSER_STACK_BYTES)
+        .spawn(work)
+        .expect("spawn clud argument parser")
+        .join()
+        .expect("clud argument parser panicked")
+}
+
+/// Clap's derived `CommandFactory::command()` on [`ARG_PARSER_STACK_BYTES`].
+///
+/// Building the nested command tree is one large debug-build frame, so every
+/// inspector of the tree (argument splitting, misplaced-flag hints, suggestion
+/// matching) goes through here instead of `Args::command()`.
+pub(crate) fn parser_command() -> clap::Command {
+    use clap::CommandFactory;
+    on_arg_parser_stack(Args::command)
+}
+
 impl Args {
     pub fn parse_with_passthrough() -> Self {
         let raw: Vec<String> = std::env::args().collect();
         Self::parse_from_raw(raw)
     }
 
+    /// Clap's `Parser::try_parse_from`, run on [`ARG_PARSER_STACK_BYTES`].
+    ///
+    /// Shadowing the trait method keeps every `Args::try_parse_from(..)` call
+    /// site (production and tests alike) off the caller's stack.
+    pub fn try_parse_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let argv: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
+        on_arg_parser_stack(move || <Self as Parser>::try_parse_from(argv))
+    }
+
+    /// Clap's `Parser::parse_from`, run on [`ARG_PARSER_STACK_BYTES`].
+    pub fn parse_from<I, T>(itr: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let argv: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
+        on_arg_parser_stack(move || <Self as Parser>::parse_from(argv))
+    }
+
     pub fn parse_from_raw(raw: Vec<String>) -> Self {
+        on_arg_parser_stack(move || Self::parse_from_raw_on_parser_stack(raw))
+    }
+
+    fn parse_from_raw_on_parser_stack(raw: Vec<String>) -> Self {
         let (normalized, continue_index) = extract_continue_index(&raw);
         let normalized = normalize_bare_resume_before_subcommand(&normalized);
         let normalized = split_unicode_space_glued_flags(&normalized);
         let normalized = normalize_known_option_dashes(&normalized);
         let normalized = match split_inline_key_assignments(&normalized) {
             Ok(normalized) => normalized,
-            Err(message) => {
-                use clap::CommandFactory;
-                Args::command()
-                    .error(clap::error::ErrorKind::InvalidValue, message)
-                    .exit()
-            }
+            Err(message) => parser_command()
+                .error(clap::error::ErrorKind::InvalidValue, message)
+                .exit(),
         };
         let (known, unknown) = match split_known_unknown(&normalized) {
             Ok(parts) => parts,
-            Err(message) => {
-                use clap::CommandFactory;
-                Args::command()
-                    .error(clap::error::ErrorKind::UnknownArgument, message)
-                    .exit()
-            }
+            Err(message) => parser_command()
+                .error(clap::error::ErrorKind::UnknownArgument, message)
+                .exit(),
         };
         if let Some(message) = misplaced_global_flag(&known) {
-            use clap::CommandFactory;
-            Args::command()
+            parser_command()
                 .error(clap::error::ErrorKind::UnknownArgument, message)
                 .exit()
         }
-        let mut args = Args::parse_from(known.clone());
+        let mut args = <Args as Parser>::parse_from(known.clone());
         if let Some(Command::SafeRm { args: command_args }) = &mut args.command {
             // Clap consumes global options even after a trailing subcommand.
             // For this command, every token after its name belongs to its
@@ -1935,8 +2245,7 @@ impl Args {
 /// Only correct an exact, public clud option while still in the top-level
 /// option region. In particular, never rewrite prompt values or backend argv.
 fn normalize_known_option_dashes(raw: &[String]) -> Vec<String> {
-    use clap::CommandFactory;
-    let command = Args::command();
+    let command = parser_command();
     let public_longs: std::collections::HashSet<&str> = command
         .get_arguments()
         .filter(|argument| !argument.is_hide_set())
@@ -2360,8 +2669,7 @@ fn suggest_public_subcommand(token: &str) -> Option<String> {
     if token.chars().any(char::is_whitespace) || looks_like_api_key(token) {
         return None;
     }
-    use clap::CommandFactory;
-    let command = Args::command();
+    let command = parser_command();
     let mut suggestions = clap::Command::default().name("clud");
     let visible: std::collections::HashSet<String> = command
         .get_subcommands()
@@ -2388,7 +2696,6 @@ fn suggest_public_subcommand(token: &str) -> Option<String> {
 }
 
 fn validate_top_level_unknown(token: &str, following: Option<&str>) -> Result<(), String> {
-    use clap::CommandFactory;
     let name = token.split_once('=').map_or(token, |(name, _)| name);
     let canonical = if let Some(name) = name.strip_prefix("--") {
         format!("--{name}")
@@ -2403,7 +2710,7 @@ fn validate_top_level_unknown(token: &str, following: Option<&str>) -> Result<()
     } else {
         return Ok(());
     };
-    let command = Args::command();
+    let command = parser_command();
     let all_options: std::collections::HashSet<String> = command
         .get_arguments()
         .filter_map(|argument| argument.get_long().map(|name| format!("--{name}")))
@@ -2418,7 +2725,7 @@ fn validate_top_level_unknown(token: &str, following: Option<&str>) -> Result<()
             "clud's option splitter omitted {name}; this is a clud bug"
         ));
     }
-    let suggestion = Args::command()
+    let suggestion = parser_command()
         .try_get_matches_from(["clud", canonical.as_str()])
         .err()
         .and_then(|error| {
@@ -2452,6 +2759,31 @@ fn validate_top_level_unknown(token: &str, following: Option<&str>) -> Result<()
 #[cfg(test)]
 #[path = "args_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod arg_parser_stack_tests {
+    use super::*;
+
+    /// The parser must not depend on the caller's stack. A debug build needs
+    /// several MiB for clap's derived `from_arg_matches` frame while libtest
+    /// gives each test only 2 MiB, which used to abort the whole `args::`
+    /// shard (issue #2629). Parsing on [`ARG_PARSER_STACK_BYTES`] means even a
+    /// deliberately tiny caller stack parses fine.
+    #[test]
+    fn parsing_survives_a_small_caller_stack() {
+        let parsed = std::thread::Builder::new()
+            .name("clud-small-stack-caller".to_string())
+            .stack_size(256 * 1024)
+            .spawn(|| Args::try_parse_from(["clud", "grind-facts", "path"]))
+            .expect("spawn small-stack caller")
+            .join()
+            .expect("small-stack caller panicked");
+        assert!(matches!(
+            parsed.expect("parse on a small caller stack").command,
+            Some(Command::GrindFacts { .. })
+        ));
+    }
+}
 
 #[cfg(test)]
 mod grind_scripts_parse_tests {

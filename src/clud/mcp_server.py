@@ -980,6 +980,24 @@ async def session_inject(
 #: Where this agent's next ``board_read`` resumes; per bridge process.
 _board_cursor = 0
 
+#: How many ``all``-broadcast messages a fresh bridge replays on its FIRST read.
+#: A new session starts its cursor at zero, so it re-delivered the whole board
+#: backlog: measured 2026-11-02, 38-39 unrelated progress reports from other
+#: repos, ~26 KB, in every fresh session (46 such results in one day's
+#: transcripts). Messages addressed to THIS agent are never capped — that is the
+#: steering channel and dropping one would change behaviour. Older broadcasts
+#: stay on the board and stay reachable with an explicit ``board_read(after=0)``.
+DEFAULT_FIRST_READ_BROADCASTS = 8
+
+#: Override for :data:`DEFAULT_FIRST_READ_BROADCASTS`. A negative number (or a
+#: non-integer) replays the whole backlog — the rollback, since it restores the
+#: pre-cap behaviour exactly. ``0`` means "no broadcasts on the first read".
+FIRST_READ_BROADCASTS_ENV_VAR = "CLUD_BOARD_FIRST_READ_BROADCASTS"
+
+#: True once this process has read the board; the cap is a first-read thing.
+#: Later reads return deltas, which are small by construction.
+_board_first_read_done = False
+
 
 def _board_identity() -> str:
     """This agent's bulletin-board address: ``CLUD_BOARD_ID`` or the session id."""
@@ -1011,6 +1029,62 @@ async def board_post(to: str, body: str) -> str:
     return _dump(payload)
 
 
+def _first_read_broadcast_cap() -> int:
+    """Broadcasts a fresh process replays on its first read; negative = no cap."""
+    raw = os.environ.get(FIRST_READ_BROADCASTS_ENV_VAR, "").strip()
+    if not raw:
+        return DEFAULT_FIRST_READ_BROADCASTS
+    try:
+        return int(raw)
+    except ValueError:
+        # An unparseable override must not silently truncate the board: replay it.
+        return -1
+
+
+def _bound_first_read(payload: dict) -> dict:
+    """Cap the broadcast backlog a fresh process replays on its first read.
+
+    Keeps every message addressed to this agent, plus the newest ``cap``
+    broadcasts; reports how many broadcasts it withheld and how to get them
+    back. Nothing is discarded — the board keeps them and ``after=0`` replays
+    from the start — so the cap is a page size, not a filter.
+    """
+    messages = payload.get("messages")
+    cap = _first_read_broadcast_cap()
+    if cap < 0 or not isinstance(messages, list):
+        return payload
+    rows = [m for m in messages if isinstance(m, dict)]
+    broadcasts = [m for m in rows if m.get("to") == "all"]
+    if len(broadcasts) <= cap:
+        return payload
+    kept_broadcasts = {id(m) for m in (broadcasts[len(broadcasts) - cap :] if cap else [])}
+    kept = [m for m in rows if m.get("to") != "all" or id(m) in kept_broadcasts]
+    skipped = len(broadcasts) - cap
+    return {
+        **payload,
+        "messages": kept,
+        "skipped_broadcasts": skipped,
+        "note": (
+            f"{skipped} older broadcast message(s) withheld from this first read; "
+            "they are still on the board. Call board_read(after=0) to replay the "
+            "whole backlog."
+        ),
+    }
+
+
+def _dump_page(payload: dict) -> str:
+    """Serialize a board page without indentation.
+
+    Board pages are parsed, not read: the pretty-printed form of a measured
+    39-message page cost 27,359 bytes against 24,579 compact (10.2%), and the
+    page is re-sent on every later request of the session.
+    """
+    try:
+        return json.dumps(v.normalize(payload), separators=(",", ":"), default=str)
+    except (TypeError, ValueError):
+        return json.dumps({"error": "result was not JSON-serializable"})
+
+
 @server.tool()
 async def board_read(after: int = -1) -> str:
     """Read new bulletin-board messages addressed to this agent or to "all".
@@ -1018,10 +1092,15 @@ async def board_read(after: int = -1) -> str:
     Each call returns only what arrived since the previous call. Act on any
     instructions from clud, Hermes or the user, and reply with `board_post`.
 
+    The first read of a fresh process returns every message addressed to this
+    agent, plus the newest 8 broadcasts, and reports `skipped_broadcasts` when
+    it withheld older ones — those are still on the board; pass `after=0` to
+    replay them from the start.
+
     Args:
         after: Cursor to read from; -1 (default) continues from the last read.
     """
-    global _board_cursor
+    global _board_cursor, _board_first_read_done
     try:
         base, token = await _discover_api()
     except Exception as exc:
@@ -1031,8 +1110,11 @@ async def board_read(after: int = -1) -> str:
     status, payload = await _api(base, token, "GET", f"/v1/board/messages?{query}")
     if status != 200 or not isinstance(payload, dict):
         return _dump({"error": f"read failed ({status}): {payload}"})
+    if not _board_first_read_done and after < 0:
+        payload = _bound_first_read(payload)
+    _board_first_read_done = True
     _board_cursor = int(payload.get("next_cursor", cursor))
-    return _dump(payload)
+    return _dump_page(payload)
 
 
 @server.tool()

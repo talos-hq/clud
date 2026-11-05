@@ -66,7 +66,6 @@ pub(super) fn parse_backend_event(backend: Backend, line: &str) -> BackendEvent 
 
 #[cfg(test)]
 mod tests {
-    use clap::Parser;
 
     use super::*;
     use crate::backend::{HarnessSelection, PreferenceSource, RoutingMode};

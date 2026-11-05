@@ -114,6 +114,45 @@ The same level name is calibrated differently by each model. Diagnostics may
 name the public provider/effort, but never credentials, prompts, reasoning
 content, response bodies, or provider-private state.
 
+## Payload rules
+
+`CLUD_PAYLOAD_RULES=<path>` names a JSON file of operator rules that rewrite a
+request body before a route is chosen ([`payload_rules.rs`](../../crates/clud-bin/src/payload_rules.rs)).
+This is the port of CLIProxyAPI's `requests.payload` seam; it is the one place a
+launch may change what the harness asked for, so it ships off unless the
+variable is set and the file parses.
+
+```json
+{
+  "default":  [{"models": [{"name": "claude-*"}], "params": {"temperature": 0.3}}],
+  "override": [{"models": [{"name": "claude-*", "protocol": "claude"}],
+                "params": {"max_tokens": 32}}],
+  "filter":   [{"params": ["metadata.user_id"]}]
+}
+```
+
+* Kinds run in `default` → `override` → `filter` order. `default` fills a path
+  only when the caller left it absent or `null`; `override` always sets it;
+  `filter` removes it.
+* `models[].name` is a case-insensitive `*` glob and an empty `models` array
+  selects every model. `models[].protocol` narrows the rule to the protocol the
+  gateway is serving (`claude` for `POST /v1/messages`); absent matches any.
+* `params` keys are dotted JSON paths; a numeric segment indexes an array
+  (`messages.0.role`). A missing object on the way is created; an array is never
+  grown, because inventing elements would change the conversation.
+* A rule that cannot be applied is reported on stderr and skipped — the client's
+  request still proceeds with every change that landed. The file is re-read when
+  its mtime or size changes, so an edit applies to the next turn without a
+  restart.
+* Unknown keys are a parse error, so a typo (`overide`) is refused instead of
+  silently doing nothing — a rule file that cannot be understood means the
+  gateway forwards the harness bytes untouched.
+
+Not yet ported: gjson query syntax (`tools.#(name=="x")`), the
+`headers`/`match`/`not-match`/`exist` selectors, the `*-raw` variants, and the
+OpenAI-shaped ingress body (rules apply to the Anthropic-shaped body this
+gateway receives).
+
 ## Hung upstreams
 
 The proxy hop's budget is *idle*, not total: it reads through an agent with

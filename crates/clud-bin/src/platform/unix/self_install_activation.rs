@@ -461,6 +461,40 @@ fn cleanup_created_dirs(edits: &[ProfileEdit]) {
 }
 
 fn verify(destination: &Path, plan: &ActivationHost, version: &str) -> Result<(), String> {
+    let result = verify_fresh_shells(destination, plan, version);
+    reclaim_terminal_foreground();
+    result
+}
+
+/// An interactive probe shell (`-ic`/`-lic`) that inherits the terminal
+/// enables job control and moves its own process group to the terminal's
+/// foreground; it does not always hand the terminal back on exit. clud is
+/// then a background group, and its next terminal read (the provider menu
+/// that follows a verified install, #2219) fails with EIO. Take the
+/// foreground back for clud's own group. SIGTTOU is ignored around the
+/// call, as POSIX requires for a background group to change the foreground.
+fn reclaim_terminal_foreground() {
+    // SAFETY: plain libc calls on fd 0 and this process's own group; the
+    // previous SIGTTOU disposition is restored before returning.
+    unsafe {
+        if libc::isatty(libc::STDIN_FILENO) != 1 {
+            return;
+        }
+        let own = libc::getpgrp();
+        if libc::tcgetpgrp(libc::STDIN_FILENO) == own {
+            return;
+        }
+        let previous = libc::signal(libc::SIGTTOU, libc::SIG_IGN);
+        let _ = libc::tcsetpgrp(libc::STDIN_FILENO, own);
+        libc::signal(libc::SIGTTOU, previous);
+    }
+}
+
+fn verify_fresh_shells(
+    destination: &Path,
+    plan: &ActivationHost,
+    version: &str,
+) -> Result<(), String> {
     let expected = format!("clud {version}");
     for mode in ["-lc", "-ic", "-lic"] {
         let mut env: Vec<(String, String)> = std::env::vars_os()

@@ -1004,3 +1004,1200 @@ mod tests {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Response half: Anthropic Messages JSON / SSE -> a Responses `response` object
+// or an `event: response.*` stream.
+//
+// Ports CLIProxyAPI
+// `internal/translator/claude/openai/responses/claude_openai-responses_response.go`.
+//
+// Deliberate differences, also recorded in `docs/architecture/standalone-gateway.md`:
+//
+// * server-side web search (`server_tool_use` + `web_search_tool_result`) folds
+//   into upstream's `web_search_call` item only because CLIProxyAPI injects that
+//   tool; clud refuses those tools at the door, so the pair is skipped here
+//   instead of synthesised;
+// * `pause_turn` ends the response as `completed` with no `incomplete_details`,
+//   as upstream does: the client continues it by replaying the assistant turn.
+// ---------------------------------------------------------------------------
+
+/// Usage folded into the Responses `usage` object.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct ResponsesUsage {
+    input_tokens: u64,
+    output_tokens: u64,
+    cache_creation_input_tokens: u64,
+    cache_read_input_tokens: u64,
+}
+
+impl ResponsesUsage {
+    fn merge(&mut self, usage: Option<&Value>) {
+        let Some(usage) = usage.and_then(Value::as_object) else {
+            return;
+        };
+        if let Some(value) = usage.get("input_tokens").and_then(Value::as_u64) {
+            self.input_tokens = value;
+        }
+        if let Some(value) = usage.get("output_tokens").and_then(Value::as_u64) {
+            self.output_tokens = value;
+        }
+        if let Some(value) = usage
+            .get("cache_creation_input_tokens")
+            .and_then(Value::as_u64)
+        {
+            self.cache_creation_input_tokens = value;
+        }
+        if let Some(value) = usage.get("cache_read_input_tokens").and_then(Value::as_u64) {
+            self.cache_read_input_tokens = value;
+        }
+    }
+
+    fn input_total(&self) -> u64 {
+        self.input_tokens + self.cache_creation_input_tokens + self.cache_read_input_tokens
+    }
+
+    fn render(&self) -> Value {
+        let input = self.input_total();
+        let output = self.output_tokens;
+        json!({
+            "input_tokens": input,
+            "input_tokens_details": { "cached_tokens": self.cache_read_input_tokens },
+            "output_tokens": output,
+            "output_tokens_details": { "reasoning_tokens": 0 },
+            "total_tokens": input + output,
+        })
+    }
+}
+
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs())
+        .unwrap_or_default()
+}
+
+/// A Responses `response` still being assembled.
+#[derive(Debug, Clone)]
+struct ResponseEnvelope {
+    id: String,
+    created_at: u64,
+    model: String,
+    output: Vec<Value>,
+}
+
+impl ResponseEnvelope {
+    fn new(model: &str) -> Self {
+        let created_at = now_seconds();
+        Self {
+            id: format!("resp_{created_at}"),
+            created_at,
+            model: model.to_string(),
+            output: Vec::new(),
+        }
+    }
+
+    fn status_json(&self, status: &str, details: Option<Value>, usage: Option<Value>) -> Value {
+        json!({
+            "id": self.id,
+            "object": "response",
+            "created_at": self.created_at,
+            "status": status,
+            "background": false,
+            "error": Value::Null,
+            "incomplete_details": details,
+            "model": self.model,
+            "output": self.output,
+            "parallel_tool_calls": true,
+            "store": false,
+            "truncation": "disabled",
+            "usage": usage,
+        })
+    }
+}
+
+/// Upstream's mapping from an Anthropic stop reason to Responses'
+/// `incomplete_details`, plus whether the response is incomplete at all.
+fn incomplete_details(stop_reason: &str) -> Option<Value> {
+    match stop_reason.trim().to_ascii_lowercase().as_str() {
+        "max_tokens" | "model_context_window_exceeded" => {
+            Some(json!({ "reason": "max_output_tokens" }))
+        }
+        // A safety refusal stops the turn with a normal 200; Responses clients
+        // treat `content_filter` as a retryable refusal, not a finished answer.
+        "refusal" => Some(json!({ "reason": "content_filter" })),
+        _ => None,
+    }
+}
+
+fn item_id(prefix: &str, block: &Map<String, Value>) -> String {
+    block
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format!("{prefix}_{}", now_seconds()))
+}
+
+fn output_text_part(text: &str) -> Value {
+    json!({ "type": "output_text", "annotations": [], "logprobs": [], "text": text })
+}
+
+fn reasoning_output_item(id: &str, text: &str, signature: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "reasoning",
+        "status": "completed",
+        "encrypted_content": signature,
+        "summary": [{ "type": "summary_text", "text": text }],
+    })
+}
+
+fn message_output_item(id: &str, text: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "message",
+        "status": "completed",
+        "role": "assistant",
+        "content": [output_text_part(text)],
+    })
+}
+
+fn function_call_output_item(id: &str, call_id: &str, name: &str, arguments: &str) -> Value {
+    json!({
+        "id": id,
+        "type": "function_call",
+        "status": "completed",
+        "call_id": call_id,
+        "name": name,
+        "arguments": arguments,
+    })
+}
+
+/// Translate one buffered Anthropic Messages body into a Responses `response`.
+///
+/// `requested_model` is echoed when the upstream body carries no model, so the
+/// client sees the name it asked for rather than a provider's wire name.
+pub fn translate_responses_response(
+    body: &[u8],
+    requested_model: Option<&str>,
+) -> Result<Value, IngressError> {
+    let response: Value = serde_json::from_slice(body).map_err(|_| IngressError::NotJson)?;
+    let response = response.as_object().ok_or(IngressError::NotJson)?;
+    let stop_reason = response
+        .get("stop_reason")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let upstream_model = response
+        .get("model")
+        .and_then(Value::as_str)
+        .filter(|model| !model.is_empty());
+    let model = upstream_model.or(requested_model).unwrap_or_default();
+    let mut envelope = ResponseEnvelope::new(model);
+    // The upstream id keeps the conversation traceable on both sides.
+    if let Some(id) = response.get("id").and_then(Value::as_str) {
+        envelope.id = id.to_string();
+    }
+    let mut usage = ResponsesUsage::default();
+    usage.merge(response.get("usage"));
+    for block in response
+        .get("content")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        if let Some(item) = buffered_output_item(block) {
+            envelope.output.push(item);
+        }
+    }
+    let details = incomplete_details(&stop_reason);
+    let status = if details.is_some() {
+        "incomplete"
+    } else {
+        "completed"
+    };
+    Ok(envelope.status_json(status, details, Some(usage.render())))
+}
+
+/// One Anthropic content block as a Responses output item, or `None` when it
+/// has no Responses counterpart (an unknown/extended block type).
+fn buffered_output_item(block: &Value) -> Option<Value> {
+    let block = block.as_object()?;
+    match block
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+    {
+        "text" => {
+            let text = block
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Some(message_output_item(&item_id("msg", block), text))
+        }
+        "thinking" => {
+            let text = block
+                .get("thinking")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let signature = block
+                .get("signature")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Some(reasoning_output_item(
+                &item_id("rs", block),
+                text,
+                signature,
+            ))
+        }
+        "redacted_thinking" => {
+            // Responses has no redacted item; the payload rides in
+            // `encrypted_content` behind upstream's marker so a replay through
+            // the request half restores it verbatim.
+            let data = block
+                .get("data")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Some(reasoning_output_item(
+                &item_id("rs", block),
+                "",
+                &format!("{REDACTED_THINKING_PREFIX}{data}"),
+            ))
+        }
+        "tool_use" => {
+            let arguments = block
+                .get("input")
+                .map(|input| serde_json::to_string(input).unwrap_or_else(|_| "{}".to_string()))
+                .unwrap_or_else(|| "{}".to_string());
+            Some(function_call_output_item(
+                &item_id("fc", block),
+                block.get("id").and_then(Value::as_str).unwrap_or_default(),
+                block
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                &arguments,
+            ))
+        }
+        _ => None,
+    }
+}
+
+/// Marker upstream puts in `encrypted_content` for a replayed
+/// `redacted_thinking` block (`ClaudeResponsesRedactedThinkingPrefix`).
+pub const REDACTED_THINKING_PREFIX: &str = "claude-redacted-thinking:";
+
+/// The item a freshly-opened Anthropic block becomes, plus the
+/// `response.output_item.added` payloads that announce it (empty for a block
+/// whose payload only exists once it completes).
+fn open_block(block: &Map<String, Value>) -> Option<(OpenItem, Vec<Value>)> {
+    let kind = block
+        .get("type")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    match kind {
+        "text" => {
+            let id = item_id("msg", block);
+            let added = json!({
+                "id": id.clone(),
+                "type": "message",
+                "status": "in_progress",
+                "role": "assistant",
+                "content": [],
+            });
+            Some((
+                OpenItem::Text {
+                    id,
+                    text: String::new(),
+                },
+                vec![added],
+            ))
+        }
+        "thinking" => {
+            let id = item_id("rs", block);
+            let added = json!({
+                "id": id.clone(),
+                "type": "reasoning",
+                "status": "in_progress",
+                "summary": [],
+            });
+            Some((
+                OpenItem::Reasoning {
+                    id,
+                    text: String::new(),
+                    signature: String::new(),
+                },
+                vec![added],
+            ))
+        }
+        "redacted_thinking" => {
+            let id = item_id("rs", block);
+            let data = block
+                .get("data")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            Some((
+                OpenItem::Reasoning {
+                    id,
+                    text: String::new(),
+                    signature: format!("{REDACTED_THINKING_PREFIX}{data}"),
+                },
+                Vec::new(),
+            ))
+        }
+        "tool_use" => {
+            let id = item_id("fc", block);
+            let call_id = block.get("id").and_then(Value::as_str).unwrap_or_default();
+            let name = block
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let added = json!({
+                "id": id.clone(),
+                "type": "function_call",
+                "status": "in_progress",
+                "call_id": call_id,
+                "name": name,
+                "arguments": "",
+            });
+            Some((
+                OpenItem::Tool {
+                    id,
+                    call_id: call_id.to_string(),
+                    name: name.to_string(),
+                    arguments: String::new(),
+                },
+                vec![added],
+            ))
+        }
+        _ => None,
+    }
+}
+
+fn open_item_id(item: &OpenItem) -> String {
+    match item {
+        OpenItem::Text { id, .. } | OpenItem::Reasoning { id, .. } | OpenItem::Tool { id, .. } => {
+            id.clone()
+        }
+    }
+}
+
+/// A content block mid-stream.
+#[derive(Debug)]
+enum OpenItem {
+    Text {
+        id: String,
+        text: String,
+    },
+    Reasoning {
+        id: String,
+        text: String,
+        signature: String,
+    },
+    Tool {
+        id: String,
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+}
+
+/// Stateful translator for the streaming half: feed it the upstream Messages SSE
+/// lines, get Responses `response.*` events back.
+///
+/// Anthropic streams a block's `thinking` text *before* its `signature_delta`,
+/// so the `response.output_item.done` reasoning item is emitted at
+/// `content_block_stop` with the signature collected so far — exactly the point
+/// at which upstream seals the item.
+pub struct ResponsesStreamTranslator {
+    envelope: ResponseEnvelope,
+    sequence: u64,
+    output_index: u32,
+    open: std::collections::BTreeMap<u64, OpenItem>,
+    indexes: std::collections::BTreeMap<String, u32>,
+    stop_reason: String,
+    usage: ResponsesUsage,
+    terminal: bool,
+}
+
+impl ResponsesStreamTranslator {
+    pub fn new(model: impl Into<String>) -> Self {
+        let envelope = ResponseEnvelope::new(&model.into());
+        Self {
+            envelope,
+            sequence: 0,
+            output_index: 0,
+            open: std::collections::BTreeMap::new(),
+            indexes: std::collections::BTreeMap::new(),
+            stop_reason: String::new(),
+            usage: ResponsesUsage::default(),
+            terminal: false,
+        }
+    }
+
+    fn event(&mut self, kind: &str, mut fields: Map<String, Value>) -> Value {
+        fields.insert("type".into(), Value::String(kind.to_string()));
+        fields.insert("sequence_number".into(), json!(self.sequence));
+        self.sequence += 1;
+        Value::Object(fields)
+    }
+
+    /// Feed one SSE line. Returns the events it produced (usually one, never
+    /// more than a handful).
+    pub fn push_line(&mut self, line: &str) -> Vec<Value> {
+        let line = line.trim();
+        let Some(payload) = line.strip_prefix("data:") else {
+            return Vec::new();
+        };
+        let payload = payload.trim();
+        if payload.is_empty() || payload == "[DONE]" {
+            return Vec::new();
+        }
+        let Ok(event) = serde_json::from_str::<Value>(payload) else {
+            return Vec::new();
+        };
+        self.push_event(&event)
+    }
+
+    /// Feed a whole SSE body.
+    pub fn push_body(&mut self, body: &[u8]) -> Vec<Value> {
+        let text = String::from_utf8_lossy(body);
+        let mut out = Vec::new();
+        for line in text.lines() {
+            out.extend(self.push_line(line));
+        }
+        out
+    }
+
+    /// Close a stream whose upstream body ended without `message_stop`.
+    ///
+    /// That is a truncated answer, not a finished one: sealing it as
+    /// `response.completed` would tell the client the model stopped on purpose,
+    /// so the response is failed with a `server_error` the client can retry.
+    /// Idempotent, and a no-op once a `message_stop` has sealed the stream.
+    pub fn finish(&mut self) -> Vec<Value> {
+        if self.terminal {
+            return Vec::new();
+        }
+        self.terminal = true;
+        let mut response = self
+            .envelope
+            .status_json("failed", None, Some(self.usage.render()));
+        response["error"] = json!({
+            "code": "server_error",
+            "message": "the upstream stream ended before the response was complete",
+        });
+        let mut fields = Map::new();
+        fields.insert("response".into(), response);
+        vec![self.event("response.failed", fields)]
+    }
+
+    fn push_event(&mut self, event: &Value) -> Vec<Value> {
+        let kind = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        match kind {
+            "message_start" => self.message_start(event),
+            "content_block_start" => self.block_start(event),
+            "content_block_delta" => self.block_delta(event),
+            "content_block_stop" => self.block_stop(event),
+            "message_delta" => {
+                self.message_delta(event);
+                Vec::new()
+            }
+            "message_stop" => self.terminal_event(),
+            "error" => vec![self.failed_event(event)],
+            _ => Vec::new(),
+        }
+    }
+
+    fn message_start(&mut self, event: &Value) -> Vec<Value> {
+        let message = event.get("message");
+        if let Some(id) = message
+            .and_then(|message| message.get("id"))
+            .and_then(Value::as_str)
+        {
+            self.envelope.id = id.to_string();
+        }
+        if let Some(model) = message
+            .and_then(|message| message.get("model"))
+            .and_then(Value::as_str)
+            .filter(|model| !model.is_empty())
+        {
+            self.envelope.model = model.to_string();
+        }
+        self.usage
+            .merge(message.and_then(|message| message.get("usage")));
+        let created = self.envelope.status_json("in_progress", None, None);
+        let mut created_fields = Map::new();
+        created_fields.insert("response".into(), created.clone());
+        let made = self.event("response.created", created_fields);
+        let in_progress = self.envelope.status_json("in_progress", None, None);
+        let mut progress_fields = Map::new();
+        progress_fields.insert("response".into(), in_progress);
+        let started = self.event("response.in_progress", progress_fields);
+        vec![made, started]
+    }
+
+    fn block_start(&mut self, event: &Value) -> Vec<Value> {
+        let index = event
+            .get("index")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let block = event
+            .get("content_block")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let output_index = self.output_index;
+        let Some((item, added)) = open_block(&block) else {
+            return Vec::new();
+        };
+        let id = open_item_id(&item);
+        self.indexes.insert(id.clone(), output_index);
+        let opens_text = matches!(item, OpenItem::Text { .. });
+        self.open.insert(index, item);
+        self.output_index += 1;
+        let mut out = Vec::new();
+        for item in added {
+            let mut fields = Map::new();
+            fields.insert("output_index".into(), json!(output_index));
+            fields.insert("item".into(), item);
+            out.push(self.event("response.output_item.added", fields));
+        }
+        if opens_text {
+            let mut fields = Map::new();
+            fields.insert("item_id".into(), Value::String(id));
+            fields.insert("output_index".into(), json!(output_index));
+            fields.insert("content_index".into(), json!(0));
+            fields.insert("part".into(), output_text_part(""));
+            out.push(self.event("response.content_part.added", fields));
+        }
+        out
+    }
+
+    fn block_delta(&mut self, event: &Value) -> Vec<Value> {
+        let index = event
+            .get("index")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let delta = event
+            .get("delta")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let kind = delta
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        // Each Anthropic delta kind spells its payload differently: text and
+        // thinking are `text`/`thinking`, a tool call is `partial_json`, and a
+        // signature carries no client-visible text at all.
+        let payload = match kind.as_str() {
+            "thinking_delta" => delta
+                .get("thinking")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            "input_json_delta" => delta
+                .get("partial_json")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+            _ => delta
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string(),
+        };
+        let Some(item) = self.open.get_mut(&index) else {
+            return Vec::new();
+        };
+        let id = match item {
+            OpenItem::Text { id, text } if kind == "text_delta" => {
+                text.push_str(&payload);
+                id.clone()
+            }
+            OpenItem::Reasoning {
+                id,
+                text,
+                signature,
+            } => match kind.as_str() {
+                "thinking_delta" => {
+                    text.push_str(&payload);
+                    id.clone()
+                }
+                "signature_delta" => {
+                    signature.push_str(
+                        delta
+                            .get("signature")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    );
+                    return Vec::new();
+                }
+                _ => return Vec::new(),
+            },
+            OpenItem::Tool { id, arguments, .. } if kind == "input_json_delta" => {
+                arguments.push_str(&payload);
+                id.clone()
+            }
+            _ => return Vec::new(),
+        };
+        let output_index = self.output_index_for(&id);
+        let mut fields = Map::new();
+        fields.insert("item_id".into(), Value::String(id));
+        fields.insert("output_index".into(), json!(output_index));
+        fields.insert("delta".into(), Value::String(payload));
+        match kind.as_str() {
+            "text_delta" => {
+                fields.insert("content_index".into(), json!(0));
+                vec![self.event("response.output_text.delta", fields)]
+            }
+            "thinking_delta" => {
+                fields.insert("summary_index".into(), json!(0));
+                vec![self.event("response.reasoning_summary_text.delta", fields)]
+            }
+            _ => vec![self.event("response.function_call_arguments.delta", fields)],
+        }
+    }
+
+    fn output_index_for(&self, id: &str) -> u32 {
+        // Output indexes are assigned at block start; the item id is the only
+        // handle a delta carries, so it is what the delta looks the slot up by.
+        self.indexes.get(id).copied().unwrap_or_default()
+    }
+
+    fn block_stop(&mut self, event: &Value) -> Vec<Value> {
+        let index = event
+            .get("index")
+            .and_then(Value::as_u64)
+            .unwrap_or_default();
+        let Some(item) = self.open.remove(&index) else {
+            return Vec::new();
+        };
+        let output_index = self.output_index_for(&open_item_id(&item));
+        let mut out = Vec::new();
+        match item {
+            OpenItem::Text { id, text } => {
+                let mut done = Map::new();
+                done.insert("item_id".into(), Value::String(id.clone()));
+                done.insert("output_index".into(), json!(output_index));
+                done.insert("content_index".into(), json!(0));
+                done.insert("text".into(), Value::String(text.clone()));
+                done.insert("logprobs".into(), json!([]));
+                out.push(self.event("response.output_text.done", done));
+                let mut part_done = Map::new();
+                part_done.insert("item_id".into(), Value::String(id.clone()));
+                part_done.insert("output_index".into(), json!(output_index));
+                part_done.insert("content_index".into(), json!(0));
+                part_done.insert("part".into(), output_text_part(&text));
+                out.push(self.event("response.content_part.done", part_done));
+                self.envelope.output.push(message_output_item(&id, &text));
+            }
+            OpenItem::Reasoning {
+                id,
+                text,
+                signature,
+            } => {
+                let mut done = Map::new();
+                done.insert("item_id".into(), Value::String(id.clone()));
+                done.insert("output_index".into(), json!(output_index));
+                done.insert("summary_index".into(), json!(0));
+                done.insert("text".into(), Value::String(text.clone()));
+                out.push(self.event("response.reasoning_summary_text.done", done));
+                let mut part_done = Map::new();
+                part_done.insert("item_id".into(), Value::String(id.clone()));
+                part_done.insert("output_index".into(), json!(output_index));
+                part_done.insert("summary_index".into(), json!(0));
+                part_done.insert(
+                    "part".into(),
+                    json!({ "type": "summary_text", "text": text }),
+                );
+                out.push(self.event("response.reasoning_summary_part.done", part_done));
+                self.envelope
+                    .output
+                    .push(reasoning_output_item(&id, &text, &signature));
+            }
+            OpenItem::Tool {
+                id,
+                call_id,
+                name,
+                arguments,
+            } => {
+                let mut done = Map::new();
+                done.insert("item_id".into(), Value::String(id.clone()));
+                done.insert("output_index".into(), json!(output_index));
+                done.insert("arguments".into(), Value::String(arguments.clone()));
+                out.push(self.event("response.function_call_arguments.done", done));
+                self.envelope
+                    .output
+                    .push(function_call_output_item(&id, &call_id, &name, &arguments));
+            }
+        }
+        let item = self.envelope.output.last().cloned().unwrap_or(Value::Null);
+        let mut fields = Map::new();
+        fields.insert("output_index".into(), json!(output_index));
+        fields.insert("item".into(), item);
+        out.push(self.event("response.output_item.done", fields));
+        out
+    }
+
+    fn message_delta(&mut self, event: &Value) {
+        if let Some(reason) = event
+            .get("delta")
+            .and_then(|delta| delta.get("stop_reason"))
+            .and_then(Value::as_str)
+        {
+            self.stop_reason = reason.to_string();
+        }
+        self.usage.merge(event.get("usage"));
+    }
+
+    fn terminal_event(&mut self) -> Vec<Value> {
+        self.terminal = true;
+        let details = incomplete_details(&self.stop_reason);
+        let (kind, status) = if details.is_some() {
+            ("response.incomplete", "incomplete")
+        } else {
+            ("response.completed", "completed")
+        };
+        let usage = self.usage.render();
+        let response = self.envelope.status_json(status, details, Some(usage));
+        let mut fields = Map::new();
+        fields.insert("response".into(), response);
+        vec![self.event(kind, fields)]
+    }
+
+    fn failed_event(&mut self, event: &Value) -> Value {
+        self.terminal = true;
+        let message = event
+            .get("error")
+            .and_then(|error| error.get("message"))
+            .and_then(Value::as_str)
+            .unwrap_or("the upstream stream failed");
+        let mut response = self
+            .envelope
+            .status_json("failed", None, Some(self.usage.render()));
+        response["error"] = json!({ "code": "server_error", "message": message });
+        let mut fields = Map::new();
+        fields.insert("response".into(), response);
+        self.event("response.failed", fields)
+    }
+}
+
+/// Translate a buffered Messages SSE body into Responses events.
+pub fn translate_responses_sse(model: &str, body: &[u8]) -> Vec<Value> {
+    let mut translator = ResponsesStreamTranslator::new(model);
+    let mut out = translator.push_body(body);
+    out.extend(translator.finish());
+    out
+}
+
+/// Render a buffered Messages body as a Responses `response` HTTP body.
+pub fn render_response_body(model: &str, body: &[u8]) -> Result<Vec<u8>, IngressError> {
+    let translated = translate_responses_response(body, Some(model))?;
+    Ok(serde_json::to_vec(&translated).unwrap_or_default())
+}
+
+/// Render a buffered Messages SSE body as an `event: response.*` frame stream.
+pub fn render_response_stream(model: &str, body: &[u8]) -> Vec<u8> {
+    let mut rendered = String::new();
+    for event in translate_responses_sse(model, body) {
+        let kind = event
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or("message")
+            .to_string();
+        if let Ok(encoded) = serde_json::to_string(&event) {
+            rendered.push_str("event: ");
+            rendered.push_str(&kind);
+            rendered.push_str("\ndata: ");
+            rendered.push_str(&encoded);
+            rendered.push_str("\n\n");
+        }
+    }
+    rendered.into_bytes()
+}
+
+/// Render the Responses error envelope for a refusal.
+///
+/// Responses and Chat Completions share `{"error": {...}}`, but the two are
+/// rendered from one place per dialect so a future divergence lands in the
+/// dialect that changed rather than in both.
+pub fn render_response_error(status: u16, message: &str) -> Vec<u8> {
+    crate::openai_ingress::render_chat_error(status, message)
+}
+
+/// Dispatch the hidden seam: request translation by default, the response half
+/// with `response`.
+pub fn run_seam(response: bool, stream: bool, for_model: Option<&str>, http: bool) -> i32 {
+    if !response {
+        return run_translate_stdin();
+    }
+    run_translate_response_stdin(stream, for_model, http)
+}
+
+/// `clud __openai-responses-translate --response [--stream] [--http]` — the
+/// process seam for the response half. Reads the upstream Messages body on
+/// stdin; writes one Responses event per line (or the `response` object), or
+/// with `--http` the exact bytes the route writes.
+pub fn run_translate_response_stdin(
+    stream: bool,
+    requested_model: Option<&str>,
+    http: bool,
+) -> i32 {
+    use std::io::{Read, Write};
+
+    let mut body = Vec::new();
+    if std::io::stdin().read_to_end(&mut body).is_err() {
+        eprintln!("could not read the response body from stdin");
+        return 2;
+    }
+    let model = requested_model.unwrap_or_default();
+    let rendered = if http {
+        if stream {
+            Ok(render_response_stream(model, &body))
+        } else {
+            render_response_body(model, &body)
+        }
+    } else if stream {
+        let mut rendered = String::new();
+        for event in translate_responses_sse(model, &body) {
+            if let Ok(encoded) = serde_json::to_string(&event) {
+                rendered.push_str(&encoded);
+                rendered.push('\n');
+            }
+        }
+        Ok(rendered.into_bytes())
+    } else {
+        translate_responses_response(&body, requested_model).map(|response| {
+            let mut encoded = serde_json::to_vec(&response).unwrap_or_default();
+            encoded.push(b'\n');
+            encoded
+        })
+    };
+    match rendered {
+        Ok(rendered) => match std::io::stdout().write_all(&rendered) {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("could not write the translated response: {error}");
+                2
+            }
+        },
+        Err(error) => {
+            eprintln!("{error}");
+            2
+        }
+    }
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+
+    fn messages_body() -> Value {
+        json!({
+            "id": "msg_01",
+            "type": "message",
+            "role": "assistant",
+            "model": "claude-x",
+            "content": [
+                { "type": "thinking", "thinking": "let me look", "signature": "sig-1" },
+                { "type": "text", "text": "hello there" },
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "read_file",
+                    "input": { "path": "a.rs" }
+                }
+            ],
+            "stop_reason": "tool_use",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 7,
+                "cache_read_input_tokens": 3
+            }
+        })
+    }
+
+    fn sse(events: &[Value]) -> String {
+        events
+            .iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect()
+    }
+
+    #[test]
+    fn a_messages_body_becomes_a_responses_object() {
+        let body = serde_json::to_vec(&messages_body()).unwrap();
+        let response = translate_responses_response(&body, Some("claude-sonnet")).unwrap();
+        assert_eq!(response["object"], "response");
+        assert_eq!(response["id"], "msg_01");
+        assert_eq!(response["model"], "claude-x");
+        assert_eq!(response["status"], "completed");
+        let output = response["output"].as_array().unwrap();
+        assert_eq!(output.len(), 3);
+        assert_eq!(output[0]["type"], "reasoning");
+        assert_eq!(output[0]["encrypted_content"], "sig-1");
+        assert_eq!(output[0]["summary"][0]["text"], "let me look");
+        assert_eq!(output[1]["type"], "message");
+        assert_eq!(output[1]["content"][0]["type"], "output_text");
+        assert_eq!(output[1]["content"][0]["text"], "hello there");
+        assert_eq!(output[2]["type"], "function_call");
+        assert_eq!(output[2]["name"], "read_file");
+        assert_eq!(output[2]["arguments"], "{\"path\":\"a.rs\"}");
+        // cached tokens fold into input, as upstream does.
+        assert_eq!(response["usage"]["input_tokens"], 13);
+        assert_eq!(
+            response["usage"]["input_tokens_details"]["cached_tokens"],
+            3
+        );
+        assert_eq!(response["usage"]["total_tokens"], 20);
+    }
+
+    #[test]
+    fn a_truncated_turn_is_reported_incomplete() {
+        let mut body = messages_body();
+        body["stop_reason"] = json!("max_tokens");
+        let rendered =
+            translate_responses_response(&serde_json::to_vec(&body).unwrap(), None).unwrap();
+        assert_eq!(rendered["status"], "incomplete");
+        assert_eq!(
+            rendered["incomplete_details"]["reason"],
+            "max_output_tokens"
+        );
+    }
+
+    #[test]
+    fn a_refusal_stop_reason_is_a_content_filter_incomplete() {
+        let mut body = messages_body();
+        body["stop_reason"] = json!("refusal");
+        let rendered =
+            translate_responses_response(&serde_json::to_vec(&body).unwrap(), None).unwrap();
+        assert_eq!(rendered["incomplete_details"]["reason"], "content_filter");
+    }
+
+    #[test]
+    fn a_requested_model_is_echoed_when_the_body_carries_none() {
+        let body = json!({ "content": [], "stop_reason": "end_turn" });
+        let rendered =
+            translate_responses_response(&serde_json::to_vec(&body).unwrap(), Some("my-model"))
+                .unwrap();
+        assert_eq!(rendered["model"], "my-model");
+    }
+
+    #[test]
+    fn the_stream_opens_with_created_and_in_progress() {
+        let body = sse(&[json!({
+            "type": "message_start",
+            "message": { "id": "msg_s", "model": "claude-x", "usage": { "input_tokens": 4 } }
+        })]);
+        let events = translate_responses_sse("claude-x", body.as_bytes());
+        let kinds: Vec<&str> = events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "response.created",
+                "response.in_progress",
+                "response.failed"
+            ],
+            "{events:?}"
+        );
+        assert_eq!(events[0]["response"]["id"], "msg_s");
+        assert_eq!(events[0]["sequence_number"], 0);
+        assert_eq!(events[1]["sequence_number"], 1);
+    }
+
+    #[test]
+    fn a_streamed_text_block_emits_deltas_and_a_completed_item() {
+        let body = sse(&[
+            json!({ "type": "message_start", "message": { "id": "msg_s", "model": "claude-x" } }),
+            json!({ "type": "content_block_start", "index": 0,
+                    "content_block": { "type": "text", "text": "" } }),
+            json!({ "type": "content_block_delta", "index": 0,
+                    "delta": { "type": "text_delta", "text": "hello " } }),
+            json!({ "type": "content_block_delta", "index": 0,
+                    "delta": { "type": "text_delta", "text": "world" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "message_delta",
+                    "delta": { "stop_reason": "end_turn" },
+                    "usage": { "output_tokens": 2 } }),
+            json!({ "type": "message_stop" }),
+        ]);
+        let events = translate_responses_sse("claude-x", body.as_bytes());
+        let kinds: Vec<&str> = events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            kinds,
+            vec![
+                "response.created",
+                "response.in_progress",
+                "response.output_item.added",
+                "response.content_part.added",
+                "response.output_text.delta",
+                "response.output_text.delta",
+                "response.output_text.done",
+                "response.content_part.done",
+                "response.output_item.done",
+                "response.completed",
+            ],
+            "{kinds:?}"
+        );
+        assert_eq!(events[4]["delta"], "hello ");
+        assert_eq!(events[6]["text"], "hello world");
+        let completed = &events[9];
+        assert_eq!(completed["response"]["status"], "completed");
+        assert_eq!(
+            completed["response"]["output"][0]["content"][0]["text"],
+            "hello world"
+        );
+        // sequence_number is monotonic across the whole stream.
+        for (position, event) in events.iter().enumerate() {
+            assert_eq!(event["sequence_number"], position);
+        }
+    }
+
+    #[test]
+    fn a_streamed_tool_call_assembles_its_arguments() {
+        let body = sse(&[
+            json!({ "type": "message_start", "message": { "id": "msg_t" } }),
+            json!({ "type": "content_block_start", "index": 0,
+                    "content_block": { "type": "tool_use", "id": "toolu_9",
+                                       "name": "read_file", "input": {} } }),
+            json!({ "type": "content_block_delta", "index": 0,
+                    "delta": { "type": "input_json_delta", "partial_json": "{\"path\":" } }),
+            json!({ "type": "content_block_delta", "index": 0,
+                    "delta": { "type": "input_json_delta", "partial_json": "\"a.rs\"}" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "message_delta", "delta": { "stop_reason": "tool_use" } }),
+            json!({ "type": "message_stop" }),
+        ]);
+        let events = translate_responses_sse("claude-x", body.as_bytes());
+        let done = events
+            .iter()
+            .find(|event| event["type"] == "response.function_call_arguments.done")
+            .expect("arguments done");
+        assert_eq!(done["arguments"], "{\"path\":\"a.rs\"}");
+        let item = &events.last().unwrap()["response"]["output"][0];
+        assert_eq!(item["type"], "function_call");
+        assert_eq!(item["call_id"], "toolu_9");
+        assert_eq!(item["arguments"], "{\"path\":\"a.rs\"}");
+    }
+
+    #[test]
+    fn a_streamed_reasoning_block_keeps_its_signature() {
+        let body = sse(&[
+            json!({ "type": "message_start", "message": { "id": "msg_r" } }),
+            json!({ "type": "content_block_start", "index": 0,
+                    "content_block": { "type": "thinking", "thinking": "" } }),
+            json!({ "type": "content_block_delta", "index": 0,
+                    "delta": { "type": "thinking_delta", "thinking": "because" } }),
+            json!({ "type": "content_block_delta", "index": 0,
+                    "delta": { "type": "signature_delta", "signature": "sig-9" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "message_stop" }),
+        ]);
+        let events = translate_responses_sse("claude-x", body.as_bytes());
+        let kinds: Vec<&str> = events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect();
+        assert!(
+            kinds.contains(&"response.reasoning_summary_text.delta"),
+            "{kinds:?}"
+        );
+        // A signature delta carries no visible text.
+        assert!(!kinds.iter().any(|kind| kind.contains("signature")));
+        let item = &events.last().unwrap()["response"]["output"][0];
+        assert_eq!(item["encrypted_content"], "sig-9");
+        assert_eq!(item["summary"][0]["text"], "because");
+    }
+
+    #[test]
+    fn a_stream_that_ends_without_message_stop_still_seals_once() {
+        let body = sse(&[
+            json!({ "type": "message_start", "message": { "id": "msg_cut" } }),
+            json!({ "type": "content_block_start", "index": 0,
+                    "content_block": { "type": "text", "text": "" } }),
+            json!({ "type": "content_block_delta", "index": 0,
+                    "delta": { "type": "text_delta", "text": "half" } }),
+        ]);
+        let events = translate_responses_sse("claude-x", body.as_bytes());
+        let failed = events
+            .iter()
+            .filter(|event| event["type"] == "response.failed")
+            .count();
+        assert_eq!(failed, 1, "{events:?}");
+        assert_eq!(events.last().unwrap()["response"]["status"], "failed");
+    }
+
+    #[test]
+    fn a_streamed_error_event_fails_the_response() {
+        let body = sse(&[
+            json!({ "type": "message_start", "message": { "id": "msg_e" } }),
+            json!({ "type": "error",
+                    "error": { "type": "overloaded_error", "message": "overloaded" } }),
+        ]);
+        let events = translate_responses_sse("claude-x", body.as_bytes());
+        let failed = events
+            .iter()
+            .find(|event| event["type"] == "response.failed")
+            .expect("failed event");
+        assert_eq!(failed["response"]["status"], "failed");
+        assert_eq!(failed["response"]["error"]["message"], "overloaded");
+    }
+
+    #[test]
+    fn a_redacted_thinking_block_round_trips_through_the_marker() {
+        let body = json!({
+            "content": [{ "type": "redacted_thinking", "data": "abc" }],
+            "stop_reason": "end_turn"
+        });
+        let rendered =
+            translate_responses_response(&serde_json::to_vec(&body).unwrap(), None).unwrap();
+        assert_eq!(
+            rendered["output"][0]["encrypted_content"],
+            "claude-redacted-thinking:abc"
+        );
+    }
+
+    #[test]
+    fn the_http_stream_frames_every_event_and_ends_with_completed() {
+        let body = sse(&[
+            json!({ "type": "message_start", "message": { "id": "msg_h" } }),
+            json!({ "type": "message_stop" }),
+        ]);
+        let rendered = render_response_stream("claude-x", body.as_bytes());
+        let text = String::from_utf8(rendered).unwrap();
+        assert!(text.contains("event: response.created\n"), "{text}");
+        assert!(text.contains("event: response.completed\n"), "{text}");
+        assert!(text.ends_with("\n\n"), "{text:?}");
+        // Every frame carries the event name it is labelled with.
+        for frame in text.split("\n\n").filter(|frame| !frame.is_empty()) {
+            let name = frame
+                .lines()
+                .find_map(|line| line.strip_prefix("event: "))
+                .expect("frame name");
+            let data = frame
+                .lines()
+                .find_map(|line| line.strip_prefix("data: "))
+                .expect("frame data");
+            let event: Value = serde_json::from_str(data).unwrap();
+            assert_eq!(event["type"], name, "{frame}");
+        }
+    }
+
+    #[test]
+    fn the_renderer_rejects_a_body_that_is_not_json() {
+        assert!(render_response_body("claude-x", b"not json").is_err());
+    }
+}

@@ -16,6 +16,9 @@ use crate::platform::host;
 use crate::platform::self_install as fs_host;
 
 const MAX_BINARY_BYTES: u64 = 256 * 1024 * 1024;
+// Package-manager/debug installations may include symbols larger than a
+// published asset. Bound prior-file hashing separately without relaxing downloads.
+const MAX_PRIOR_BINARY_BYTES: u64 = 1024 * 1024 * 1024;
 const MAX_WHEEL_BYTES: u64 = 384 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -69,9 +72,9 @@ pub fn plan(intent: InstallIntent, modify_path: bool) -> Result<InstallPlan, Str
         inspect_destination(&destination, true)?;
     }
     let replacement = if recovering {
-        Some(hash_path(&backup, MAX_BINARY_BYTES)?.0)
+        Some(hash_path(&backup, MAX_PRIOR_BINARY_BYTES)?.0)
     } else if destination.exists() {
-        Some(hash_path(&destination, MAX_BINARY_BYTES)?.0)
+        Some(hash_path(&destination, MAX_PRIOR_BINARY_BYTES)?.0)
     } else {
         None
     };
@@ -193,7 +196,7 @@ pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
     recover(&plan.destination)?;
     inspect_destination(&plan.destination, true)?;
     if plan.destination.exists() {
-        let current = hash_path(&plan.destination, MAX_BINARY_BYTES)?.0;
+        let current = hash_path(&plan.destination, MAX_PRIOR_BINARY_BYTES)?.0;
         if plan.replacement.as_deref() != Some(current.as_str()) {
             return Err("installed executable changed after consent".into());
         }
@@ -308,7 +311,8 @@ pub(crate) fn inspect_destination(destination: &Path, probe_version: bool) -> Re
         }
     }
     if let Ok(meta) = fs::symlink_metadata(destination) {
-        if !meta.is_file() || meta.file_type().is_symlink() {
+        let launcher = fs_host::replaceable_launcher_link(destination, &meta);
+        if !launcher && (!meta.is_file() || meta.file_type().is_symlink()) {
             return Err("installed path is not an owned regular file".into());
         }
         if !fs_host::owned_exclusively(&meta) {

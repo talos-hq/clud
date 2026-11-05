@@ -15,6 +15,9 @@ bridge logs can be attributed to Codex, DeepSeek, or Kimi.
 The [context spam scan](context_spam/README.md) measures Bash output volume
 and CI-polling redundancy in local transcripts (#2312, #2315).
 
+The [shell result budget replay](tool-result-cap.md) records the 20-task
+captured-output replay through the production Codex translator.
+
 The [Kimi real-key smoke](kimi_smoke.md) is the opt-in, manual check that a
 real Moonshot key works direct and through `--unified` without leaking.
 

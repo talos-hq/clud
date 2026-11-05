@@ -7,7 +7,6 @@ use std::path::PathBuf;
 #[cfg(test)]
 use std::sync::{Mutex, OnceLock};
 
-use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tiny_http::{Method, Request};
 

@@ -169,6 +169,18 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         quiet_ok: true,
     },
     BundledTool {
+        rel_path: "wait/until.py",
+        body: include_str!("../assets/tools/wait/until.py"),
+        // Blocks until one command's output changes (#2631). The state
+        // it waits on belongs to the world, so an interrupted wait loses
+        // no work — `Resumable`; and it is deliberately silent while
+        // nothing changes, hence `quiet_ok`.
+        kill_semantics: KillSemantics::Resumable,
+        command_timeout: Duration::from_secs(3660),
+        progress_timeout: None,
+        quiet_ok: true,
+    },
+    BundledTool {
         rel_path: "github/is_meta_issue.py",
         body: include_str!("../assets/tools/github/is_meta_issue.py"),
         // Read-only GitHub query (#1404): classifies an issue as meta or

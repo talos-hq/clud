@@ -26,6 +26,7 @@ const CODEX_BRIDGE_PROBE_REQUEST: &str = include_str!("../assets/codex_bridge_pr
 
 mod codex_app_server;
 mod platform;
+mod prompt_tools;
 mod serve;
 
 #[expect(
@@ -342,12 +343,11 @@ fn main() {
         }
     }
 
-    // Emit canned stream-json events line-by-line. When the integration
-    // test wants to exercise clud's renderer, it points this at a file
-    // containing one JSON event per line; we write them with a flush
-    // between each so the parent's drain loop sees them incrementally,
-    // exactly like real claude would emit them. Then exit immediately
-    // so the test's wait completes without the usual JSON-report tail.
+    if let Some(path) = std::env::var_os("MOCK_AGENT_PROMPT_TOOLS") {
+        prompt_tools::run(Path::new(&path));
+        std::process::exit(exit_code);
+    }
+
     // `clud workflow` integration (#2471): every `agent()` call is a
     // separate `clud -p <prompt>` child, so per-call `--mock-*` flags are
     // impossible. `MOCK_AGENT_WORKFLOW_RESPONSES` names a JSON object whose
@@ -595,7 +595,7 @@ fn main() {
         std::process::exit(86);
     }
     trace("report write start");
-    println!("{}", report_str);
+    prompt_tools::emit_report(&report_str, &filtered_args);
     trace("report write done");
 
     // Also write to file if requested (useful when stdout is captured by PTY)
@@ -659,11 +659,16 @@ fn run_codex_bridge_probe(report_path: &Path) -> serde_json::Value {
     let result = (|| -> Result<(), String> {
         let base_url = base_url.as_deref().ok_or("missing bridge URL")?;
         let token = token.as_deref().ok_or("missing bridge token")?;
-        let address: SocketAddr = base_url
+        let authority_and_path = base_url
             .strip_prefix("http://")
-            .ok_or("bridge URL is not HTTP")?
+            .ok_or("bridge URL is not HTTP")?;
+        let (authority, base_path) = authority_and_path
+            .split_once('/')
+            .unwrap_or((authority_and_path, ""));
+        let address: SocketAddr = authority
             .parse()
             .map_err(|_| "bridge URL is not a socket address")?;
+        let path = format!("/{}/v1/messages", base_path.trim_matches('/')).replace("//", "/");
         report["attempted"] = true.into();
         report["loopback"] = address.ip().is_loopback().into();
         report["port"] = address.port().into();
@@ -675,7 +680,7 @@ fn run_codex_bridge_probe(report_path: &Path) -> serde_json::Value {
             .map_err(|error| format!("read timeout failed: {error}"))?;
         let body = CODEX_BRIDGE_PROBE_REQUEST.trim();
         let request = format!(
-            "POST /v1/messages HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "POST {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         stream

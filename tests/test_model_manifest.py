@@ -140,7 +140,7 @@ def test_model_only_stage_preserves_installer_bytes(
     monkeypatch.setattr(publish, "observed_model_ids", lambda: set())
     original = {
         f"{publish.PAGES}/{name}": (name + " contents").encode()
-        for name in ("index.html", "install/index.html", "install/manifest.json")
+        for name in publish.published_paths()
     }
     monkeypatch.setattr(publish, "fetch", lambda url: original[url])
     assert publish.stage_site(tmp_path, trigger="manual", now=now) == "publish"

@@ -239,6 +239,21 @@ impl ForegroundRuntime {
     }
 
     pub fn start(plan: &LaunchPlan, mut env: Vec<(String, String)>) -> Result<Self, BridgeError> {
+        // A remote capability is the only credential source for this launch.
+        // This branch must precede even construction of a local credential store.
+        if let Some(proxy) = crate::remote_connect::proxy::SessionProxy::from_process()
+            .map_err(BridgeError::Settings)?
+        {
+            crate::remote_connect::proxy::validate_plan(plan).map_err(BridgeError::Settings)?;
+            return Ok(Self {
+                env: proxy
+                    .runtime_environment(env)
+                    .map_err(BridgeError::Settings)?,
+                bridge: None,
+                claude_settings: None,
+                startup_notices: Vec::new(),
+            });
+        }
         // The inherited-pin line leads every launch's notices: a boundary the
         // user did not type deserves to be seen first (#1257).
         let pin_notices =
@@ -600,6 +615,13 @@ impl ForegroundRuntime {
         status_writer: Option<&std::sync::Arc<crate::toast::statusline::StatusStateWriter>>,
     ) -> Result<(Self, bool), BridgeError> {
         let mut runtime = Self::start(plan, env)?;
+        if runtime
+            .env
+            .iter()
+            .any(|(key, _)| key == "CLUD_REMOTE_PROXY_ORIGIN")
+        {
+            return Ok((runtime, false));
+        }
         if let (Some(bridge), Some(writer)) = (runtime.bridge.as_ref(), status_writer) {
             bridge.set_status_usage_writer(std::sync::Arc::clone(writer));
         }
@@ -836,10 +858,12 @@ impl ForegroundRuntime {
         cwd: Option<PathBuf>,
         capture_stdout: bool,
         creation_flags: Option<u32>,
+        dashboard_owns_stdin: bool,
     ) -> Result<ManagedSubprocess, String> {
         let adapter = NativeSubprocessAdapter {
             capture_stdout,
             creation_flags,
+            dashboard_owns_stdin,
         };
         self.spawn_with(
             &adapter,
@@ -1892,6 +1916,7 @@ pub(crate) fn env_key_eq(left: &str, right: &str) -> bool {
 }
 
 struct NativeSubprocessAdapter {
+    dashboard_owns_stdin: bool,
     capture_stdout: bool,
     creation_flags: Option<u32>,
 }
@@ -1907,7 +1932,12 @@ impl SpawnAdapter<ManagedSubprocess> for NativeSubprocessAdapter {
         env: Vec<(String, String)>,
     ) -> Result<ManagedSubprocess, Self::Error> {
         debug_assert_eq!(mode, SpawnMode::Subprocess);
-        ManagedSubprocess::start(
+        let start = if self.dashboard_owns_stdin {
+            ManagedSubprocess::start_without_stdin
+        } else {
+            ManagedSubprocess::start
+        };
+        start(
             command,
             cwd.map(PathBuf::from),
             env,
@@ -2028,6 +2058,7 @@ pub(crate) mod tests {
             task_summary: None,
             loop_markers: None,
             stream_json_progress: false,
+            prompt_summary: false,
             codex_model: None,
             model_selection: None,
             failover: None,

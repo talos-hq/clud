@@ -35,6 +35,17 @@ reaches every reader.
 The bridge keeps the cursor per process, so `board_read()` returns only what
 arrived since the previous call.
 
+A fresh process starts at cursor zero, which re-delivered the whole backlog:
+measured 2026-11-02, 38-39 unrelated progress broadcasts (~26 KB) in every new
+session. So the bridge's **first** read keeps every message addressed to that
+agent — the steering channel is never capped — plus the newest
+`CLUD_BOARD_FIRST_READ_BROADCASTS` broadcasts (default 8). Withheld broadcasts
+are reported as `skipped_broadcasts` with a `note`; they stay on the board and
+`board_read(after=0)` replays them. Set the variable to a negative value to
+replay the full backlog on the first read (the pre-cap behaviour); `0` means
+"no broadcasts on the first read". Board pages are serialized without
+indentation — they are parsed, not read (10.2% measured on a 39-message page).
+
 ## Limits
 
 In daemon memory only: a restart forgets the board, the same as session

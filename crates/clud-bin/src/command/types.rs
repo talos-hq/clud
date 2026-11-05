@@ -68,6 +68,9 @@ pub struct LaunchPlan {
     /// through `stream_json::render_line` so the user sees live progress.
     #[serde(default)]
     pub stream_json_progress: bool,
+    /// Foreground print turns use compact classified activity and full final stdout.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub prompt_summary: bool,
     /// Legacy Codex model+effort compatibility selection, canonicalized as
     /// `gpt-5.6-terra@high`. New plans use `model_selection` and emit a
     /// harness-facing discovery ID; this field remains for old daemon payloads
@@ -163,6 +166,7 @@ mod tests {
             task_summary: None,
             loop_markers: None,
             stream_json_progress: false,
+            prompt_summary: false,
             codex_model: None,
             model_selection: None,
             failover: None,

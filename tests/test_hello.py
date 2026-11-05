@@ -2043,7 +2043,10 @@ def test_dry_run_loop_no_done() -> None:
     result = _run("--dry-run", "loop", "--no-done", "do stuff")
     assert result.returncode == 0
     data = json.loads(result.stdout)
-    assert data["command"][-1] == "do stuff"
+    prompt = data["command"][-1]
+    assert prompt.startswith("do stuff")
+    assert "NEXT_MESSAGE.md" in prompt
+    assert "DONE terminates" not in prompt
     assert data["loop_markers"] is None
 
 

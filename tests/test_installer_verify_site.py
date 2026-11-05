@@ -11,9 +11,7 @@ from installer.catalog import TARGETS
 def write_site(destination, targets: set[tuple[str, str]]) -> None:
     (destination / "install").mkdir(parents=True)
     (destination / "index.html").write_text(
-        '<a href="/clud/install/manifest.json"></a>'
-        "<script>location.replace('/clud/install/index.html')</script>",
-        encoding="utf-8",
+        "Latest stable release: 2.10.0", encoding="utf-8"
     )
     (destination / "install" / "index.html").write_text(
         "Latest stable release: 2.10.0", encoding="utf-8"

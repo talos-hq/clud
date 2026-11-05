@@ -86,6 +86,12 @@ pub enum Note {
     Inline(String),
     /// On its own line under the row.
     Below(String),
+    /// Installer release annotations; only these trusted badges receive color.
+    Release {
+        asset: String,
+        current: bool,
+        latest: bool,
+    },
 }
 
 pub fn check_marker(checked: bool) -> &'static str {
@@ -210,7 +216,7 @@ pub fn render_within(view: &View, columns: usize, rows: usize) -> Frame {
     let inline_width = view
         .rows
         .iter()
-        .filter(|row| matches!(row.note, Note::Inline(_)))
+        .filter(|row| matches!(row.note, Note::Inline(_) | Note::Release { .. }))
         .map(|row| row.label.chars().count())
         .max()
         .unwrap_or(0)
@@ -252,9 +258,26 @@ pub fn render_within(view: &View, columns: usize, rows: usize) -> Frame {
     if window.start > 0 {
         frame.line(&format!("{TEXT_INDENT}... {} more above", window.start));
     }
-    for lines in &row_lines[window.clone()] {
+    for (index, lines) in row_lines[window.clone()].iter().enumerate() {
         for line in lines {
+            let start = frame.bytes.len();
             frame.line(line);
+            if let Note::Release {
+                current, latest, ..
+            } = &view.rows[window.start + index].note
+            {
+                let mut rendered = String::from_utf8_lossy(&frame.bytes[start..]).into_owned();
+                for (enabled, badge, color) in [
+                    (*current, "<-- current", "33"),
+                    (*latest, "<-- latest", "32"),
+                ] {
+                    if enabled {
+                        rendered = rendered.replace(badge, &format!("\x1b[{color}m{badge}\x1b[0m"));
+                    }
+                }
+                frame.bytes.truncate(start);
+                frame.bytes.extend_from_slice(rendered.as_bytes());
+            }
         }
     }
     if window.end < row_lines.len() {
@@ -282,6 +305,15 @@ fn lines_for_row(row: &Row, inline_width: usize) -> Vec<String> {
         Note::Inline(note) => {
             let pad = inline_width.saturating_sub(row.label.chars().count());
             vec![format!("{lead}{}{note}", " ".repeat(pad))]
+        }
+        Note::Release {
+            asset,
+            current,
+            latest,
+        } => {
+            let current = if *current { "  <-- current" } else { "" };
+            let latest = if *latest { "  <-- latest" } else { "" };
+            vec![format!("{lead}{current}{latest}   {asset}")]
         }
         Note::Below(note) => vec![lead, format!("{NOTE_INDENT}{note}")],
     }
@@ -1008,6 +1040,10 @@ mod tests {
             (
                 "self_install/picker.rs",
                 include_str!("self_install/picker.rs"),
+            ),
+            (
+                "self_install/setup.rs",
+                include_str!("self_install/setup.rs"),
             ),
         ] {
             // Only production code: tests legitimately assert on the escape

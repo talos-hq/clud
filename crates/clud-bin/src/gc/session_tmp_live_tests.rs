@@ -81,7 +81,43 @@ fn facts(cwd: Option<&str>, env: &[&str]) -> ProcFacts {
         environ: env.iter().map(Into::into).collect(),
         zombie: false,
         same_user: true,
+        desktop_service: false,
+        gone: false,
     }
+}
+
+#[test]
+fn protected_desktop_service_does_not_hide_live_agent_paths() {
+    let own = facts(Some("/a"), &["X=1"]);
+    let desktop = ProcFacts {
+        cwd: Some(PathBuf::new()),
+        desktop_service: true,
+        ..facts(None, &[])
+    };
+    let agent = facts(Some("/scratch/session"), &["TMPDIR=/scratch/session"]);
+    assert_eq!(
+        paths_from_facts(&own, &[desktop.clone(), agent]),
+        Some(vec![PathBuf::from("/scratch/session")])
+    );
+    assert!(paths_from_facts(&own, &[desktop, facts(None, &[])]).is_none());
+}
+
+#[test]
+fn unavailable_cwd_covers_both_sysinfo_representations() {
+    assert!(!cwd_available(None));
+    assert!(!cwd_available(Some(Path::new(""))));
+    assert!(cwd_available(Some(Path::new("/scratch"))));
+}
+
+#[test]
+fn an_exited_census_task_is_not_an_unreadable_live_agent() {
+    let own = facts(Some("/a"), &["X=1"]);
+    let exited = ProcFacts {
+        gone: true,
+        ..facts(None, &[])
+    };
+    assert_eq!(paths_from_facts(&own, &[exited]), Some(vec![]));
+    assert!(paths_from_facts(&own, &[facts(None, &[])]).is_none());
 }
 
 #[test]

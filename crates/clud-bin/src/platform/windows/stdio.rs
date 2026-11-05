@@ -34,6 +34,19 @@ fn leak_duplicate(file: &File) -> io::Result<HANDLE> {
     Ok(handle)
 }
 
+/// Modern Windows Terminal supports Rust's Unicode console writes. Legacy
+/// console code pages use ASCII replacement; redirected streams default UTF-8.
+pub fn output_is_utf8() -> bool {
+    use std::io::IsTerminal;
+    use windows::Win32::System::Console::GetConsoleOutputCP;
+    if !std::io::stdout().is_terminal() && !std::io::stderr().is_terminal() {
+        return true;
+    }
+    std::env::var_os("WT_SESSION").is_some()
+        // SAFETY: this read-only API takes no pointers or handles.
+        || unsafe { GetConsoleOutputCP() } == 65001
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

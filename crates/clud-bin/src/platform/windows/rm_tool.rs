@@ -85,3 +85,14 @@ pub fn grant_record_mode(_options: &mut OpenOptions) {}
 /// Windows has no mode bits; the test tree stays as created.
 #[cfg(test)]
 pub(crate) fn seal_dir_for_test(_dir: &Path) {}
+/// Unix directory-mode repair has no Windows equivalent. Preserve the
+/// original failed unlink instead of changing a file's shared attributes.
+pub fn remove_owned_leaf_writable(
+    _root: &std::path::Path,
+    _path: &std::path::Path,
+) -> std::io::Result<()> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::PermissionDenied,
+        "directory-mode repair is Unix-only",
+    ))
+}

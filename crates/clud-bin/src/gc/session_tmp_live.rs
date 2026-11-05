@@ -6,7 +6,8 @@
 //! idle unit it asks this module whether anything points at it:
 //!
 //! - a running process whose cwd, or `TMPDIR`/`TMP`/`TEMP`/`CLAUDE_CODE_TMPDIR`
-//!   value, lies inside the unit; or
+//!   value, lies inside the unit or names its ancestor strictly inside the
+//!   managed temp root (never the global root itself); or
 //! - a unit path component equal to the Claude-encoded form of a running
 //!   process's cwd (or any ancestor of it): the whole `claude-<uid>/<project>/`
 //!   subtree is live while a process works in that project; or
@@ -15,8 +16,10 @@
 //!   under `<state>/api-sessions`).
 //!
 //! Fail safe: when a source cannot be consulted (the process scan cannot read this process's own cwd or environ, or a
-//! process of ours returned neither, or the session records are unreadable) every
+//! unverified process of ours returned neither, or the session records are unreadable) every
 //! unit counts as live, so the cap simply stays exceeded.
+//! Verified protected desktop services are excluded using their OS service
+//! identity and manager lineage, never their name alone.
 
 use std::collections::HashSet;
 use std::fs;
@@ -58,6 +61,16 @@ impl LiveSignals {
         Self::new(Some(Vec::new()), Some(HashSet::new()))
     }
 
+    pub fn unavailable_reason(&self) -> Option<&'static str> {
+        if self.paths.is_none() {
+            Some("process cwd/environment references unavailable")
+        } else if self.session_ids.is_none() {
+            Some("tracked session records unavailable")
+        } else {
+            None
+        }
+    }
+
     /// Scan the host processes and the daemon's session records.
     pub fn collect() -> Self {
         let ids = crate::daemon::default_state_dir()
@@ -73,10 +86,15 @@ impl LiveSignals {
             return true;
         };
         let canonical = fs::canonicalize(unit).unwrap_or_else(|_| unit.to_path_buf());
-        if paths
-            .iter()
-            .any(|p| p.starts_with(unit) || p.starts_with(&canonical))
-        {
+        let canonical_root = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+        if paths.iter().any(|p| {
+            p.starts_with(unit)
+                || p.starts_with(&canonical)
+                || (p != root && p.starts_with(root) && unit.starts_with(p))
+                || (p != &canonical_root
+                    && p.starts_with(&canonical_root)
+                    && canonical.starts_with(p))
+        }) {
             return true;
         }
         let rel = unit.strip_prefix(root).unwrap_or(unit);
@@ -146,23 +164,36 @@ pub struct ProcFacts {
     pub zombie: bool,
     /// Owned by the user running this scan.
     pub same_user: bool,
+    /// Verified protected desktop infrastructure in its OS service lineage.
+    pub desktop_service: bool,
+    /// Kernel-confirmed disappearance since the process table was captured.
+    pub gone: bool,
+}
+
+fn cwd_available(cwd: Option<&Path>) -> bool {
+    cwd.is_some_and(|path| !path.as_os_str().is_empty())
 }
 
 /// Turn process facts into in-use paths. `None` (unconsulted, everything
-/// live) when this process cannot read its own cwd or environ, or when any
-/// live process of ours returned neither: a denied read looks exactly like
-/// "no process here", so absence would prove nothing.
+/// live) when this process cannot read its own cwd or environ, or when an
+/// unverified live process of ours returned neither. A denied read looks
+/// exactly like absence, so it cannot authorize eviction.
 pub fn paths_from_facts(own: &ProcFacts, procs: &[ProcFacts]) -> Option<Vec<PathBuf>> {
-    let has_cwd = |p: &ProcFacts| p.cwd.as_ref().is_some_and(|c| !c.as_os_str().is_empty());
-    if !has_cwd(own) || own.environ.is_empty() {
+    if !cwd_available(own.cwd.as_deref()) || own.environ.is_empty() {
         return None;
     }
     let mut paths = Vec::new();
     for process in procs {
-        if process.same_user && !process.zombie && !has_cwd(process) && process.environ.is_empty() {
+        if process.same_user
+            && !process.zombie
+            && !process.gone
+            && !process.desktop_service
+            && !cwd_available(process.cwd.as_deref())
+            && process.environ.is_empty()
+        {
             return None;
         }
-        if has_cwd(process) {
+        if cwd_available(process.cwd.as_deref()) {
             paths.extend(process.cwd.clone());
         }
         for key in SCRATCH_ENV {
@@ -194,9 +225,45 @@ fn process_paths() -> Option<Vec<PathBuf>> {
         environ: p.environ().to_vec(),
         zombie: p.status() == ProcessStatus::Zombie,
         same_user: p.user_id().cloned() == uid,
+        desktop_service: !cwd_available(p.cwd())
+            && p.environ().is_empty()
+            && p.user_id().cloned() == uid
+            && p.status() != ProcessStatus::Zombie
+            && crate::platform::session_tmp_live::verified_desktop_service(p.pid().as_u32()),
+        gone: !cwd_available(p.cwd())
+            && p.environ().is_empty()
+            && crate::platform::session_tmp_live::task_has_exited(p.pid().as_u32()),
     };
-    let procs: Vec<ProcFacts> = system.processes().values().map(facts).collect();
-    paths_from_facts(&facts(me), &procs)
+    let mut blocked = Vec::new();
+    let procs: Vec<ProcFacts> = system
+        .processes()
+        .values()
+        .map(|process| {
+            let fact = facts(process);
+            if fact.same_user
+                && !fact.zombie
+                && !fact.gone
+                && !fact.desktop_service
+                && !cwd_available(fact.cwd.as_deref())
+                && fact.environ.is_empty()
+            {
+                blocked.push(format!(
+                    "{} ({})",
+                    process.pid(),
+                    process.name().to_string_lossy()
+                ));
+            }
+            fact
+        })
+        .collect();
+    let own = facts(me);
+    let paths = paths_from_facts(&own, &procs);
+    if paths.is_none() {
+        eprintln!("tmp: liveness census unavailable: own cwd={}, own environment={}; {} unreadable process(es): {}",
+            cwd_available(own.cwd.as_deref()), !own.environ.is_empty(), blocked.len(),
+            blocked.iter().take(8).cloned().collect::<Vec<_>>().join(", "));
+    }
+    paths
 }
 
 /// Ids of sessions the daemon still tracks, from its state directory.

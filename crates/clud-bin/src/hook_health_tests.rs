@@ -1,5 +1,4 @@
 use super::*;
-use clap::Parser;
 use tempfile::tempdir;
 
 pub(crate) fn write(path: &Path, body: &str) {

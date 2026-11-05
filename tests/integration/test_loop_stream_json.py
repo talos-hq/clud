@@ -197,3 +197,34 @@ def test_loop_passes_through_non_json_stderr_lines(
     assert "npm WARN deprecated foo@1.0" in combined, (
         f"non-JSON stderr line was dropped:\n{combined}"
     )
+
+
+@pytest.mark.parametrize("launch_mode", ["--subprocess", "--pty"])
+def test_codex_loop_preserves_output_in_both_launch_modes(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path, launch_mode: str
+) -> None:
+    """Captured runs retain the whole transcript without a dashboard taking over."""
+    script = tmp_path / "history.txt"
+    script.write_text("\n".join(f"history-{n:03}" for n in range(250)) + "\n", encoding="utf-8")
+    result = _run(
+        clud_binary,
+        "--no-daemon",
+        "--codex",
+        launch_mode,
+        "loop",
+        "--no-done",
+        "--loop-count",
+        "1",
+        "test scrolling output",
+        "--",
+        "--mock-ansi-script",
+        str(script),
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    combined = result.stdout + result.stderr
+    assert result.returncode == 0, combined
+    for n in range(250):
+        assert f"history-{n:03}" in combined
+    assert "\x1b[?1049h" not in combined
+    assert "\x1b[2J" not in combined

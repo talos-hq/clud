@@ -40,6 +40,18 @@ def _translate(request: dict[str, object]) -> process.CompletedProcess[object]:
     )
 
 
+def _translate_response(
+    body: object, *flags: str
+) -> process.CompletedProcess[object]:
+    return process.run(
+        [str(_clud_binary()), "__openai-responses-translate", "--response", *flags],
+        input=body if isinstance(body, str) else json.dumps(body),
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
 def test_a_responses_conversation_becomes_a_messages_request() -> None:
     completed = _translate(
         {
@@ -130,3 +142,143 @@ def test_a_request_without_a_model_is_refused() -> None:
 
     assert completed.returncode == 2
     assert "missing a model" in completed.stderr
+
+
+# ---------------------------------------------------------------------------
+# Response half: an upstream Messages answer becomes the Responses shape the
+# client asked for (CLIProxyAPI claude_openai-responses_response.go).
+# ---------------------------------------------------------------------------
+
+
+def _messages_answer() -> dict[str, object]:
+    return {
+        "id": "msg_py_1",
+        "type": "message",
+        "role": "assistant",
+        "model": "claude-x",
+        "content": [
+            {"type": "thinking", "thinking": "short plan", "signature": "sig-py"},
+            {"type": "text", "text": "the answer"},
+            {
+                "type": "tool_use",
+                "id": "toolu_py",
+                "name": "read_file",
+                "input": {"path": "b.rs"},
+            },
+        ],
+        "stop_reason": "tool_use",
+        "usage": {"input_tokens": 5, "output_tokens": 4, "cache_read_input_tokens": 2},
+    }
+
+
+def test_a_messages_answer_is_rendered_as_a_response_object() -> None:
+    completed = _translate_response(_messages_answer())
+
+    assert completed.returncode == 0, completed.stderr
+    response = json.loads(completed.stdout)
+    assert response["object"] == "response"
+    assert response["status"] == "completed"
+    assert response["model"] == "claude-x"
+    kinds = [item["type"] for item in response["output"]]
+    assert kinds == ["reasoning", "message", "function_call"], kinds
+    assert response["output"][1]["content"][0] == {
+        "type": "output_text",
+        "annotations": [],
+        "logprobs": [],
+        "text": "the answer",
+    }
+    assert response["output"][2]["arguments"] == '{"path":"b.rs"}'
+    assert response["usage"]["input_tokens"] == 7
+    assert response["usage"]["input_tokens_details"]["cached_tokens"] == 2
+    assert response["usage"]["total_tokens"] == 11
+
+
+def test_a_max_tokens_stop_is_reported_incomplete() -> None:
+    answer = _messages_answer()
+    answer["stop_reason"] = "max_tokens"
+    completed = _translate_response(answer)
+
+    assert completed.returncode == 0, completed.stderr
+    response = json.loads(completed.stdout)
+    assert response["status"] == "incomplete"
+    assert response["incomplete_details"] == {"reason": "max_output_tokens"}
+
+
+def test_a_streamed_answer_emits_response_events() -> None:
+    frames = [
+        {
+            "type": "message_start",
+            "message": {"id": "msg_sse", "model": "claude-x", "usage": {"input_tokens": 3}},
+        },
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "hi"},
+        },
+        {"type": "content_block_stop", "index": 0},
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"output_tokens": 1},
+        },
+        {"type": "message_stop"},
+    ]
+    body = "".join(f"event: {frame['type']}\ndata: {json.dumps(frame)}\n\n" for frame in frames)
+    completed = _translate_response(body, "--stream")
+
+    assert completed.returncode == 0, completed.stderr
+    events = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    kinds = [event["type"] for event in events]
+    assert kinds[-1] == "response.completed", kinds
+    assert "response.output_text.delta" in kinds, kinds
+    assert [event["sequence_number"] for event in events] == list(range(len(events)))
+    assert events[-1]["response"]["output"][0]["content"][0]["text"] == "hi"
+
+
+def test_the_http_stream_frames_events_with_their_names() -> None:
+    frames = [
+        {"type": "message_start", "message": {"id": "msg_http"}},
+        {"type": "message_stop"},
+    ]
+    body = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames)
+    completed = _translate_response(body, "--stream", "--http")
+
+    assert completed.returncode == 0, completed.stderr
+    text = completed.stdout
+    assert text.startswith("event: response.created\n"), text
+    assert "event: response.completed\n" in text, text
+    for frame in text.rstrip("\n").split("\n\n"):
+        name = next(line for line in frame.splitlines() if line.startswith("event: "))[7:]
+        payload = json.loads(
+            next(line for line in frame.splitlines() if line.startswith("data: "))[6:]
+        )
+        assert payload["type"] == name, frame
+
+
+def test_a_body_that_ends_without_message_stop_fails_the_response() -> None:
+    frames = [
+        {"type": "message_start", "message": {"id": "msg_cut"}},
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "ha"}},
+    ]
+    body = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames)
+    completed = _translate_response(body, "--stream")
+
+    assert completed.returncode == 0, completed.stderr
+    events = [json.loads(line) for line in completed.stdout.splitlines() if line.strip()]
+    assert events[-1]["type"] == "response.failed", events[-1]
+    assert events[-1]["response"]["status"] == "failed"
+    assert events[-1]["response"]["error"]["code"] == "server_error"
+
+
+def test_a_response_body_that_is_not_json_is_refused() -> None:
+    completed = _translate_response("definitely not json")
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+    assert "JSON" in completed.stderr

@@ -2459,7 +2459,7 @@ mod tests {
     /// inside `clud daemon restart`'s 10s wait, even with an idle client
     /// connection held open against the daemon.
     #[test]
-    fn shutdown_and_signal_flag_finish_within_the_restart_timeout() {
+    fn tier1_shutdown_and_signal_flag_finish_within_the_restart_timeout() {
         let bound = Duration::from_secs(5);
         for use_flag in [false, true] {
             let tmp = tempfile::tempdir().unwrap();

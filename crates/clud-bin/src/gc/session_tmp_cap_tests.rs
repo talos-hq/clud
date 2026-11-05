@@ -32,6 +32,147 @@ fn hours(n: u64) -> Duration {
 }
 
 #[test]
+fn readonly_parent_of_an_idle_leaf_is_reclaimed_without_changing_shared_file_mode() {
+    if !crate::platform::host::UNIX {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("managed");
+    let parent = root.join("skill_batch/hermes-agent");
+    fs::create_dir_all(&parent).unwrap();
+    let file = parent.join("SKILL.md");
+    let cached = tmp.path().join("protected-cache-file");
+    fs::write(&cached, vec![0u8; 2 * KIB as usize]).unwrap();
+    fs::hard_link(&cached, &file).unwrap();
+    let now = SystemTime::now();
+    for path in [&file, &parent] {
+        set_mtime(path, now - hours(30));
+    }
+    crate::platform::gc_test_fs::set_mode(&cached, 0o444).unwrap();
+    crate::platform::gc_test_fs::set_mode(&parent, 0o555).unwrap();
+    let report = enforce_cap_at(&root, KIB, now, false, LiveSignals::nothing_live);
+    crate::platform::gc_test_fs::set_mode(&parent, 0o700).unwrap();
+    assert_eq!(report.evicted, 1, "{report:?}");
+    assert_eq!(report.failed, 0, "{report:?}");
+    assert!(!file.exists());
+    assert!(fs::metadata(&cached).unwrap().permissions().readonly());
+    assert_eq!(fs::read(cached).unwrap(), vec![0u8; 2 * KIB as usize]);
+}
+
+#[test]
+fn a_live_cwd_inside_the_root_protects_flattened_leaf_units() {
+    let tmp = tempfile::tempdir().unwrap();
+    let now = SystemTime::now();
+    let parent = session(
+        tmp.path(),
+        "skill_batch/hermes-agent",
+        2 * KIB,
+        hours(30),
+        now,
+    );
+    let live = LiveSignals::new(Some(vec![parent.clone()]), Some(Default::default()));
+    let report = enforce_cap_at(tmp.path(), KIB, now, false, || live);
+    assert_eq!(report.evicted, 0, "{report:?}");
+    assert_eq!(report.kept_live, 1, "{report:?}");
+    assert!(parent.join("data").exists());
+}
+
+#[test]
+fn live_or_unknown_readonly_leaf_is_not_chmodded_or_unlinked() {
+    if !crate::platform::host::UNIX {
+        return;
+    }
+    for unknown in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let now = SystemTime::now();
+        let parent = session(
+            tmp.path(),
+            "skill_batch/hermes-agent",
+            2 * KIB,
+            hours(30),
+            now,
+        );
+        let file = parent.join("data");
+        crate::platform::gc_test_fs::set_mode(&file, 0o444).unwrap();
+        crate::platform::gc_test_fs::set_mode(&parent, 0o555).unwrap();
+        let identity = crate::platform::rm_tool::file_identity(&fs::metadata(&file).unwrap());
+        let paths = if unknown {
+            None
+        } else {
+            Some(vec![parent.clone()])
+        };
+        let live = LiveSignals::new(paths, Some(Default::default()));
+        let report = enforce_cap_at(tmp.path(), KIB, now, false, || live);
+        let parent_unchanged = fs::metadata(&parent).unwrap().permissions().readonly();
+        crate::platform::gc_test_fs::set_mode(&parent, 0o700).unwrap();
+        assert_eq!(report.evicted, 0, "{report:?}");
+        assert_eq!(report.failed, 0, "{report:?}");
+        assert!(parent_unchanged);
+        let metadata = fs::metadata(&file).unwrap();
+        assert_eq!(crate::platform::rm_tool::file_identity(&metadata), identity);
+        assert!(metadata.permissions().readonly());
+    }
+}
+
+#[test]
+fn readonly_parent_repair_leaves_live_sibling_directories_sealed() {
+    if !crate::platform::host::UNIX {
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let now = SystemTime::now();
+    let parent = session(
+        tmp.path(),
+        "skill_batch/hermes-agent",
+        2 * KIB,
+        hours(30),
+        now,
+    );
+    let sibling = session(
+        tmp.path(),
+        "skill_batch/hermes-agent/live",
+        2 * KIB,
+        hours(30),
+        now,
+    );
+    crate::platform::gc_test_fs::set_mode(&sibling, 0o555).unwrap();
+    crate::platform::gc_test_fs::set_mode(&parent, 0o555).unwrap();
+    let live = LiveSignals::new(Some(vec![sibling.clone()]), Some(Default::default()));
+    let report = enforce_cap_at(tmp.path(), KIB, now, false, || live);
+    let sibling_unchanged = fs::metadata(&sibling).unwrap().permissions().readonly();
+    crate::platform::gc_test_fs::set_mode(&parent, 0o700).unwrap();
+    crate::platform::gc_test_fs::set_mode(&sibling, 0o700).unwrap();
+    assert_eq!(report.evicted, 1, "{report:?}");
+    assert_eq!(report.failed, 0, "{report:?}");
+    assert!(!parent.join("data").exists());
+    assert!(sibling.join("data").exists());
+    assert!(sibling_unchanged);
+}
+
+#[test]
+fn global_root_or_ancestor_paths_do_not_pin_all_flattened_scratch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let now = SystemTime::now();
+    let parent = session(
+        tmp.path(),
+        "skill_batch/hermes-agent",
+        2 * KIB,
+        hours(30),
+        now,
+    );
+    let live = LiveSignals::new(
+        Some(vec![
+            tmp.path().to_path_buf(),
+            tmp.path().parent().unwrap().into(),
+        ]),
+        Some(Default::default()),
+    );
+    let report = enforce_cap_at(tmp.path(), KIB, now, false, || live);
+    assert_eq!(report.evicted, 1, "{report:?}");
+    assert!(!parent.join("data").exists());
+}
+
+#[test]
 fn under_cap_removes_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     let now = SystemTime::now();
@@ -191,5 +332,9 @@ fn unconsultable_signals_fail_safe() {
     let idle = session(tmp.path(), "claude-1/p/idle", 50 * KIB, hours(30), now);
     let report = enforce_cap_at(tmp.path(), KIB, now, false, LiveSignals::default);
     assert!(idle.join("data").exists());
-    assert_eq!(report.kept_live, 1);
+    assert_eq!(report.kept_live, 0);
+    assert_eq!(report.kept_unknown, 1);
+    assert!(report
+        .summary_line()
+        .contains("Eviction blocked: process cwd/environment references unavailable"));
 }

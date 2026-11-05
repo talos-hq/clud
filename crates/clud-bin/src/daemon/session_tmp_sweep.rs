@@ -45,7 +45,7 @@ pub fn maybe_sweep_session_tmp() {
 /// `tmp.max_bytes`. Runs after the age pass so it sizes what survived.
 fn enforce_size_cap(state_dir: Option<&Path>) {
     let report = session_tmp_cap::enforce_cap(false);
-    if report.evicted == 0 && report.failed == 0 {
+    if report.evicted == 0 && report.failed == 0 && report.liveness_unavailable.is_none() {
         return;
     }
     eprintln!("[clud] gc: {}", report.summary_line());
@@ -62,6 +62,8 @@ fn enforce_size_cap(state_dir: Option<&Path>) {
                 ("evicted", json!(report.evicted)),
                 ("reclaimed_bytes", json!(report.reclaimed_bytes)),
                 ("kept_live", json!(report.kept_live)),
+                ("kept_unknown", json!(report.kept_unknown)),
+                ("liveness_unavailable", json!(report.liveness_unavailable)),
                 ("failed", json!(report.failed)),
             ],
         );

@@ -1,9 +1,11 @@
 # Keeps the served `model_contexts` section in step with OpenRouter's public
 # datasheet (#1258). This is the repository's first scheduled workflow: it
-# commits its own section back to `main`, so installed builds pick the change
-# up through the existing server-settings fetch-from-main path in about twenty
-# minutes, with no release. A fetch or parse failure fails the run loudly
-# instead of publishing an empty or stale map.
+# lands its own section on `main` through a bot PR with auto-merge (a direct
+# push is rejected now that `main` requires the merge queue, #2518), so
+# installed builds pick the change up through the existing server-settings
+# fetch-from-main path in about twenty minutes once CI passes, with no release.
+# A fetch or parse failure fails the run loudly instead of publishing an empty
+# or stale map.
 name: refresh-model-contexts
 
 on:
@@ -31,8 +33,9 @@ jobs:
       # architecture/ci.md, "Never use uv run in a workflow step").
       - name: Refresh model_contexts from the OpenRouter datasheet
         run: python -m ci.refresh_model_contexts
-      # Gate (#1635, DD-127): this job pushes straight to main, so run the
-      # producer tests that read the regenerated file before committing it.
+      # Gate (#1635, DD-127): the refresh reaches `main` without a human
+      # reviewer, so run the producer tests that read the regenerated file
+      # before committing it.
       # A failure fails the job and nothing is pushed. pytest-timeout is
       # needed because pyproject.toml sets `timeout`; running-process because
       # tests/conftest.py imports ci.process.
@@ -40,15 +43,33 @@ jobs:
         run: |
           python -m pip install --quiet pytest pytest-timeout running-process
           python -m pytest -q -p no:cacheprovider tests/test_refresh_model_contexts.py
+      # `main` requires the merge queue and a "CI OK" check, so the bot can no
+      # longer push to it (#2518). A PR opened with GITHUB_TOKEN would not
+      # trigger `pull_request` workflows at all (GitHub's recursion guard), so
+      # the branch is pushed and the PR opened with a bot token instead; the
+      # PR then runs normal CI and auto-enqueues. Without the token the job
+      # fails loudly rather than retrying a push `main` will always reject.
       - name: Commit the refreshed section
+        env:
+          REFRESH_BOT_TOKEN: ${{ secrets.REFRESH_BOT_TOKEN }}
         run: |
           if git diff --quiet -- crates/clud-bin/assets/server-settings.json; then
             echo "model_contexts already fresh"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
+          if [ -z "$REFRESH_BOT_TOKEN" ]; then
+            echo "::error::REFRESH_BOT_TOKEN is not set; main requires a merge-queue PR, see #2518"
+            exit 1
+          fi
+          BRANCH="bot/refresh-model-contexts"
+          git checkout -b "$BRANCH"
+          git config user.name "clud-refresh-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add crates/clud-bin/assets/server-settings.json
           git commit -m "chore(server-settings): refresh model_contexts from OpenRouter datasheet (#1258)"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git push --force "https://x-access-token:${REFRESH_BOT_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+          export GH_TOKEN="$REFRESH_BOT_TOKEN"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore(server-settings): refresh model_contexts from the OpenRouter datasheet" \
+            --body "Automated daily refresh of \`model_contexts\` (#1258). The producer tests ran against this file before the commit (DD-127). Auto-merge is on: the merge queue lands it once \`CI OK\` passes." || true
+          gh pr merge "$BRANCH" --squash --auto

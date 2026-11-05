@@ -61,7 +61,7 @@ impl Undeletable {
     }
 
     /// `N paths could not be removed (permission denied), e.g. <path>; owned by
-    /// root — remove with sudo`, or `None` when nothing failed.
+    /// root — restore ownership, then retry clud gc`, or `None` when nothing failed.
     pub fn summary_line(&self) -> Option<String> {
         let first = self.first.as_ref()?;
         let noun = if self.count == 1 { "path" } else { "paths" };
@@ -83,7 +83,9 @@ impl Undeletable {
             )
         };
         match self.first_owner {
-            Some(0) => line.push_str("; owned by root \u{2014} remove with sudo"),
+            Some(0) => {
+                line.push_str("; owned by root \u{2014} restore ownership, then retry clud gc")
+            }
             Some(uid) => {
                 let _ = write!(line, "; owned by uid {uid}");
             }

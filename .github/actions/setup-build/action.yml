@@ -59,6 +59,15 @@ runs:
       with:
         python-version: "3.11"
 
+    # Preserve Soldr's free-space guard. These preinstalled SDKs are unrelated
+    # to clud's desktop targets and otherwise crowd out cross toolchains.
+    - name: Reclaim unused hosted Linux SDKs
+      if: runner.os == 'Linux' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        sudo env GITHUB_ACTIONS="$GITHUB_ACTIONS" RUNNER_ENVIRONMENT="$RUNNER_ENVIRONMENT" RUNNER_OS="$RUNNER_OS" \
+          LD_LIBRARY_PATH="$pythonLocation/lib" "$pythonLocation/bin/python" -m ci.hosted_disk
+
     - uses: astral-sh/setup-uv@v5
       with:
         version: "0.12.19"

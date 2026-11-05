@@ -210,6 +210,35 @@ def test_no_tty_refusal_preserves_windows_user_path() -> None:
         assert after == before
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX launcher symlinks")
+def test_upgrade_replaces_uv_launcher_and_preserves_package_target(tmp_path: Path) -> None:
+    home = tmp_path / "home"
+    target = home / ".local/share/uv/tools/clud/bin/clud"
+    target.parent.mkdir(parents=True, mode=0o700)
+    shutil.copy2(clud_binary(), target)
+    # uv/debug installs may exceed the published-asset limit due to symbols.
+    with target.open("r+b") as executable:
+        executable.truncate(max(target.stat().st_size, 256 * 1024 * 1024 + 1))
+    original = hashlib.sha256(target.read_bytes()).digest()
+    cached = target.with_name("cached-clud")
+    os.link(target, cached)
+    destination = home / ".local/bin/clud"
+    destination.parent.mkdir(parents=True, mode=0o700)
+    destination.symlink_to(target)
+    result = run_process(
+        [str(clud_binary()), "--installer", "--install-current", "--yes", "--no-modify-path"],
+        env=isolated_env(home), capture_output=True, timeout=30, check=False,
+    )
+    assert result.returncode == 0, result.stderr.decode(errors="replace")
+    assert not destination.is_symlink()
+    assert hashlib.sha256(destination.read_bytes()).digest() == hashlib.sha256(
+        clud_binary().read_bytes()
+    ).digest()
+    assert hashlib.sha256(target.read_bytes()).digest() == original
+    assert hashlib.sha256(cached.read_bytes()).digest() == original
+    assert not destination.with_suffix(".clud-backup").exists()
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX startup files")
 def test_install_only_preserves_profiles_and_reports_activation(tmp_path: Path) -> None:
     home = tmp_path / "home"
