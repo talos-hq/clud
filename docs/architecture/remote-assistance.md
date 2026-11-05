@@ -49,7 +49,10 @@ The bearer is an ephemeral server capability, never an OpenRouter/provider key.
 The real OpenRouter credential remains on clud.bot.
 
 Claude and Codex configuration paths point into a session-owned temporary
-configuration directory; no credential is written there. A nested `clud -p`
+configuration directory; no credential is written there. It holds only a seeded
+Claude `.claude.json` marking onboarding complete, and clud's launch-scope picker
+stays out of the way. Claude's per-folder trust check still appears: it is a safety
+decision, not a credential. A missing Claude Code still prompts to install it. A nested `clud -p`
 launch recognizes the private `CLUD_REMOTE_PROXY_ORIGIN`,
 `CLUD_REMOTE_PROXY_TOKEN` and `CLUD_REMOTE_PROXY_MODEL` environment context before
 credential-based provider selection. It uses the direct Claude wire protocol,
@@ -82,7 +85,10 @@ SOLDR_PORCELAIN=1 soldr cargo build -p clud --bin clud
 CLUD_TEST_BINARY=/path/to/clud/target/debug/clud uv run pytest -q tests/e2e/native_client.py
 ```
 
-When an older installation rejects `connect`, update clud and start a new
+A build older than this command does not reject it: unknown words pass through
+to the harness, so `clud remote connect` opens Claude Code and its login. The
+installer uses the latest GitHub release, so the command works only once a release
+containing it is published. Update clud and start a new
 terminal. `clud remote connect --help` checks the executable on PATH before a
 session is created.
 

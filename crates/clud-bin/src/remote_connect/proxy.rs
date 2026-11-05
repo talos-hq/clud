@@ -93,6 +93,18 @@ impl SessionProxy {
         env.into_iter().collect()
     }
 
+    /// Mark the session's own Claude configuration as onboarded. The first-run
+    /// wizard is not needed: the session bearer is the only credential, and
+    /// this file holds none.
+    pub fn seed_agent_config(config: &Path) -> std::io::Result<()> {
+        let claude = config.join("claude");
+        std::fs::create_dir_all(&claude)?;
+        std::fs::write(
+            claude.join(".claude.json"),
+            r#"{"hasCompletedOnboarding":true}"#,
+        )
+    }
+
     pub fn runtime_environment(
         &self,
         env: Vec<(String, String)>,
@@ -104,6 +116,12 @@ impl SessionProxy {
             .ok_or("invalid remote configuration directory")?;
         Ok(self.environment(env, parent))
     }
+}
+
+/// True inside a consented remote shell, where nothing should stop to ask for
+/// local launch preferences.
+pub fn active() -> bool {
+    std::env::var_os(ORIGIN).is_some()
 }
 
 fn scrub(key: &str) -> bool {
@@ -234,6 +252,15 @@ mod tests {
         assert!(!serde_json::to_string(&env).unwrap().contains("own-"));
         assert!(Path::new(&env["CLAUDE_CONFIG_DIR"]).starts_with(config.path()));
         assert_eq!(std::fs::read_dir(config.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn seeded_config_skips_onboarding_and_holds_no_credential() {
+        let config = tempfile::tempdir().unwrap();
+        SessionProxy::seed_agent_config(config.path()).unwrap();
+        let text = std::fs::read_to_string(config.path().join("claude/.claude.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value, serde_json::json!({"hasCompletedOnboarding": true}));
     }
 
     #[test]
