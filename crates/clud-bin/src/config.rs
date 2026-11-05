@@ -5,11 +5,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use clap::CommandFactory;
 use running_process::{NativeProcess, ProcessConfig, StderrMode, StdinMode};
 use serde_json::{json, Value};
 
-use crate::args::{Args, ConfigSubcommand};
+use crate::args::{parser_command, Args, ConfigSubcommand};
 use crate::{clud_settings, loop_spec, subprocess};
 
 const REPO_SETTINGS_DIR: &str = ".clud";
@@ -17,6 +16,7 @@ const REPO_SETTINGS_FILE: &str = "settings.json";
 const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
     "backend",
     "codex",
+    "context",
     "foreground",
     "hook_health",
     "launch_setup",
@@ -44,6 +44,14 @@ fn run_inner(args: &Args, subcommand: ConfigSubcommand) -> Result<i32, String> {
     let home = clud_settings::home_dir_path().map_err(|error| error.to_string())?;
     let cwd = env::current_dir().map_err(|error| format!("current directory: {error}"))?;
     match subcommand {
+        ConfigSubcommand::Set { assignment } => {
+            let change = assignment_change(&assignment)?;
+            if args.dry_run {
+                println!("[clud] dry-run: would propose {assignment}");
+                return Ok(0);
+            }
+            Ok(clud_settings::authorized::run(&change))
+        }
         ConfigSubcommand::Show { json } => {
             let mut stdout = io::stdout().lock();
             show_to_writer(&home, &cwd, json, &mut stdout)?;
@@ -60,6 +68,31 @@ fn run_inner(args: &Args, subcommand: ConfigSubcommand) -> Result<i32, String> {
             Ok(0)
         }
     }
+}
+
+fn assignment_change(assignment: &str) -> Result<clud_settings::authorized::Mutation, String> {
+    let (key, raw) = assignment
+        .split_once('=')
+        .ok_or("expected KEY=VALUE, for example context.hermes.enabled=true")?;
+    if key.is_empty()
+        || key.split('.').any(|part| {
+            part.is_empty()
+                || !part
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
+    {
+        return Err("settings keys must be dot-separated names".into());
+    }
+    let value: Value = serde_json::from_str(raw).unwrap_or_else(|_| Value::String(raw.into()));
+    if key == "context.hermes.enabled" && !value.is_boolean() {
+        return Err("context.hermes.enabled must be true or false".into());
+    }
+    Ok(clud_settings::authorized::Mutation::Set {
+        pointer: format!("/{}", key.replace('.', "/")),
+        value: value.to_string(),
+        reason: format!("Set {key} using clud config set"),
+    })
 }
 
 pub(crate) fn show_to_writer(
@@ -229,7 +262,7 @@ fn run_editor(argv: Vec<String>) -> Result<(), String> {
 }
 
 fn print_help_and_exit_zero() -> i32 {
-    let mut command = Args::command();
+    let mut command = parser_command();
     if let Some(config) = command.find_subcommand_mut("config") {
         let _ = config.print_help();
         println!();
@@ -286,6 +319,32 @@ mod tests {
     use super::*;
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn dotted_assignment_uses_the_authorized_settings_mutation() {
+        let clud_settings::authorized::Mutation::Set { pointer, value, .. } =
+            assignment_change("context.hermes.enabled=true").unwrap()
+        else {
+            panic!("expected set")
+        };
+        assert_eq!(pointer, "/context/hermes/enabled");
+        assert_eq!(value, "true");
+        for invalid in [
+            "use-hermes",
+            "context..enabled=true",
+            "context.hermes.enabled=yes",
+            "context/hermes=true",
+            "=true",
+        ] {
+            assert!(assignment_change(invalid).is_err(), "{invalid}");
+        }
+        let clud_settings::authorized::Mutation::Set { value, .. } =
+            assignment_change("context.hermes.enabled=false").unwrap()
+        else {
+            panic!("expected set")
+        };
+        assert_eq!(value, "false");
+    }
 
     #[test]
     fn repo_settings_path_requires_git_root() {

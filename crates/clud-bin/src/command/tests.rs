@@ -130,7 +130,16 @@ fn test_prompt_with_yolo() {
     let p = plan(&["clud", "-p", "hello"]);
     assert_eq!(
         command_without_deletion_policy(&p),
-        vec!["claude", "--dangerously-skip-permissions", "-p", "hello"]
+        vec![
+            "claude",
+            "--dangerously-skip-permissions",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+            "-p",
+            "hello"
+        ]
     );
     assert_eq!(p.iterations, 1);
     assert_eq!(p.launch_mode, LaunchMode::Subprocess);
@@ -788,6 +797,10 @@ fn test_unattended_disallows_interactive_tools() {
             "claude",
             "--dangerously-skip-permissions",
             "--disallowedTools=EnterPlanMode,AskUserQuestion",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
             "-p",
             "hello"
         ]
@@ -880,7 +893,15 @@ fn test_safe_mode_no_yolo() {
     let p = plan(&["clud", "--safe", "-p", "hello"]);
     assert_eq!(
         command_without_deletion_policy(&p),
-        vec!["claude", "-p", "hello"]
+        vec![
+            "claude",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--include-partial-messages",
+            "-p",
+            "hello"
+        ]
     );
 }
 
@@ -1014,5 +1035,105 @@ fn tool_call_rules_reach_both_backends_even_without_landing() {
                 "{backend} {extra:?} is missing the tool-call rules"
             );
         }
+    }
+}
+
+#[test]
+fn print_turns_use_compact_protocol_but_explicit_native_output_is_preserved() {
+    for backend in ["--claude", "--codex"] {
+        let p = plan(&["clud", backend, "-p", "hello"]);
+        assert!(p.prompt_summary, "{:?}", p.command);
+        assert_eq!(last_arg(&p), "hello");
+        let raw = if backend == "--claude" {
+            vec!["clud", backend, "-p", "hello", "--", "--output-format=json"]
+        } else {
+            vec!["clud", backend, "-p", "hello", "--", "--json"]
+        };
+        let p = plan(&raw);
+        assert!(!p.prompt_summary, "{:?}", p.command);
+    }
+    let p = plan(&["clud", "--claude", "--pty", "-p", "hello"]);
+    assert!(!p.prompt_summary);
+    let p = plan(&["clud", "--claude"]);
+    assert!(!p.prompt_summary);
+}
+
+#[test]
+fn flag_shaped_literal_prompts_are_not_native_output_requests() {
+    for backend in ["--claude", "--codex"] {
+        let p = plan(&["clud", backend, "--prompt=--json"]);
+        assert!(p.prompt_summary, "{:?}", p.command);
+    }
+}
+
+#[test]
+fn managed_print_sessions_keep_their_native_log_protocol() {
+    for backend in ["--claude", "--codex"] {
+        for managed in [
+            "--detach",
+            "--detachable",
+            "--experimental-daemon-centralized",
+        ] {
+            let p = plan(&["clud", backend, managed, "-p", "hello"]);
+            assert!(!p.prompt_summary, "{:?}", p.command);
+            assert!(
+                !p.command
+                    .iter()
+                    .any(|arg| arg == "--json" || arg == "stream-json"),
+                "{:?}",
+                p.command
+            );
+        }
+    }
+}
+
+#[test]
+fn optional_personality_reference_is_additive_for_both_harnesses() {
+    for (backend, extra) in [
+        (
+            Backend::Claude,
+            vec!["--append-system-prompt", "existing instruction"],
+        ),
+        (
+            Backend::Codex,
+            vec!["-c", "developer_instructions=\"existing instruction\""],
+        ),
+    ] {
+        let mut args = parse(&["clud", "-p", "do the task"]);
+        args.passthrough = extra.into_iter().map(str::to_string).collect();
+        let reference = "Optional personality context: read /example/SOUL.md when useful.";
+        args.optional_context = Some(reference.into());
+        let plan = build_launch_plan(&args, backend, backend.executable_name());
+        let instructions = match backend {
+            Backend::Claude => {
+                assert!(!plan.command.iter().any(|s| s == "--system-prompt"));
+                let n = plan
+                    .command
+                    .iter()
+                    .position(|s| s == "--append-system-prompt")
+                    .unwrap();
+                plan.command[n + 1].clone()
+            }
+            Backend::Codex => {
+                assert!(!plan
+                    .command
+                    .iter()
+                    .any(|s| s.starts_with("model_instructions_file=")));
+                let value = plan
+                    .command
+                    .iter()
+                    .find_map(|s| s.strip_prefix("developer_instructions="))
+                    .unwrap();
+                format!("value={value}").parse::<toml::Table>().unwrap()["value"]
+                    .as_str()
+                    .unwrap()
+                    .into()
+            }
+            _ => unreachable!(),
+        };
+        assert_eq!(instructions.matches(reference).count(), 1);
+        assert!(instructions.contains("existing instruction"));
+        assert!(instructions.contains(&crate::deletion_rules::generated().instructions));
+        assert!(plan.command.iter().any(|s| s.contains("do the task")));
     }
 }

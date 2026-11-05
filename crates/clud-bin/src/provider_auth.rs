@@ -143,6 +143,20 @@ impl NativeSecretStore {
                 descriptor.vault_service == service && descriptor.vault_account == account
             })
             .map(|descriptor| descriptor.api_key_env);
+        Self::with_env_fallback(service, account, env_var)
+    }
+
+    /// The same store without the API-key environment-variable read
+    /// fallback: answers whether a key is actually persisted.
+    pub fn persisted_only(service: &'static str, account: &'static str) -> Self {
+        Self::with_env_fallback(service, account, None).expect("store construction is infallible")
+    }
+
+    fn with_env_fallback(
+        service: &'static str,
+        account: &'static str,
+        env_var: Option<&'static str>,
+    ) -> Result<Self, SecretStoreError> {
         // The debug-only test vault already stands in for the native one, and
         // its tests must not read the developer's real `~/.clud`.
         let file = (!test_vault_active())
@@ -312,6 +326,19 @@ pub fn has_well_formed_stored_key(
     descriptor: &'static AnthropicCompatProvider,
 ) -> Result<bool, SecretStoreError> {
     let store = NativeSecretStore::new_for(descriptor.vault_service, descriptor.vault_account)?;
+    let key = store.get()?.map(Zeroizing::new);
+    Ok(key
+        .as_deref()
+        .is_some_and(|key| stored_key_is_well_formed(key)))
+}
+
+/// Like [`has_well_formed_stored_key`], but ignores the API-key environment
+/// variable: true only when the vault (or its owner-only file) holds a key.
+pub fn has_well_formed_persisted_key(
+    descriptor: &'static AnthropicCompatProvider,
+) -> Result<bool, SecretStoreError> {
+    let store =
+        NativeSecretStore::persisted_only(descriptor.vault_service, descriptor.vault_account);
     let key = store.get()?.map(Zeroizing::new);
     Ok(key
         .as_deref()
@@ -585,6 +612,33 @@ pub fn run_for(
         &store,
         &mut stdout,
         || prompt_secret(descriptor.display_name),
+        |key| probe_provider_key(descriptor, key),
+    )
+}
+
+/// `login` for `descriptor` with a key the caller already holds (for
+/// `clud setup --yes`, the provider's API-key env var) instead of the masked
+/// prompt. The same validation, store and messages as `clud auth login`; the
+/// key itself is never printed.
+pub fn login_with_key(descriptor: &'static AnthropicCompatProvider, key: String) -> i32 {
+    let store = match NativeSecretStore::new_for(descriptor.vault_service, descriptor.vault_account)
+    {
+        Ok(store) => store,
+        Err(error) => {
+            eprintln!(
+                "{}-auth: {error}; unlock the vault or check ~/.clud/credentials",
+                descriptor.settings_id
+            );
+            return 2;
+        }
+    };
+    let mut stdout = io::stdout().lock();
+    run_with_probe(
+        descriptor,
+        &DeepseekAuthSubcommand::Login,
+        &store,
+        &mut stdout,
+        || Ok(key),
         |key| probe_provider_key(descriptor, key),
     )
 }
@@ -1164,7 +1218,7 @@ mod tests {
         );
         assert_eq!(
             String::from_utf8(output).unwrap(),
-            "{\"configured\":true,\"source\":\"native_vault\"}\n"
+            "{\"source\":\"native_vault\",\"configured\":true}\n"
         );
 
         let mut output = Vec::new();

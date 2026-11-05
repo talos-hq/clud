@@ -534,7 +534,10 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
     }
 
     // #1674: deny the same call once it has run more than N times in a row
-    // in this session. Fails open on any state error; see the module docs.
+    // in this session. #2631: the same ledger also counts a *patient* poll —
+    // one read-only query repeated across gaps — and says so once, without
+    // denying it. Fails open on any state error; see the module docs.
+    let mut poll_note: Option<String> = None;
     if event == PRE_TOOL_USE_EVENT {
         if block_bad_cmd_repeat::opts_out(&payload.command) {
             append_log(&format!(
@@ -542,15 +545,30 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
                 block_bad_cmd_repeat::ALLOW_REPEAT_TOKEN,
                 payload.tool_name
             ));
-        } else if let Some(reason) = block_bad_cmd_repeat::reason(
-            &payload.tool_name,
-            payload.tool_input.as_ref(),
-            payload.session_id.as_deref(),
-        ) {
-            append_log(&format!("REPEAT-GUARD-BLOCKED: {reason}"));
-            println!("{}", deny_json(&reason));
-            eprintln!("{reason}");
-            return 2;
+        } else {
+            match block_bad_cmd_repeat::outcome(
+                &payload.tool_name,
+                payload.tool_input.as_ref(),
+                payload.session_id.as_deref(),
+            ) {
+                block_bad_cmd_repeat::Outcome::Deny(reason) => {
+                    append_log(&format!("REPEAT-GUARD-BLOCKED: {reason}"));
+                    println!("{}", deny_json(&reason));
+                    eprintln!("{reason}");
+                    return 2;
+                }
+                block_bad_cmd_repeat::Outcome::PollDeny(reason) => {
+                    append_log(&format!("POLL-GUARD-BLOCKED: {reason}"));
+                    println!("{}", deny_json(&reason));
+                    eprintln!("{reason}");
+                    return 2;
+                }
+                block_bad_cmd_repeat::Outcome::Note(note) => {
+                    append_log("REPEAT-GUARD-POLL-NOTE");
+                    poll_note = Some(note);
+                }
+                block_bad_cmd_repeat::Outcome::Allow => {}
+            }
         }
     }
     // #2233: count shell read-hops per file, not per command. An agent that
@@ -575,6 +593,90 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: `pgrep -a` / `ps ... args` print each match's whole command line,
+    // and a gate or build process carries its heredoc in argv. Past a few
+    // unbounded dumps per session the next distinct one is refused once with
+    // the width-bounded form of the pipeline it just wrote. Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_proc_scan::opts_out(&payload.command) {
+            append_log(&format!(
+                "PROC-SCAN-GUARD-OVERRIDE: {} in command: proc-scan guard bypassed for tool_name={:?}",
+                block_bad_cmd_proc_scan::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_proc_scan::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            append_log(&format!("PROC-SCAN-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
+    // #2233: a multi-range shell read hunt (`sed -n` over several disjoint
+    // windows in one call) lands every window in the transcript, where each
+    // later request re-sends it. Past a few per session the hunt is refused
+    // once with the exact `code/slice.py` call for the ranges it named.
+    // Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_hunt::opts_out(
+            payload
+                .tool_input
+                .as_ref()
+                .and_then(|input| input.get("command"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ) {
+            append_log(&format!(
+                "READ-HUNT-GUARD-OVERRIDE: {} in command: read-hunt guard bypassed for tool_name={:?}",
+                block_bad_cmd_hunt::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_hunt::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            append_log(&format!("READ-HUNT-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
+    // #2233: one `sed -n A,Bp` range that would print more than the bounded
+    // reader's cap lands all of it in the transcript, where every later request
+    // re-sends it. Past a few per session the next distinct oversized read is
+    // refused once with the exact `code/slice.py` call for the range it named.
+    // Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_slice::opts_out(
+            payload
+                .tool_input
+                .as_ref()
+                .and_then(|input| input.get("command"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ) {
+            append_log(&format!(
+                "READ-SLICE-GUARD-OVERRIDE: {} in command: read-slice guard bypassed for tool_name={:?}",
+                block_bad_cmd_slice::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_slice::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            append_log(&format!("READ-SLICE-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
     // #2233: a Read of a file whose bytes are unchanged since the same read in
     // this session returns nothing new, and every later request pays for it
     // again. Refused with the bounded alternatives named; fails open.
@@ -588,6 +690,49 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             println!("{}", deny_json(&reason));
             eprintln!("{reason}");
             return 2;
+        }
+    }
+    // #2233: an image read is retained forever, so N views of one screenshot
+    // path cost N frames on every later request. Past half the limit the call
+    // gets an advisory note; past the limit one refusal, then the retry runs.
+    let mut image_note: Option<String> = None;
+    if event == PRE_TOOL_USE_EVENT {
+        match block_bad_cmd_imgview::outcome(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            block_bad_cmd_imgview::Outcome::Deny(reason) => {
+                append_log(&format!("IMAGE-VIEW-BLOCKED: {reason}"));
+                println!("{}", deny_json(&reason));
+                eprintln!("{reason}");
+                return 2;
+            }
+            block_bad_cmd_imgview::Outcome::Note(note) => image_note = Some(note),
+            block_bad_cmd_imgview::Outcome::Allow => {}
+        }
+    }
+
+    // #2233: `gh run view --log[-failed]` keeps a whole job log in the
+    // transcript, and every later request re-sends it. Past the limit the next
+    // distinct run's raw log is refused once with the bundled bounded reader
+    // (`github/ci_failure_report.py`: <=8 KiB summary + a private artifact).
+    let mut ci_log_note: Option<String> = None;
+    if event == PRE_TOOL_USE_EVENT {
+        match block_bad_cmd_cilog::outcome(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            block_bad_cmd_cilog::Outcome::Deny(reason) => {
+                append_log(&format!("CI-LOG-GUARD-BLOCKED: {reason}"));
+                println!("{}", deny_json(&reason));
+                eprintln!("{reason}");
+                return 2;
+            }
+            block_bad_cmd_cilog::Outcome::Note(note) => ci_log_note = Some(note),
+            block_bad_cmd_cilog::Outcome::Allow => {}
         }
     }
 
@@ -1080,8 +1225,11 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
-    if let Some(note) = verify_note {
-        append_log("allowed with verify-ratio note");
+    if let Some(note) = merge_notes(
+        merge_notes(merge_notes(verify_note, image_note), ci_log_note),
+        poll_note,
+    ) {
+        append_log("allowed with an advisory note");
         let output = block_bad_cmd_verify_ratio::context_json(&note);
         println!("{}", with_hook_notice(output, event, &payload));
         return 0;
@@ -2015,6 +2163,14 @@ pub fn decision_from_payload(
     match forbidden_reason(&payload.command, Some(&payload.cwd), bad_commands) {
         Some(reason) => Decision::Deny { reason },
         None => Decision::Allow,
+    }
+}
+
+/// Join the advisory notes that ride one PreToolUse allow (#1988, #2233).
+fn merge_notes(first: Option<String>, second: Option<String>) -> Option<String> {
+    match (first, second) {
+        (Some(a), Some(b)) => Some(format!("{a}\n{b}")),
+        (a, b) => a.or(b),
     }
 }
 
@@ -3954,8 +4110,20 @@ mod block_bad_cmd_repeat;
 
 #[path = "block_bad_cmd_hop.rs"]
 mod block_bad_cmd_hop;
+#[path = "block_bad_cmd_hunt.rs"]
+mod block_bad_cmd_hunt;
 #[path = "block_bad_cmd_reread.rs"]
 mod block_bad_cmd_reread;
+#[path = "block_bad_cmd_slice.rs"]
+mod block_bad_cmd_slice;
+
+#[path = "block_bad_cmd_imgview.rs"]
+mod block_bad_cmd_imgview;
+#[path = "block_bad_cmd_proc_scan.rs"]
+mod block_bad_cmd_proc_scan;
+
+#[path = "block_bad_cmd_cilog.rs"]
+mod block_bad_cmd_cilog;
 
 #[path = "block_bad_cmd_verify_ratio.rs"]
 mod block_bad_cmd_verify_ratio;

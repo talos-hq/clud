@@ -32,6 +32,86 @@ pub fn make_dir_permissions_writable(permissions: &mut Permissions) {
 /// Files keep their mode bits on Unix; only directories are opened up.
 pub fn make_file_writable(_path: &Path, _permissions: Permissions) {}
 
+/// Retry an idle managed leaf's removal through caller-owned directories.
+/// Only its parent directory gains owner permissions; shared file inodes and
+/// sibling trees are untouched. Every descendant directory is opened without
+/// following links, and unlink uses the same parent handle as the chmod.
+pub fn remove_owned_leaf_writable(root: &Path, path: &Path) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::Component;
+
+    let denied = || {
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "scratch is not caller-owned",
+        )
+    };
+    let relative = path.strip_prefix(root).map_err(|_| denied())?;
+    let parent = relative.parent().ok_or_else(denied)?;
+    let name = relative.file_name().ok_or_else(denied)?;
+    let flags = libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+    let mut directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(flags)
+        .open(root)?;
+    if file_owner(&directory.metadata()?) != effective_uid() {
+        return Err(denied());
+    }
+    for component in parent.components() {
+        let Component::Normal(component) = component else {
+            return Err(denied());
+        };
+        let component = CString::new(component.as_bytes()).map_err(|_| denied())?;
+        // SAFETY: the live directory fd and NUL-terminated component outlive
+        // openat; O_NOFOLLOW and O_DIRECTORY refuse links and non-directories.
+        let fd = unsafe {
+            libc::openat(
+                directory.as_raw_fd(),
+                component.as_ptr(),
+                flags | libc::O_RDONLY,
+            )
+        };
+        if fd < 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        // SAFETY: openat returned a newly owned descriptor on success.
+        directory = unsafe { std::fs::File::from_raw_fd(fd) };
+        if file_owner(&directory.metadata()?) != effective_uid() {
+            return Err(denied());
+        }
+    }
+    let name = CString::new(name.as_bytes()).map_err(|_| denied())?;
+    // SAFETY: an all-zero stat is valid storage for fstatat's output.
+    let mut leaf: libc::stat = unsafe { std::mem::zeroed() };
+    // SAFETY: the directory fd, NUL-terminated name and writable stat storage
+    // are live; AT_SYMLINK_NOFOLLOW inspects a link itself, never its target.
+    if unsafe {
+        libc::fstatat(
+            directory.as_raw_fd(),
+            name.as_ptr(),
+            &mut leaf,
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    } != 0
+    {
+        return Err(std::io::Error::last_os_error());
+    }
+    if Some(leaf.st_uid) != effective_uid() {
+        return Err(denied());
+    }
+    let mut permissions = directory.metadata()?.permissions();
+    make_dir_permissions_writable(&mut permissions);
+    directory.set_permissions(permissions)?;
+    // SAFETY: the live directory fd and NUL-terminated leaf name identify an
+    // entry in this same owned directory; flags=0 never follows the leaf link.
+    if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(())
+}
+
 /// Recreate the symlink `source` (pointing at `link`) at `dest`.
 pub fn copy_symlink(_source: &Path, link: PathBuf, dest: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(link, dest)
@@ -136,6 +216,64 @@ mod tests {
     use crate::rm_tool::tests::{run_ledger, shm_roots, shm_world, temp_world, world};
     use crate::rm_tool::{copy_nofollow, Kind};
     use std::path::Path;
+
+    #[test]
+    fn readonly_leaf_retry_rejects_a_symlinked_parent_without_changing_its_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("managed");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("keep"), b"precious").unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        super::seal_dir_for_test(&outside);
+        let result = super::remove_owned_leaf_writable(&root, &root.join("link/keep"));
+        let traversal = super::remove_owned_leaf_writable(&root, &root.join("../outside/keep"));
+        let unchanged = std::fs::metadata(&outside)
+            .unwrap()
+            .permissions()
+            .readonly();
+        crate::platform::gc_test_fs::set_mode(&outside, 0o700).unwrap();
+        assert!(result.is_err());
+        assert!(traversal.is_err());
+        assert!(unchanged);
+        assert_eq!(std::fs::read(outside.join("keep")).unwrap(), b"precious");
+    }
+
+    #[test]
+    fn readonly_leaf_retry_refuses_a_root_owned_by_someone_else() {
+        let root = Path::new("/");
+        if super::file_owner(&std::fs::metadata(root).unwrap()) == super::effective_uid() {
+            return;
+        }
+        let result = super::remove_owned_leaf_writable(root, &root.join("unused-gc-leaf"));
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::PermissionDenied
+        );
+    }
+
+    #[test]
+    fn readonly_leaf_retry_unlinks_a_final_symlink_without_chmodding_the_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("managed");
+        std::fs::create_dir_all(&root).unwrap();
+        let outside = tmp.path().join("protected");
+        std::fs::write(&outside, b"precious").unwrap();
+        crate::platform::gc_test_fs::set_mode(&outside, 0o444).unwrap();
+        let link = root.join("link");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        super::seal_dir_for_test(&root);
+        let result = super::remove_owned_leaf_writable(&root, &link);
+        crate::platform::gc_test_fs::set_mode(&root, 0o700).unwrap();
+        assert!(result.is_ok(), "{result:?}");
+        assert!(std::fs::symlink_metadata(link).is_err());
+        assert!(std::fs::metadata(&outside)
+            .unwrap()
+            .permissions()
+            .readonly());
+        assert_eq!(std::fs::read(outside).unwrap(), b"precious");
+    }
 
     #[test]
     fn a_symlinked_parent_that_leaves_the_roots_is_refused_and_a_final_link_is_removed_as_a_link() {

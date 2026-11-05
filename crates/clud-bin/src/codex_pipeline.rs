@@ -909,7 +909,7 @@ fn history_aware_input(
         .collect::<Vec<_>>();
     append_pending_input(&mut turn_input, &recovered);
     append_pending_input(&mut turn_input, pending_input);
-    let mut upstream_input = history
+    let prior = history
         .iter()
         .filter(|item| !is_developer_item(item))
         .cloned()
@@ -918,8 +918,15 @@ fn history_aware_input(
     // what `record_successful_turn` persists. Repairing only what goes
     // upstream would send a valid request and then store the orphan again,
     // so the fix would work exactly once.
-    repair_orphaned_outputs(&mut turn_input, &upstream_input);
-    append_pending_input(&mut upstream_input, &turn_input);
+    repair_orphaned_outputs(&mut turn_input, &prior);
+    // #2551: the current instruction leads, as it did on the first turn. A
+    // provider prompt cache matches prefixes; placing it after the history
+    // moved it every turn and re-billed the whole request.
+    let (developer, rest): (Vec<_>, Vec<_>) =
+        turn_input.iter().cloned().partition(is_developer_item);
+    let mut upstream_input = developer;
+    append_pending_input(&mut upstream_input, &prior);
+    append_pending_input(&mut upstream_input, &rest);
     // And sweep the assembled input, which also covers an orphan that is
     // already resident in `history`. Without this the tightened validator
     // would simply move the wedge from upstream to a local 400 — the same
@@ -2152,6 +2159,38 @@ data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"outpu
         assert_eq!(error, PipelineError::Upstream(UpstreamError::Cancelled));
     }
 
+    /// #2551: with an unchanged instruction, each request's input must start
+    /// with the previous request's input, or the provider re-bills it all.
+    #[test]
+    fn successive_turns_extend_the_previous_request_as_a_prefix() {
+        let msg = |role: &str, text: &str| json!({"type": "message", "role": role, "content": [{"type": "input_text", "text": text}]});
+        let dev = msg("developer", "system prompt");
+        let first = vec![dev.clone(), msg("user", "u1")];
+        let (request1, stored1, _) = history_aware_input(&[], &first, &first[1..]);
+        let mut history = stored1;
+        history.push(msg("assistant", "a1"));
+
+        let second = vec![
+            dev.clone(),
+            msg("user", "u1"),
+            msg("assistant", "a1"),
+            msg("user", "u2"),
+        ];
+        let (request2, _, _) = history_aware_input(&history, &second, &second[3..]);
+
+        assert!(
+            request2.starts_with(&request1),
+            "turn 2 must extend turn 1 as a prefix:\n{request1:#?}\n{request2:#?}"
+        );
+        assert_eq!(
+            request2
+                .iter()
+                .filter(|item| is_developer_item(item))
+                .count(),
+            1
+        );
+    }
+
     #[test]
     fn continuation_replaces_the_prior_developer_instruction() {
         let history = vec![
@@ -2172,9 +2211,12 @@ data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"outpu
         assert_eq!(recovered, 0);
         assert_eq!(turn.len(), 2);
         assert_eq!(turn[0]["content"][0]["text"], "current instruction");
+        // The instruction leads the request, as on the first turn: a
+        // provider prompt cache matches prefixes, so moving it behind the
+        // history would miss on every continuation turn (#2551).
         assert_eq!(upstream.len(), 3);
-        assert_eq!(upstream[0]["content"][0]["text"], "earlier user");
-        assert_eq!(upstream[1]["content"][0]["text"], "current instruction");
+        assert_eq!(upstream[0]["content"][0]["text"], "current instruction");
+        assert_eq!(upstream[1]["content"][0]["text"], "earlier user");
         assert_eq!(upstream[2]["content"][0]["text"], "current user");
         assert!(
             !serde_json::to_string(&upstream)

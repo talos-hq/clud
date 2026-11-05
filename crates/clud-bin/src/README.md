@@ -11,6 +11,9 @@ The per-launch `--unsafe` choice crosses argv, `LaunchPlan`, child environment,
 command hooks, and the `rm` alias. See
 [unsafe-mode.md](../../../docs/architecture/unsafe-mode.md).
 
+`opencode_harness.rs` owns OpenCode argv translation and child-local provider
+configuration; see [OpenCode](../../../docs/architecture/opencode.md).
+
 Entry point and source tree for the `clud-bin` Rust binary. The binary launches
 a backend agent (`claude` or `codex`) in YOLO mode, optionally through a PTY,
 with first-class support for loop iterations, drag-and-drop, voice input, and a
@@ -137,6 +140,10 @@ Entry and orchestration:
   see `docs/architecture/provider-failover.md`.
 - `serve_gateway.rs` - foreground API-server startup and credential setup; see [standalone-gateway.md](../../../docs/architecture/standalone-gateway.md).
 - `serve_transport.rs` - tracked standalone upstream TLS sockets and shutdown cancellation.
+- `tool_result_cap.rs` — recoverable, line-aligned shell text budgets in the
+  Codex translator; `tool_result_cap_translate_tests.rs` covers normal/pending
+  translation and opt-in captured-output replay. Configuration and coverage:
+  [codex-via-claude.md](../../../docs/architecture/codex-via-claude.md#shell-tool-result-budget).
 - `codex_model.rs` - #752's Codex compatibility view over the shared provider
   catalog: the `sol`/`terra`/`luna` aliases and per-model defaults, the
   `<model>@<effort>` parser, and the provider-neutral `Effort` ladder
@@ -274,6 +281,14 @@ CLI surface and backend resolution:
 
 - `args.rs` - `clap` `Args` and `Command` definitions; passthrough for unknown
   flags; subcommand definitions for `loop`, `up`, `rebase`, `fix`, `do`, `gc`, etc.
+- `claude_temp_home_install.rs` - fallback for Claude Code's native installer
+  when the home volume is too small or not writable (a live USB such as the
+  Arch ISO): `backend_bootstrap.rs` reruns the installer once with `HOME` in
+  the RAM-backed temp dir and links the binary to `~/.local/bin/claude`;
+  `discover` finds such an install when that link is missing.
+- `temp_home_logs.rs` - low-space mode: when Claude Code runs from a temp
+  install home, redirects clud's and Claude Code's log dirs there and purges
+  the oldest files, on write events only, once they pass 64 MiB.
 - `backend.rs` - concrete `Backend`, independent `ModelProvider` /
   `HarnessSelection` resolution, provider `RoutingMode`, process `LaunchMode`,
   PATH lookup, and backend-path resolution. See
@@ -363,6 +378,9 @@ Console and terminal:
   #1702).
 
 Loop subsystem (`clud loop`):
+
+- `loop_console.rs` - scrollable headless loop dashboard with incremental rendering,
+  bottom message actions and guarded restart confirmation; see [loop subsystem](../../../docs/architecture/loop-subsystem.md#interactive-loop-dashboard).
 
 - `loop_spec.rs` - task-spec resolver: classifies the positional (GH URL,
   `#42`, file, literal), fetches GH issue/PR bodies via `gh` (curl fallback),
@@ -552,7 +570,12 @@ which test tier a change belongs in — lives in
   line could never deliver. `merge_hook_settings` concatenates per event rather
   than replacing, mirroring how the harness layers hooks, so clud's
   registration cannot displace the bridge's lifecycle hooks or a user's own
-  `--settings` document. Codex receives its PreToolUse command hook and trust
+  `--settings` document. `consolidate_scanner_hooks` folds plain managed
+  registrations into one invocation per event before launch; see
+  [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md).
+  `scanner_hook_migration.rs` consolidates existing plain scanner registrations
+  across normal Claude settings and lets the launch defer to inherited coverage.
+  Codex receives its PreToolUse command hook and trust
   state through launch `-c` values, without writing to user configuration.
   Phase 5 adds the `CwdChanged`
   backstop (`CWD_CHANGED_EVENT`, DD-064): `claude_settings_fragment` inserts
@@ -845,6 +868,7 @@ Diagnostics and misc:
 Quick lookup, which file owns a given subcommand:
 
 - `clud doctor` -> `doctor::run`.
+- `clud setup` -> `setup_command::run` ([setup-command.md](../../../docs/architecture/setup-command.md)).
 - `clud loop ...` -> `command::build_launch_plan_for_target` (resolved
   provider/harness, prompt, and markers) +
   `loop_spec` (task resolution) + `loop_artifacts` (artifact files) +
@@ -965,6 +989,8 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   interpretation and the shim.
 - `block_bad_cmd_rm_identity.rs` — effective-PATH byte identity and source
   resolution checks, shared by both hook entrypoints.
+- `optional_context.rs` — opt-in external personality references prepared for Claude and Codex; see [optional context](../../../docs/architecture/optional-context.md).
+- `setup_command.rs` — `clud setup` (#2219): alias install, shared provider setup (`self_install/setup.rs`), optional shell activation; `setup_command/hermes.rs` owns offer-only credential imports and reference-only personality resolution. See [setup-command.md](../../../docs/architecture/setup-command.md) and [optional context](../../../docs/architecture/optional-context.md).
 - `doctor.rs` — `clud doctor [--json]` (#1954): reports stale, missing and retired aliases in clud's interpreter, session and helper alias dirs (`inspect_dir`), lists non-alias files there without deleting them, flags a foreign first `clud-cmd-scan` on PATH, and computes scanner coverage of the launch fragment and of each hook config on disk (`coverage_report`); exit 1 on an alias finding; tests in `doctor_tests.rs`. See [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md#hook-health-clud-doctor).
 - `hook_handshake.rs` — the hook build handshake (#1954): startup exports the launcher path and build fingerprint; `multicall::run_cmd_scan` relays a skewed `clud-cmd-scan` to `<launcher> __cmd-scan` and logs `HOOK-SKEW`; decision is `decide` over injected `Facts`; tests in `hook_handshake_tests.rs`; see [launch-setup.md](../../../docs/architecture/launch-setup.md).
 - `multicall.rs` — argv[0] dispatch, the first thing `main` does (#1551,
@@ -992,3 +1018,7 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   `shim_main/dispatch.rs` is the shim personality's single entry path: session
   checks, target resolution and fail-open passthrough (#1546); see
   [shim-dispatch.md](../../../docs/architecture/shim-dispatch.md).
+
+- `prompt_output.rs` / `prompt_patch.rs` — compact foreground Claude/Codex print activity and exact per-tool line accounting; see [prompt-output.md](../../../docs/architecture/prompt-output.md).
+
+- [`remote_connect/`](remote_connect/README.md): native `remote connect` operator assistance; see [remote assistance](../../../docs/architecture/remote-assistance.md).

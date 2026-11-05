@@ -1121,6 +1121,7 @@ fn handle_connection(
         log,
         fallback_root,
         cache_health,
+        sessionless_standalone: standalone_root.is_some(),
     };
     route_request(&mut stream, &connection, parsed, &conversation_key);
 }
@@ -1133,6 +1134,22 @@ struct ConnectionContext<'a> {
     log: Option<&'a SharedBridgeLog>,
     fallback_root: &'a str,
     cache_health: &'a SharedCacheHealth,
+    /// A standalone request without a session header (#2554).
+    sessionless_standalone: bool,
+}
+
+impl ConnectionContext<'_> {
+    /// The prefix-stable key a sessionless standalone turn uses instead of
+    /// its per-request one (#2554); `None` keeps the header-derived key.
+    fn turn_key(
+        &self,
+        request: &serde_json::Value,
+        parsed: &ParsedRequest,
+    ) -> Option<ConversationKey> {
+        self.sessionless_standalone.then(|| {
+            sessionless_conversation_key(request, parsed.agent_id.as_deref(), self.fallback_root)
+        })
+    }
 }
 
 /// Read the request headers and admit the request: size and credential
@@ -1195,6 +1212,7 @@ fn admit_request(
 /// Dispatch one admitted request to its route handler.
 fn route_request(
     stream: &mut TcpStream,
+
     connection: &ConnectionContext<'_>,
     mut parsed: ParsedRequest,
     conversation_key: &ConversationKey,
@@ -1208,60 +1226,24 @@ fn route_request(
         .path
         .split('?')
         .next()
-        .unwrap_or(parsed.path.as_str())
+        .unwrap_or_default()
         .to_string();
     let method = parsed.method.clone();
     match (method.as_str(), route.as_str()) {
-        ("POST", "/_clud/context/compact") => {
-            let control = ContextControl::Compact;
-            if let Some(key) =
-                read_context_key(stream, connection, &mut parsed, control, conversation_key)
-            {
-                serve_context_compact(
-                    stream,
-                    config,
-                    connection.shutdown,
-                    connection.conversations,
-                    log,
-                    key,
-                    connection.cache_health,
-                );
-            }
+        (
+            "POST",
+            "/_clud/context/compact" | "/_clud/context/clear" | "/_clud/context/compact-finished",
+        ) => {
+            route_context_control(stream, connection, &mut parsed, conversation_key, &route);
         }
-        ("POST", "/_clud/context/clear") => {
-            let control = ContextControl::Clear;
-            if let Some(key) =
-                read_context_key(stream, connection, &mut parsed, control, conversation_key)
-            {
-                serve_context_clear(
-                    stream,
-                    connection.conversations,
-                    key,
-                    connection.cache_health,
-                    &config.status_usage,
-                );
-            }
+        ("GET", "/v1/models") => serve_catalog(stream, config, log),
+        ("GET", path) if path.starts_with(MODELS_DETAIL_PREFIX) => {
+            serve_model_detail(stream, config, log, &path[MODELS_DETAIL_PREFIX.len()..]);
         }
-        ("POST", "/_clud/context/compact-finished") => {
-            let control = ContextControl::CompactFinished;
-            if let Some(key) =
-                read_context_key(stream, connection, &mut parsed, control, conversation_key)
-            {
-                serve_context_compact_finished(stream, connection.conversations, log, key);
-            }
-        }
-        ("GET", "/v1/models") => match &config.gateway_mode {
-            GatewayMode::Codex => serve_codex_catalog(stream, config, log),
-            GatewayMode::Unified(_) => serve_unified_catalog(stream, config, log),
-        },
-        ("GET", "/_clud/route/status") => match &config.gateway_mode {
-            GatewayMode::Unified(unified) => serve_route_status(stream, unified),
-            GatewayMode::Codex => {
-                record_rejection(log, 404, "route_status_unsupported");
-                let _ = write_error(stream, 404);
-            }
-        },
+        ("GET", "/_clud/route/status") => serve_route_status_or_404(stream, config, log),
         ("POST", "/_clud/route/clear") => route_clear(stream, connection, &mut parsed),
+        ("GET", "/healthz") => serve_health(stream, false),
+        ("HEAD", "/healthz") => serve_health(stream, true),
         ("HEAD", "/v1/messages") => {
             let _ = write_response(stream, 200, "application/json", b"", true);
         }
@@ -1274,11 +1256,45 @@ fn route_request(
         ("POST", "/v1/chat/completions") => {
             route_chat_completions(stream, connection, &mut parsed, conversation_key);
         }
+        ("POST", "/v1/responses") => {
+            route_responses(stream, connection, &mut parsed, conversation_key);
+        }
+        ("POST", "/v1/responses/compact") => {
+            route_responses_compact(stream, connection, &mut parsed, conversation_key);
+        }
+        ("POST", "/v1/completions") => {
+            route_completions(stream, connection, &mut parsed, conversation_key);
+        }
+        // Gemini names its verb in the path, so this is a prefix route rather
+        // than a literal one. A path under the prefix with an unknown verb is
+        // still a Gemini client talking to us: answer it in Gemini's shape
+        // instead of dropping it into the generic 404.
+        ("POST", path) if path.starts_with(GEMINI_ROUTE_PREFIX) => route_generate_content_path(
+            stream,
+            connection,
+            &mut parsed,
+            path,
+            conversation_key,
+            log,
+        ),
+        // Gemini's discovery doors are GETs on the same prefix. A client lists
+        // models before it calls one, so an unlisted surface leaves the
+        // generation door unreachable for a stock Gemini SDK.
+        ("GET", "/v1beta/models") => serve_gemini_models(stream, config, log),
+        ("GET", path) if path.starts_with(GEMINI_ROUTE_PREFIX) => {
+            serve_gemini_model_detail(stream, config, path, log);
+        }
         ("POST", "/v1/images/generations") => {
             route_images_generations(stream, connection, &mut parsed, conversation_key);
         }
         ("POST", "/v1/images/edits") => {
             route_images_edits(stream, connection, &mut parsed, conversation_key);
+        }
+        // The Codex CLI's own base (`chatgpt_base_url`) exposes the same search
+        // door under `/backend-api/codex`; upstream registers both aliases
+        // (`internal/api/server_routes.go:90` and `:127`).
+        ("POST", "/v1/alpha/search" | "/backend-api/codex/alpha/search") => {
+            route_alpha_search(stream, connection, &mut parsed, conversation_key);
         }
         _ => {
             if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
@@ -1288,6 +1304,73 @@ fn route_request(
                 );
             }
             record_rejection(log, 404, "unrouted_request");
+            let _ = write_error(stream, 404);
+        }
+    }
+}
+
+/// Answer one of the `/_clud/context/*` control doors.
+///
+/// The three doors share their read/authorise step and differ only in which
+/// mutation they apply, so the dispatch stays one arm and the branch lives here
+/// -- `route_request` is already at the line cap.
+fn route_context_control(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+    route: &str,
+) {
+    let (config, log) = (connection.config, connection.log);
+    let control = match route {
+        "/_clud/context/compact" => ContextControl::Compact,
+        "/_clud/context/clear" => ContextControl::Clear,
+        _ => ContextControl::CompactFinished,
+    };
+    let Some(key) = read_context_key(stream, connection, parsed, control, conversation_key) else {
+        return;
+    };
+    match control {
+        ContextControl::Compact => serve_context_compact(
+            stream,
+            config,
+            connection.shutdown,
+            connection.conversations,
+            log,
+            key,
+            connection.cache_health,
+        ),
+        ContextControl::Clear => serve_context_clear(
+            stream,
+            connection.conversations,
+            key,
+            connection.cache_health,
+            &config.status_usage,
+        ),
+        ContextControl::CompactFinished => {
+            serve_context_compact_finished(stream, connection.conversations, log, key);
+        }
+    }
+}
+
+/// Answer `GET /v1/models` in whichever catalog shape the launch serves.
+fn serve_catalog(stream: &mut TcpStream, config: &BridgeConfig, log: Option<&SharedBridgeLog>) {
+    match &config.gateway_mode {
+        GatewayMode::Codex => serve_codex_catalog(stream, config, log),
+        GatewayMode::Unified(_) => serve_unified_catalog(stream, config, log),
+    }
+}
+
+/// Answer `GET /_clud/route/status`; a Codex-only launch has no route plan.
+fn serve_route_status_or_404(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+) {
+    match &config.gateway_mode {
+        GatewayMode::Unified(unified) => serve_route_status(stream, unified),
+        GatewayMode::Codex => {
+            record_rejection(log, 404, "route_status_unsupported");
             let _ = write_error(stream, 404);
         }
     }
@@ -1416,7 +1499,7 @@ fn route_messages(
     let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
         return;
     };
-    let json: serde_json::Value = match serde_json::from_slice(&body) {
+    let mut json: serde_json::Value = match serde_json::from_slice(&body) {
         Ok(json) => json,
         Err(_) => {
             record_rejection(log, 400, "invalid_json");
@@ -1424,7 +1507,30 @@ fn route_messages(
             return;
         }
     };
+    // CLIProxyAPI's `requests.payload` parity: rewrite the body before a route
+    // is chosen, so the rules see exactly what the caller sent. A launch with no
+    // `CLUD_PAYLOAD_RULES` gets its bytes back untouched.
+    let requested_model = json
+        .get("model")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    let (body, rules_outcome) = crate::payload_rules::rewrite_body_with_source(
+        &requested_model,
+        "claude",
+        "claude",
+        &parsed.headers,
+        body,
+        &mut json,
+    );
+    // A rule that cannot be applied is an operator mistake, not a client one:
+    // the request keeps going with every change that did land.
+    for problem in &rules_outcome.problems {
+        eprintln!("payload rules: {problem}");
+    }
     record_request_effort(&config.status_usage, &json, parsed.agent_id.is_some());
+    let derived = connection.turn_key(&json, parsed);
+    let conversation_key = derived.as_ref().unwrap_or(conversation_key);
     let streaming = json.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
     if matches!(config.gateway_mode, GatewayMode::Unified(_)) {
         serve_unified_messages(
@@ -1489,6 +1595,8 @@ fn route_chat_completions(
         return;
     };
     let model = model.to_string();
+    let derived = connection.turn_key(&request, parsed);
+    let conversation_key = derived.as_ref().unwrap_or(conversation_key);
     let streaming = request.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
     if !matches!(config.gateway_mode, GatewayMode::Unified(_)) {
         record_rejection(log, 501, "chat_completions_unsupported");
@@ -1508,6 +1616,27 @@ fn route_chat_completions(
         }
     };
     let translated = serde_json::to_vec(&translated).unwrap_or_default();
+    // CLIProxyAPI applies payload rules in the executor, on the body it is
+    // about to forward, with `protocol` = the target protocol and
+    // `fromProtocol` = the shape the client spoke
+    // (`payload_helpers.go`: `ApplyPayloadConfigWithRequest`). Do the same on
+    // the translated Messages body so a rule can target chat callers only
+    // (`from-protocol: openai`) instead of every Messages request.
+    let (translated, rules_outcome) = match serde_json::from_slice::<serde_json::Value>(&translated)
+    {
+        Ok(mut translated_json) => crate::payload_rules::rewrite_body_with_source(
+            &model,
+            "claude",
+            "openai",
+            &parsed.headers,
+            translated,
+            &mut translated_json,
+        ),
+        Err(_) => (translated, crate::payload_rules::Outcome::default()),
+    };
+    for problem in &rules_outcome.problems {
+        eprintln!("payload rules: {problem}");
+    }
     serve_unified_messages(
         stream,
         config,
@@ -1519,8 +1648,114 @@ fn route_chat_completions(
         &parsed.headers,
         log,
         connection.cache_health,
-        Some(ChatTranslation { model: &model }),
+        Some(ChatTranslation {
+            model: &model,
+            dialect: ClientDialect::OpenAi,
+        }),
     );
+}
+
+/// One Gemini `generateContent` call, as named by its URL.
+///
+/// Gemini puts the verb in the path (`/v1beta/models/<model>:generateContent`),
+/// not in the body, so the route has to read it before the body is parsed. The
+/// model is whatever the caller named -- clud resolves it exactly as it would a
+/// Messages `model` (catalog id, `@effort`, `(budget)` suffix), so a client is
+/// expected to name a clud-routable model rather than a Google one: clud has no
+/// Gemini provider, only Gemini-shaped framing over its own ladder.
+#[derive(Debug, PartialEq, Eq)]
+struct GeminiCall<'a> {
+    model: &'a str,
+    stream: bool,
+}
+
+const GEMINI_ROUTE_PREFIX: &str = "/v1beta/models/";
+
+fn parse_generate_content_route(path: &str) -> Option<GeminiCall<'_>> {
+    let rest = path.strip_prefix(GEMINI_ROUTE_PREFIX)?;
+    let (model, verb) = rest.rsplit_once(':')?;
+    // A Gemini client echoes the name it read from `GET /v1beta/models`,
+    // i.e. `models/<id>`. Discovery and generation must agree on the spelling,
+    // so the prefix is accepted here rather than advertised without being
+    // servable.
+    let model = model.trim();
+    let model = model.strip_prefix("models/").unwrap_or(model);
+    if model.is_empty() {
+        return None;
+    }
+    let stream = match verb {
+        "generateContent" => false,
+        "streamGenerateContent" => true,
+        _ => return None,
+    };
+    Some(GeminiCall { model, stream })
+}
+
+/// `POST /v1beta/models/<model>:generateContent` — a Gemini-shaped turn.
+///
+/// CLIProxyAPI serves this path from `internal/api/server_routes.go` and
+/// translates it in `internal/translator/claude/gemini/`. clud has no Gemini
+/// provider, so the same door is opened over clud's existing ladder: the body
+/// becomes a Messages request (`gemini_client_ingress`), the unified route
+/// serves it, and the answer is rendered back as a `GenerateContentResponse`.
+/// Additive only: no route in the ladder learns a second protocol and the
+/// launch-scoped gateway contract is untouched.
+fn route_generate_content(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    call: &GeminiCall<'_>,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    config.turn_requests.fetch_add(1, Ordering::Release);
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    if !matches!(config.gateway_mode, GatewayMode::Unified(_)) {
+        record_rejection(log, 501, "generate_content_unsupported");
+        refuse_gemini(
+            stream,
+            501,
+            "POST /v1beta/models/<model>:generateContent needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    }
+    let translated = match crate::gemini_client_ingress::translate_generate_content_request(
+        call.model,
+        call.stream,
+        &body,
+    ) {
+        Ok(translated) => translated,
+        Err(error) => {
+            record_rejection(log, 400, "untranslatable_request");
+            refuse_gemini(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let translated = serde_json::to_vec(&translated).unwrap_or_default();
+    serve_unified_messages(
+        stream,
+        config,
+        connection.shutdown,
+        connection.conversations,
+        &translated,
+        call.stream,
+        conversation_key,
+        &parsed.headers,
+        log,
+        connection.cache_health,
+        Some(ChatTranslation {
+            model: call.model,
+            dialect: ClientDialect::Gemini,
+        }),
+    );
+}
+
+/// Answer a refused `generateContent` turn in the shape its client speaks.
+fn refuse_gemini(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::gemini_client_ingress::render_generate_content_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
 /// Answer a refused `/v1/chat/completions` turn in the shape its client speaks.
@@ -1529,6 +1764,398 @@ fn refuse_chat(stream: &mut TcpStream, status: u16, message: &str) {
     // not ask for, and cannot parse, an Anthropic one.
     let envelope = crate::openai_ingress::render_chat_error(status, message);
     let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
+/// `POST /v1/responses`: an OpenAI Responses-shaped turn.
+///
+/// Upstream capability: CLIProxyAPI serves `POST /v1/responses`
+/// (`internal/api/server_routes.go:87`) over a subscription account, translating
+/// the item-based body into a Claude Messages request and the answer back into a
+/// `response` object or `response.*` event stream. clud's relay, ladder, failover
+/// and credentials all speak Messages, so the door translates in
+/// (`responses_ingress::translate_responses_request`) and out
+/// (`responses_ingress::render_response_body` / `render_response_stream`) and
+/// reuses the same relay as `/v1/messages` and `/v1/chat/completions`. Nothing in
+/// the ladder learns a second protocol and the launch-scoped contract is
+/// untouched; `clud serve` inherits the door through the shared route table.
+///
+/// The websocket verb upstream also serves at `/v1/responses` is deliberately not
+/// ported: clud's bridge is plain HTTP/1.1 and a websocket transport is a
+/// different lifecycle.
+fn route_responses(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    config.turn_requests.fetch_add(1, Ordering::Release);
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    let request: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => {
+            record_rejection(log, 400, "invalid_json");
+            refuse_responses(stream, 400, "request body is not valid JSON");
+            return;
+        }
+    };
+    let Some(model) = request.get("model").and_then(serde_json::Value::as_str) else {
+        record_rejection(log, 400, "missing_model");
+        refuse_responses(stream, 400, "request is missing a model");
+        return;
+    };
+    let model = model.to_string();
+    let streaming = request.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
+    if !matches!(config.gateway_mode, GatewayMode::Unified(_)) {
+        record_rejection(log, 501, "responses_unsupported");
+        refuse_responses(
+            stream,
+            501,
+            "POST /v1/responses needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    }
+    let translated = match crate::responses_ingress::translate_responses_request(&body) {
+        Ok(translated) => translated,
+        Err(error) => {
+            record_rejection(log, 400, "untranslatable_request");
+            refuse_responses(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let translated = serde_json::to_vec(&translated).unwrap_or_default();
+    serve_unified_messages(
+        stream,
+        config,
+        connection.shutdown,
+        connection.conversations,
+        &translated,
+        streaming,
+        conversation_key,
+        &parsed.headers,
+        log,
+        connection.cache_health,
+        Some(ChatTranslation {
+            model: &model,
+            dialect: ClientDialect::Responses,
+        }),
+    );
+}
+
+/// Answer a refused `/v1/responses` turn in the Responses error envelope.
+fn refuse_responses(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::responses_ingress::render_response_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
+/// `POST /v1/responses/compact`: the Responses context-compaction door.
+///
+/// Upstream capability: CLIProxyAPI serves `POST /v1/responses/compact`
+/// (`internal/api/server_routes.go:88`) and forwards the body to
+/// `<codex base>/responses/compact` with the `responses/compact` action
+/// (`sdk/api/handlers/openai/openai_responses_handlers.go:917`), refusing
+/// `stream: true` and relaying the answer byte-for-byte.
+///
+/// Unlike `POST /v1/responses` this is NOT a translation: the body is already a
+/// Responses payload and only the Codex backend can compact a Codex history.
+/// clud already called that endpoint for its own auto-compaction, so this route
+/// is the missing client-facing half -- one non-retried upstream call and the
+/// upstream's own envelope back, in the shape its client parses.
+fn route_responses_compact(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    config.turn_requests.fetch_add(1, Ordering::Release);
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    let codex_available = match &config.gateway_mode {
+        GatewayMode::Codex => true,
+        GatewayMode::Unified(unified) => unified.codex_available,
+    };
+    if !codex_available {
+        record_rejection(log, 501, "responses_compact_route_missing");
+        refuse_responses(
+            stream,
+            501,
+            "POST /v1/responses/compact needs the Codex route; start the gateway with --codex",
+        );
+        return;
+    }
+    let prepared = match crate::responses_compact::prepare_compact_request(&body) {
+        Ok(prepared) => prepared,
+        Err(error) => {
+            record_rejection(log, 400, "invalid_compact_request");
+            refuse_responses(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let client = match codex_upstream_client(config, log, conversation_key, codex_redactor(config))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            let (status, message) = compact_failure(&error);
+            record_rejection(log, status, "responses_compact_credentials");
+            refuse_responses(stream, status, message);
+            return;
+        }
+    };
+    match client.compact_body(&prepared, connection.shutdown) {
+        // The upstream's envelope is the client contract, on success and on
+        // failure alike: a Responses client parses `{"error": ...}` from a 4xx.
+        Ok(reply) => {
+            let _ = write_response(stream, reply.status, "application/json", &reply.body, false);
+        }
+        Err(UpstreamError::Cancelled) => {}
+        Err(error) => {
+            let (status, message) = compact_failure(&error);
+            record_rejection(log, status, "responses_compact_upstream_failure");
+            refuse_responses(stream, status, message);
+        }
+    }
+}
+
+/// How a failed compaction door is reported. The statuses are the ones the
+/// other Codex passthrough doors use, so a client sees one behaviour across
+/// them; a missing credential names the command that fixes it rather than
+/// reporting an upstream fault.
+fn compact_failure(error: &UpstreamError) -> (u16, &'static str) {
+    match error {
+        UpstreamError::Credentials(_) => (
+            503,
+            "Codex credentials are unavailable; run `clud auth login codex`",
+        ),
+        UpstreamError::Timeout => (
+            504,
+            "the Codex upstream timed out before returning a compaction",
+        ),
+        _ => (
+            502,
+            "the Codex upstream failed before returning a compaction",
+        ),
+    }
+}
+
+/// `POST /v1/completions`: OpenAI's legacy text-completions door.
+///
+/// Upstream capability: CLIProxyAPI serves it at
+/// `internal/api/server_routes.go:74` (`v1.POST("/completions")`) as a thin
+/// adapter over its chat-completions handler
+/// (`sdk/api/handlers/openai/openai_handlers.go:203`
+/// `convertCompletionsRequestToChatCompletions`, and :268 for the answer).
+/// clud had no such door at all, so an OpenAI SDK configured with
+/// `client.completions` saw a 404. This route rewrites the one-prompt body into
+/// the Messages request the ladder already serves and answers in
+/// `text_completion` shape on the way back.
+///
+/// `n`, `echo`, `suffix`, `best_of`, `logprobs` and a token-id prompt are
+/// refused by name rather than answered differently; see
+/// [`crate::completions_ingress`].
+fn route_completions(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    config.turn_requests.fetch_add(1, Ordering::Release);
+    let Some(body) = read_request_body(stream, connection, parsed, "request_body") else {
+        return;
+    };
+    let request: serde_json::Value = match serde_json::from_slice(&body) {
+        Ok(request) => request,
+        Err(_) => {
+            record_rejection(log, 400, "invalid_json");
+            refuse_completions(stream, 400, "request body is not valid JSON");
+            return;
+        }
+    };
+    let Some(model) = request.get("model").and_then(serde_json::Value::as_str) else {
+        record_rejection(log, 400, "missing_model");
+        refuse_completions(stream, 400, "request is missing a model");
+        return;
+    };
+    let model = model.to_string();
+    let streaming = request.get("stream").and_then(serde_json::Value::as_bool) == Some(true);
+    if !matches!(config.gateway_mode, GatewayMode::Unified(_)) {
+        record_rejection(log, 501, "completions_unsupported");
+        refuse_completions(
+            stream,
+            501,
+            "POST /v1/completions needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    }
+    let translated = match crate::completions_ingress::translate_completions_request(&body) {
+        Ok(translated) => translated,
+        Err(error) => {
+            record_rejection(log, 400, "untranslatable_request");
+            refuse_completions(stream, 400, &error.to_string());
+            return;
+        }
+    };
+    let translated = serde_json::to_vec(&translated).unwrap_or_default();
+    serve_unified_messages(
+        stream,
+        config,
+        connection.shutdown,
+        connection.conversations,
+        &translated,
+        streaming,
+        conversation_key,
+        &parsed.headers,
+        log,
+        connection.cache_health,
+        Some(ChatTranslation {
+            model: &model,
+            dialect: ClientDialect::Completions,
+        }),
+    );
+}
+
+/// Answer a refused `/v1/completions` turn in the OpenAI error envelope.
+fn refuse_completions(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::completions_ingress::render_completions_error(status, message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
+/// Dispatch a path under [`GEMINI_ROUTE_PREFIX`]: a known verb reaches the
+/// route, an unknown one is answered in Gemini's own error shape rather than
+/// the generic Anthropic 404, because a path under the prefix still means a
+/// Gemini client is talking to us.
+fn route_generate_content_path(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    path: &str,
+    conversation_key: &ConversationKey,
+    log: Option<&SharedBridgeLog>,
+) {
+    match parse_generate_content_route(path) {
+        Some(call) => {
+            route_generate_content(stream, connection, parsed, &call, conversation_key);
+        }
+        None => {
+            record_rejection(log, 404, "unrouted_generate_content");
+            refuse_gemini(
+                stream,
+                404,
+                "the path must be /v1beta/models/<model>:generateContent or :streamGenerateContent",
+            );
+        }
+    }
+}
+
+/// Models this launch advertises on the Gemini surface.
+///
+/// The same provider-availability and #1257 allowlist filters
+/// [`serve_unified_catalog`] applies, because discovery may only offer rows the
+/// route would also serve. `None` means this launch has no Gemini door at all:
+/// the `generateContent` route refuses a Codex-only launch by name, so its
+/// listing must refuse too instead of advertising a surface that cannot answer.
+fn gemini_advertised_rows(
+    config: &BridgeConfig,
+) -> Option<Vec<&'static provider_catalog::CatalogModel>> {
+    let GatewayMode::Unified(unified) = &config.gateway_mode else {
+        return None;
+    };
+    Some(
+        provider_catalog::MODELS
+            .iter()
+            .filter(|entry| unified.provider_available(entry.provider))
+            .filter(|entry| {
+                entry.discovery_id.is_some_and(|id| {
+                    provider_catalog::model_allowlist_allows(&config.allowed_models, id)
+                })
+            })
+            .collect(),
+    )
+}
+
+/// `GET /v1beta/models` -- Gemini's model listing.
+///
+/// Upstream capability: CLIProxyAPI registers `v1beta.GET("/models", ...)`
+/// (`internal/api/server_routes.go:134`) and answers it from
+/// `sdk/api/handlers/gemini/gemini_handlers.go: GeminiModels`, which normalises
+/// each registry row to `models/<name>` and fills in the display fields a
+/// Gemini client reads. clud had no discovery door, so a Gemini SDK could not
+/// find a model to call even though `generateContent` answered. The row shape
+/// lives in [`crate::gemini_models`]; this function owns the mode gate, the
+/// advertisement record and the response.
+fn serve_gemini_models(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+) {
+    let Some(rows) = gemini_advertised_rows(config) else {
+        record_rejection(log, 501, "gemini_models_unsupported");
+        refuse_gemini(
+            stream,
+            501,
+            "GET /v1beta/models needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    };
+    record_catalog_advertised(
+        log,
+        &rows
+            .iter()
+            .filter_map(|entry| entry.discovery_id)
+            .collect::<Vec<_>>(),
+    );
+    let body = crate::gemini_models::list_body(&rows);
+    let _ = write_response(stream, 200, "application/json", &body, false);
+}
+
+/// `GET /v1beta/models/<model>` -- one advertised row.
+///
+/// Upstream capability: `v1beta.GET("/models/*action", ...)`
+/// (`internal/api/server_routes.go:137`) -> `GeminiGetHandler`, which matches
+/// the action with or without the `models/` prefix and answers `404` with
+/// Gemini's own error envelope for an unknown name. Only advertised rows
+/// resolve, so a client cannot read a row the listing would not offer.
+fn serve_gemini_model_detail(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    path: &str,
+    log: Option<&SharedBridgeLog>,
+) {
+    let Some(rows) = gemini_advertised_rows(config) else {
+        record_rejection(log, 501, "gemini_models_unsupported");
+        refuse_gemini(
+            stream,
+            501,
+            "GET /v1beta/models needs the unified gateway; this launch exposes the Codex discovery bridge only",
+        );
+        return;
+    };
+    let Some(crate::gemini_models::ModelQuery::Detail(requested)) =
+        crate::gemini_models::parse_model_query(path)
+    else {
+        record_rejection(log, 400, "gemini_model_missing_name");
+        refuse_gemini(
+            stream,
+            400,
+            "the path must be /v1beta/models or /v1beta/models/<model>",
+        );
+        return;
+    };
+    let Some(entry) = crate::gemini_models::find(&rows, requested) else {
+        record_rejection(log, 404, "gemini_model_not_found");
+        refuse_gemini(stream, 404, &format!("model not found: {requested}"));
+        return;
+    };
+    let Some(body) = crate::gemini_models::detail_body(entry) else {
+        record_rejection(log, 404, "gemini_model_not_found");
+        refuse_gemini(stream, 404, &format!("model not found: {requested}"));
+        return;
+    };
+    let _ = write_response(stream, 200, "application/json", &body, false);
 }
 
 /// `POST /v1/images/generations` -- OpenAI's images API on the Codex lane.
@@ -1804,13 +2431,138 @@ fn refuse_images(stream: &mut TcpStream, status: u16, message: &str) {
     let _ = write_response(stream, status, "application/json", &envelope, false);
 }
 
+/// The client shape a translated turn is answered in.
+/// `POST /v1/alpha/search` -- Codex's standalone web-search door.
+///
+/// Upstream capability: CLIProxyAPI forwards this body unchanged (minus the two
+/// prompt-cache fields) to `chatgpt.com/backend-api/codex/alpha/search` and
+/// relays the answer with its own status and content type
+/// (`codexAlphaSearch`, `internal/api/server_routes.go:360`; routes at `:90`
+/// and the `chatgpt_base_url` alias at `:127`). clud served no search door at
+/// all, so a current Codex client's standalone search fell through to 404.
+///
+/// This is deliberately a passthrough, not a translation: the payload is
+/// already in Codex search format and must not pass through a protocol
+/// translator. Only the Codex lane can run a search -- Claude, DeepSeek, Kimi
+/// and OpenRouter have no such endpoint -- so a launch without `--codex`
+/// refuses by name instead of pretending to answer.
+fn route_alpha_search(
+    stream: &mut TcpStream,
+    connection: &ConnectionContext<'_>,
+    parsed: &mut ParsedRequest,
+    conversation_key: &ConversationKey,
+) {
+    let (config, log) = (connection.config, connection.log);
+    let Some(body) = read_request_body(stream, connection, parsed, "alpha_search_body") else {
+        return;
+    };
+    let codex_available = match &config.gateway_mode {
+        GatewayMode::Codex => true,
+        GatewayMode::Unified(unified) => unified.codex_available,
+    };
+    if !codex_available {
+        record_rejection(log, 501, "alpha_search_route_missing");
+        refuse_search(
+            stream,
+            501,
+            "POST /v1/alpha/search needs the Codex route; start the gateway with --codex",
+        );
+        return;
+    }
+    let prepared = crate::alpha_search_ingress::prepare_search(&body);
+    let client = match codex_upstream_client(config, log, conversation_key, codex_redactor(config))
+    {
+        Ok(client) => client,
+        Err(error) => {
+            let (status, message) = search_failure(&error);
+            record_rejection(log, status, "alpha_search_credentials");
+            refuse_search(stream, status, message);
+            return;
+        }
+    };
+    match client.alpha_search(&prepared, connection.shutdown) {
+        // The upstream's own envelope and content type are the client
+        // contract, on success and on failure alike.
+        Ok(reply) => {
+            let content_type = reply.content_type.as_deref().unwrap_or("application/json");
+            let _ = write_response(stream, reply.status, content_type, &reply.body, false);
+        }
+        Err(UpstreamError::Cancelled) => {}
+        Err(error) => {
+            let (status, message) = search_failure(&error);
+            record_rejection(log, status, "alpha_search_upstream_failure");
+            refuse_search(stream, status, message);
+        }
+    }
+}
+
+/// How a search failure is answered. `UpstreamError` is shared with the images
+/// doors, so this maps the same classes to search wording instead of reusing
+/// messages that talk about an image the caller never asked for.
+fn search_failure(error: &UpstreamError) -> (u16, &'static str) {
+    match error {
+        UpstreamError::Credentials(_) => (
+            503,
+            "Codex credentials are unavailable; run `clud auth login codex`",
+        ),
+        UpstreamError::Timeout => (
+            504,
+            "the Codex upstream timed out before returning a search answer",
+        ),
+        _ => (
+            502,
+            "the Codex upstream failed before returning a search answer",
+        ),
+    }
+}
+
+/// Answer a refused search turn in the envelope the Codex search client parses.
+fn refuse_search(stream: &mut TcpStream, status: u16, message: &str) {
+    let envelope = crate::alpha_search_ingress::render_search_error(message);
+    let _ = write_response(stream, status, "application/json", &envelope, false);
+}
+
 /// The client shape a translated `/v1/chat/completions` turn is answered in.
 ///
-/// `model` is whatever the client asked for: OpenAI's reply echoes it, and a
-/// provider that renames the wire model must not leak that name back.
+/// clud routes and credentials speak Anthropic Messages. A caller that speaks
+/// another dialect is translated in at the door and back out at the response,
+/// so the same route ladder serves `/v1/chat/completions` (OpenAI),
+/// `/v1/responses` (OpenAI Responses), `/v1/completions` (legacy OpenAI
+/// completions) and `/v1beta/models/<model>:generateContent` (Gemini).
+///
+/// `model` is whatever the client asked for: OpenAI's reply echoes it and
+/// Gemini's `modelVersion` names it, so a provider that renames the wire model
+/// must not leak that name back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClientDialect {
+    OpenAi,
+    Gemini,
+    Responses,
+    Completions,
+}
 #[derive(Clone, Copy)]
 struct ChatTranslation<'a> {
     model: &'a str,
+    dialect: ClientDialect,
+}
+
+/// `GET|HEAD /healthz` -- liveness for a client or monitor holding the token.
+///
+/// CLIProxyAPI registers an unauthenticated `GET|HEAD /healthz`
+/// (`internal/api/server_routes.go:53-64`) that answers `{"status":"ok"}`.
+/// clud keeps one admission contract instead of carving an unauthenticated
+/// hole: a probe carries the same client token as every other request, so a
+/// refused connection still means "down" and a 401 still means "wrong token".
+/// It reads no provider, no route state and no credential, so it answers 200
+/// even while every route is cooling -- that is the point of a probe.
+fn serve_health(stream: &mut TcpStream, head_only: bool) {
+    let _ = write_response(
+        stream,
+        200,
+        "application/json",
+        br#"{"status":"ok"}"#,
+        head_only,
+    );
 }
 
 /// `GET /_clud/route/status` -- the configured ladder and each route's health.
@@ -1914,17 +2666,22 @@ fn serve_route_clear(stream: &mut TcpStream, unified: &UnifiedGatewayConfig, bod
     let _ = write_response(stream, 200, "application/json", body.as_bytes(), false);
 }
 
-fn serve_unified_catalog(
-    stream: &mut TcpStream,
+/// The rows this launch advertises on `GET /v1/models`, plus that listing's
+/// `has_more` flag.
+///
+/// `serve_unified_catalog`, `serve_codex_catalog` and `serve_model_detail` all
+/// answer from this one function: a model-detail lookup that built its own row
+/// set could 404 an id the listing offers, or answer an id it never advertised.
+fn catalog_rows(
     config: &BridgeConfig,
     log: Option<&SharedBridgeLog>,
-) {
-    let GatewayMode::Unified(unified) = &config.gateway_mode else {
-        unreachable!("catalog route is guarded by the unified mode match arm");
-    };
+) -> Result<(Vec<serde_json::Value>, bool), ()> {
     let advertised = provider_catalog::MODELS
         .iter()
-        .filter(|entry| unified.provider_available(entry.provider))
+        .filter(|entry| match &config.gateway_mode {
+            GatewayMode::Codex => entry.provider == ModelProvider::Codex,
+            GatewayMode::Unified(unified) => unified.provider_available(entry.provider),
+        })
         .filter_map(|entry| entry.discovery_id.map(|id| (id, entry.display_name)))
         // #1257: a pinned launch may only be *advertised* rows it would also
         // serve. Discovery adds rows and cannot subtract them from the
@@ -1944,24 +2701,37 @@ fn serve_unified_catalog(
     );
     let mut data = advertised
         .iter()
-        .map(|(id, display_name)| {
-            serde_json::json!({
-                "id": id,
-                "display_name": display_name,
-                "type": "model",
-            })
-        })
+        .map(|(id, display_name)| catalog_row(id, display_name))
         .collect::<Vec<_>>();
     let mut has_more = false;
-    if config.standalone_claude_credential.is_some() {
-        let Ok((mut native, more)) = fetch_standalone_claude_models(config, unified) else {
-            let _ = write_error(stream, 502);
-            return;
-        };
-        native.append(&mut data);
-        data = native;
-        has_more = more;
+    if let GatewayMode::Unified(unified) = &config.gateway_mode {
+        if config.standalone_claude_credential.is_some() {
+            let (mut native, more) = fetch_standalone_claude_models(config, unified)?;
+            native.append(&mut data);
+            data = native;
+            has_more = more;
+        }
     }
+    Ok((data, has_more))
+}
+
+fn catalog_row(id: &str, display_name: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": id,
+        "display_name": display_name,
+        "type": "model",
+    })
+}
+
+fn serve_unified_catalog(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+) {
+    let Ok((data, has_more)) = catalog_rows(config, log) else {
+        let _ = write_error(stream, 502);
+        return;
+    };
     let body = if config.standalone_client_auth {
         let first = data.first().and_then(|row| row.get("id")).cloned();
         let last = data.last().and_then(|row| row.get("id")).cloned();
@@ -1972,6 +2742,50 @@ fn serve_unified_catalog(
     .to_string();
     let _ = write_response(stream, 200, "application/json", body.as_bytes(), false);
 }
+
+/// `GET /v1/models/<id>` -- OpenAI's model-retrieve door.
+///
+/// Upstream CLIProxyAPI registers `v1.GET("/models/*model")`
+/// (internal/api/server_routes.go:70) and answers it by selecting out of the
+/// listing it would have just served, 404ing with `code="model_not_found"`
+/// otherwise (sdk/api/handlers/handlers_interceptors.go:736). clud had only the
+/// listing, so an OpenAI SDK client calling `models.retrieve()` saw a bare 404
+/// for a model the gateway serves.
+fn serve_model_detail(
+    stream: &mut TcpStream,
+    config: &BridgeConfig,
+    log: Option<&SharedBridgeLog>,
+    model: &str,
+) {
+    let model = model.trim_end_matches('/');
+    let Ok((rows, _)) = catalog_rows(config, log) else {
+        let _ = write_error(stream, 502);
+        return;
+    };
+    let selected = rows
+        .iter()
+        .find(|row| row.get("id").and_then(serde_json::Value::as_str) == Some(model));
+    let Some(row) = selected else {
+        record_rejection(log, 404, "model_not_found");
+        let _ = write_response(
+            stream,
+            404,
+            "application/json",
+            MODEL_NOT_FOUND_BODY.as_bytes(),
+            false,
+        );
+        return;
+    };
+    let body = row.to_string();
+    let _ = write_response(stream, 200, "application/json", body.as_bytes(), false);
+}
+
+/// The OpenAI-shaped refusal for a model id this launch does not advertise.
+const MODEL_NOT_FOUND_BODY: &str = r#"{"error":{"message":"Model not found","type":"invalid_request_error","code":"model_not_found"}}"#;
+
+/// Path prefix of the model-retrieve door. Kept beside the refusal it feeds so
+/// the route arm and the message cannot drift.
+const MODELS_DETAIL_PREFIX: &str = "/v1/models/";
 
 /// Fetch native Claude inventory using the server's credential, not the client's.
 fn fetch_standalone_claude_models(
@@ -2054,29 +2868,10 @@ fn serve_codex_catalog(
     config: &BridgeConfig,
     log: Option<&SharedBridgeLog>,
 ) {
-    let advertised = provider_catalog::MODELS
-        .iter()
-        .filter(|entry| entry.provider == ModelProvider::Codex)
-        .filter_map(|entry| entry.discovery_id.map(|id| (id, entry.display_name)))
-        // #1257: same rule as the unified catalog -- a pinned launch is
-        // advertised only rows it would also serve (plus the route's own
-        // injected role rows, which the launch folds into this allowlist).
-        .filter(|(id, _)| provider_catalog::model_allowlist_allows(&config.allowed_models, id))
-        .collect::<Vec<_>>();
-    record_catalog_advertised(
-        log,
-        &advertised.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
-    );
-    let data = advertised
-        .iter()
-        .map(|(id, display_name)| {
-            serde_json::json!({
-                "id": id,
-                "display_name": display_name,
-                "type": "model",
-            })
-        })
-        .collect::<Vec<_>>();
+    let Ok((data, _)) = catalog_rows(config, log) else {
+        let _ = write_error(stream, 502);
+        return;
+    };
     let body = serde_json::json!({"data": data, "has_more": false}).to_string();
     let _ = write_response(stream, 200, "application/json", body.as_bytes(), false);
 }
@@ -2177,6 +2972,53 @@ fn conversation_key_from_headers(
         Some(session_id) => ConversationKey::from_headers(Some(session_id), agent_id),
         None => ConversationKey::bridge_fallback(fallback_root, agent_id),
     }
+}
+
+/// #2554: the conversation key for a standalone client that sent no session
+/// header. Each such request gets its own history store, but its upstream
+/// prompt-cache key must stay the same across requests that share a prompt
+/// prefix, or the provider's cache routing changes on every call. The key is
+/// the client's own `prompt_cache_key` or `user` when it sends one, otherwise
+/// a digest of the stable prefix: model, system or instructions, tools and the
+/// first message. It stays beneath this listener's random root, so it never
+/// matches another launch.
+fn sessionless_conversation_key(
+    request: &serde_json::Value,
+    agent_id: Option<&str>,
+    fallback_root: &str,
+) -> ConversationKey {
+    let client_key = ["prompt_cache_key", "user"].iter().find_map(|field| {
+        request
+            .get(*field)
+            .and_then(serde_json::Value::as_str)
+            .filter(|value| !value.is_empty())
+    });
+    let identity = match client_key {
+        Some(key) => format!("client:{key}"),
+        None => {
+            let first = ["messages", "input"].iter().find_map(|field| {
+                request
+                    .get(*field)
+                    .and_then(serde_json::Value::as_array)
+                    .and_then(|items| items.first())
+            });
+            let prefix = serde_json::json!([
+                request.get("model"),
+                request.get("system"),
+                request.get("instructions"),
+                request.get("tools"),
+                first,
+            ]);
+            format!("prefix:{prefix}")
+        }
+    };
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(identity.as_bytes());
+    let short: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    conversation_key_from_headers(None, agent_id, &format!("{fallback_root}-p{short}"))
 }
 
 fn serve_context_compact(
@@ -2966,9 +3808,10 @@ fn serve_unified_anthropic_proxy(
             // A served caller's credential problem is reported in the shape its
             // client speaks; an OpenAI chat caller cannot parse the Anthropic
             // envelope.
-            if chat.is_some() {
-                return write_chat_error(
+            if let Some(chat) = chat {
+                return write_client_error(
                     stream,
+                    chat.dialect,
                     503,
                     "the served backend has no usable upstream credential",
                     idle_timeout,
@@ -3052,8 +3895,9 @@ fn serve_unified_anthropic_proxy(
     });
     if let Some(beats) = heartbeat {
         let succeeded = matches!(outcome, ProxyOutcome::Committed { status } if status < 400);
-        let target =
-            succeeded.then(|| heartbeat_target(base_url, path, body, headers, injected_api_key));
+        let target = succeeded
+            .then(|| heartbeat_replay(base_url, path, body, headers, injected_api_key, redaction))
+            .flatten();
         beats.finish(&conversation_key.id, target, Instant::now());
     }
     if let Err(error) = routed {
@@ -3068,6 +3912,28 @@ fn serve_unified_anthropic_proxy(
 
 /// #2046: what the cache heartbeat replays: the request exactly as this hop
 /// sent it upstream (forwarded headers, injected credential, same body).
+/// #2552: the heartbeat replays the bytes the upstream actually received.
+/// Redaction tokens are stable for the session, so this matches the real
+/// prefix; replaying the raw body would warm the wrong prefix and send the
+/// secrets upstream. A body that cannot be redacted gets no heartbeat.
+fn heartbeat_replay(
+    base_url: &str,
+    path: &str,
+    body: &[u8],
+    headers: &[(String, String)],
+    injected_api_key: Option<&str>,
+    redaction: Option<&SharedSession>,
+) -> Option<crate::cache_heartbeat::Target> {
+    let sent = redact_request(body, redaction).ok()?;
+    Some(heartbeat_target(
+        base_url,
+        path,
+        &sent,
+        headers,
+        injected_api_key,
+    ))
+}
+
 fn heartbeat_target(
     base_url: &str,
     path: &str,
@@ -3377,7 +4243,8 @@ fn serve_anthropic_proxy(
     };
     let status = response.status();
     if target.sanitize_errors && status >= 400 && !probe {
-        return write_sanitized_failure(stream, status, target.chat.is_some(), idle_timeout);
+        let dialect = target.chat.map(|chat| chat.dialect);
+        return write_sanitized_failure(stream, status, dialect, idle_timeout);
     }
     let content_type = response
         .header("content-type")
@@ -3519,14 +4386,15 @@ fn relay_translated_chat(
         let message = format!(
             "upstream response exceeded the {TRANSLATED_BODY_LIMIT}-byte translation buffer"
         );
-        return write_chat_error(stream, 502, &message, idle_timeout);
+        return write_client_error(stream, chat.dialect, 502, &message, idle_timeout);
     }
     let restored = match redaction {
         Some(session) => match restore_response(&body, session) {
             Ok(restored) => restored,
             Err(_) => {
-                return write_chat_error(
+                return write_client_error(
                     stream,
+                    chat.dialect,
                     502,
                     "upstream response could not be restored for the client",
                     idle_timeout,
@@ -3539,25 +4407,13 @@ fn relay_translated_chat(
         // The upstream's own failure: keep its status, but in the client's
         // shape, with whatever the upstream said as the message.
         let message = upstream_error_message(&restored);
-        return write_chat_error(stream, status, &message, idle_timeout);
+        return write_client_error(stream, chat.dialect, status, &message, idle_timeout);
     }
-    let (out_status, out_type, payload) = if chat_stream {
-        (
-            200,
-            "text/event-stream",
-            crate::openai_ingress::render_chat_stream(chat.model, &restored),
-        )
-    } else {
-        match crate::openai_ingress::render_chat_body(chat.model, &restored) {
-            Ok(payload) => (200, "application/json", payload),
-            Err(error) => {
-                return write_chat_error(
-                    stream,
-                    502,
-                    &format!("upstream response was not a Messages body: {error}"),
-                    idle_timeout,
-                );
-            }
+    let (out_status, out_type, payload) = match render_translated_body(chat, chat_stream, &restored)
+    {
+        Ok(rendered) => rendered,
+        Err(message) => {
+            return write_client_error(stream, chat.dialect, 502, &message, idle_timeout);
         }
     };
     let translated = ProxyResponseHead {
@@ -3578,6 +4434,71 @@ fn relay_translated_chat(
         out_type,
     );
     ProxyOutcome::Committed { status: out_status }
+}
+
+/// An upstream body that will not render as the client's dialect.
+fn unrendered(error: impl std::fmt::Display) -> String {
+    format!("upstream response was not a Messages body: {error}")
+}
+
+/// Render one restored Messages body in the dialect the client asked for.
+///
+/// Every dialect renders the same body; only the renderer differs, so the shape
+/// choice lives here instead of in the relay, which is at the line cap.
+fn render_translated_body(
+    chat: ChatTranslation<'_>,
+    chat_stream: bool,
+    restored: &[u8],
+) -> Result<(u16, &'static str, Vec<u8>), String> {
+    let (status, content_type, payload) = match (chat.dialect, chat_stream) {
+        (ClientDialect::OpenAi, true) => (
+            200,
+            "text/event-stream",
+            crate::openai_ingress::render_chat_stream(chat.model, restored),
+        ),
+        (ClientDialect::OpenAi, false) => (
+            200,
+            "application/json",
+            crate::openai_ingress::render_chat_body(chat.model, restored).map_err(unrendered)?,
+        ),
+        (ClientDialect::Gemini, true) => (
+            200,
+            "text/event-stream",
+            crate::gemini_client_ingress::render_generate_content_stream(chat.model, restored),
+        ),
+        (ClientDialect::Gemini, false) => (
+            200,
+            "application/json",
+            serde_json::to_vec(
+                &crate::gemini_client_ingress::translate_messages_response(chat.model, restored)
+                    .map_err(unrendered)?,
+            )
+            .unwrap_or_default(),
+        ),
+        (ClientDialect::Responses, true) => (
+            200,
+            "text/event-stream",
+            crate::responses_ingress::render_response_stream(chat.model, restored),
+        ),
+        (ClientDialect::Responses, false) => (
+            200,
+            "application/json",
+            crate::responses_ingress::render_response_body(chat.model, restored)
+                .map_err(unrendered)?,
+        ),
+        (ClientDialect::Completions, true) => (
+            200,
+            "text/event-stream",
+            crate::completions_ingress::render_completions_stream(chat.model, restored),
+        ),
+        (ClientDialect::Completions, false) => (
+            200,
+            "application/json",
+            crate::completions_ingress::render_completions_body(chat.model, restored)
+                .map_err(unrendered)?,
+        ),
+    };
+    Ok((status, content_type, payload))
 }
 
 /// Read the rest of a translated turn's upstream body into `body`, stopping at
@@ -3627,12 +4548,13 @@ fn upstream_error_message(body: &[u8]) -> String {
 fn write_sanitized_failure(
     stream: &mut TcpStream,
     status: u16,
-    chat: bool,
+    dialect: Option<ClientDialect>,
     idle_timeout: Duration,
 ) -> ProxyOutcome {
-    if chat {
-        return write_chat_error(
+    if let Some(dialect) = dialect {
+        return write_client_error(
             stream,
+            dialect,
             status,
             "the upstream route refused this turn",
             idle_timeout,
@@ -3642,21 +4564,46 @@ fn write_sanitized_failure(
     ProxyOutcome::local(status)
 }
 
-/// Write one OpenAI error envelope and close the connection.
-fn write_chat_error(
+/// Write one client-dialect error envelope and close the connection.
+///
+/// The status is preserved (the client's retry logic keys on it); only the
+/// envelope shape follows the dialect the caller asked for.
+fn write_client_error(
     stream: &mut TcpStream,
+    dialect: ClientDialect,
     status: u16,
     message: &str,
     idle_timeout: Duration,
 ) -> ProxyOutcome {
-    let payload = crate::openai_ingress::render_chat_error(status, message);
+    let payload = match dialect {
+        ClientDialect::OpenAi => crate::openai_ingress::render_chat_error(status, message),
+        ClientDialect::Gemini => {
+            crate::gemini_client_ingress::render_generate_content_error(status, message)
+        }
+        ClientDialect::Responses => {
+            crate::responses_ingress::render_response_error(status, message)
+        }
+        ClientDialect::Completions => {
+            crate::completions_ingress::render_completions_error(status, message)
+        }
+    };
+    write_translated_error(stream, status, &payload, idle_timeout)
+}
+
+/// Commit a pre-rendered error body and close the connection.
+fn write_translated_error(
+    stream: &mut TcpStream,
+    status: u16,
+    payload: &[u8],
+    idle_timeout: Duration,
+) -> ProxyOutcome {
     let head = ProxyResponseHead {
         status,
         content_type: "application/json",
         retry_after: None,
         request_id: None,
     };
-    if !write_proxy_head(stream, &head, &payload, idle_timeout) {
+    if !write_proxy_head(stream, &head, payload, idle_timeout) {
         return ProxyOutcome::Committed { status };
     }
     finish_proxy_body(
@@ -4242,6 +5189,20 @@ fn serve_messages(
             return;
         }
     };
+    // A tool-less side call (session title, summary) arrives under the main
+    // session header. It gets a one-request history store and its own cache
+    // key, so it neither splices its transcript into the main conversation
+    // nor moves the main cache prefix.
+    let side_store;
+    let side_key;
+    let (conversations, conversation_key) = match side_call_key(&redacted, conversation_key) {
+        Some(key) => {
+            side_store = ConversationStore::new(config.history_limits);
+            side_key = key;
+            (&side_store, &side_key)
+        }
+        None => (conversations, conversation_key),
+    };
     let pipeline = match build_pipeline(config, log, conversation_key, redaction) {
         Ok(pipeline) => pipeline,
         Err(error) => {
@@ -4270,6 +5231,45 @@ fn serve_messages(
     } else {
         serve_messages_complete(stream, &turn);
     }
+}
+
+/// The key for a Claude Code side call, or `None` for a conversation turn.
+///
+/// Claude Code's main and subagent turns send their tool list; its side calls
+/// (session titles, summaries) send `"tools": []` without thinking or context
+/// management controls, under the main session
+/// header and with no agent id. Such a call is keyed beneath the main conversation by a
+/// digest of its system prompt, so repeated side calls of one kind share a
+/// stable cache key without touching the main one.
+fn side_call_key(body: &[u8], main: &ConversationKey) -> Option<ConversationKey> {
+    let request: serde_json::Value = serde_json::from_slice(body).ok()?;
+    // Captured from Claude Code 2.1.316: the side call sends `"tools": []`,
+    // explicitly empty, without main-turn controls. `--tools ""` main turns
+    // still send thinking or context management and must keep canonical history.
+    let explicitly_tool_less = request
+        .get("tools")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(Vec::is_empty);
+    if !explicitly_tool_less
+        || request.get("thinking").is_some()
+        || request.get("context_management").is_some()
+    {
+        return None;
+    }
+    let system = request
+        .get("system")
+        .map(ToString::to_string)
+        .unwrap_or_default();
+    let digest = <sha2::Sha256 as sha2::Digest>::digest(system.as_bytes());
+    let short: String = digest
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    Some(ConversationKey {
+        id: format!("{}-side-{short}", main.id),
+        session_prefix: main.session_prefix.clone(),
+    })
 }
 
 /// One `POST /v1/messages` turn, once its pipeline is built.
@@ -5716,6 +6716,71 @@ mod tests {
     use std::time::Duration;
     use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
 
+    /// #2554: sessionless standalone requests that share a prompt prefix get
+    /// one conversation key (and so one upstream prompt-cache key); unrelated
+    /// prefixes and a client-supplied key stay distinct.
+    #[test]
+    fn sessionless_requests_sharing_a_prefix_share_one_cache_key() {
+        let turn = |system: &str, messages: serde_json::Value| serde_json::json!({"model": "m", "system": system, "tools": [{"name": "Bash"}], "messages": messages});
+        let first = turn(
+            "sys",
+            serde_json::json!([{"role": "user", "content": "u1"}]),
+        );
+        let later = turn(
+            "sys",
+            serde_json::json!([
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u2"}
+            ]),
+        );
+        let other = turn(
+            "other system",
+            serde_json::json!([{"role": "user", "content": "u1"}]),
+        );
+        let key =
+            |request: &serde_json::Value| sessionless_conversation_key(request, None, "root").id;
+
+        assert_eq!(key(&first), key(&later));
+        assert_ne!(key(&first), key(&other));
+        assert!(key(&first).starts_with("bridge-root-p"));
+
+        let mut pinned = other.clone();
+        pinned["prompt_cache_key"] = serde_json::json!("client-key");
+        let mut pinned_too = first.clone();
+        pinned_too["prompt_cache_key"] = serde_json::json!("client-key");
+        assert_eq!(key(&pinned), key(&pinned_too));
+        assert_ne!(key(&pinned), key(&first));
+    }
+
+    /// #2552: the cache heartbeat must replay what the upstream received,
+    /// never the pre-redaction body.
+    #[test]
+    fn heartbeat_replays_the_redacted_body_the_upstream_received() {
+        let secret = "FAKE_HEARTBEAT_VAULT_KEY_FIXTURE_2552";
+        let session: SharedSession = std::sync::Arc::new(std::sync::Mutex::new(
+            crate::secret_redaction::reversible::Session::new(vec![secret.into()]).unwrap(),
+        ));
+        let body =
+            format!(r#"{{"model":"m","messages":[{{"role":"user","content":"key {secret}"}}]}}"#);
+        let sent = redact_request(body.as_bytes(), Some(&session))
+            .unwrap()
+            .into_owned();
+
+        let target = heartbeat_replay(
+            "http://up.invalid",
+            "/v1/messages",
+            body.as_bytes(),
+            &[],
+            None,
+            Some(&session),
+        )
+        .expect("a redactable body gets a heartbeat");
+
+        assert!(!String::from_utf8_lossy(&target.body).contains(secret));
+        assert_eq!(target.body, sent);
+    }
+
     #[test]
     fn unified_gateway_injects_the_complete_openrouter_privacy_policy() {
         let policy = crate::route_plan::ProviderRouting {
@@ -5825,6 +6890,47 @@ mod tests {
     }
 
     #[test]
+    fn health_probe_answers_ok_behind_the_client_token() {
+        let mut bridge = BridgeHandle::start(BridgeConfig::default()).unwrap();
+        let token = bridge.bearer_token().to_owned();
+
+        let response = request(
+            bridge.socket_addr(),
+            &authorized("GET", "/healthz", &token, ""),
+        );
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(
+            response.contains("Content-Type: application/json"),
+            "{response}"
+        );
+        assert!(response.ends_with(r#"{"status":"ok"}"#), "{response}");
+
+        let head = request(
+            bridge.socket_addr(),
+            &authorized("HEAD", "/healthz", &token, ""),
+        );
+        assert_eq!(status(&head), 200, "{head}");
+        assert!(
+            !head.contains("status"),
+            "a HEAD probe carries headers only: {head}"
+        );
+
+        let refused = request(
+            bridge.socket_addr(),
+            &authorized("GET", "/healthz", "wrong-client-token", ""),
+        );
+        assert_eq!(status(&refused), 401, "{refused}");
+        assert!(!refused.contains("status"), "{refused}");
+
+        let unrouted = request(
+            bridge.socket_addr(),
+            &authorized("POST", "/healthz", &token, "{}"),
+        );
+        assert_eq!(status(&unrouted), 404, "{unrouted}");
+        bridge.shutdown().unwrap();
+    }
+
+    #[test]
     fn standalone_codex_catalog_requires_no_claude_credential() {
         let bridge = BridgeHandle::start(
             BridgeConfig::default()
@@ -5839,6 +6945,133 @@ mod tests {
         assert_eq!(status(&response), 200, "{response}");
         assert!(response.contains("clud-claude-codex-sol"));
         assert!(!response.contains("clud-claude-openrouter"));
+    }
+
+    /// Split a raw HTTP response into (status, JSON body).
+    fn json_response(response: &str) -> serde_json::Value {
+        let body = response
+            .split_once("\r\n\r\n")
+            .map(|(_, body)| body)
+            .unwrap_or_else(|| panic!("response has no body: {response}"));
+        serde_json::from_str(body).unwrap_or_else(|error| panic!("{error}: {body}"))
+    }
+
+    /// Upstream CLIProxyAPI answers `GET /v1/models/<model>` out of the catalog
+    /// it just listed (internal/api/server_routes.go:70). Every row a launch
+    /// advertises must therefore resolve to itself here, and to nothing else.
+    #[test]
+    fn model_detail_answers_every_advertised_row() {
+        let bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_unified_gateway(UnifiedGatewayConfig::new(None, true))
+                .with_standalone_client_auth(),
+        )
+        .unwrap();
+        let listing = request(
+            bridge.socket_addr(),
+            &authorized("GET", "/v1/models", bridge.bearer_token(), ""),
+        );
+        assert_eq!(status(&listing), 200, "{listing}");
+        let rows = json_response(&listing);
+        let ids = rows["data"]
+            .as_array()
+            .expect("catalog data array")
+            .iter()
+            .filter_map(|row| row["id"].as_str().map(str::to_string))
+            .collect::<Vec<_>>();
+        assert!(
+            ids.contains(&"clud-claude-codex-sol".to_string()),
+            "{ids:?}"
+        );
+        for id in &ids {
+            let detail = request(
+                bridge.socket_addr(),
+                &authorized(
+                    "GET",
+                    &format!("/v1/models/{id}"),
+                    bridge.bearer_token(),
+                    "",
+                ),
+            );
+            assert_eq!(status(&detail), 200, "{detail}");
+            let row = json_response(&detail);
+            assert_eq!(row["id"].as_str(), Some(id.as_str()), "{detail}");
+            assert_eq!(row["type"].as_str(), Some("model"), "{detail}");
+        }
+    }
+
+    #[test]
+    fn model_detail_refuses_an_unadvertised_row_in_the_openai_envelope() {
+        let bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_unified_gateway(UnifiedGatewayConfig::new(None, true))
+                .with_standalone_client_auth(),
+        )
+        .unwrap();
+        for path in ["/v1/models/clud-claude-no-such-model", "/v1/models/"] {
+            let response = request(
+                bridge.socket_addr(),
+                &authorized("GET", path, bridge.bearer_token(), ""),
+            );
+            assert_eq!(status(&response), 404, "{response}");
+            let body = json_response(&response);
+            assert_eq!(
+                body["error"]["code"].as_str(),
+                Some("model_not_found"),
+                "{body}"
+            );
+            assert_eq!(
+                body["error"]["type"].as_str(),
+                Some("invalid_request_error"),
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn model_detail_tolerates_a_trailing_slash() {
+        let bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_unified_gateway(UnifiedGatewayConfig::new(None, true))
+                .with_standalone_client_auth(),
+        )
+        .unwrap();
+        let response = request(
+            bridge.socket_addr(),
+            &authorized(
+                "GET",
+                "/v1/models/clud-claude-codex-sol/",
+                bridge.bearer_token(),
+                "",
+            ),
+        );
+        assert_eq!(status(&response), 200, "{response}");
+        assert_eq!(
+            json_response(&response)["id"].as_str(),
+            Some("clud-claude-codex-sol")
+        );
+    }
+
+    #[test]
+    fn model_detail_is_provider_scoped_like_its_listing() {
+        let bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_unified_gateway(UnifiedGatewayConfig::new(None, true))
+                .with_standalone_client_auth(),
+        )
+        .unwrap();
+        // The Kimi/OpenRouter rows are not advertised without their routes, so
+        // the detail door must refuse them rather than resolving any catalog id.
+        let response = request(
+            bridge.socket_addr(),
+            &authorized(
+                "GET",
+                "/v1/models/clud-claude-kimi-k3",
+                bridge.bearer_token(),
+                "",
+            ),
+        );
+        assert_eq!(status(&response), 404, "{response}");
     }
 
     #[test]
@@ -7063,6 +8296,96 @@ Connection: close
         bridge.shutdown().unwrap();
     }
 
+    fn completions_request(bridge: &BridgeHandle, body: &str, session: &str) -> String {
+        request(
+            bridge.socket_addr(),
+            &authorized_with_headers(
+                "POST",
+                "/v1/completions",
+                bridge.bearer_token(),
+                body,
+                &[
+                    (UNIFIED_GATEWAY_TOKEN_HEADER, bridge.bearer_token()),
+                    ("x-claude-code-session-id", session),
+                    ("content-type", "application/json"),
+                ],
+            ),
+        )
+    }
+
+    /// `POST /v1/completions` is the legacy OpenAI door: one prompt in, one
+    /// `text_completion` out, over the same Messages ladder.
+    #[test]
+    fn completions_answers_in_the_text_completion_shape() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","prompt":"say hi","max_tokens":16}"#;
+        let response = completions_request(&bridge, body, "completions-session");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(
+            response.contains("\"object\":\"text_completion\""),
+            "{response}"
+        );
+        assert!(
+            response.contains("\"text\":\"hello from messages\""),
+            "{response}"
+        );
+        assert!(
+            response.contains("\"finish_reason\":\"stop\""),
+            "{response}"
+        );
+        // The prompt reached the upstream as a Messages user turn.
+        let sent = anthropic.requests();
+        assert_eq!(sent.len(), 1, "{}", sent.len());
+        assert!(sent[0].contains("\"role\":\"user\""), "{}", sent[0]);
+        assert!(sent[0].contains("say hi"), "{}", sent[0]);
+        assert!(!sent[0].contains("\"prompt\""), "{}", sent[0]);
+        bridge.shutdown().unwrap();
+    }
+
+    /// A `stream: true` completions client receives `text_completion` chunks
+    /// terminated by `[DONE]`, not chat chunks.
+    #[test]
+    fn completions_streams_text_completion_chunks() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_stream()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","prompt":"say hi","stream":true}"#;
+        let response = completions_request(&bridge, body, "completions-stream-session");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(
+            response.contains("\"object\":\"text_completion\""),
+            "{response}"
+        );
+        assert!(!response.contains("chat.completion.chunk"), "{response}");
+        assert!(response.contains("hello "), "{response}");
+        assert!(response.contains("data: [DONE]"), "{response}");
+        bridge.shutdown().unwrap();
+    }
+
+    /// A knob the gateway cannot honour is refused locally, in the OpenAI error
+    /// envelope, without spending an upstream turn.
+    #[test]
+    fn completions_refuses_multiple_choices_before_the_ladder() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","prompt":"say hi","n":3}"#;
+        let response = completions_request(&bridge, body, "completions-refusal-session");
+        assert_eq!(status(&response), 400, "{response}");
+        assert!(response.contains("\"error\""), "{response}");
+        assert!(response.contains("`n`"), "{response}");
+        assert!(anthropic.requests().is_empty(), "no upstream turn is spent");
+        bridge.shutdown().unwrap();
+    }
+
     /// The standalone (served) surface suppresses upstream error detail. A chat
     /// caller must still receive an OpenAI envelope: the suppression path used
     /// to answer with the Anthropic shape, which an OpenAI client cannot parse.
@@ -7232,6 +8555,116 @@ Connection: close
         bridge.shutdown().unwrap();
     }
 
+    /// Send one Responses-shaped turn.
+    fn responses_request(bridge: &BridgeHandle, body: &str, session: &str) -> String {
+        request(
+            bridge.socket_addr(),
+            &authorized_with_headers(
+                "POST",
+                "/v1/responses",
+                bridge.bearer_token(),
+                body,
+                &[
+                    (UNIFIED_GATEWAY_TOKEN_HEADER, bridge.bearer_token()),
+                    ("x-claude-code-session-id", session),
+                    ("content-type", "application/json"),
+                ],
+            ),
+        )
+    }
+
+    /// `POST /v1/responses` is translated in, served by the same relay, and
+    /// answered as a Responses `response` object.
+    #[test]
+    fn responses_answers_in_the_responses_shape() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}"#;
+        let response = responses_request(&bridge, body, "responses-session");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(response.contains("\"object\":\"response\""), "{response}");
+        assert!(response.contains("\"type\":\"output_text\""), "{response}");
+        assert!(response.contains("hello from messages"), "{response}");
+        assert!(response.contains("\"status\":\"completed\""), "{response}");
+        assert!(
+            !response.contains("chat.completion"),
+            "a Responses client got a chat.completion: {response}"
+        );
+        // The request that reached the upstream was a Messages request.
+        let sent = anthropic.requests();
+        assert_eq!(sent.len(), 1, "{}", sent.len());
+        assert!(sent[0].contains("\"messages\""), "{}", sent[0]);
+        assert!(!sent[0].contains("\"input\""), "{}", sent[0]);
+        bridge.shutdown().unwrap();
+    }
+
+    /// The streaming half speaks the Responses event vocabulary, not chat chunks.
+    #[test]
+    fn responses_streams_response_events() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_stream()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":true}"#;
+        let response = responses_request(&bridge, body, "responses-stream-session");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(response.contains("text/event-stream"), "{response}");
+        assert!(response.contains("event: response.created"), "{response}");
+        assert!(
+            response.contains("event: response.output_text.delta"),
+            "{response}"
+        );
+        assert!(response.contains("event: response.completed"), "{response}");
+        assert!(
+            !response.contains("chat.completion.chunk"),
+            "a Responses client got a chat chunk: {response}"
+        );
+        assert!(
+            !response.contains("data: [DONE]"),
+            "a Responses stream must not end with the chat sentinel: {response}"
+        );
+        bridge.shutdown().unwrap();
+    }
+
+    /// A part clud has no Anthropic spelling for is refused, not dropped, and
+    /// the refusal is a Responses-shaped error envelope.
+    #[test]
+    fn responses_refuses_a_builtin_tool_in_the_responses_shape() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body = r#"{"model":"claude-x","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"tools":[{"type":"web_search"}],"stream":false}"#;
+        let response = responses_request(&bridge, body, "responses-refused-session");
+        assert_eq!(status(&response), 400, "{response}");
+        assert!(response.contains("invalid_request_error"), "{response}");
+        assert!(response.contains("web_search"), "{response}");
+        assert!(
+            anthropic.requests().is_empty(),
+            "a refused turn must not reach the upstream"
+        );
+        bridge.shutdown().unwrap();
+    }
+
+    /// A launch with no unified gateway has no Responses surface, and says so in
+    /// the shape its client speaks.
+    #[test]
+    fn responses_is_refused_without_a_unified_gateway() {
+        let upstream = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let mut bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+        let body = r#"{"model":"claude-x","input":[{"role":"user","content":[{"type":"input_text","text":"hi"}]}],"stream":false}"#;
+        let response = responses_request(&bridge, body, "responses-no-gateway-session");
+        assert_eq!(status(&response), 501, "{response}");
+        assert!(response.contains("service_unavailable_error"), "{response}");
+        assert!(upstream.requests().is_empty(), "{response}");
+        bridge.shutdown().unwrap();
+    }
+
     fn status(response: &str) -> u16 {
         response
             .split_whitespace()
@@ -7239,6 +8672,95 @@ Connection: close
             .expect("HTTP status")
             .parse()
             .unwrap()
+    }
+
+    /// Send one compaction body on the Responses compaction door.
+    ///
+    /// The unified token header rides along so the same helper works in both
+    /// gateway modes: a unified bridge authenticates on it before routing.
+    fn responses_compact_request(bridge: &BridgeHandle, body: &str) -> String {
+        request(
+            bridge.socket_addr(),
+            &authorized_with_headers(
+                "POST",
+                "/v1/responses/compact",
+                bridge.bearer_token(),
+                body,
+                &[
+                    (UNIFIED_GATEWAY_TOKEN_HEADER, bridge.bearer_token()),
+                    ("x-claude-code-session-id", "compact-session"),
+                    ("content-type", "application/json"),
+                ],
+            ),
+        )
+    }
+
+    /// `POST /v1/responses/compact` is a Codex passthrough: the upstream's own
+    /// answer reaches the client, and the body it received has no `stream` key.
+    #[test]
+    fn responses_compact_relays_the_codex_answer_verbatim() {
+        let codex = FakeResponses::start_with_response(Some(compact_success_response()));
+        let mut bridge = BridgeHandle::start(bridged_config(&codex)).unwrap();
+        let body = r#"{"model":"gpt-5.1-codex","input":[],"stream":false}"#;
+        let response = responses_compact_request(&bridge, body);
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(
+            response.contains("\"encrypted_content\":\"opaque-summary\""),
+            "{response}"
+        );
+        let forwarded = codex.requests();
+        assert_eq!(forwarded.len(), 1, "one attempt, never retried");
+        let upstream = captured_body(&forwarded[0]);
+        assert!(
+            upstream.contains("\"model\":\"gpt-5.1-codex\""),
+            "the client's model reaches the backend: {upstream}"
+        );
+        assert!(
+            !upstream.contains("\"stream\""),
+            "upstream deletes the stream key on this door: {upstream}"
+        );
+        bridge.shutdown().unwrap();
+    }
+
+    /// A streaming compaction is refused locally, in the Responses envelope, and
+    /// never reaches the backend.
+    #[test]
+    fn responses_compact_refuses_a_streaming_body() {
+        let codex = FakeResponses::start_with_response(Some(compact_success_response()));
+        let mut bridge = BridgeHandle::start(bridged_config(&codex)).unwrap();
+        let body = r#"{"model":"gpt-5.1-codex","input":[],"stream":true}"#;
+        let response = responses_compact_request(&bridge, body);
+        assert_eq!(status(&response), 400, "{response}");
+        assert!(
+            response.contains("Streaming not supported for compact responses"),
+            "{response}"
+        );
+        assert!(
+            codex.requests().is_empty(),
+            "a refused body must not be spent"
+        );
+        bridge.shutdown().unwrap();
+    }
+
+    /// Without `--codex` the door names the flag instead of reporting a bare 404.
+    #[test]
+    fn responses_compact_is_refused_without_the_codex_route() {
+        let upstream = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let mut bridge = BridgeHandle::start(
+            BridgeConfig::default()
+                .with_test_upstream_url(Some(upstream.base_url.clone()))
+                .with_unified_gateway(UnifiedGatewayConfig::new(
+                    Some("deepseek-route-canary".to_string()),
+                    false,
+                )),
+        )
+        .unwrap();
+        let body = r#"{"model":"gpt-5.1-codex","input":[]}"#;
+        let response = responses_compact_request(&bridge, body);
+        assert_eq!(status(&response), 501, "{response}");
+        assert!(response.contains("--codex"), "{response}");
+        assert!(upstream.requests().is_empty(), "{response}");
+        bridge.shutdown().unwrap();
     }
 
     /// Best-effort RSS snapshot for the opt-in bridge benchmark. It is a
@@ -7954,13 +9476,13 @@ Connection: close
         bridge.shutdown().unwrap();
 
         let text = std::fs::read_to_string(log_path).unwrap();
-        // Serialized field order is serde_json's (sorted): model, then reason.
+        // Serialized field order is insertion order (preserve_order): reason, then model.
         assert!(
-            text.contains(r#""model":"gpt-6-nonexistent","reason":"unknown_model""#),
+            text.contains(r#""reason":"unknown_model","model":"gpt-6-nonexistent""#),
             "{text}"
         );
         assert!(
-            text.contains(r#""model":"clud-claude-kimi-k3","reason":"model_not_served_here""#),
+            text.contains(r#""reason":"model_not_served_here","model":"clud-claude-kimi-k3""#),
             "{text}"
         );
         // The model field comes from a 32 MiB-capped body: one oversized value
@@ -8006,7 +9528,7 @@ Connection: close
 
         let text = std::fs::read_to_string(&log_path).unwrap();
         assert!(
-            text.contains(r#""model":"gpt-6-sol","reason":"model_not_allowed""#),
+            text.contains(r#""reason":"model_not_allowed","model":"gpt-6-sol""#),
             "{text}"
         );
         assert!(!text.contains(&bearer), "{text}");
@@ -8117,7 +9639,7 @@ Connection: close
 
         let text = std::fs::read_to_string(&log_path).unwrap();
         assert!(
-            text.contains(r#""model":"deepseek-flash","reason":"model_not_allowed""#),
+            text.contains(r#""reason":"model_not_allowed","model":"deepseek-flash""#),
             "{text}"
         );
     }
@@ -11505,6 +13027,113 @@ Connection: close
         }
     }
 
+    /// Claude Code's tool-less side calls (session titles, summaries) carry
+    /// the main session header with no agent id. They must not read or write
+    /// the main conversation's history, or the main turn is sent with the
+    /// side call's transcript spliced in and its cache prefix moves.
+    #[test]
+    fn a_tool_less_side_call_does_not_enter_the_main_history() {
+        let upstream = FakeResponses::start();
+        let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+        let session = [("X-Claude-Code-Session-Id", "claude-session-side")];
+        let side = r#"{"model":"claude-x","system":"You are naming a coding session","tools":[],"messages":[{"role":"user","content":"SIDE-CALL-TRANSCRIPT"}],"stream":false}"#;
+        let main = r#"{"model":"claude-x","system":"main agent","tools":[{"name":"Bash","description":"run","input_schema":{"type":"object"}}],"messages":[{"role":"user","content":"MAIN-TURN"}],"stream":false}"#;
+        for body in [side, main] {
+            let response = request(
+                bridge.socket_addr(),
+                &authorized_with_headers(
+                    "POST",
+                    "/v1/messages",
+                    bridge.bearer_token(),
+                    body,
+                    &session,
+                ),
+            );
+            assert_eq!(status(&response), 200, "{response}");
+        }
+        let requests = upstream.requests();
+        assert_eq!(requests.len(), 2);
+        let main_sent = captured_body(&requests[1]);
+        assert!(main_sent.contains("MAIN-TURN"), "{main_sent}");
+        assert!(!main_sent.contains("SIDE-CALL-TRANSCRIPT"), "{main_sent}");
+        let key = |request: &str| {
+            let body: serde_json::Value = serde_json::from_str(captured_body(request)).unwrap();
+            body["prompt_cache_key"].as_str().unwrap().to_string()
+        };
+        assert_ne!(key(&requests[0]), key(&requests[1]));
+    }
+
+    /// #2561: disabling tools must preserve canonical history and cache identity.
+    #[test]
+    fn tool_less_main_turns_reuse_main_history() {
+        for controls in [
+            serde_json::json!({"thinking": {"type": "adaptive"}}),
+            serde_json::json!({"context_management": {"edits": []}}),
+            serde_json::json!({
+                "thinking": {"type": "adaptive"},
+                "context_management": {"edits": []}
+            }),
+        ] {
+            let upstream = FakeResponses::start();
+            let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+            let session = [("X-Claude-Code-Session-Id", "tool-less-main")];
+            for content in ["FIRST-MAIN-TURN", "SECOND-MAIN-TURN"] {
+                let mut body = serde_json::json!({
+                    "model": "claude-x", "system": "main agent", "tools": [],
+                    "messages": [{"role": "user", "content": content}], "stream": false
+                });
+                body.as_object_mut()
+                    .unwrap()
+                    .extend(controls.as_object().unwrap().clone());
+                let response = request(
+                    bridge.socket_addr(),
+                    &authorized_with_headers(
+                        "POST",
+                        "/v1/messages",
+                        bridge.bearer_token(),
+                        &body.to_string(),
+                        &session,
+                    ),
+                );
+                assert_eq!(status(&response), 200, "{response}");
+            }
+            let requests = upstream.requests();
+            assert_eq!(requests.len(), 2);
+            let second: serde_json::Value =
+                serde_json::from_str(captured_body(&requests[1])).unwrap();
+            assert!(second["input"].to_string().contains("FIRST-MAIN-TURN"));
+            assert!(second["input"].to_string().contains("SECOND-MAIN-TURN"));
+            let main = ConversationKey::from_headers(Some("tool-less-main"), None);
+            assert_eq!(second["prompt_cache_key"], main.id);
+        }
+    }
+
+    /// #2554: a standalone client without a session header used to get a new
+    /// upstream prompt-cache key on every request.
+    #[test]
+    fn standalone_sessionless_turns_with_one_prefix_share_a_cache_key() {
+        let upstream = FakeResponses::start();
+        let bridge =
+            BridgeHandle::start(bridged_config(&upstream).with_standalone_client_auth()).unwrap();
+        for _ in 0..2 {
+            let response = request(
+                bridge.socket_addr(),
+                &authorized("POST", "/v1/messages", bridge.bearer_token(), PROBE_BODY),
+            );
+            assert_eq!(status(&response), 200, "{response}");
+        }
+        let keys = upstream
+            .requests()
+            .iter()
+            .map(|request| {
+                let body: serde_json::Value = serde_json::from_str(captured_body(request)).unwrap();
+                body["prompt_cache_key"].as_str().unwrap().to_string()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0], keys[1]);
+    }
+
     #[test]
     fn headerless_cache_identity_is_stable_per_bridge_but_not_shared_between_launches() {
         let upstream = FakeResponses::start();
@@ -13000,4 +14629,94 @@ Connection: close
         let (out_body, _) = super::strip_advisor_capability(raw, &[]);
         assert_eq!(out_body, raw.to_vec());
     }
+}
+
+/// Gemini names its verb in the path, so the path is the route: these pin the
+/// grammar a Gemini-native client actually sends, and the ways a near-miss must
+/// NOT be mistaken for a call.
+#[test]
+fn generate_content_route_reads_the_verb_out_of_the_path() {
+    assert_eq!(
+        parse_generate_content_route("/v1beta/models/claude-test:generateContent"),
+        Some(GeminiCall {
+            model: "claude-test",
+            stream: false
+        })
+    );
+    assert_eq!(
+        parse_generate_content_route("/v1beta/models/claude-test:streamGenerateContent"),
+        Some(GeminiCall {
+            model: "claude-test",
+            stream: true
+        })
+    );
+    // A clud model carries its own suffix grammar, and `rsplit_once` keeps the
+    // model intact even when the caller names one with a colon-free suffix.
+    assert_eq!(
+        parse_generate_content_route("/v1beta/models/clud-claude-sonnet@high:generateContent"),
+        Some(GeminiCall {
+            model: "clud-claude-sonnet@high",
+            stream: false
+        })
+    );
+}
+
+/// Discovery hands a client `models/<id>`; generation must accept exactly that
+/// spelling, or the listing advertises a name the route cannot serve.
+#[test]
+fn generate_content_route_accepts_the_name_discovery_advertises() {
+    let entry = provider_catalog::model_by_discovery_id("clud-claude-codex-sol").expect("row");
+    let name = crate::gemini_models::model_name(&entry).expect("advertised name");
+    let path = format!("/v1beta/models/{name}:generateContent");
+    assert_eq!(
+        parse_generate_content_route(&path),
+        Some(GeminiCall {
+            model: "clud-claude-codex-sol",
+            stream: false
+        })
+    );
+}
+
+#[test]
+fn generate_content_route_refuses_everything_that_is_not_a_generate_call() {
+    for path in [
+        "/v1beta/models/",
+        "/v1beta/models/:generateContent",
+        "/v1beta/models/claude-test",
+        "/v1beta/models/claude-test:countTokens",
+        "/v1beta/models/claude-test:generateContent/extra",
+        "/v1/messages",
+    ] {
+        assert_eq!(
+            parse_generate_content_route(path),
+            None,
+            "{path} must not parse as a generateContent call"
+        );
+    }
+}
+
+/// A refusal on this route has to be readable by a Gemini client: the HTTP
+/// status is preserved (retry logic keys on it) and the envelope names it.
+#[test]
+fn a_gemini_refusal_keeps_the_status_and_speaks_the_gemini_envelope() {
+    let envelope = crate::gemini_client_ingress::render_generate_content_error(
+        400,
+        "candidateCount above 1 is not supported",
+    );
+    let parsed: serde_json::Value = serde_json::from_slice(&envelope).unwrap();
+    assert_eq!(parsed["error"]["code"], 400);
+    assert_eq!(parsed["error"]["status"], "INVALID_ARGUMENT");
+    assert!(
+        parsed["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("candidateCount"),
+        "{parsed}"
+    );
+    let throttled: serde_json::Value = serde_json::from_slice(
+        &crate::gemini_client_ingress::render_generate_content_error(429, "slow down"),
+    )
+    .unwrap();
+    assert_eq!(throttled["error"]["status"], "RESOURCE_EXHAUSTED");
+    assert_eq!(throttled["error"]["code"], 429);
 }

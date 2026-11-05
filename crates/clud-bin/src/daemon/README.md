@@ -11,6 +11,9 @@ Provider/harness metadata travels additively inside each worker's
 for the cross-route ownership boundary and
 [docs/architecture/launch-targets.md](../../../../docs/architecture/launch-targets.md)
 for field-level resolution.
+OpenCode JSONL session identities are recognized by `headless_adapter.rs`;
+managed API turns remain limited to Claude and Codex and reject OpenCode
+explicitly. See [OpenCode](../../../../docs/architecture/opencode.md).
 Normalized model/effort/context fields and unified-mode repeat reconstruction
 are owned by
 [docs/architecture/provider-selection.md](../../../../docs/architecture/provider-selection.md).
@@ -205,8 +208,12 @@ Dead rows are omitted by default. Passing `--since <duration>` sets `include_dea
 
 ## Used by
 
-- `crates/clud-bin/src/main.rs` — sole external consumer; calls `experimental_enabled`, `handle_special_command`, and `run_centralized_session`.
+- `crates/clud-bin/src/main.rs` — calls `experimental_enabled`, `handle_special_command`, and `run_centralized_session`.
 - `crates/clud-bin/src/process_tree.rs` — doc-only cross-reference to `signal_process_tree`.
 - Re-enters itself via the hidden `__daemon` / `__worker` subcommands defined in `crates/clud-bin/src/args.rs`.
 
 Session rm activation and hook identity checks: [rm protection](../../../../docs/architecture/rm-protection.md).
+
+`command::builder` also uses the canonical `experimental_enabled` routing decision
+to keep foreground-only print rendering out of managed/native session logs; see
+[prompt-output.md](../../../../docs/architecture/prompt-output.md).

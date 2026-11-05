@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import os
 import socket
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -88,7 +90,9 @@ def test_fan_out_replay_and_gap(broker, capsys):
 
 
 def test_refuses_missing_or_wrong_token(broker, capsys):
-    assert bus.addr_path().stat().st_mode & 0o077 == 0
+    # Windows stat exposes synthetic mode bits, not its directory/file ACL.
+    if os.name != "nt":
+        assert bus.addr_path().stat().st_mode & 0o077 == 0
     info = bus._read_addr()
     assert info["host"] == "127.0.0.1"
     assert len(info["token"]) == 64
@@ -102,6 +106,49 @@ def test_refuses_missing_or_wrong_token(broker, capsys):
     assert "refused: wrong token" in capsys.readouterr().err
     assert bus.publish_event(_event(1)) is False  # refusal surfaced, not swallowed
     assert "refused: wrong token" in capsys.readouterr().err
+
+
+def test_private_writer_requests_mode_and_replaces_content_atomically(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    destination = tmp_path / "bus.addr"
+    destination.write_text("old")
+    temporary = destination.with_name(f"bus.addr.{os.getpid()}.tmp")
+    operations: list[tuple[str, int | None]] = []
+
+    def record_open(path: Path, flags: int, mode: int) -> int:
+        assert path == temporary
+        assert flags & os.O_CREAT
+        operations.append(("open", mode))
+        return os.open(path, flags, mode)
+
+    def record_chmod(path: Path, mode: int) -> None:
+        assert destination.read_text() == "old"
+        operations.append(("chmod", mode))
+        os.chmod(path, mode)
+
+    def record_replace(source: Path, target: Path) -> None:
+        assert source == temporary
+        assert target == destination
+        assert destination.read_text() == "old"
+        assert source.read_text() == "new"
+        operations.append(("replace", None))
+        os.replace(source, target)
+
+    # Patch only this tool's OS binding, preserving real filesystem operations.
+    monkeypatch.setattr(
+        bus,
+        "os",
+        SimpleNamespace(
+            **{**vars(os), "open": record_open, "chmod": record_chmod, "replace": record_replace}
+        ),
+    )
+    bus._write_private(destination, "new")
+    assert operations == [("open", 0o600), ("chmod", 0o600), ("replace", None)]
+    assert destination.read_text() == "new"
+    assert not temporary.exists()
+    if os.name != "nt":
+        assert destination.stat().st_mode & 0o077 == 0
 
 
 def test_no_transport_switch_remains():

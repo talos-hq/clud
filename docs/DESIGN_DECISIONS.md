@@ -5360,6 +5360,20 @@ pins a live value (the 60f6087b failure mode) can still go red after a refresh;
 producer's logic on fixtures, not the committed catalog itself. Revisit with a
 PR-based flow if the owner adds a bot token.
 
+**Update (2026-11-04, #2518):** the premise no longer holds. `main` now requires
+the merge queue plus a `CI OK` check, so `git push origin HEAD:main` is rejected
+(`GH013: Changes must be made through the merge queue`) and both bots had been
+failing on every scheduled run since 2026-10-22 — the assets silently froze for
+eleven days. The advertised revisit condition has arrived: the bots now push a
+`bot/refresh-*` branch, open a PR and enable auto-merge with
+`REFRESH_BOT_TOKEN` (a user or GitHub App token, never `GITHUB_TOKEN`, whose
+PRs trigger no `pull_request` workflows). CI now runs on the refresh before it
+lands, which is strictly more gating than this entry originally bought; the
+producer-test gate still runs on the regenerated file before the commit, so a
+bad refresh never even reaches the branch. A refresh is no longer instant: it
+waits for `CI OK` and the merge queue. Without the secret the job fails with an
+explicit error instead of retrying a push `main` will always reject.
+
 ## DD-128: safe-rm always allows entries under the system temp dirs, owned-by-you on Unix
 
 **Context:** #1622. An agent wrote `/tmp/clud-issue-body.md`, then could not
@@ -7349,9 +7363,11 @@ required and background agents exist. The chaperone reports `MERGED`,
 `NEEDS-FIXUP` or `STUCK`; the orchestrator counts work done only on `MERGED`.
 Native CI labels are applied at PR creation, never later. Harnesses without
 background agents keep the old behavior: the agent observes until merged.
-`LAND_CONTRACT` carries the short form; the full contract is owned by
-[ci.md](architecture/ci.md#agent-landing-workers-end-at-enqueue-chaperones-own-the-merge),
-a candidate fleet policy (GEN-033, forge-ci/ci.yml).
+`LAND_CONTRACT` (`command/do_prompt.rs`) is the contract text itself, not a
+short form; [ci.md](architecture/ci.md#agent-landing-workers-end-at-enqueue-chaperones-own-the-merge)
+documents the same fleet policy (GEN-033, forge-ci/ci.yml). Clud appends it
+once: under `clud do` the rendered `/do` procedure omits its own copy, so an
+agent sees the contract exactly once per session (#2570).
 
 **Why:** A worker waiting on PR CI and the merge_group run holds the only
 checkout while idle. Worktrees would add parallelism but also cost disk,
@@ -7480,3 +7496,80 @@ uses one code path for Claude and Codex, survives restarts, and reuses the
 lifecycle's existing idempotency and interrupt machinery. A harness that cannot
 take daemon turns (DeepSeek Harness) fails closed with its name instead of
 queueing a message that would never arrive.
+
+
+## DD-198: OpenCode is a harness with a child-local Messages adapter
+
+**Context:** OpenCode must run both native provider models and models behind
+`clud serve`. Its flags and configuration are independent of Claude Code's;
+notably, `opencode run -p` supplies a password instead of a prompt.
+
+**Decision:** model-provider resolution stays independent of the new OpenCode
+harness. The launch builder translates prompts to `opencode run`, while the
+foreground runtime renders the resolved Messages route into child-local
+`OPENCODE_CONFIG_CONTENT`. It uses a dedicated `clud` provider and selects
+that provider for both primary and small-model work. User configuration and
+permission denies are preserved outside clud's owned route keys. No auth or
+config files are written. Codex and unified routing fail explicitly until
+their adapters are supported; Claude-only hooks and slash commands are never
+forwarded to OpenCode.
+
+**Why:** one explicit wire adapter works with the existing served gateway and
+Messages-compatible providers. Reusing Claude's argv or writing OpenCode's
+global authentication would change another tool's behavior and expose state
+across launches. The acceptance test uses the real OpenCode binary, a served
+mock provider, and a complete file-read tool cycle; see
+[OpenCode](architecture/opencode.md).
+
+## DD-199: naming a metered provider on the command line is consent
+
+**Context:** #2529 and #2533 made clud subscription-first: every route to a
+pay-per-token provider needed `CLUD_ALLOW_METERED=1` and a matching
+`CLUD_METERED_PROVIDER`. The motivation was to stop clud from quietly moving a
+user off their Claude or Codex subscription onto API billing. #2533 also
+gated `--openrouter`, `--deepseek`, `--kimi` and `--provider`, so a user who
+typed `clud --openrouter <key>` was refused.
+
+**Decision:** a metered provider the user names on the command line is
+consented: it launches with the loud warning and no environment overrides.
+`clud serve --openrouter` is the same. The two overrides remain required for
+every implicit route: a provider inferred from a qualified `--model`, a saved
+provider setting, the DeepSeek-only credential fallback, unified-gateway vault
+keys, `--failover-allow-metered`, and the Codex bridge's `OPENAI_API_KEY`
+fallback.
+
+**Why:** the harm being prevented is a surprise bill from a route the user did
+not choose. Typing the provider's flag is that choice; requiring two
+environment variables on top of it only broke deliberate use.
+
+## DD-200: print turns classify native events and keep final answers on stdout
+
+Foreground Claude/Codex print turns were too verbose in native inherited-stdio
+mode. The launcher selects each harness's native JSONL protocol and renders
+classified, bounded activity on stderr; final answers remain complete on stdout.
+Explicit native output modes opt out. Tool text-line counts and edit patch
+counts replace bulky bodies. Codex omits diffs from its public exec events, so
+exact edit counts use the current thread's native patch records rather than a
+working-tree diff (which could include unrelated user changes). Named ASCII
+fallbacks plus lossy input decoding/replacement avoid encoding failures.
+The contract and limits live in [prompt-output.md](architecture/prompt-output.md).
+
+## DD-201: clud.bot assistance uses its existing consent-gated WebSocket protocol
+
+The site's advertised `clud remote connect clud.bot` must speak the deployed
+operator protocol: keyword sessions, local consent and binary PTY streams. A
+paired SSH exec command cannot connect to that service. The native client reuses
+running-process's PTY boundary and negotiates its capabilities with the server;
+it neither starts a backend agent nor installs an SSH daemon. Session bearer
+credentials stay on the same origin. See
+[remote assistance](architecture/remote-assistance.md) for the contract and the
+real-executable integration test maintained with the site.
+
+## DD-202: Hermes personality integration is an optional reference
+
+`context.hermes.enabled` appends a reference to the instance's `SOUL.md` through
+Claude's append-system-prompt and Codex's developer instructions. The model may
+read the file when useful. Clud preserves the native system prompt and does not
+eagerly inject the persona or read Hermes credentials/configuration. This keeps
+the existing Hermes integration boundary narrow and gives the user one setting
+for both harnesses. See [optional context](architecture/optional-context.md).

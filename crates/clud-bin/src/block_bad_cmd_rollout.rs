@@ -59,7 +59,7 @@ pub struct MigrationReport {
 /// Where a hook config lives, which decides whether it may be pinned to the
 /// launching executable (see the module docs).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ConfigScope {
+pub(crate) enum ConfigScope {
     /// Inside the repo; usually committed, so only portable rewrites.
     Project,
     /// Under the hook home; machine-local, so pinning is safe.
@@ -87,6 +87,10 @@ pub fn run_startup_checks(auto_fix_hooks: bool) {
     let home = hook_home_dir();
     match migrate_hook_configs_at(&repo_root, home.as_deref(), sibling_helper_present) {
         Ok(report) => {
+            if let Err(error) = crate::scanner_hook_migration::migrate(&repo_root, home.as_deref())
+            {
+                eprintln!("[clud] warning: failed to consolidate scanner hooks: {error}");
+            }
             if report.commands_changed > 0 {
                 if !sibling_helper_present {
                     eprintln!("[clud] migrated legacy hook command to the CLUD_EXE shim");
@@ -164,7 +168,10 @@ const PROJECT_CONFIGS: [(&str, &str); 3] = [
 ];
 const USER_CONFIGS: [(&str, &str); 2] = [(".claude", "settings.json"), (".codex", "hooks.json")];
 
-fn hook_config_paths(repo_root: &Path, home: Option<&Path>) -> Vec<(PathBuf, ConfigScope)> {
+pub(crate) fn hook_config_paths(
+    repo_root: &Path,
+    home: Option<&Path>,
+) -> Vec<(PathBuf, ConfigScope)> {
     let mut paths = Vec::new();
     for (dir, file) in PROJECT_CONFIGS {
         paths.push((repo_root.join(dir).join(file), ConfigScope::Project));
@@ -404,6 +411,17 @@ pub fn dangling_hook_program_warnings(repo_root: &Path, home: Option<&Path>) -> 
 /// while the session runs, and every hook would then fail with `command not
 /// found`. Appended, it never shadows the copy PATH found first.
 pub fn ensure_helper_on_session_path() {
+    if let InstallProbe::HelperPresent { path } = probe_current_install() {
+        let path_env = std::env::var("PATH").unwrap_or_default();
+        if let Some(launcher) = crate::shim_resolve::which("clud", &path_env) {
+            if let Err(error) = expose_helper_beside_launcher(&launcher, &path) {
+                eprintln!(
+                    "[clud] warning: cannot expose scanner beside {}: {error}",
+                    launcher.display()
+                );
+            }
+        }
+    }
     let path_env = std::env::var("PATH").unwrap_or_default();
     let InstallProbe::HelperPresent { path } = probe_current_install() else {
         return;
@@ -429,6 +447,21 @@ pub fn ensure_helper_on_session_path() {
 fn session_path_with_helper(path_env: &str, clud: &Path, home: &Path) -> Option<String> {
     let dir = expose_helper_at(home, clud).ok()?;
     path_with_appended(path_env, &dir)
+}
+
+/// Login shells can rebuild PATH and discard helper-bin. Keep the scanner
+/// beside the public launcher too, including a uv tool's symlink in local/bin.
+/// Existing aliases beside another installation remain untouched.
+fn expose_helper_beside_launcher(launcher: &Path, source: &Path) -> io::Result<()> {
+    let Some(dir) = launcher.parent() else {
+        return Ok(());
+    };
+    let scanner = dir.join(native_helper_name());
+    if scanner.exists() && !same_file::is_same_file(launcher, source).unwrap_or(false) {
+        return Ok(());
+    }
+    crate::alias_link::install_alias(source, &scanner)?;
+    Ok(())
 }
 
 /// Bring a `clud-cmd-scan` already on PATH up to the running `clud` when clud
@@ -606,6 +639,29 @@ mod tests {
             InstallProbe::NotInstalledLayout,
             "a missing file is not an install"
         );
+    }
+
+    #[test]
+    fn public_launcher_gets_a_scanner_without_exposing_other_tools() {
+        let tmp = tempdir().unwrap();
+        let source = tmp.path().join("tool-env/clud");
+        write(&source, "current-build");
+        let public = tmp.path().join("public/clud");
+        std::fs::create_dir_all(public.parent().unwrap()).unwrap();
+        crate::alias_link::install_alias(&source, &public).unwrap();
+        expose_helper_beside_launcher(&public, &source).unwrap();
+        let scanner = public.parent().unwrap().join(native_helper_name());
+        assert!(crate::alias_link::is_fresh(&source, &scanner));
+        assert!(!public.parent().unwrap().join("python").exists());
+
+        let foreign = tmp.path().join("foreign/clud");
+        write(&foreign, "other-build");
+        expose_helper_beside_launcher(&foreign, &source).unwrap();
+        assert!(foreign
+            .parent()
+            .unwrap()
+            .join(native_helper_name())
+            .exists());
     }
 
     #[test]

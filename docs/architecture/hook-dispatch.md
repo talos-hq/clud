@@ -413,6 +413,34 @@ retry stays denied.
   `0` turns the guard off (the rollback switch). Evidence and tradeoff:
   [DD-140](../DESIGN_DECISIONS.md#dd-140-the-repeated-call-guard-denies-call-201-of-an-identical-streak-and-fails-open).
 
+**Patient polls (#2631).** The burst above starts over after a 120 s gap, so
+the expensive shape is the one it never sees: one read-only query re-run every
+few minutes for hours. Measured on 2026-11-05, a single session issued the same
+`gh issue view … --json comments` command 618 times across five days while
+waiting on an upstream repository, re-sending the whole conversation each time.
+The same session ledger keeps a second, gap-independent count (`steady`,
+window 6 h, reset by a different call) for read-only queries only: a `gh` read
+verb (`view`/`list`/`status`/`checks`/`diff`/`api` without a write flag),
+`git ls-remote`, `curl` without a write flag, `ssh` whose remote command reads,
+`docker ps|logs|inspect`, `kubectl get|describe|logs`, and
+`systemctl status|is-active|show`. At the 6th and the 24th repeat the hook adds
+one `hookSpecificOutput.additionalContext` line naming the bundled waiter:
+`clud tool run wait/until.py -- --cmd '<the same command>' --interval 120
+--timeout 3600`, which blocks and prints only the delta.
+
+Those two notes are advisory, and the measured session above ignored both: 127
+more identical polls in the next 24 h. So the ladder ends. Repeat
+`POLL_DENY_AT + 1 = 97` of the *same read-only query* in one session is refused
+with `[clud poll-guard]`, the same waiter command, and the deliberate-repeat
+escape `CLUD_ALLOW_REPEAT=1` (any different call resets the count, and the
+refusal is per exact call signature). Nothing that is not a read-only query is
+ever counted, so builds, tests and writes keep the burst guard's own 200-call
+limit; `CLUD_REPEAT_CALL_LIMIT=0` still disables the whole module.
+`CLUD_POLL_CALL_LIMIT=<n>` or `hooks.poll_call_limit` moves the poll limit alone
+(`0` turns just the poll stop off). Evidence: the same 24 h window recorded
+151 avoidable requests (20 % of all requests, 30 % of input tokens), 126 of
+them from that one session's poll loop.
+
 ### Per-file shell read-hop guard (#2233)
 
 The repeated-call guard above only sees an *identical* call; a hunt never
@@ -442,6 +470,98 @@ shell reads (`sed`, `cat`, `head`, `tail`, `nl`, `less`, `bat`, `tac`,
   session, at most 32 files per session, 2 days / 500 files retained. Fail
   open on every state error.
 
+### Multi-range read-hunt guard (#2233)
+
+The hop guard counts how often a file is read; this one looks at a **single**
+call. `sed -n '40,60p' a.rs; sed -n '120,160p' a.rs; sed -n '400,430p' b.rs`
+lands every disjoint window in the transcript, and each later request in the
+session re-sends all of them. Measured over 24 h: 1,143 shell `sed` calls
+produced 3.9 MB of results — ~37 % of all tool-result text the fleet re-sends
+on average 71× — and 91 % of those calls were multi-command hunts.
+
+`block_bad_cmd_hunt.rs` therefore counts multi-range hunts per session and,
+past the limit, refuses the next **distinct** hunt once with the exact
+replacement for the ranges the command named:
+
+```text
+clud tool run code/slice.py /w/a.rs --lines 40-60 --lines 120-160 --lines 400-430
+```
+
+`code/slice.py` merges overlaps, prints `LINE| text` instead of repeating the
+path on every line, and stops at a byte cap whose footer names the line to
+continue from.
+
+- Qualifies only when every range is `sed -n A,Bp FILE` over an existing
+  source file of at least 8 KiB, there are at least two of them, and they add
+  up to at least 80 requested lines. A single ranged read, a short
+  confirmation read, a piped read (already bounded downstream) and any
+  non-source target are ignored.
+- `sed -i` and redirects are writes, not reads, and pass untouched.
+- A retry of the **identical** hunt is allowed: the refusal is recorded by
+  range signature, so the guard can never wedge a session.
+- **Limit:** `N = 3` hunts per session, reset after an hour without a hunt.
+  `CLUD_READ_HUNT_LIMIT=<n>` overrides it and `0` turns the guard off.
+  `CLUD_ALLOW_READ_HUNT=1` in a command runs one hunt deliberately (logged).
+- **State:** `<clud state dir>/read-hunt-guard/<hash>.json`, one file per
+  session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
+  on every state, parse or stat error.
+
+### Oversized read guard: wide `sed` range and whole-file `cat` (#2233)
+
+The hunt guard covers one call that names several ranges. The other half of the
+`sed` habit is a single wide range: `sed -n '120,720p' file` prints the whole
+600-line window into the transcript, and every later request in the session
+re-sends it. Measured over 24 h (2,903 calls, 291 MB of context exposure):
+single-range slices that print at least 8 KiB are **14 calls, 164 kB of text,
+4.8 % of all exposure**, because they tend to land early in long sessions.
+
+For exactly those calls the bounded reader is smaller. Same file, same ranges:
+`120,520p` is 14,713 B with `sed` and 8,240 B through `code/slice.py`, whose
+`--max-bytes` cap (8 KiB default) stops the text with a footer naming the line
+to continue from. Under the cap `slice.py` is *larger* than `sed` (it prefixes
+every line), which is why this guard never counts a read that fits the cap.
+
+`block_bad_cmd_slice.rs` predicts the printed size from the file itself, counts
+oversized reads per session and, past the limit, refuses the next **distinct**
+one once with the exact replacement for the range it named:
+
+```text
+clud tool run code/slice.py /w/a.rs --lines 300-900
+```
+
+- Only a command whose `sed` reads name **one** range is counted; multi-range
+  calls belong to the hunt guard, so no call is billed twice.
+- Targets must exist, carry a source extension and be at least 8 KiB; logs and
+  data files are never counted. Segments with a pipe, a redirect or `sed -i`
+  are bounded or writes and pass untouched.
+- A retry of the **identical** read is allowed: refusals are recorded by range
+  signature, so the guard can never wedge a session.
+- **Limit:** `N = 2` oversized reads per session, reset after an hour without
+  one. `CLUD_SLICE_BUDGET_LIMIT=<n>` overrides it and `0` turns the guard off.
+  `CLUD_ALLOW_SLICE_BUDGET=1` in a command runs one read deliberately (logged).
+- **State:** `<clud state dir>/read-slice-guard/<hash>.json`, one file per
+  session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
+  on every state, parse or stat error.
+
+**Whole-file `cat` is the same budget** (same file, same state, same limit and
+override knobs). `cat docs/handoffs/<date>.md` prints an entire file and, unlike
+`sed`, offers no range to bound; measured over the same 24 h it is the largest
+unguarded read shape left — **6 calls, 106 kB of text, 14.8 MB of exposure
+(11.6 %)** of a 127 MB run, because a single `cat` lands early and is re-sent by
+every later request.
+
+- Only `cat` segments count. Targets must be plain source/doc paths between
+  1 KiB and 4 MiB, and the segment total must reach 8 KiB, so `cat SPEC.md
+  README.md BLOCKERS.md` counts as one oversized read.
+- A command the hunt guard owns (two or more ranged reads) is skipped, so no
+  call is billed twice; a wide-`sed` habit does not spend the `cat` allowance.
+- The refusal names `code/outline.py` first, then `code/slice.py --lines A-B`,
+  and `head -n 80` for a first look:
+
+```text
+clud tool run code/outline.py -- path/to/file
+```
+
 ### Unchanged-re-read guard (#2233)
 
 A `Read` that repeats a call already made in this session — same path, same
@@ -466,6 +586,101 @@ file that cannot be `stat`ed. `CLUD_REREAD_GUARD=0` turns it off.
 Evidence (24 h probe, 2026-10-31): 308 of 1,035 `Read` calls repeated a
 call already made in the same session, re-supplying 1,029,780 bytes, led by
 one 2,142-line file read 23 times.
+
+### Image-view budget (#2233)
+
+A screenshot is not retained like text: every frame an agent opens stays in the
+conversation for the rest of the session and is re-sent on every later request,
+so a UI loop that overwrites and re-opens one scratchpad screenshot pays for
+every frame it ever looked at, forever.
+
+Evidence (24 h probe, 2026-11-03): image `Read`s were 162 calls but **19.9% of
+all context exposure** (182 MB of the 916 MB re-sent) while every text `Read`
+together was 2.7%. One session opened the same `scratchpad/cur.png` 46 times —
+45 distinct frames, ~190 KB of base64 each.
+
+- **Counting:** views per `(session, image path)`, resolved the way the harness
+  resolves them (`~/` against `$HOME`, relative against the tool's cwd, so both
+  spellings share one count). Only `Read`/`read_file`/`readfile` on an existing
+  image file of at least 8 KiB (`png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`,
+  `tif`, `tiff`, `heic`). A shell `cat x.png` and text files are not counted.
+- **Past half the limit** the allow carries an `additionalContext` note with the
+  frame number, the per-frame payload and the cheaper capture — clip or scale
+  the capture, or crop the region that changed — and the read runs.
+- **Past the limit** the read is refused **once** per file per session, naming
+  the retained payload and the same cheaper capture; repeating the read runs it.
+  A `Read` has no command text to hang a per-call override on, and a permanent
+  wall would have no escape at all, so the refusal is a single decision point.
+- **Limit:** `N = 12` views per file. `CLUD_IMAGE_READ_LIMIT=<n>` overrides it
+  and `0` turns the guard off.
+- **State:** `<clud state dir>/image-view-guard/<hash>.json`, one file per
+  session, at most 16 paths per session, 2 days / 200 files retained; a path's
+  count expires after 60 minutes without a view. Fails open on every state error.
+
+### Process-scan bound (#2233)
+
+`pgrep -a` and `ps aux`/`-ef`/`-eo ...args` print each match's *whole* command
+line, and a gate or build process carries its entire heredoc in argv. The answer
+an agent wants - is it running, which pid, since when - lives in the first ~160
+columns of each line; the rest is pure transcript weight that every later
+request in the session re-sends.
+
+Evidence (24 h probe, 2026-11-03): 284 process-inspection calls produced 455 kB
+of tool text (average 1.6 kB), and one of them -
+`ps -eo pid,etime,args | grep -E 'local.gate|local_gate' | grep -v grep | head`
+- returned **25,686 B for a handful of processes**.
+
+- **Counting:** one count per unbounded dump per session, where a dump is a
+  pipeline (split on `;`, `&`, `&&`, `||`, newlines - never on `|`) whose stages
+  include `pgrep` with an argv flag (`-a`/`-af`/`--list-full`) or `ps` listing
+  `args`/`command` (`aux`, `-ef`, `-ax`, `-eo pid,...,args`). Shell tools only.
+- **Not counted:** a pipeline that already bounds its width (`cut -c`,
+  `head -c`, `--width`, `fold`, `colrm`), a redirect (`... > file`), a
+  command substitution or backtick (the shell consumes that output), and
+  `pgrep`/`ps` forms that print pids or selected columns only. No process is
+  ever filtered out of the output - the guard only bounds each line's width.
+- **Past the limit** the next distinct dump is refused **once**, naming the
+  exact bounded form of the pipeline the agent just wrote
+  (`... | cut -c1-160`). Repeating the identical pipeline always runs, so the
+  guard cannot wedge a session.
+- **Limit:** `N = 3` dumps per session. `CLUD_PROC_SCAN_LIMIT=<n>` overrides it
+  and `0` turns it off; prefixing a command with `CLUD_ALLOW_PROC_SCAN=1`
+  bypasses it once.
+- **State:** `<clud state dir>/proc-scan-guard/<hash>.json`, one file per
+  session, at most 16 refused signatures, 2 days / 200 files. The count resets
+  after an hour of quiet. **Fails open** on every missing fact: no session id,
+  no state dir, no command.
+
+### Raw CI-log read budget (#2233)
+
+`gh run view --log-failed` prints every line of a failed job into the
+transcript, where every later request re-sends it.
+
+Evidence (24 h probe, 2026-11-03, `reports/rows-2026-11-03.jsonl`): 244
+`gh run view` calls produced 283 kB of tool text but **10.8 MB of exposure
+(4.5%)**, the largest category after `sed`; the widest single call was 27.3 kB
+landing at request 200 of its session, so it alone cost 1 MB. The bounded
+replacement already ships and nobody used it: on one failed job here,
+`gh run view … --log-failed` = **119,184 B** versus **995 B** from
+`github/ci_failure_report.py` (≤8 KiB summary, full log saved to a private
+artifact and named in the output).
+
+- **Counting:** distinct `(repo, run)` pairs read raw in one session. Detected
+  stages are `gh run view … --log` / `--log-failed` and
+  `gh api repos/O/R/actions/runs/<id>/logs`. A command that redirects to a file
+  is already out of the transcript and is never counted; `--json`,
+  `gh run list`, `gh run download` and job-level `gh api` paths (which carry no
+  run id) are ignored.
+- **At the limit** the hook adds an advisory note naming the bounded command,
+  and the call proceeds. **Past the limit** the next raw log for a run not yet
+  read is refused once, with the exact bounded replacement for that run —
+  `"$CLUD_EXE" tool run github/ci_failure_report.py -- --repo R --run ID --job J`.
+  Any retry of the same run's log proceeds, so the decision cannot loop.
+- **Budget:** two raw runs per session. `CLUD_ALLOW_CI_LOG=1` in the command
+  skips one call, `CLUD_CI_LOG_LIMIT=<n>` sets the limit and `0` disables it.
+- **State:** `<clud state dir>/ci-log-guard/<hash>.json`, one file per session,
+  at most 24 runs per session, 2 days / 500 files retained; the count expires
+  after 60 minutes without a read. Fails open on every state error.
 
 ### Verification-to-edit ratio note (#1988)
 
@@ -565,10 +780,37 @@ This is why the invocation carries an `explicit` flag rather than just an event
 name: a bare call and a compiled `--event PreToolUse` call name the same event
 but play different roles.
 
+Before writing launch-scoped Claude settings, clud consolidates its plain
+scanner registrations into one explicit `--event <E>` command per event.
+Safety checks and declared hooks then run in the same process. Legacy
+`clud-block-bad-cmd` and Python guard lines in a supplied `--settings` document
+are folded into that command too. Matchers are combined; unrelated handlers
+and handlers with custom options are preserved.
+
+The startup hook migration also folds existing plain scanner registrations
+across normal Claude user/project settings into one explicit catch-all per
+event, preferring an existing user registration (`CLAUDE_CONFIG_DIR` when set).
+Project registrations and arbitrary project hooks stay in the project and
+retain their trust boundary. Project scanners suppress generated launch
+coverage only when workspace trust has already been verified; unknown or
+untrusted project settings never replace launch safety. The migration preserves unrelated
+hooks, settings and customized handlers, and adds no registration where none
+existed. The generated launch fragment defers to those inherited canonical
+registrations. Explicit `--setting-sources` overrides retain launch coverage
+because they can exclude the settings file holding the inherited scanner.
+
+At startup clud also installs the scanner alias beside the public `clud`
+launcher on PATH. This includes a uv tool's public symlink directory. An
+existing scanner beside another installation is left alone; a missing one
+is installed even for an absolute-path development launch. Login shells can rebuild
+PATH and discard the session helper directory; the public alias keeps the
+portable scanner command available in that case. No interpreter or other
+tool aliases are installed in the public directory by this step.
+
 ## Delivery: compiled into CLI args, not written to files
 
-clud never writes hook lines into a user's config. It **compiles** its hook set
-into each frontend's native surface and passes it at launch:
+clud **compiles** its hook set into each frontend's native surface and passes
+it at launch. The migration above only consolidates existing scanner wiring:
 
 - **Claude** takes `--settings <file-or-json>`, an *additional* source that
   merges with the settings files rather than replacing them, with hook entries

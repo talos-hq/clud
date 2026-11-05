@@ -240,7 +240,7 @@ fn only_the_explicit_metered_codex_route_permits_the_api_key() {
 fn every_resolved_metered_provider_needs_consent_for_exactly_it() {
     let none = resolve(&EnvSnapshot::default()).expect("default");
     for provider in ModelProvider::ALL.iter().copied() {
-        let result = enforce_resolved(&none, provider, false);
+        let result = enforce_resolved(&none, provider, None, false);
         if CostOwner::for_provider(provider) == CostOwner::Metered {
             assert_eq!(
                 result,
@@ -256,9 +256,12 @@ fn every_resolved_metered_provider_needs_consent_for_exactly_it() {
         (METERED_PROVIDER_ENV, "kimi"),
     ]))
     .expect("kimi consent");
-    assert_eq!(enforce_resolved(&kimi, ModelProvider::Kimi, false), Ok(()));
     assert_eq!(
-        enforce_resolved(&kimi, ModelProvider::OpenRouter, false),
+        enforce_resolved(&kimi, ModelProvider::Kimi, None, false),
+        Ok(())
+    );
+    assert_eq!(
+        enforce_resolved(&kimi, ModelProvider::OpenRouter, None, false),
         Err(PolicyError::ResolvedMeteredWithoutConsent(
             ModelProvider::OpenRouter
         ))
@@ -269,11 +272,11 @@ fn every_resolved_metered_provider_needs_consent_for_exactly_it() {
 fn failover_metered_consent_needs_the_environment_too() {
     let none = resolve(&EnvSnapshot::default()).expect("default");
     assert_eq!(
-        enforce_resolved(&none, ModelProvider::Claude, true),
+        enforce_resolved(&none, ModelProvider::Claude, None, true),
         Err(PolicyError::FailoverMeteredWithoutConsent)
     );
     assert_eq!(
-        enforce_resolved(&none, ModelProvider::Claude, false),
+        enforce_resolved(&none, ModelProvider::Claude, None, false),
         Ok(())
     );
 }
@@ -297,4 +300,41 @@ fn a_consent_list_serves_a_unified_session_but_not_a_single_route() {
     ]))
     .expect_err("CLUD_PROVIDER needs exactly its own consent");
     assert!(pinned.to_string().contains("disagrees"), "{pinned}");
+}
+
+/// Naming a metered provider on the command line is consent; any other route
+/// to it (saved setting, `--model` inference, fallback) still needs the env.
+#[test]
+fn an_explicit_cli_provider_is_consent_for_exactly_that_provider() {
+    let none = resolve(&EnvSnapshot::default()).expect("default");
+    for provider in ModelProvider::ALL.iter().copied() {
+        assert_eq!(
+            enforce_resolved(&none, provider, Some(provider), false),
+            Ok(()),
+            "{provider}"
+        );
+    }
+    assert_eq!(
+        enforce_resolved(
+            &none,
+            ModelProvider::OpenRouter,
+            Some(ModelProvider::Kimi),
+            false
+        ),
+        Err(PolicyError::ResolvedMeteredWithoutConsent(
+            ModelProvider::OpenRouter
+        ))
+    );
+    assert_eq!(
+        enforce_resolved(
+            &none,
+            ModelProvider::Claude,
+            Some(ModelProvider::OpenRouter),
+            true
+        ),
+        Err(PolicyError::FailoverMeteredWithoutConsent)
+    );
+    assert!(!resolve(&EnvSnapshot::default())
+        .expect("default")
+        .allows_codex_api_key());
 }

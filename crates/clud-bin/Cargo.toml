@@ -40,6 +40,8 @@ getrandom = "0.4"
 ignore = "0.4"
 # File identity (including NTFS hardlinks), rather than matching size/mtime.
 same-file = "1"
+# Exact line diffs for compact tool summaries (Apache-2.0).
+similar = "3.1"
 # Issue #556: in-process git-index parse for the large-file guard's fast
 # (tracked-files + cached sizes) pass. Pinned exactly; license MIT OR
 # Apache-2.0 (gitoxide family). Only the index reader is pulled in — no ODB,
@@ -60,6 +62,9 @@ hmac = "0.12.1"
 ureq = { version = "2", default-features = false, features = ["tls"] }
 webpki-roots = "0.26.11"
 url = "2"
+# Remote assistance adds system roots only to its own HTTP/WebSocket connectors.
+rustls-native-certs = "0.8"
+tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 # Issue #73 / #110: embedded KV store for the session and tracked-entry
 # registries. `redb` is pure Rust (no bundled C toolchain), single-writer
 # at the file level, and ships its own file locking — replaces the
@@ -92,7 +97,11 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 zeroize = "1"
 prost = "0.14"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["raw_value"] }
+# preserve_order: the gateway re-serializes provider request bodies (secret
+# redaction, provider pin, advisor strip). Sorted keys would rewrite tool
+# schemas and tool inputs, and the provider would re-bill the cached history
+# as new input (#2225).
+serde_json = { version = "1", features = ["raw_value", "preserve_order"] }
 sysinfo = "0.37"
 terminal_size = "0.4"
 # Plain serde-friendly TOML deserializer. Used by the shell::git_bash_resolver
@@ -139,9 +148,10 @@ tree-sitter-bash = "=0.25.1"
 tree-sitter-powershell = "=0.26.4"
 tempfile = "3"
 os_pipe = "1.2.3"
+# Read-only Hermes config detection in `clud setup` only (setup_command/hermes.rs).
+serde_yaml = "0.9"
 
 [dev-dependencies]
-serde_yaml = "0.9"
 # #1148: the nested-sweep tests need a *mixed-age* tree — a stale session
 # directory beneath a fresh parent — which is the exact shape the bug lives
 # in. The existing idiom in `gc::session_tmp` shifts the test's notion of

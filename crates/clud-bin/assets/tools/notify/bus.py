@@ -39,7 +39,11 @@ file makes the relaunch resume exactly after what it printed.
 
 Security. The broker binds 127.0.0.1 (never 0.0.0.0 or ::) on an
 ephemeral port and atomically writes {"host","port","token"} to
-$CLUD_WATCH_DIR/bus.addr (mode 0600). A loopback port is reachable by every
+$CLUD_WATCH_DIR/bus.addr (mode 0600 on POSIX). Windows uses the directory's
+inherited ACL, so CLUD_WATCH_DIR must be a private directory there; this
+stdlib writer does not establish an owner-only Windows DACL.
+Native owner-only Windows verification is tracked in clud#2586.
+A loopback port is reachable by every
 local user, so every request's one handshake line must carry that random
 256-bit per-broker token, compared with secrets.compare_digest. A missing
 or wrong token is logged by the broker, answered with `{"error": ...}`,
@@ -75,7 +79,7 @@ def addr_path() -> Path:
 
 
 def _write_private(path: Path, text: str) -> None:
-    """Owner-only file, replaced atomically."""
+    """Atomic replacement; POSIX owner mode, Windows inherited directory ACL."""
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
