@@ -714,9 +714,9 @@ fn periodic_tick_spares_unverified_source_when_free_space_low() {
             },
         },
     );
-    // #1790: the unverified sibling clone has no cached Git verdict and
-    // must survive disk pressure. Only the worktree is dispatched.
-    assert_eq!(dispatched, 1, "unverified sibling must not be dispatched");
+    // Neither source has a cached Git verdict. Disk pressure cannot turn
+    // unknown source into a verified deletion candidate.
+    assert_eq!(dispatched, 0, "unverified source must not be dispatched");
 
     // Outside the worker loop the test plays the role of the
     // registry-writer thread: apply the pool's completion callbacks to redb
@@ -1113,18 +1113,20 @@ fn list_surfaces_the_ticks_reason_from_cache_and_never_probes_itself() {
         "a cached verdict should carry when it was computed"
     );
 
-    // The same row, with nothing cached: plain reclaimable, no reason. This
-    // is what proves the state came from the cache and not from `List`
-    // probing git on its own.
+    // Without a cached verdict, source verification is pending. The absence
+    // of an evaluated timestamp proves `List` did not probe git itself.
     let uncached = list_rows(
         &registry,
         &pool_tx,
         &completion_tx,
         &mut SpareReasons::new(),
     );
-    assert_eq!(uncached[0].state, "reclaimable");
-    assert!(uncached[0].reclaimable);
-    assert_eq!(uncached[0].reason, None);
+    assert_eq!(uncached[0].state, "pinned");
+    assert!(!uncached[0].reclaimable);
+    assert_eq!(
+        uncached[0].reason.as_deref(),
+        Some("pinned: source verification pending")
+    );
     assert_eq!(uncached[0].evaluated_unix, None);
 }
 
@@ -1335,6 +1337,36 @@ fn tracked_worktree_reverification_checks_source_references() {
         reverify_before_delete_with(&entry, &|_| None),
         Some("pinned: not a verified git checkout")
     );
+}
+
+#[test]
+fn worktree_preview_requires_a_current_source_verdict() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = TrackedEntry {
+        id: 1,
+        kind: WORKTREE_KIND.to_string(),
+        path: tmp.path().to_string_lossy().into_owned(),
+        repo_root: None,
+        branch: None,
+        agent_id: None,
+        created_unix: 0,
+    };
+    let mut cache = SpareReasons::new();
+    let (purgeable, skipped) = partition_purgeable(vec![entry.clone()], vec![], &mut cache);
+    assert!(purgeable.is_empty(), "unprobed source is not removable");
+    assert_eq!(skipped, 1);
+    cache.record(
+        entry.path.clone(),
+        PurgeDecision {
+            purge: false,
+            reason: "pinned: uncommitted or unpushed work",
+            class: extern_repo::PurgeClass::Pinned,
+        },
+        now_unix(),
+    );
+    let (purgeable, skipped) = partition_purgeable(vec![entry], vec![], &mut cache);
+    assert!(purgeable.is_empty());
+    assert_eq!(skipped, 1);
 }
 
 /// A second probe must not stack on top of one already running: it would

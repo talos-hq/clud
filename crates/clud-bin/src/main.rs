@@ -296,6 +296,20 @@ fn session_stats(session: Option<&str>) -> i32 {
     }
 }
 
+/// The OpenAI Chat Completions ingress seam: request in, Messages body out, or
+/// the reverse with `--response`. No session, backend, or daemon.
+fn run_openai_chat_translate_seam(
+    response: bool,
+    stream: bool,
+    for_model: Option<&str>,
+    http: bool,
+) -> i32 {
+    if response {
+        return clud::openai_ingress::run_translate_response_stdin(stream, for_model, http);
+    }
+    clud::openai_ingress::run_translate_stdin()
+}
+
 fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
     let code = match cmd? {
         // #1189: Claude Code runs `clud statusline` as its statusLine command
@@ -339,21 +353,26 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             stream,
             for_model,
             http,
-        } => {
-            if *response {
-                clud::openai_ingress::run_translate_response_stdin(
-                    *stream,
-                    for_model.as_deref(),
-                    *http,
-                )
-            } else {
-                clud::openai_ingress::run_translate_stdin()
-            }
-        }
+        } => run_openai_chat_translate_seam(*response, *stream, for_model.as_deref(), *http),
         // Hidden test seam for the Claude <-> Gemini translator: stdin in, the
         // translated body out. `--response` runs the ingress direction. No
         // session, backend or daemon.
         args::Command::InternalClaudeGeminiTranslate { .. } => run_claude_gemini_seam(cmd),
+        args::Command::InternalApplyPayloadRules {
+            rules,
+            settings_file,
+            model,
+            protocol,
+            from_protocol,
+            headers,
+        } => clud::payload_rules::run_apply_stdin(
+            rules.as_deref(),
+            settings_file.as_deref(),
+            model.as_deref().unwrap_or_default(),
+            protocol,
+            from_protocol,
+            headers.to_vec(),
+        ),
         args::Command::InternalOpenAiResponsesTranslate => {
             clud::responses_ingress::run_translate_stdin()
         }

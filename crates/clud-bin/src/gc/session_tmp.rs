@@ -145,28 +145,23 @@ pub fn read_foreign_owned(state_dir: &Path) -> Vec<PathBuf> {
         .unwrap_or_default()
 }
 
-/// `clud gc` lines for unremovable subtrees, each with the command that
-/// removes it: `sudo rm -rf`, or a throwaway root container when sudo is
-/// unavailable (Docker made the files, so Docker can delete them).
+/// `clud gc` lines for unremovable subtrees. Restore ownership without
+/// following directory links, then let native GC enforce its safety rules.
 pub fn foreign_owned_lines(paths: &[PathBuf]) -> Vec<String> {
     if paths.is_empty() {
         return Vec::new();
     }
     let mut lines = vec![format!(
-        "warning: ~/.clud/tmp: {} path(s) owned by another user (likely Docker) cannot be swept; remove them with:",
+        "warning: ~/.clud/tmp: {} path(s) owned by another user (likely Docker) cannot be swept; review and restore ownership, then retry native GC:",
         paths.len()
     )];
     for path in paths {
         let quoted = shell_quote(&path.display().to_string());
-        lines.push(format!("  sudo rm -rf {quoted}"));
-        if let (Some(parent), Some(name)) = (path.parent(), path.file_name()) {
-            lines.push(format!(
-                "    or: docker run --rm -v {}:/x alpine rm -rf {}",
-                shell_quote(&parent.display().to_string()),
-                shell_quote(&format!("/x/{}", name.to_string_lossy())),
-            ));
-        }
+        lines.push(format!(
+            "  sudo chown -hRP -- \"$(id -u):$(id -g)\" {quoted}"
+        ));
     }
+    lines.push("  clud gc prune tmp".to_string());
     lines
 }
 
@@ -927,14 +922,15 @@ mod tests {
     }
 
     #[test]
-    fn foreign_owned_lines_give_sudo_and_docker_commands() {
+    fn foreign_owned_lines_restore_ownership_then_use_native_gc() {
         let lines = foreign_owned_lines(&[PathBuf::from("/t/s/it's")]);
         assert!(lines[0].contains("1 path(s)"));
-        assert_eq!(lines[1], "  sudo rm -rf '/t/s/it'\\''s'");
         assert_eq!(
-            lines[2],
-            "    or: docker run --rm -v '/t/s':/x alpine rm -rf '/x/it'\\''s'"
+            lines[1],
+            "  sudo chown -hRP -- \"$(id -u):$(id -g)\" '/t/s/it'\\''s'"
         );
+        assert_eq!(lines[2], "  clud gc prune tmp");
+        assert!(lines.iter().all(|line| !line.contains("rm -rf")));
         assert!(foreign_owned_lines(&[]).is_empty());
     }
 

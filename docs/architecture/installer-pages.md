@@ -53,16 +53,64 @@ asset URL, and parses a complete newer candidate row. Normal installs keep
 using the canonical Pages URL and reject a candidate channel.
 
 `installer/site.py` renders the exact Pages artifact paths: `index.html`,
-`install/index.html`, and `install/manifest.json`. The project root is a static
-client-side redirect to `/clud/install/index.html` with one hyperlink to the
-catalog. The landing page lists only verified direct native assets from the catalog's
+`install/index.html`, `install/manifest.json`, and `install.sh`. The project
+root (`https://talosbot.ai/clud/`) serves the same download page as
+`install/index.html`, which stays for `self_install::entry::INSTALL_PAGE`. The
+landing page lists only verified direct native assets from the catalog's
 `latest-stable` release. It prefers static musl over GNU Linux assets and shows
 an explicit no-download message for wheel-only releases. Each link uses the
 catalog's immutable release URL, filename, OS, architecture, and variant; the
 page does not construct `/releases/latest/download/` links. It provides
 terminal launch commands for the downloaded executable and links to Apple's
-Open Anyway guidance for macOS. The verifier checks those links against the
-generated catalog.
+Open Anyway guidance for macOS. The verifier checks those links, the dropdown
+entries, the inlined detection script, and root/install page identity against
+the generated catalog.
+
+### Download page detection
+
+`installer/download.js` is inlined into the page. It reads
+`navigator.userAgentData` (platform, then `architecture`/`bitness` via
+`getHighEntropyValues`), falling back to `navigator.platform` and
+`navigator.userAgent`. macOS browsers freeze the UA at "Intel Mac OS X" and the
+platform at `MacIntel`, so without client hints (Safari, Firefox) the CPU is
+unknowable. The page then assumes Apple Silicon and says so: "Detected: macOS ·
+assuming Apple Silicon (aarch64) — most Macs since 2020." followed by a
+"Switch to Intel." button that swaps the recommendation to
+`x86_64-apple-darwin`. The guess is always labelled, never silent; WebGL is not
+consulted because Safari reports `Apple GPU` on Intel Macs too. A real
+client-hint answer is used as-is with no override. Phones, tablets (including
+desktop-mode iPadOS), Chrome OS, 32-bit hosts and unknown agents get no
+recommendation, only the full list. A detected system pre-selects the
+`<select id="platform-select">` entry and fills the primary download button
+with the exact asset name; the status chip and the dropdown let the visitor
+override it. The page is one self-contained HTML file (inline CSS and JS,
+system font stacks, no external fetches), dark, responsive down to 390 px, with
+visible focus rings and `prefers-reduced-motion` honoured. With
+JavaScript off, the plain list of all native downloads still works.
+
+### `install.sh`
+
+`installer/install.sh` is served at `https://talosbot.ai/clud/install.sh`
+(`curl -fsSL https://talosbot.ai/clud/install.sh | sh`; flags after
+`sh -s --`). It maps `uname -s`/`uname -m` to one of the four macOS/Linux
+assets (Linux uses static musl; a Rosetta shell on Apple Silicon gets aarch64),
+resolves the latest release tag from the `releases/latest` redirect unless
+`--version <tag>` is given, downloads the asset and the release's
+`SHA256SUMS`, and installs to `${CLUD_INSTALL_DIR:-$HOME/.local/bin}/clud`. It
+never edits shell profiles unless `--write-profile` (appends a PATH line to
+`~/.profile`), and prints `clud setup` as the next step instead of running it.
+`--dry-run` prints the platform, release, both URLs and the destination and
+downloads nothing (without `--version` it makes one header-only request to
+resolve the tag). It exits non-zero on: an unknown flag; an unsupported OS or
+architecture (naming the supported four); an asset missing from
+`SHA256SUMS`; a checksum mismatch; or no `sha256sum`/`shasum`. Windows is out
+of scope: the page links the `.exe` downloads. This is separate from the
+repository-root `install.sh` (the `uv tool` route).
+`tests/test_installer_download_page.py` holds the table-driven detection test
+(run under `node`), a fake-DOM test that the Intel override changes the
+recommended `href`, the page inventory and self-contained tests, and hermetic script tests with
+stub `uname`/`curl`/`sha256sum` on `PATH`; the deploy job runs the live
+script's `--dry-run`.
 
 `.github/workflows/install-pages.yml` runs the unit suite and upstream
 `manifest-validate` on PRs, then publishes only on `main` or manual dispatch.

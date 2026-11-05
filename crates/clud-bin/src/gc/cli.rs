@@ -207,30 +207,10 @@ pub fn run(args: &Args, sub: Option<GcSubcommand>) -> i32 {
         return code;
     }
 
-    // Issue #422: `--kind uv-cache` is filesystem-managed (not redb-tracked),
-    // so it short-circuits the daemon roundtrip entirely. Handle it before
-    // the daemon-required check so users without the daemon running can
-    // still manage their uv cache.
-    match &action {
-        GcAction::List {
-            json,
-            kind: Some(k),
-            ..
-        } if k == UV_CACHE_KIND => return cmd_list_uv_cache(*json),
-        GcAction::Purge {
-            dry_run,
-            yes,
-            kind: Some(k),
-            ..
-        } if k == UV_CACHE_KIND => {
-            return cmd_purge_uv_cache(*dry_run, *yes);
-        }
-        GcAction::Prune {
-            dry_run,
-            kind: Some(k),
-            ..
-        } if k == UV_CACHE_KIND => return cmd_prune_uv_cache(*dry_run),
-        _ => {}
+    // Filesystem collectors do not need a registry round trip. Dispatch
+    // them before the daemon-required check, including read-only temp plans.
+    if let Some(code) = run_without_daemon(&action) {
+        return code;
     }
     if args.no_daemon {
         eprintln!("error: gc operations require the clud daemon; remove --no-daemon");
@@ -243,8 +223,39 @@ pub fn run(args: &Args, sub: Option<GcSubcommand>) -> i32 {
             return 1;
         }
     };
+    run_with_daemon(action, &state_dir)
+}
+
+fn run_without_daemon(action: &GcAction) -> Option<i32> {
     match action {
-        GcAction::List { json, kind, .. } => cmd_list(&state_dir, json, kind.as_deref()),
+        GcAction::List {
+            json,
+            kind: Some(k),
+            ..
+        } if k == UV_CACHE_KIND => Some(cmd_list_uv_cache(*json)),
+        GcAction::Purge {
+            dry_run,
+            yes,
+            kind: Some(k),
+            ..
+        } if k == UV_CACHE_KIND => Some(cmd_purge_uv_cache(*dry_run, *yes)),
+        GcAction::Prune {
+            dry_run,
+            kind: Some(k),
+            ..
+        } if k == UV_CACHE_KIND => Some(cmd_prune_uv_cache(*dry_run)),
+        GcAction::Prune {
+            dry_run,
+            kind: Some(k),
+            ..
+        } if k == TMP_KIND => Some(cmd_prune_tmp(*dry_run)),
+        _ => None,
+    }
+}
+
+fn run_with_daemon(action: GcAction, state_dir: &Path) -> i32 {
+    match action {
+        GcAction::List { json, kind, .. } => cmd_list(state_dir, json, kind.as_deref()),
         GcAction::Prune {
             dry_run,
             older_than,
@@ -252,13 +263,13 @@ pub fn run(args: &Args, sub: Option<GcSubcommand>) -> i32 {
         } => {
             let kind = kind.expect("validated kind");
             if kind == ALL_KIND {
-                run_all_kinds(&state_dir, false, dry_run, false, older_than.as_deref())
+                run_all_kinds(state_dir, false, dry_run, false, older_than.as_deref())
             } else {
                 let spec = find_kind(&kind).expect("validated kind");
-                if let Some(code) = run_fs_kind(&state_dir, spec, dry_run) {
+                if let Some(code) = run_fs_kind(state_dir, spec, dry_run) {
                     return code;
                 }
-                cmd_prune_tracked(&state_dir, spec, dry_run, older_than.as_deref())
+                cmd_prune_tracked(state_dir, spec, dry_run, older_than.as_deref())
             }
         }
         GcAction::Purge {
@@ -269,13 +280,13 @@ pub fn run(args: &Args, sub: Option<GcSubcommand>) -> i32 {
         } => {
             let kind = kind.expect("validated kind");
             if kind == ALL_KIND {
-                run_all_kinds(&state_dir, true, dry_run, yes, older_than.as_deref())
+                run_all_kinds(state_dir, true, dry_run, yes, older_than.as_deref())
             } else {
                 let spec = find_kind(&kind).expect("validated kind");
-                if let Some(code) = run_fs_kind(&state_dir, spec, dry_run) {
+                if let Some(code) = run_fs_kind(state_dir, spec, dry_run) {
                     return code;
                 }
-                cmd_purge_tracked(&state_dir, spec, dry_run, yes, older_than.as_deref())
+                cmd_purge_tracked(state_dir, spec, dry_run, yes, older_than.as_deref())
             }
         }
         GcAction::All {
@@ -283,8 +294,8 @@ pub fn run(args: &Args, sub: Option<GcSubcommand>) -> i32 {
             dry_run,
             yes,
             older_than,
-        } => cmd_all(&state_dir, purge, dry_run, yes, older_than.as_deref()),
-        GcAction::Reconcile => cmd_reconcile(&state_dir),
+        } => cmd_all(state_dir, purge, dry_run, yes, older_than.as_deref()),
+        GcAction::Reconcile => cmd_reconcile(state_dir),
     }
 }
 
@@ -680,7 +691,7 @@ fn cmd_prune_tmp(dry_run: bool) -> i32 {
     if let Some(line) = report.undeletable.summary_line() {
         eprintln!("tmp: {line}");
     }
-    i32::from(report.failed > 0)
+    i32::from(report.failed > 0 || report.liveness_unavailable.is_some())
 }
 
 /// Repo roots clud has run in (the registry's `repo_visits`).
