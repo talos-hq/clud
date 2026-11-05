@@ -136,7 +136,7 @@ def test_reject_wheel_without_real_clud() -> None:
         executable_member(wheel("clud.exe", b"invalid"), "clud.exe")
 
 
-def test_pages_paths_redirect_and_only_manifest_link(tmp_path) -> None:
+def test_pages_paths_root_serves_page_and_only_manifest_link(tmp_path) -> None:
     from html.parser import HTMLParser
 
     data = wheel("clud.exe", b"MZpayload")
@@ -159,7 +159,7 @@ def test_pages_paths_redirect_and_only_manifest_link(tmp_path) -> None:
     links = Links()
     links.feed(root)
     assert links.hrefs == ["/clud/install/manifest.json"]
-    assert "location.replace('/clud/install/index.html')" in root
+    assert root == page
     assert "2.9.0" in page
     assert "No native downloads are available for this stable release" in page
     assert "releases/latest/download/clud-installer.exe" not in page

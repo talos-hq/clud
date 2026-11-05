@@ -606,6 +606,37 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
+    // #2233: one `sed -n A,Bp` range that would print more than the bounded
+    // reader's cap lands all of it in the transcript, where every later request
+    // re-sends it. Past a few per session the next distinct oversized read is
+    // refused once with the exact `code/slice.py` call for the range it named.
+    // Fail-open.
+    if event == PRE_TOOL_USE_EVENT {
+        if block_bad_cmd_slice::opts_out(
+            payload
+                .tool_input
+                .as_ref()
+                .and_then(|input| input.get("command"))
+                .and_then(Value::as_str)
+                .unwrap_or_default(),
+        ) {
+            append_log(&format!(
+                "READ-SLICE-GUARD-OVERRIDE: {} in command: read-slice guard bypassed for tool_name={:?}",
+                block_bad_cmd_slice::ALLOW_TOKEN,
+                payload.tool_name
+            ));
+        } else if let Some(reason) = block_bad_cmd_slice::reason(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+            &payload.cwd,
+        ) {
+            append_log(&format!("READ-SLICE-GUARD-BLOCKED: {reason}"));
+            println!("{}", deny_json(&reason));
+            eprintln!("{reason}");
+            return 2;
+        }
+    }
     // #2233: a Read of a file whose bytes are unchanged since the same read in
     // this session returns nothing new, and every later request pays for it
     // again. Refused with the bounded alternatives named; fails open.
@@ -640,6 +671,28 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             }
             block_bad_cmd_imgview::Outcome::Note(note) => image_note = Some(note),
             block_bad_cmd_imgview::Outcome::Allow => {}
+        }
+    }
+
+    // #2233: `gh run view --log[-failed]` keeps a whole job log in the
+    // transcript, and every later request re-sends it. Past the limit the next
+    // distinct run's raw log is refused once with the bundled bounded reader
+    // (`github/ci_failure_report.py`: <=8 KiB summary + a private artifact).
+    let mut ci_log_note: Option<String> = None;
+    if event == PRE_TOOL_USE_EVENT {
+        match block_bad_cmd_cilog::outcome(
+            &payload.tool_name,
+            payload.tool_input.as_ref(),
+            payload.session_id.as_deref(),
+        ) {
+            block_bad_cmd_cilog::Outcome::Deny(reason) => {
+                append_log(&format!("CI-LOG-GUARD-BLOCKED: {reason}"));
+                println!("{}", deny_json(&reason));
+                eprintln!("{reason}");
+                return 2;
+            }
+            block_bad_cmd_cilog::Outcome::Note(note) => ci_log_note = Some(note),
+            block_bad_cmd_cilog::Outcome::Allow => {}
         }
     }
 
@@ -1132,7 +1185,7 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
         return 0;
     }
 
-    if let Some(note) = merge_notes(verify_note, image_note) {
+    if let Some(note) = merge_notes(merge_notes(verify_note, image_note), ci_log_note) {
         append_log("allowed with an advisory note");
         let output = block_bad_cmd_verify_ratio::context_json(&note);
         println!("{}", with_hook_notice(output, event, &payload));
@@ -4018,9 +4071,14 @@ mod block_bad_cmd_hop;
 mod block_bad_cmd_hunt;
 #[path = "block_bad_cmd_reread.rs"]
 mod block_bad_cmd_reread;
+#[path = "block_bad_cmd_slice.rs"]
+mod block_bad_cmd_slice;
 
 #[path = "block_bad_cmd_imgview.rs"]
 mod block_bad_cmd_imgview;
+
+#[path = "block_bad_cmd_cilog.rs"]
+mod block_bad_cmd_cilog;
 
 #[path = "block_bad_cmd_verify_ratio.rs"]
 mod block_bad_cmd_verify_ratio;

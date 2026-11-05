@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from installer.catalog import TARGETS
-from installer.site import select_native_downloads
+from installer.site import CATALOG_HREF, DETECT_SCRIPT, select_native_downloads
 
 
 class Links(HTMLParser):
@@ -16,9 +16,12 @@ class Links(HTMLParser):
         super().__init__()
         self.hrefs: list[str] = []
         self.native: list[dict[str, str]] = []
+        self.options: list[str] = []
         self._current: dict[str, str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "option" and dict(attrs).get("value"):
+            self.options.append(dict(attrs)["value"] or "")
         if tag == "a":
             values = dict(attrs)
             href = values.get("href")
@@ -47,12 +50,8 @@ def verify(site: Path) -> str:  # noqa: C901
     root = (site / "index.html").read_text(encoding="utf-8")
     page = (site / "install" / "index.html").read_text(encoding="utf-8")
     catalog = json.loads((site / "install" / "manifest.json").read_text(encoding="utf-8"))
-    links = Links()
-    links.feed(root)
-    if links.hrefs != ["/clud/install/manifest.json"]:
-        raise ValueError(f"root must link only to catalog: {links.hrefs}")
-    if "location.replace('/clud/install/index.html')" not in root:
-        raise ValueError("root does not redirect to installer page")
+    if root != page:
+        raise ValueError("root must serve the same download page as install/index.html")
     expected = catalog["channels"]["latest-stable"]
     entry = next((item for item in catalog["releases"] if item["version"] == expected), None)
     if entry is None:
@@ -80,18 +79,22 @@ def verify(site: Path) -> str:  # noqa: C901
         if os_name == "linux" and flavor == "static-musl"
     }
     if static_arches and static_arches != {"x86_64", "aarch64"}:
-        raise ValueError(f"latest stable release has incomplete static musl assets: {static_arches}")
+        raise ValueError(
+            f"latest stable release has incomplete static musl assets: {static_arches}"
+        )
     if expected not in page:
         raise ValueError("landing page does not show catalog latest")
     page_links = Links()
     page_links.feed(page)
     expected_downloads = select_native_downloads(catalog)
     if page_links.native != expected_downloads:
-        raise ValueError(
-            f"native download links differ from catalog: {page_links.native}"
-        )
+        raise ValueError(f"native download links differ from catalog: {page_links.native}")
+    if expected_downloads and page_links.options != [row["url"] for row in expected_downloads]:
+        raise ValueError(f"platform dropdown differs from catalog: {page_links.options}")
+    if expected_downloads and DETECT_SCRIPT not in page:
+        raise ValueError("download page lacks the platform detection script")
     allowed_links = {row["url"] for row in expected_downloads}
-    allowed_links.update(("manifest.json", "https://support.apple.com/en-us/102445"))
+    allowed_links.update((CATALOG_HREF, "https://support.apple.com/en-us/102445"))
     for href in page_links.hrefs:
         if href not in allowed_links:
             raise ValueError(f"page link is absent from catalog or site guidance: {href}")

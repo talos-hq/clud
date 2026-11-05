@@ -145,7 +145,10 @@ pub(super) fn entry_path_contains_live_cwd_path(path: &str, live_cwds: &[PathBuf
 /// without computing the answer, for callers that only need to know
 /// whether a cache slot applies.
 pub(super) fn entry_is_cacheable(entry: &TrackedEntry) -> bool {
-    matches!(entry.kind.as_str(), EXTERN_REPO_KIND | SIBLING_CLONE_KIND)
+    matches!(
+        entry.kind.as_str(),
+        EXTERN_REPO_KIND | SIBLING_CLONE_KIND | WORKTREE_KIND
+    )
 }
 
 pub(super) fn now_unix() -> i64 {

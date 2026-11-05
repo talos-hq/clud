@@ -24,6 +24,7 @@ macro_rules! impl_from_redb {
 }
 
 pub mod alias_link;
+pub mod alpha_search_ingress;
 pub mod anthropic_usage;
 pub mod args;
 pub mod attribution;
@@ -111,6 +112,7 @@ pub mod log_event;
 pub mod loop_artifacts;
 pub mod loop_check;
 pub mod loop_config;
+mod loop_console;
 pub mod loop_plan_mode;
 pub mod loop_restart;
 pub mod loop_spec;
@@ -125,6 +127,8 @@ pub mod optimize;
 pub mod orphan_reaper;
 pub mod paste_image;
 pub mod path_norm;
+pub mod payload_query;
+pub mod payload_rules;
 pub mod platform;
 pub mod preference;
 pub mod process_identity;
@@ -157,6 +161,7 @@ pub mod session_index;
 pub mod session_origin;
 pub mod session_registry;
 pub mod settings_tui;
+pub mod setup_command;
 pub mod shell;
 pub mod shell_ast;
 pub mod shim_install;

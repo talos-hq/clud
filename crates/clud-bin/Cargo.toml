@@ -145,9 +145,10 @@ tree-sitter-bash = "=0.25.1"
 tree-sitter-powershell = "=0.26.4"
 tempfile = "3"
 os_pipe = "1.2.3"
+# Read-only Hermes config detection in `clud setup` only (setup_command/hermes.rs).
+serde_yaml = "0.9"
 
 [dev-dependencies]
-serde_yaml = "0.9"
 # #1148: the nested-sweep tests need a *mixed-age* tree — a stale session
 # directory beneath a fresh parent — which is the exact shape the bug lives
 # in. The existing idiom in `gc::session_tmp` shifts the test's notion of

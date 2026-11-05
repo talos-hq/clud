@@ -323,3 +323,34 @@ re-enters cold. The unified gateway keeps it warm out of band
 ## Restarting a finished loop (#2471)
 
 When an interactive `clud loop` ends (stdin and stderr are terminals, not `--dry-run`, not interrupted), clud offers **Restart loop / Exit** through the shared selector (`loop_restart.rs`). Restart moves the run artifacts (`info.json`, `log.txt`, `NEXT_MESSAGE.md`, `motivation.md`, root `LOOP_DONE.md`, DONE/BLOCKED markers) into `.clud/loop/history/<millis>/`, keeps `loop.json` and `inbox/`, and re-runs the same argv.
+
+
+## Interactive loop dashboard
+
+Headless subprocess loops show a dashboard when stdin, stdout and stderr are terminals
+and `TERM` is not `dumb`. `loop_console.rs` owns the alternate screen, raw input,
+and restoration through a drop guard. It uses crossterm events on all hosts;
+its captured child has null stdin so the child cannot consume operator input.
+Explicit PTY launches continue to show the harness's own interactive UI.
+Redirected runs retain the existing plain progress output.
+
+The fixed bottom bar offers `q` **Queue message**, `i` **Interrupt with message**,
+and Ctrl+C **Stop**. Enter saves a queued message for the next iteration;
+Esc discards the draft. The interrupt editor opens a confirmation:
+“This will restart the loop. Are you sure?” Only `y` confirms; Enter or `n`
+returns to editing. Confirmation persists the message before stopping the child.
+The runner reaps the child synchronously, clears its completion markers, and
+relaunches the same iteration without spending another iteration from the budget.
+Both actions use the existing inbox and `NEXT_MESSAGE.md` delivery contract,
+including `--no-done` loops. Cron-style repeats without markers keep their
+existing prompt because their daemon worker does not drain this inbox.
+Queueing alone never stops a child or overrides its DONE marker; a message can
+remain queued if the current iteration completes the entire task.
+
+The dashboard retains 200 progress lines, clips output to terminal cells, and
+keeps drafts separate from progress updates. Pasted text cannot activate actions.
+Acceptance tests in `tests/integration/pty/loop_console.rs` launch through Bash
+(on Linux/macOS/Windows), cmd and Windows PowerShell (on Windows), use real PTYs,
+and check queueing, confirmation rejection, restart with a one-iteration budget,
+delivery, and terminal restoration. The existing native PTY CI suites run them;
+unit tests cover Unicode, paste, cancellation, release events, and viewport sizes.
