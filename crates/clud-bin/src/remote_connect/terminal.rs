@@ -121,6 +121,8 @@ impl Terminal {
             .prefix("clud-remote-auth-")
             .tempdir()
             .map_err(|_| "cannot isolate remote agent credentials")?;
+        super::proxy::SessionProxy::seed_agent_config(config.path())
+            .map_err(|_| "cannot prepare remote agent configuration")?;
         self.environment = Some(proxy.environment(std::env::vars().collect(), config.path()));
         self.config = Some(config);
         Ok(())
