@@ -64,11 +64,7 @@ fn stdin_lines() -> mpsc::Receiver<String> {
 fn run_session(host: &str) -> Result<i32, String> {
     let base = transport::base_url(host)?;
     let session = transport::create(&base)?;
-    println!(
-        "Waiting for the operator to accept. Tell them this keyword: {}",
-        session.keyword
-    );
-    println!("{}connect#k={}", base, session.keyword);
+    println!("Connecting to: {}connect#k={}", base, session.keyword);
     std::io::stdout()
         .flush()
         .map_err(|_| "cannot print remote keyword")?;
@@ -85,6 +81,10 @@ fn run_session(host: &str) -> Result<i32, String> {
             return Err(error);
         }
     };
+    println!("Connected!\n\nTell them this keyword:\n{}", session.keyword);
+    std::io::stdout()
+        .flush()
+        .map_err(|_| "cannot print remote keyword")?;
     let stop = Arc::new(AtomicBool::new(false));
     let signal = Arc::clone(&stop);
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))
