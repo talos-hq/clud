@@ -58,7 +58,7 @@ fn merge_sums_and_keeps_the_earliest_example() {
 }
 
 #[test]
-fn a_root_owned_path_gets_the_sudo_hint() {
+fn a_root_owned_path_gets_the_native_gc_remediation_hint() {
     // `/proc/1` is root-owned on Linux; skip where it is not available.
     let Some(meta) = std::fs::symlink_metadata("/").ok() else {
         return;
@@ -71,7 +71,7 @@ fn a_root_owned_path_gets_the_sudo_hint() {
     assert!(u
         .summary_line()
         .unwrap()
-        .ends_with("owned by root \u{2014} remove with sudo"));
+        .ends_with("owned by root \u{2014} restore ownership, then retry clud gc"));
 }
 
 #[test]

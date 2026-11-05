@@ -102,7 +102,7 @@ pub fn run_explicit(args: &Args) -> Option<i32> {
         }
     };
     if !args.installer_json {
-        return Some(outcome.exit_code());
+        return Some(finish_with_provider_setup(args, &outcome));
     }
     match outcome.write_json(io::stdout().lock()) {
         Ok(()) => Some(outcome.exit_code()),
@@ -130,13 +130,40 @@ pub fn run_auto_offer(args: &Args) -> Option<i32> {
     }
     match picker::prompt_menu(true) {
         Ok(MenuChoice::NotNow) => None,
-        Ok(choice) => Some(run_menu_choice(choice, InstallOptions::default()).exit_code()),
+        Ok(choice) => {
+            let outcome = run_menu_choice(choice, InstallOptions::default());
+            Some(finish_with_provider_setup(args, &outcome))
+        }
         Err(error) if error.kind() == io::ErrorKind::Interrupted => Some(130),
         Err(error) => {
             eprintln!("clud installer: {error}");
             Some(1)
         }
     }
+}
+
+/// `clud setup --write-profile`: the installer's own current-version install
+/// with shell activation, so profile/PATH edits have exactly one owner.
+pub fn install_current_with_profile(yes: bool) -> i32 {
+    run_request(
+        Request::Current,
+        InstallOptions {
+            yes,
+            modify_path: true,
+        },
+        false,
+    )
+    .exit_code()
+}
+
+/// After a complete interactive install, continue into the provider step
+/// `clud setup` runs (#2219): one implementation, two entry points.
+/// Scripted (`--yes`), structured and non-terminal installs skip it.
+fn finish_with_provider_setup(args: &Args, outcome: &Outcome) -> i32 {
+    if !outcome.is_complete() || args.yes || !terminal_available() {
+        return outcome.exit_code();
+    }
+    crate::setup_command::run_provider_step_interactive()
 }
 
 fn run_request(request: Request, options: InstallOptions, automatic: bool) -> Outcome {

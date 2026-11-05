@@ -7349,9 +7349,11 @@ required and background agents exist. The chaperone reports `MERGED`,
 `NEEDS-FIXUP` or `STUCK`; the orchestrator counts work done only on `MERGED`.
 Native CI labels are applied at PR creation, never later. Harnesses without
 background agents keep the old behavior: the agent observes until merged.
-`LAND_CONTRACT` carries the short form; the full contract is owned by
-[ci.md](architecture/ci.md#agent-landing-workers-end-at-enqueue-chaperones-own-the-merge),
-a candidate fleet policy (GEN-033, forge-ci/ci.yml).
+`LAND_CONTRACT` (`command/do_prompt.rs`) is the contract text itself, not a
+short form; [ci.md](architecture/ci.md#agent-landing-workers-end-at-enqueue-chaperones-own-the-merge)
+documents the same fleet policy (GEN-033, forge-ci/ci.yml). Clud appends it
+once: under `clud do` the rendered `/do` procedure omits its own copy, so an
+agent sees the contract exactly once per session (#2570).
 
 **Why:** A worker waiting on PR CI and the merge_group run holds the only
 checkout while idle. Worktrees would add parallelism but also cost disk,

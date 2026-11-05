@@ -118,6 +118,9 @@ mod tests {
             .split(" --lines")
             .next()
             .unwrap();
+        let paths = shell_words::split(path).unwrap();
+        assert_eq!(paths.len(), 1);
+        let path = &paths[0];
         assert_eq!(std::fs::read(path).unwrap(), text.as_bytes());
         // TempPath cleanup keeps tests from leaving persistent production spills.
         drop(tempfile::TempPath::try_from_path(path).unwrap());

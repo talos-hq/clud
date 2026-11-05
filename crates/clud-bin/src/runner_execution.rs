@@ -49,19 +49,46 @@ pub(super) fn run_with_stream_json_renderer(
     captured_output: &mut String,
     batch_wrapped: bool,
     iteration: u32,
+    mut console: Option<&mut crate::loop_console::LoopConsole>,
 ) -> ProcessOutcome {
     use running_process::ReadStatus;
     use std::time::Duration;
 
-    let timeout = Duration::from_millis(100);
+    let timeout = Duration::from_millis(if console.is_some() { 16 } else { 100 });
     loop {
         if interrupted.load(Ordering::SeqCst) {
             teardown_interrupted_child(process, batch_wrapped);
             return ProcessOutcome::Interrupted;
         }
+        if let Some(ui) = console.as_deref_mut() {
+            match ui.input() {
+                Ok(Some(crate::loop_console::Action::Restart(_))) => return restart_child(process),
+                Ok(Some(crate::loop_console::Action::Quit)) => {
+                    interrupted.store(true, Ordering::SeqCst);
+                    teardown_interrupted_child(process, batch_wrapped);
+                    return ProcessOutcome::Interrupted;
+                }
+                Err(error) => {
+                    teardown_interrupted_child(process, batch_wrapped);
+                    crate::launch_log::record_failure_reason(format_args!(
+                        "loop dashboard: {error}"
+                    ));
+                    return ProcessOutcome::Error;
+                }
+                _ => {}
+            }
+        }
         match process.read_stdout(Some(timeout)) {
             ReadStatus::Line(bytes) => {
-                emit_rendered_line(&bytes, captured_output);
+                if let Err(error) =
+                    emit_rendered_line(&bytes, captured_output, console.as_deref_mut())
+                {
+                    teardown_interrupted_child(process, batch_wrapped);
+                    crate::launch_log::record_failure_reason(format_args!(
+                        "loop dashboard output: {error}"
+                    ));
+                    return ProcessOutcome::Error;
+                }
             }
             ReadStatus::Timeout => {
                 // No new data within the window; check if the child has
@@ -77,7 +104,7 @@ pub(super) fn run_with_stream_json_renderer(
         }
     }
     let summary = stream_json::IterationSummary::from_output(captured_output);
-    if summary != stream_json::IterationSummary::default() {
+    if console.is_none() && summary != stream_json::IterationSummary::default() {
         eprintln!("{}", summary.render_panel(iteration));
     }
 
@@ -92,7 +119,11 @@ pub(super) fn run_with_stream_json_renderer(
     }
 }
 
-fn emit_rendered_line(bytes: &[u8], captured_output: &mut String) {
+fn emit_rendered_line(
+    bytes: &[u8],
+    captured_output: &mut String,
+    console: Option<&mut crate::loop_console::LoopConsole>,
+) -> std::io::Result<()> {
     let line = String::from_utf8_lossy(bytes);
     let trimmed = line.trim_end_matches(['\r', '\n']);
     // Issue #95: keep the raw text around so we can scan for the
@@ -100,8 +131,13 @@ fn emit_rendered_line(bytes: &[u8], captured_output: &mut String) {
     captured_output.push_str(trimmed);
     captured_output.push('\n');
     if let Some(rendered) = stream_json::render_line(trimmed) {
-        eprintln!("{rendered}");
+        if let Some(ui) = console {
+            ui.line(&rendered)?;
+        } else {
+            eprintln!("{rendered}");
+        }
     }
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -502,6 +538,100 @@ pub(super) fn run_with_prompt_summary(
         Err(_) => process
             .returncode()
             .map_or(ProcessOutcome::Error, ProcessOutcome::Exited),
+    }
+}
+
+pub(super) fn loop_console(
+    session: Option<&loop_artifacts::LoopSession>,
+    iteration: u32,
+    total: u32,
+) -> std::io::Result<Option<crate::loop_console::LoopConsole>> {
+    match session {
+        Some(session) => {
+            crate::loop_console::LoopConsole::enter(session.git_root(), iteration, total)
+        }
+        None => Ok(None),
+    }
+}
+
+pub(super) fn wait_loop_child(
+    process: &subprocess::ManagedSubprocess,
+    interrupted: &AtomicBool,
+    captured: &mut String,
+    batch: bool,
+    iteration: u32,
+    plan: &command::LaunchPlan,
+    console: Option<&mut crate::loop_console::LoopConsole>,
+) -> ProcessOutcome {
+    if plan.prompt_summary {
+        run_with_prompt_summary(plan, process, interrupted, batch)
+    } else if plan.stream_json_progress || console.is_some() {
+        run_with_stream_json_renderer(process, interrupted, captured, batch, iteration, console)
+    } else {
+        run_with_inherited_stdio(process, interrupted, batch)
+    }
+}
+
+fn restart_child(process: &subprocess::ManagedSubprocess) -> ProcessOutcome {
+    // Restart must reap synchronously: a delayed daemon kill could otherwise
+    // race the replacement child or leave an old writer creating DONE.
+    if let Some(pid) = process.pid() {
+        process_tree::kill_tree(pid);
+    }
+    let _ = process.kill();
+    match process.wait(Some(std::time::Duration::from_secs(2))) {
+        Ok(_) => ProcessOutcome::Restart,
+        Err(_) => ProcessOutcome::Error,
+    }
+}
+
+pub(super) fn clear_restart_markers(plan: &command::LaunchPlan) {
+    if let Some(markers) = &plan.loop_markers {
+        crate::loop_spec::clear_markers_at(&crate::loop_spec::MarkerPaths {
+            done: markers.done_path.clone().into(),
+            blocked: markers.blocked_path.clone().into(),
+        });
+    }
+}
+
+pub(super) fn start_subprocess_runtime(
+    plan: &command::LaunchPlan,
+    toast_cfg: crate::toast::ToastLaunchCfg,
+    writer: Option<&std::sync::Arc<crate::toast::statusline::StatusStateWriter>>,
+) -> Result<ForegroundRuntime, String> {
+    let injection = if toast_cfg.claude_statusline {
+        writer
+            .map(std::sync::Arc::as_ref)
+            .and_then(crate::toast::launch::injection_for)
+    } else {
+        None
+    };
+    ForegroundRuntime::start_with_statusline(
+        plan,
+        child_env_for_backend(plan.backend),
+        injection.as_ref(),
+        writer,
+    )
+    .map(|(runtime, _)| runtime)
+    .map_err(|error| error.to_string())
+}
+
+pub(super) fn finish_loop_console(
+    console: Option<crate::loop_console::LoopConsole>,
+    captured: &str,
+    iteration: u32,
+) {
+    let transcript = console
+        .as_ref()
+        .map(crate::loop_console::LoopConsole::transcript);
+    drop(console);
+    if let Some(transcript) = transcript {
+        let summary = stream_json::IterationSummary::from_output(captured);
+        if summary != stream_json::IterationSummary::default() {
+            eprintln!("{}", summary.render_panel(iteration));
+        } else if !transcript.is_empty() {
+            eprintln!("{transcript}");
+        }
     }
 }
 

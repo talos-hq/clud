@@ -478,6 +478,62 @@ continue from.
   session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
   on every state, parse or stat error.
 
+### Oversized read guard: wide `sed` range and whole-file `cat` (#2233)
+
+The hunt guard covers one call that names several ranges. The other half of the
+`sed` habit is a single wide range: `sed -n '120,720p' file` prints the whole
+600-line window into the transcript, and every later request in the session
+re-sends it. Measured over 24 h (2,903 calls, 291 MB of context exposure):
+single-range slices that print at least 8 KiB are **14 calls, 164 kB of text,
+4.8 % of all exposure**, because they tend to land early in long sessions.
+
+For exactly those calls the bounded reader is smaller. Same file, same ranges:
+`120,520p` is 14,713 B with `sed` and 8,240 B through `code/slice.py`, whose
+`--max-bytes` cap (8 KiB default) stops the text with a footer naming the line
+to continue from. Under the cap `slice.py` is *larger* than `sed` (it prefixes
+every line), which is why this guard never counts a read that fits the cap.
+
+`block_bad_cmd_slice.rs` predicts the printed size from the file itself, counts
+oversized reads per session and, past the limit, refuses the next **distinct**
+one once with the exact replacement for the range it named:
+
+```text
+clud tool run code/slice.py /w/a.rs --lines 300-900
+```
+
+- Only a command whose `sed` reads name **one** range is counted; multi-range
+  calls belong to the hunt guard, so no call is billed twice.
+- Targets must exist, carry a source extension and be at least 8 KiB; logs and
+  data files are never counted. Segments with a pipe, a redirect or `sed -i`
+  are bounded or writes and pass untouched.
+- A retry of the **identical** read is allowed: refusals are recorded by range
+  signature, so the guard can never wedge a session.
+- **Limit:** `N = 2` oversized reads per session, reset after an hour without
+  one. `CLUD_SLICE_BUDGET_LIMIT=<n>` overrides it and `0` turns the guard off.
+  `CLUD_ALLOW_SLICE_BUDGET=1` in a command runs one read deliberately (logged).
+- **State:** `<clud state dir>/read-slice-guard/<hash>.json`, one file per
+  session, refusals capped at 16, 2 days / 500 files retained. **Fails open**
+  on every state, parse or stat error.
+
+**Whole-file `cat` is the same budget** (same file, same state, same limit and
+override knobs). `cat docs/handoffs/<date>.md` prints an entire file and, unlike
+`sed`, offers no range to bound; measured over the same 24 h it is the largest
+unguarded read shape left — **6 calls, 106 kB of text, 14.8 MB of exposure
+(11.6 %)** of a 127 MB run, because a single `cat` lands early and is re-sent by
+every later request.
+
+- Only `cat` segments count. Targets must be plain source/doc paths between
+  1 KiB and 4 MiB, and the segment total must reach 8 KiB, so `cat SPEC.md
+  README.md BLOCKERS.md` counts as one oversized read.
+- A command the hunt guard owns (two or more ranged reads) is skipped, so no
+  call is billed twice; a wide-`sed` habit does not spend the `cat` allowance.
+- The refusal names `code/outline.py` first, then `code/slice.py --lines A-B`,
+  and `head -n 80` for a first look:
+
+```text
+clud tool run code/outline.py -- path/to/file
+```
+
 ### Unchanged-re-read guard (#2233)
 
 A `Read` that repeats a call already made in this session — same path, same
@@ -566,6 +622,37 @@ of tool text (average 1.6 kB), and one of them -
   session, at most 16 refused signatures, 2 days / 200 files. The count resets
   after an hour of quiet. **Fails open** on every missing fact: no session id,
   no state dir, no command.
+
+### Raw CI-log read budget (#2233)
+
+`gh run view --log-failed` prints every line of a failed job into the
+transcript, where every later request re-sends it.
+
+Evidence (24 h probe, 2026-11-03, `reports/rows-2026-11-03.jsonl`): 244
+`gh run view` calls produced 283 kB of tool text but **10.8 MB of exposure
+(4.5%)**, the largest category after `sed`; the widest single call was 27.3 kB
+landing at request 200 of its session, so it alone cost 1 MB. The bounded
+replacement already ships and nobody used it: on one failed job here,
+`gh run view … --log-failed` = **119,184 B** versus **995 B** from
+`github/ci_failure_report.py` (≤8 KiB summary, full log saved to a private
+artifact and named in the output).
+
+- **Counting:** distinct `(repo, run)` pairs read raw in one session. Detected
+  stages are `gh run view … --log` / `--log-failed` and
+  `gh api repos/O/R/actions/runs/<id>/logs`. A command that redirects to a file
+  is already out of the transcript and is never counted; `--json`,
+  `gh run list`, `gh run download` and job-level `gh api` paths (which carry no
+  run id) are ignored.
+- **At the limit** the hook adds an advisory note naming the bounded command,
+  and the call proceeds. **Past the limit** the next raw log for a run not yet
+  read is refused once, with the exact bounded replacement for that run —
+  `"$CLUD_EXE" tool run github/ci_failure_report.py -- --repo R --run ID --job J`.
+  Any retry of the same run's log proceeds, so the decision cannot loop.
+- **Budget:** two raw runs per session. `CLUD_ALLOW_CI_LOG=1` in the command
+  skips one call, `CLUD_CI_LOG_LIMIT=<n>` sets the limit and `0` disables it.
+- **State:** `<clud state dir>/ci-log-guard/<hash>.json`, one file per session,
+  at most 24 runs per session, 2 days / 500 files retained; the count expires
+  after 60 minutes without a read. Fails open on every state error.
 
 ### Verification-to-edit ratio note (#1988)
 

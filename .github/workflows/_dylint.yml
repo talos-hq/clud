@@ -49,6 +49,17 @@ jobs:
       run:
         shell: bash
     steps:
+      # The merge_group run restores the full build cache, which left the
+      # host leg under soldr's 5 GiB build-volume block threshold and failed
+      # the enforce_platform_boundary UI build (#2605). Drop SDKs no lane
+      # here uses. Best effort: a local replay without them or sudo skips.
+      - name: Free runner disk
+        run: |
+          df -h / | tail -1
+          for dir in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
+            [ -d "$dir" ] && { sudo -n rm -rf "$dir" || true; }
+          done
+          df -h / | tail -1
       - name: Checkout source
         uses: actions/checkout@v4
         with:
@@ -82,6 +93,17 @@ jobs:
         run: |
           [ "$CACHE_HIT" = "true" ] || { echo "no pass marker; running the leg"; exit 0; }
           echo "::notice::Dylint ${{ matrix.pass }} already passed for ${{ steps.pass-key.outputs.key }}; skipping"
+      # A cold Dylint build needs more than the ~6 GiB a hosted ubuntu-24.04
+      # runner leaves free; soldr refuses to build below 5 GiB. Drop the
+      # preinstalled SDKs this job never uses (Android, .NET, GHC, CodeQL).
+      - name: Free runner disk
+        env:
+          CACHE_HIT: ${{ steps.pass.outputs.cache-hit }}
+        run: |
+          [ "$CACHE_HIT" != "true" ] || { echo "pass marker hit; nothing to build"; exit 0; }
+          df -h / | tail -1
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
       - name: Set up soldr
         if: steps.pass.outputs.cache-hit != 'true'
         uses: forge-ci/setup-soldr@v0

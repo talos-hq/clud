@@ -645,6 +645,15 @@ Two trigger-level notes:
 
 ## Cross-compilation, per triple, honestly
 
+GitHub-hosted Linux builders reclaim the unused preinstalled Android and .NET
+SDK directories before provisioning cross toolchains. `ci/hosted_disk.py` uses
+a fixed allowlist and verifies GitHub-hosted Linux context before changing
+anything; the build composite also gates the step. Developer and self-hosted
+runners are excluded. This preserves Soldr's free-space guard rather than
+lowering its threshold after the full native matrix exhausted build volumes.
+The [hosted Ubuntu image inventory](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)
+documents the preinstalled SDK layout.
+
 The workspace's cross-compile surface is small. Two crates compile native code
 (`Cargo.lock`): `ring` and `blake3` (both `cc`, routine to cross).
 `crates/clud-bin/build.rs` is pure Rust (`protox` + `prost-build`, no `protoc`

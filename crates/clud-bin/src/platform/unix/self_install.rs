@@ -28,6 +28,48 @@ pub fn owned_exclusively(meta: &fs::Metadata) -> bool {
     meta.uid() == euid() && meta.nlink() == 1
 }
 
+/// A user-owned launcher may be replaced, but its package-managed target is
+/// only read. uv commonly hardlinks that target into its package cache.
+pub fn replaceable_launcher_link(path: &Path, meta: &fs::Metadata) -> bool {
+    if !meta.file_type().is_symlink() || !owned_exclusively(meta) {
+        return false;
+    }
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return false;
+    };
+    let Ok(link) = fs::read_link(path) else {
+        return false;
+    };
+    let route = if link.is_absolute() {
+        link
+    } else if let Some(parent) = path.parent() {
+        parent.join(link)
+    } else {
+        return false;
+    };
+    let Ok(target) = fs::canonicalize(&route) else {
+        return false;
+    };
+    if route != target || !home.is_absolute() || !target.starts_with(&home) {
+        return false;
+    }
+    let Ok(target_meta) = fs::metadata(&target) else {
+        return false;
+    };
+    target_meta.is_file()
+        && target_meta.uid() == euid()
+        && target_meta.mode() & 0o022 == 0
+        && target
+            .ancestors()
+            .skip(1)
+            .take_while(|dir| dir.starts_with(&home))
+            .all(|dir| {
+                fs::symlink_metadata(dir).is_ok_and(|meta| {
+                    meta.is_dir() && !meta.file_type().is_symlink() && user_controlled_dir(&meta)
+                })
+            })
+}
+
 /// True when the effective user owns the directory and no one else may write it.
 pub fn user_controlled_dir(meta: &fs::Metadata) -> bool {
     meta.uid() == euid() && meta.mode() & 0o022 == 0
@@ -208,13 +250,36 @@ mod tests {
     use std::os::unix::fs::symlink;
 
     #[test]
-    fn symlink_destination_and_backup_are_rejected_without_following_them() {
-        let dir = tempfile::tempdir().unwrap();
+    fn launcher_link_rejects_missing_targets_and_writable_target_directories() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        let target_dir = dir.path().join("package");
+        fs::create_dir(&target_dir).unwrap();
+        let target = target_dir.join("clud");
+        let destination = dir.path().join("clud");
+        symlink(&target, &destination).unwrap();
+        assert!(inspect_destination(&destination, false).is_err());
+        fs::write(&target, b"owned executable").unwrap();
+        let intermediate = dir.path().join("intermediate");
+        symlink(&target_dir, &intermediate).unwrap();
+        let indirect = dir.path().join("indirect-clud");
+        symlink(intermediate.join("clud"), &indirect).unwrap();
+        assert!(inspect_destination(&indirect, false).is_err());
+        assert!(inspect_destination(&destination, false).is_ok());
+        fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o777)).unwrap();
+        assert!(inspect_destination(&destination, false).is_err());
+        fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn owned_launcher_is_allowed_but_symlink_backup_is_rejected() {
+        let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
         let other = dir.path().join("other");
         fs::write(&other, b"owned bytes").unwrap();
+        fs::hard_link(&other, dir.path().join("cached-clud")).unwrap();
         let destination = dir.path().join("clud");
         symlink(&other, &destination).unwrap();
-        assert!(inspect_destination(&destination, false).is_err());
+        assert!(inspect_destination(&destination, false).is_ok());
         fs::remove_file(&destination).unwrap();
         symlink(&other, destination.with_extension("clud-backup")).unwrap();
         assert!(recover(&destination).is_err());
