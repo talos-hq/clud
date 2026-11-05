@@ -2,6 +2,7 @@
 use serde::Deserialize;
 use std::io::Read;
 use std::net::{TcpStream, ToSocketAddrs};
+use std::sync::Arc;
 use std::time::Duration;
 use tungstenite::{stream::MaybeTlsStream, WebSocket};
 use url::Url;
@@ -12,6 +13,13 @@ pub(super) type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 pub(super) struct Session {
     pub keyword: String,
     pub ws_url: String,
+    pub client_token: String,
+    #[serde(default = "default_proxy_model")]
+    pub proxy_model: String,
+}
+
+fn default_proxy_model() -> String {
+    "openrouter/auto".into()
 }
 
 pub(super) fn base_url(host: &str) -> Result<Url, String> {
@@ -35,6 +43,23 @@ pub(super) fn base_url(host: &str) -> Result<Url, String> {
     Ok(base)
 }
 
+fn tls_config() -> Result<Arc<ureq::rustls::ClientConfig>, String> {
+    // Preserve bundled public roots while allowing an operator-installed CA.
+    // This is remote-only; unrelated ureq callers retain their existing trust.
+    let mut roots = ureq::rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    };
+    roots.add_parsable_certificates(rustls_native_certs::load_native_certs().certs);
+    let config = ureq::rustls::ClientConfig::builder_with_provider(
+        ureq::rustls::crypto::ring::default_provider().into(),
+    )
+    .with_protocol_versions(&[&ureq::rustls::version::TLS12, &ureq::rustls::version::TLS13])
+    .map_err(|_| "remote TLS protocol configuration failed")?
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+    Ok(Arc::new(config))
+}
+
 pub(super) fn create(base: &Url) -> Result<Session, String> {
     let body = serde_json::json!({"client": {
         "host": std::env::var("HOSTNAME").or_else(|_| std::env::var("COMPUTERNAME")).unwrap_or_default(),
@@ -43,6 +68,7 @@ pub(super) fn create(base: &Url) -> Result<Session, String> {
         "cwd": std::env::current_dir().ok().map(|p| p.display().to_string()),
     }});
     let response = ureq::AgentBuilder::new()
+        .tls_config(tls_config()?)
         .redirects(0)
         .timeout(Duration::from_secs(15))
         .build()
@@ -72,6 +98,16 @@ pub(super) fn create(base: &Url) -> Result<Session, String> {
         return Err("invalid remote keyword".into());
     }
     validate_socket_url(base, &session.ws_url)?;
+    let ws = Url::parse(&session.ws_url).map_err(|_| "invalid remote WebSocket URL")?;
+    if ws
+        .query_pairs()
+        .find(|(k, _)| k == "token")
+        .map(|(_, v)| v.into_owned())
+        .as_deref()
+        != Some(session.client_token.as_str())
+    {
+        return Err("remote session bearer does not match its socket".into());
+    }
     Ok(session)
 }
 
@@ -119,9 +155,13 @@ pub(super) fn connect(session: &Session) -> Result<Socket, String> {
     tcp.set_write_timeout(Some(timeout))
         .map_err(|_| "cannot set handshake timeout")?;
     // Unlike connect(), this performs one handshake and never follows redirects.
-    let (mut socket, _) =
-        tungstenite::client_tls_with_config(session.ws_url.as_str(), tcp, Some(config), None)
-            .map_err(|_| "could not connect remote session")?;
+    let (mut socket, _) = tungstenite::client_tls_with_config(
+        session.ws_url.as_str(),
+        tcp,
+        Some(config),
+        Some(tungstenite::Connector::Rustls(tls_config()?)),
+    )
+    .map_err(|_| "could not connect remote session")?;
     let tcp = match socket.get_mut() {
         MaybeTlsStream::Plain(tcp) => tcp,
         MaybeTlsStream::Rustls(tls) => &mut tls.sock,
@@ -136,6 +176,7 @@ pub(super) fn connect(session: &Session) -> Result<Socket, String> {
 
 pub(super) fn terminal_status(base: &Url, keyword: &str) -> Option<String> {
     let response = ureq::AgentBuilder::new()
+        .tls_config(tls_config().ok()?)
         .redirects(0)
         .timeout(Duration::from_secs(15))
         .build()

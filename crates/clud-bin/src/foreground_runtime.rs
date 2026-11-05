@@ -239,6 +239,21 @@ impl ForegroundRuntime {
     }
 
     pub fn start(plan: &LaunchPlan, mut env: Vec<(String, String)>) -> Result<Self, BridgeError> {
+        // A remote capability is the only credential source for this launch.
+        // This branch must precede even construction of a local credential store.
+        if let Some(proxy) = crate::remote_connect::proxy::SessionProxy::from_process()
+            .map_err(BridgeError::Settings)?
+        {
+            crate::remote_connect::proxy::validate_plan(plan).map_err(BridgeError::Settings)?;
+            return Ok(Self {
+                env: proxy
+                    .runtime_environment(env)
+                    .map_err(BridgeError::Settings)?,
+                bridge: None,
+                claude_settings: None,
+                startup_notices: Vec::new(),
+            });
+        }
         // The inherited-pin line leads every launch's notices: a boundary the
         // user did not type deserves to be seen first (#1257).
         let pin_notices =
@@ -600,6 +615,13 @@ impl ForegroundRuntime {
         status_writer: Option<&std::sync::Arc<crate::toast::statusline::StatusStateWriter>>,
     ) -> Result<(Self, bool), BridgeError> {
         let mut runtime = Self::start(plan, env)?;
+        if runtime
+            .env
+            .iter()
+            .any(|(key, _)| key == "CLUD_REMOTE_PROXY_ORIGIN")
+        {
+            return Ok((runtime, false));
+        }
         if let (Some(bridge), Some(writer)) = (runtime.bridge.as_ref(), status_writer) {
             bridge.set_status_usage_writer(std::sync::Arc::clone(writer));
         }
