@@ -975,7 +975,8 @@ fn build_launch_plan_for_target_at(
                 push_prompt_interactive(&mut cmd, crate::video::seed_prompt(&checkout));
             }
         }
-        Some(Command::Serve { .. })
+        Some(Command::Remote { .. })
+        | Some(Command::Serve { .. })
         | Some(Command::Secret(_))
         | Some(Command::Auth { .. })
         | Some(Command::Models { .. })

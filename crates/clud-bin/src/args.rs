@@ -619,6 +619,11 @@ fn parse_setup_provider(value: &str) -> Result<crate::backend::ModelProvider, St
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    /// Connect to an operator for consent-gated remote assistance.
+    Remote {
+        #[command(subcommand)]
+        action: crate::remote_connect::Action,
+    },
     /// Serve Claude or Codex and optional Anthropic-compatible provider models
     /// to local API clients.
     Serve {
@@ -1814,6 +1819,7 @@ pub enum GcSubcommand {
 }
 
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
+    "remote",
     "serve",
     "do-prompt",
     "grind-scripts",
