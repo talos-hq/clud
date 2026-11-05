@@ -354,12 +354,13 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             for_model,
             http,
         } => run_openai_chat_translate_seam(*response, *stream, for_model.as_deref(), *http),
-        args::Command::InternalGeminiClientTranslate {
-            model,
-            response,
-            stream,
-            http,
-        } => run_gemini_client_translate_seam(model.as_deref(), *response, *stream, *http),
+        args::Command::InternalGeminiClientTranslate { .. } => {
+            run_gemini_client_translate_seam(cmd)
+        }
+        // Hidden test seam for the Claude <-> Gemini translator: stdin in, the
+        // translated body out. `--response` runs the ingress direction. No
+        // session, backend or daemon.
+        args::Command::InternalClaudeGeminiTranslate { .. } => run_claude_gemini_seam(cmd),
         args::Command::InternalApplyPayloadRules {
             rules,
             settings_file,
@@ -431,16 +432,39 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
 
 /// The Gemini-shaped client seam: stdin in, a Gemini request or response out.
 /// Split out of the dispatch match so that table stays under the length budget.
-fn run_gemini_client_translate_seam(
-    model: Option<&str>,
-    response: bool,
-    stream: bool,
-    http: bool,
-) -> i32 {
-    if response {
-        clud::gemini_client_ingress::run_translate_response_stdin(stream, model, http)
+fn run_gemini_client_translate_seam(cmd: Option<&args::Command>) -> i32 {
+    let Some(args::Command::InternalGeminiClientTranslate {
+        model,
+        response,
+        stream,
+        http,
+    }) = cmd
+    else {
+        return 1;
+    };
+    if *response {
+        clud::gemini_client_ingress::run_translate_response_stdin(*stream, model.as_deref(), *http)
     } else {
-        clud::gemini_client_ingress::run_translate_stdin(model, stream)
+        clud::gemini_client_ingress::run_translate_stdin(model.as_deref(), *stream)
+    }
+}
+
+/// Runs the hidden Claude <-> Gemini translate seam. Kept out of
+/// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
+fn run_claude_gemini_seam(cmd: Option<&args::Command>) -> i32 {
+    let Some(args::Command::InternalClaudeGeminiTranslate {
+        model,
+        response,
+        stream,
+        http,
+    }) = cmd
+    else {
+        return 1;
+    };
+    if *response {
+        clud::gemini_ingress::run_translate_response_stdin(*stream, model.as_deref(), *http)
+    } else {
+        clud::gemini_ingress::run_translate_stdin(model.as_deref())
     }
 }
 
