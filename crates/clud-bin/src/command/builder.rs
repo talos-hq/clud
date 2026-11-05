@@ -515,6 +515,16 @@ fn take_codex_developer_instructions(passthrough: &mut Vec<String>) -> Option<St
     found
 }
 
+fn configured_codex_instructions(
+    args: &Args,
+    cwd: &Path,
+    explicit: Option<String>,
+) -> (String, bool) {
+    let existing = explicit.or_else(|| existing_codex_instructions(args, cwd));
+    let has_existing = existing.is_some();
+    (existing.unwrap_or_default(), has_existing)
+}
+
 fn parse_codex_instruction_override(raw: &str) -> Option<String> {
     format!("value = {raw}")
         .parse::<toml::Table>()
@@ -689,16 +699,8 @@ fn build_launch_plan_for_target_at(
         let matcher = CODEX_HOOK_MATCHER;
         cmd.extend(["-c".into(), format!("hooks.PreToolUse=[{{matcher=\"{matcher}\",hooks=[{{type=\"command\",command=\"{scan}\"}}]}}]")]);
         cmd.extend(["-c".into(), format!("hooks.state={{\"/<session-flags>/config.toml:pre_tool_use:0:0\"={{trusted_hash=\"{}\"}}}}", codex_hook_hash(scan))]);
-        let has_passthrough_instructions = codex_passthrough_instructions.is_some();
-        let existing_instructions = if has_passthrough_instructions {
-            None
-        } else {
-            existing_codex_instructions(args, cwd)
-        };
-        let has_user_instructions = has_passthrough_instructions || existing_instructions.is_some();
-        let mut instructions = codex_passthrough_instructions
-            .or(existing_instructions)
-            .unwrap_or_default();
+        let (mut instructions, has_user_instructions) =
+            configured_codex_instructions(args, cwd, codex_passthrough_instructions);
         if !args.unsafe_mode {
             if !instructions.is_empty() {
                 instructions.push_str("\n\n");
