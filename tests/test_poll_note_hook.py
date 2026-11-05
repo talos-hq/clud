@@ -28,13 +28,20 @@ def scanner(tmp_path: Path) -> str:
     pytest.skip("build clud (cargo build -p clud --bins) or set CLUD_TEST_BINARY")
 
 
-def clean_env(state_dir: Path) -> dict[str, str]:
+def clean_env(state_dir: Path, extra: dict[str, str] | None = None) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if not key.startswith("CLUD")}
     env["CLUD_DAEMON_STATE_DIR"] = str(state_dir)
+    env.update(extra or {})
     return env
 
 
-def scan(binary: str, state_dir: Path, session: str, command: str) -> dict[str, Any]:
+def scan(
+    binary: str,
+    state_dir: Path,
+    session: str,
+    command: str,
+    extra: dict[str, str] | None = None,
+) -> dict[str, Any]:
     payload = {
         "hook_event_name": "PreToolUse",
         "session_id": session,
@@ -51,9 +58,11 @@ def scan(binary: str, state_dir: Path, session: str, command: str) -> dict[str, 
         stderr=PIPE,
         text=True,
         timeout=120,
-        env=clean_env(state_dir),
+        env=clean_env(state_dir, extra),
     )
-    assert proc.returncode == 0, proc.stderr
+    # A refusal is exit 2 with the same JSON body on stdout; anything else is a
+    # harness fault, not a verdict.
+    assert proc.returncode in (0, 2), proc.stderr
     return json.loads(proc.stdout) if proc.stdout.strip() else {}
 
 
@@ -98,3 +107,69 @@ def test_the_note_never_denies(tmp_path: Path) -> None:
     for _ in range(6):
         output = scan(binary, state, "s4", "git status --short")
     assert (output.get("hookSpecificOutput") or {}).get("permissionDecision") is None
+
+
+# ---- #2631 follow-up: the notes are advisory, the third step stops ----------
+
+# The exact shape measured on 2026-11-05: one session re-issued this query 127
+# times in 24 h, and 618 times across five days, waiting on an upstream repo.
+OBS_POLL = (
+    "for n in 3183 3184; do gh issue view $n --repo obs-rust/obs-studio --json state,comments; done"
+)
+
+
+def decision(output: dict[str, Any]) -> str | None:
+    return (output.get("hookSpecificOutput") or {}).get("permissionDecision")
+
+
+def test_the_patient_poll_is_refused_past_its_limit_through_the_real_hook(
+    tmp_path: Path,
+) -> None:
+    binary = scanner(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    denied: list[int] = []
+    noted: list[int] = []
+    for index in range(1, 99):
+        output = scan(binary, state, "poll", OBS_POLL)
+        if "poll-note" in context(output):
+            noted.append(index)
+        if decision(output) == "deny":
+            denied.append(index)
+    assert noted == [6, 24]
+    assert denied == [97, 98]
+
+
+def test_a_build_command_is_never_poll_refused(tmp_path: Path) -> None:
+    binary = scanner(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    for index in range(1, 100):
+        output = scan(binary, state, "build", "soldr cargo test -p clud")
+        assert decision(output) is None, index
+
+
+def test_a_different_call_resets_the_poll_count(tmp_path: Path) -> None:
+    binary = scanner(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    for _ in range(96):
+        scan(binary, state, "reset", OBS_POLL)
+    scan(binary, state, "reset", "git ls-remote origin")
+    output = scan(binary, state, "reset", OBS_POLL)
+    assert decision(output) is None
+
+
+def test_the_poll_limit_env_moves_the_stop(tmp_path: Path) -> None:
+    binary = scanner(tmp_path)
+    state = tmp_path / "state"
+    state.mkdir()
+    denied: list[int] = []
+    for index in range(1, 8):
+        output = scan(binary, state, "env", OBS_POLL, extra={"CLUD_POLL_CALL_LIMIT": "6"})
+        if decision(output) == "deny":
+            denied.append(index)
+    assert denied == [7]
+    reason = (output.get("hookSpecificOutput") or {}).get("permissionDecisionReason") or ""
+    assert "wait/until.py" in reason
+    assert "CLUD_ALLOW_REPEAT=1" in reason

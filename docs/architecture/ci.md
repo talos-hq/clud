@@ -413,6 +413,11 @@ and make the producer side live on Linux.
                                                                    └────────────┘
 ```
 
+Windows bundle tests default `RUST_MIN_STACK` to 4 MiB, matching the parser
+thread in `main.rs::parse_args`. Argument-parser unit tests call Clap directly
+and need that same budget to build the complete command tree. An explicitly
+configured stack budget is preserved.
+
 Each triple gets its **own** build job and its **own** test job, rather than one
 build matrix feeding one test matrix. That is not stylistic: `needs:` on a
 matrix job is all-or-nothing in GitHub Actions, so a single `test` matrix

@@ -1,6 +1,7 @@
 # Publishes the OpenRouter public model/pricing inventory used by clud (#1256).
 # Fetch/normalization errors fail the run; only a valid deterministic document
-# is committed to main for installed builds to consume.
+# is landed on main (via a bot PR with auto-merge, #2518) for installed builds
+# to consume.
 name: refresh-openrouter-catalog
 
 on:
@@ -25,8 +26,9 @@ jobs:
           python-version: "3.11"
       - name: Refresh OpenRouter catalog
         run: python -m ci.refresh_openrouter_catalog
-      # Gate (#1635, DD-127): this job pushes straight to main, so run the
-      # producer tests that read the regenerated file before committing it.
+      # Gate (#1635, DD-127): the refresh reaches `main` without a human
+      # reviewer, so run the producer tests that read the regenerated file
+      # before committing it.
       # A failure fails the job and nothing is pushed. pytest-timeout is
       # needed because pyproject.toml sets `timeout`; running-process because
       # tests/conftest.py imports ci.process.
@@ -34,15 +36,33 @@ jobs:
         run: |
           python -m pip install --quiet pytest pytest-timeout running-process
           python -m pytest -q -p no:cacheprovider tests/test_refresh_openrouter_catalog.py
+      # `main` requires the merge queue and a "CI OK" check, so the bot can no
+      # longer push to it (#2518). A PR opened with GITHUB_TOKEN would not
+      # trigger `pull_request` workflows at all (GitHub's recursion guard), so
+      # the branch is pushed and the PR opened with a bot token instead; the
+      # PR then runs normal CI and auto-enqueues. Without the token the job
+      # fails loudly rather than retrying a push `main` will always reject.
       - name: Commit catalog when changed
+        env:
+          REFRESH_BOT_TOKEN: ${{ secrets.REFRESH_BOT_TOKEN }}
         run: |
           if git diff --quiet -- crates/clud-bin/assets/openrouter-catalog.json; then
             echo "OpenRouter catalog already fresh"
             exit 0
           fi
-          git config user.name "github-actions[bot]"
+          if [ -z "$REFRESH_BOT_TOKEN" ]; then
+            echo "::error::REFRESH_BOT_TOKEN is not set; main requires a merge-queue PR, see #2518"
+            exit 1
+          fi
+          BRANCH="bot/refresh-openrouter-catalog"
+          git checkout -b "$BRANCH"
+          git config user.name "clud-refresh-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add crates/clud-bin/assets/openrouter-catalog.json
           git commit -m "chore(openrouter): refresh model catalog (#1256)"
-          git pull --rebase origin main
-          git push origin HEAD:main
+          git push --force "https://x-access-token:${REFRESH_BOT_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:refs/heads/${BRANCH}"
+          export GH_TOKEN="$REFRESH_BOT_TOKEN"
+          gh pr create --base main --head "$BRANCH" \
+            --title "chore(openrouter): refresh model catalog" \
+            --body "Automated daily refresh of the OpenRouter catalog (#1256). The producer tests ran against this file before the commit (DD-127). Auto-merge is on: the merge queue lands it once \`CI OK\` passes." || true
+          gh pr merge "$BRANCH" --squash --auto

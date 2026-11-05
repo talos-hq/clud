@@ -192,9 +192,20 @@ fn exercise(shell: &str) {
         output.contains("\x1b[?25h"),
         "cursor was not restored: {output:?}"
     );
-    assert!(
-        output.contains("\x1b[?1006l"),
+    // ConPTY can combine resets as CSI ?1003;1006l. Seed enabled modes
+    // so missing resets still fail, then verify their terminal semantics.
+    let mut restored = vt100::Parser::new(24, 140, 0);
+    restored.process(b"\x1b[?1003h\x1b[?1006h");
+    restored.process(output.as_bytes());
+    assert_eq!(
+        restored.screen().mouse_protocol_mode(),
+        vt100::MouseProtocolMode::None,
         "mouse capture not restored: {output:?}"
+    );
+    assert_eq!(
+        restored.screen().mouse_protocol_encoding(),
+        vt100::MouseProtocolEncoding::Default,
+        "mouse encoding not restored: {output:?}"
     );
     assert_eq!(
         process.wait_impl(Some(10.0)).unwrap(),
