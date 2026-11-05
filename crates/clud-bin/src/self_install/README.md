@@ -29,7 +29,8 @@ count as installer success. Explicit `--no-modify-path` instead skips the
 activation plan entirely, preserves profiles/User Path, and reports binary
 installation with activation still required. `setup.rs` is the provider step of `clud setup`
 ([setup-command.md](../../../../docs/architecture/setup-command.md)); the
-installer does not chain into it.
+complete interactive install continues into that same step
+(`entry.rs::finish_with_provider_setup`).
 
 `result.rs` defines the versioned `clud-installer-result/v1` outcome. Add
 `--installer-json` to an explicit current/version request to emit exactly one

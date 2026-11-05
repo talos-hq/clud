@@ -165,7 +165,7 @@ fn trim(state: &mut State, now: u64) {
     }
 }
 
-fn is_source_file(token: &str) -> bool {
+pub(super) fn is_source_file(token: &str) -> bool {
     let Some(extension) = token.rsplit_once('.').map(|(_, ext)| ext) else {
         return false;
     };
@@ -174,7 +174,7 @@ fn is_source_file(token: &str) -> bool {
         .any(|known| extension.eq_ignore_ascii_case(known))
 }
 
-fn plausible_path(token: &str) -> bool {
+pub(super) fn plausible_path(token: &str) -> bool {
     let token = token.trim_matches(|c| c == '"' || c == '\'');
     !token.is_empty()
         && !token.starts_with('-')
@@ -182,7 +182,7 @@ fn plausible_path(token: &str) -> bool {
         && is_source_file(token)
 }
 
-fn program(token: &str) -> &str {
+pub(super) fn program(token: &str) -> &str {
     token.rsplit('/').next().unwrap_or(token)
 }
 

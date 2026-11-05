@@ -5360,6 +5360,20 @@ pins a live value (the 60f6087b failure mode) can still go red after a refresh;
 producer's logic on fixtures, not the committed catalog itself. Revisit with a
 PR-based flow if the owner adds a bot token.
 
+**Update (2026-11-04, #2518):** the premise no longer holds. `main` now requires
+the merge queue plus a `CI OK` check, so `git push origin HEAD:main` is rejected
+(`GH013: Changes must be made through the merge queue`) and both bots had been
+failing on every scheduled run since 2026-10-22 — the assets silently froze for
+eleven days. The advertised revisit condition has arrived: the bots now push a
+`bot/refresh-*` branch, open a PR and enable auto-merge with
+`REFRESH_BOT_TOKEN` (a user or GitHub App token, never `GITHUB_TOKEN`, whose
+PRs trigger no `pull_request` workflows). CI now runs on the refresh before it
+lands, which is strictly more gating than this entry originally bought; the
+producer-test gate still runs on the regenerated file before the commit, so a
+bad refresh never even reaches the branch. A refresh is no longer instant: it
+waits for `CI OK` and the merge queue. Without the secret the job fails with an
+explicit error instead of retrying a push `main` will always reject.
+
 ## DD-128: safe-rm always allows entries under the system temp dirs, owned-by-you on Unix
 
 **Context:** #1622. An agent wrote `/tmp/clud-issue-body.md`, then could not
@@ -7349,9 +7363,11 @@ required and background agents exist. The chaperone reports `MERGED`,
 `NEEDS-FIXUP` or `STUCK`; the orchestrator counts work done only on `MERGED`.
 Native CI labels are applied at PR creation, never later. Harnesses without
 background agents keep the old behavior: the agent observes until merged.
-`LAND_CONTRACT` carries the short form; the full contract is owned by
-[ci.md](architecture/ci.md#agent-landing-workers-end-at-enqueue-chaperones-own-the-merge),
-a candidate fleet policy (GEN-033, forge-ci/ci.yml).
+`LAND_CONTRACT` (`command/do_prompt.rs`) is the contract text itself, not a
+short form; [ci.md](architecture/ci.md#agent-landing-workers-end-at-enqueue-chaperones-own-the-merge)
+documents the same fleet policy (GEN-033, forge-ci/ci.yml). Clud appends it
+once: under `clud do` the rendered `/do` procedure omits its own copy, so an
+agent sees the contract exactly once per session (#2570).
 
 **Why:** A worker waiting on PR CI and the merge_group run holds the only
 checkout while idle. Worktrees would add parallelism but also cost disk,
@@ -7537,3 +7553,23 @@ exact edit counts use the current thread's native patch records rather than a
 working-tree diff (which could include unrelated user changes). Named ASCII
 fallbacks plus lossy input decoding/replacement avoid encoding failures.
 The contract and limits live in [prompt-output.md](architecture/prompt-output.md).
+
+## DD-201: clud.bot assistance uses its existing consent-gated WebSocket protocol
+
+The site's advertised `clud remote connect clud.bot` must speak the deployed
+operator protocol: keyword sessions, local consent and binary PTY streams. A
+paired SSH exec command cannot connect to that service. The native client reuses
+running-process's PTY boundary and negotiates its capabilities with the server;
+it neither starts a backend agent nor installs an SSH daemon. Session bearer
+credentials stay on the same origin. See
+[remote assistance](architecture/remote-assistance.md) for the contract and the
+real-executable integration test maintained with the site.
+
+## DD-202: Hermes personality integration is an optional reference
+
+`context.hermes.enabled` appends a reference to the instance's `SOUL.md` through
+Claude's append-system-prompt and Codex's developer instructions. The model may
+read the file when useful. Clud preserves the native system prompt and does not
+eagerly inject the persona or read Hermes credentials/configuration. This keeps
+the existing Hermes integration boundary narrow and gives the user one setting
+for both harnesses. See [optional context](architecture/optional-context.md).

@@ -8,6 +8,7 @@ re-explaining.
 
 | Document | Lines | What it covers |
 |---|---|---|
+| [architecture/optional-context.md](architecture/optional-context.md) | ~55 | Optional Hermes SOUL.md references in Claude and Codex instructions, setting syntax and native prompt preservation |
 | [architecture/secret-prompt.md](architecture/secret-prompt.md) | ~60 | Masked native credential input, direct sinks, caller-checked askpass, output secrecy and cancellation |
 | [architecture/prompt-output.md](architecture/prompt-output.md) | ~75 | Compact Claude/Codex print activity, per-tool line counts, exact edit counts and terminal encoding fallbacks |
 | [architecture/loop-subsystem.md](architecture/loop-subsystem.md) | ~250 | `clud loop`: task resolution, plan synthesis, iteration run, DONE/BLOCKED marker contract, artifact rollover, repeat scheduling |
@@ -103,3 +104,5 @@ Release-manager evidence for the optional cross-route is tracked separately in
 - **"How does an agent delete files, and where do they go?"** -> [rm-tools.md](architecture/rm-tools.md)
 - **"Where do in-session `git` / `gh` calls get logged?"** -> [git-gh-telemetry-shim.md](architecture/git-gh-telemetry-shim.md)
 - **"How should skills and bundled tools keep output small?"** -> [bounded-output.md](architecture/bounded-output.md)
+
+- [Remote assistance](architecture/remote-assistance.md): clud.bot pairing, local consent and native PTY protocol.

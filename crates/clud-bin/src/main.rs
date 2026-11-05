@@ -35,20 +35,11 @@ fn main() {
 }
 
 fn parse_args() -> args::Args {
-    if !clud::platform::host::WINDOWS {
-        return args::Args::parse_with_passthrough();
-    }
-    // Clap builds the complete nested command tree while parsing argv. Keep
-    // only that work off Windows' small default main-thread stack so adding a
-    // maintenance command cannot make even `clud --help` overflow, while the
-    // rest of clud remains on the process main thread for console/OLE APIs.
-    std::thread::Builder::new()
-        .name("clud-arg-parser".to_string())
-        .stack_size(4 * 1024 * 1024)
-        .spawn(args::Args::parse_with_passthrough)
-        .expect("spawn clud argument parser")
-        .join()
-        .expect("clud argument parser panicked")
+    // `Args::parse_with_passthrough` already runs clap on its own parser-stack
+    // thread (see `args::ARG_PARSER_STACK_BYTES`), so the whole launch — Windows
+    // included — keeps the rest of clud on the process main thread for
+    // console/OLE APIs.
+    args::Args::parse_with_passthrough()
 }
 
 /// The whole `clud` launch, as an ordered list of phases.
@@ -78,6 +69,10 @@ fn run(mut args: args::Args) {
         if clud::worktree_consent::launch_args_ask_for_worktree(&args.passthrough) {
             std::env::set_var(clud::worktree_consent::ALLOW_ENV, "1");
         }
+    }
+    if let Err(error) = clud::remote_connect::proxy::configure_launch(&mut args) {
+        eprintln!("remote: {error}");
+        std::process::exit(2);
     }
     init_foreground_process(&args);
     if let Some(code) = dispatch_maintenance(&args) {
@@ -324,6 +319,46 @@ fn session_stats(session: Option<&str>) -> i32 {
     }
 }
 
+/// The OpenAI Chat Completions ingress seam: request in, Messages body out, or
+/// the reverse with `--response`. No session, backend, or daemon.
+fn run_openai_chat_translate_seam(
+    response: bool,
+    stream: bool,
+    for_model: Option<&str>,
+    http: bool,
+) -> i32 {
+    if response {
+        return clud::openai_ingress::run_translate_response_stdin(stream, for_model, http);
+    }
+    clud::openai_ingress::run_translate_stdin()
+}
+
+/// Run the JSON-path payload-rules seam (`__apply-payload-rules`).
+///
+/// `dispatch_fast_path_command` is at the line cap, so the seam's argument
+/// plumbing lives here rather than inline.
+fn run_payload_rules_seam(cmd: &args::Command) -> i32 {
+    let args::Command::InternalApplyPayloadRules {
+        rules,
+        settings_file,
+        model,
+        protocol,
+        from_protocol,
+        headers,
+    } = cmd
+    else {
+        unreachable!("run_payload_rules_seam is only called for its own arm")
+    };
+    clud::payload_rules::run_apply_stdin(
+        rules.as_deref(),
+        settings_file.as_deref(),
+        model.as_deref().unwrap_or_default(),
+        protocol,
+        from_protocol,
+        headers.to_vec(),
+    )
+}
+
 fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
     let code = match cmd? {
         // #1189: Claude Code runs `clud statusline` as its statusLine command
@@ -367,20 +402,27 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             stream,
             for_model,
             http,
-        } => {
-            if *response {
-                clud::openai_ingress::run_translate_response_stdin(
-                    *stream,
-                    for_model.as_deref(),
-                    *http,
-                )
-            } else {
-                clud::openai_ingress::run_translate_stdin()
-            }
+        } => run_openai_chat_translate_seam(*response, *stream, for_model.as_deref(), *http),
+        args::Command::InternalOpenAiCompletionsTranslate {
+            response,
+            stream,
+            for_model,
+            http,
+        } => clud::completions_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
+        args::Command::InternalApplyPayloadRules { .. } => run_payload_rules_seam(cmd?),
+        args::Command::InternalOpenAiResponsesTranslate {
+            response,
+            stream,
+            for_model,
+            http,
+        } => clud::responses_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
+        args::Command::InternalGeminiClientTranslate { .. } => {
+            run_gemini_client_translate_seam(cmd)
         }
-        args::Command::InternalOpenAiResponsesTranslate => {
-            clud::responses_ingress::run_translate_stdin()
-        }
+        // Hidden test seam for the Claude <-> Gemini translator: stdin in, the
+        // translated body out. `--response` runs the ingress direction. No
+        // session, backend or daemon.
+        args::Command::InternalClaudeGeminiTranslate { .. } => run_claude_gemini_seam(cmd),
         args::Command::InternalXaiDeviceLogin {
             discovery_url,
             device_endpoint,
@@ -432,6 +474,44 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
     Some(code)
 }
 
+/// The Gemini-shaped client seam: stdin in, a Gemini request or response out.
+/// Split out of the dispatch match so that table stays under the length budget.
+fn run_gemini_client_translate_seam(cmd: Option<&args::Command>) -> i32 {
+    let Some(args::Command::InternalGeminiClientTranslate {
+        model,
+        response,
+        stream,
+        http,
+    }) = cmd
+    else {
+        return 1;
+    };
+    if *response {
+        clud::gemini_client_ingress::run_translate_response_stdin(*stream, model.as_deref(), *http)
+    } else {
+        clud::gemini_client_ingress::run_translate_stdin(model.as_deref(), *stream)
+    }
+}
+
+/// Runs the hidden Claude <-> Gemini translate seam. Kept out of
+/// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
+fn run_claude_gemini_seam(cmd: Option<&args::Command>) -> i32 {
+    let Some(args::Command::InternalClaudeGeminiTranslate {
+        model,
+        response,
+        stream,
+        http,
+    }) = cmd
+    else {
+        return 1;
+    };
+    if *response {
+        clud::gemini_ingress::run_translate_response_stdin(*stream, model.as_deref(), *http)
+    } else {
+        clud::gemini_ingress::run_translate_stdin(model.as_deref())
+    }
+}
+
 /// Runs the hidden Kimi Code device-login seam. Kept out of
 /// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
 fn run_kimi_device_login_seam(
@@ -480,6 +560,7 @@ fn run_meta_device_login_seam(cmd: Option<&args::Command>) -> i32 {
 /// and none of them may resolve a backend or start a daemon.
 fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
     let code = match args.command.as_ref()? {
+        args::Command::Remote { action } => clud::remote_connect::run(action),
         args::Command::Serve {
             claude,
             codex,
@@ -1951,6 +2032,10 @@ fn build_backend_plan(args: &mut args::Args, launch: LaunchResolution) -> comman
         require_backend_version(launch_target, &backend_path);
     }
     configure_launch_setup(args, launch, backend);
+    clud::optional_context::prepare(args, backend).unwrap_or_else(|error| {
+        eprintln!("[clud] optional context: {error}");
+        std::process::exit(2);
+    });
     if matches!(backend, backend::Backend::Codex) {
         load_codex_config_overrides(args);
     }

@@ -49,13 +49,16 @@ fn launch(shell: &str, binary: &Path, root: &Path) -> Vec<String> {
     }
 }
 
-fn wait_text(process: &NativePtyProcess, text: &str) -> String {
+fn wait_text(process: &NativePtyProcess, screen: &mut vt100::Parser, text: &str) -> String {
     let deadline = Instant::now() + Duration::from_secs(45);
     let mut bytes = Vec::new();
     let mut answered = 0;
     while Instant::now() < deadline {
         match process.read_chunk_impl(Some(0.1)) {
-            Ok(Some(chunk)) => bytes.extend_from_slice(&chunk),
+            Ok(Some(chunk)) => {
+                screen.process(&chunk);
+                bytes.extend_from_slice(&chunk);
+            }
             Ok(None) => {}
             Err(error) => panic!(
                 "terminal closed waiting for {text}: {error}: {}",
@@ -68,7 +71,7 @@ fn wait_text(process: &NativePtyProcess, text: &str) -> String {
             answered += 1;
         }
         let output = String::from_utf8_lossy(&bytes);
-        if output.contains(text) {
+        if output.contains(text) || screen.screen().contents().contains(text) {
             return output.into_owned();
         }
     }
@@ -141,34 +144,35 @@ fn exercise(shell: &str) {
     .unwrap();
     process.set_echo(false);
     process.start_impl().unwrap();
-    wait_text(&process, "Interrupt with message");
+    let mut screen = vt100::Parser::new(24, 140, 0);
+    wait_text(&process, &mut screen, "Interrupt with message");
     let started = root.join("backend-started.json");
     assert!(crate::common::wait_until(Duration::from_secs(15), || {
         started_pid(&started).is_some()
     }));
     let initial_pid = started_pid(&started).unwrap();
     process.write_impl(b"q", false).unwrap();
-    wait_text(&process, "Enter: save");
+    wait_text(&process, &mut screen, "Enter: save");
     process
         .write_impl("literal café 🦀 $HOME %PATH% & message\r".as_bytes(), false)
         .unwrap();
-    wait_text(&process, "Message queued for next iteration");
+    wait_text(&process, &mut screen, "Message queued for next iteration");
     let inbox = root.join(".clud/loop/inbox");
     assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 1);
     assert_eq!(started_pid(&started), Some(initial_pid));
     process.write_impl(b"i", false).unwrap();
-    wait_text(&process, "Enter: review");
+    wait_text(&process, &mut screen, "Enter: review");
     process.write_impl(b"restart message\r", false).unwrap();
-    wait_text(&process, "Are you sure?");
+    wait_text(&process, &mut screen, "Are you sure?");
     // Enter is safe; cancellation never queues another message.
     process.write_impl(b"\r", false).unwrap();
-    wait_text(&process, "Enter: review");
+    wait_text(&process, &mut screen, "Enter: review");
     assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 1);
     assert_eq!(started_pid(&started), Some(initial_pid));
     process.write_impl(b"\r", false).unwrap();
-    wait_text(&process, "Are you sure?");
+    wait_text(&process, &mut screen, "Are you sure?");
     process.write_impl(b"y", false).unwrap();
-    wait_text(&process, "Interrupt with message");
+    wait_text(&process, &mut screen, "Interrupt with message");
     assert!(
         crate::common::wait_until(Duration::from_secs(15), || {
             started_pid(&started).is_some_and(|pid| pid != initial_pid)
@@ -183,10 +187,25 @@ fn exercise(shell: &str) {
         serde_json::from_slice(&std::fs::read(root.join(".clud/loop/info.json")).unwrap()).unwrap();
     assert_eq!(info["current_iteration"], 1);
     process.write_impl(b"\x03", false).unwrap();
-    let output = wait_text(&process, "\x1b[?1049l");
+    let output = wait_text(&process, &mut screen, "\x1b[?1049l");
     assert!(
         output.contains("\x1b[?25h"),
         "cursor was not restored: {output:?}"
+    );
+    // ConPTY can combine resets as CSI ?1003;1006l. Seed enabled modes
+    // so missing resets still fail, then verify their terminal semantics.
+    let mut restored = vt100::Parser::new(24, 140, 0);
+    restored.process(b"\x1b[?1003h\x1b[?1006h");
+    restored.process(output.as_bytes());
+    assert_eq!(
+        restored.screen().mouse_protocol_mode(),
+        vt100::MouseProtocolMode::None,
+        "mouse capture not restored: {output:?}"
+    );
+    assert_eq!(
+        restored.screen().mouse_protocol_encoding(),
+        vt100::MouseProtocolEncoding::Default,
+        "mouse encoding not restored: {output:?}"
     );
     assert_eq!(
         process.wait_impl(Some(10.0)).unwrap(),
@@ -218,4 +237,61 @@ fn powershell_queue_confirm_restart_and_restore() {
     }
     require_pty_or_skip!("powershell_queue_confirm_restart_and_restore");
     exercise("powershell");
+}
+
+#[test]
+fn codex_dashboard_scrolls_history_with_keys_and_mouse_without_screen_clears() {
+    require_pty_or_skip!(
+        "codex_dashboard_scrolls_history_with_keys_and_mouse_without_screen_clears"
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let env = isolated_env(root);
+    let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
+    let lines: String = (0..50).map(|n| format!("history-{n:03}\n")).collect();
+    std::fs::write(root.join("history.txt"), lines).unwrap();
+    let process = NativePtyProcess::new(
+        vec![
+            binary.to_string_lossy().into_owned(),
+            "--no-daemon".into(),
+            "--codex".into(),
+            "--subprocess".into(),
+            "loop".into(),
+            "--loop-count".into(),
+            "1".into(),
+            "test-scrolling".into(),
+            "--".into(),
+            "--mock-ansi-script".into(),
+            "history.txt".into(),
+            "--mock-sleep-ms".into(),
+            "60000".into(),
+        ],
+        Some(root.to_string_lossy().into_owned()),
+        Some(env),
+        10,
+        140,
+        None,
+    )
+    .unwrap();
+    process.set_echo(false);
+    process.start_impl().unwrap();
+    let mut screen = vt100::Parser::new(10, 140, 0);
+    wait_text(&process, &mut screen, "history-049");
+    for (input, expected) in [
+        (b"\x1b[5~".as_slice(), "history-036"),
+        (b"\x1b[H".as_slice(), "history-000"),
+        (b"\x1b[F".as_slice(), "history-049"),
+        (b"\x1b[<64;2;2M".as_slice(), "3 lines above live"),
+    ] {
+        process.write_impl(input, false).unwrap();
+        let output = wait_text(&process, &mut screen, expected);
+        assert!(
+            !output.contains("\x1b[2J"),
+            "scroll cleared the screen: {output:?}"
+        );
+    }
+    process.write_impl(b"\x03", false).unwrap();
+    wait_text(&process, &mut screen, "\x1b[?1049l");
+    assert_eq!(process.wait_impl(Some(10.0)).unwrap(), 130);
+    process.close_impl().unwrap();
 }

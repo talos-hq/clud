@@ -574,6 +574,14 @@ pub(super) fn spawn_dashboard_with_activity(
     )
 }
 
+/// Stack for the dashboard's serving thread.
+///
+/// `run_dashboard_loop` answers every dashboard route from a single frame, so a
+/// debug build's frame does not fit the 2 MiB a bare `thread::spawn` allows and
+/// the thread aborts with `fatal runtime error: stack overflow` before it serves
+/// a request.
+const DASHBOARD_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
+
 /// Production passes the same manager to both IPC transports and HTTP. Test
 /// callers use `spawn_dashboard_with_activity`, which owns an isolated one.
 #[allow(clippy::too_many_arguments)]
@@ -606,6 +614,10 @@ pub(super) fn spawn_dashboard_with_activity_and_lifecycle(
         }
     };
     let res = thread::Builder::new()
+        // `run_dashboard_loop` serves every dashboard route from one frame, so
+        // its debug-build frame is large enough to overflow the 2 MiB default a
+        // plain `spawn` gives a thread. Give the loop room to run.
+        .stack_size(DASHBOARD_THREAD_STACK_BYTES)
         .name("clud-dashboard-http".to_string())
         .spawn(move || {
             let access = DashboardAccess::new(dashboard_token);

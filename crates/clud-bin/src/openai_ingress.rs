@@ -78,6 +78,11 @@ pub enum IngressError {
     EmptyMessages,
     /// A content part clud has no Anthropic spelling for. Names the part.
     UnsupportedPart(String),
+    /// A request field clud cannot honour without answering something else.
+    /// Names the field.
+    UnsupportedField(String),
+    /// A completions request with no usable `prompt`.
+    MissingPrompt,
 }
 
 impl std::fmt::Display for IngressError {
@@ -90,6 +95,11 @@ impl std::fmt::Display for IngressError {
                 formatter,
                 "content part `{part}` has no Anthropic equivalent on this gateway"
             ),
+            Self::UnsupportedField(field) => write!(
+                formatter,
+                "request field `{field}` cannot be honoured on this gateway"
+            ),
+            Self::MissingPrompt => formatter.write_str("request contains no prompt"),
         }
     }
 }

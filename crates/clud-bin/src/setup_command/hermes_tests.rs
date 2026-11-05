@@ -201,6 +201,35 @@ fn no_config_is_silent_unless_import_was_requested() {
     assert_eq!(asked.outcome, Outcome::Failed(2));
 }
 
+/// This crate's `src/`: the compile-time manifest dir when it exists (the
+/// build host), else the checkout above the working directory. Native CI
+/// runners execute a bundle built on Linux from a checkout at another path,
+/// as `clud_repo_dev::this_checkout_is_detected` documents.
+fn crate_src_dir(manifest_dir: &Path, cwd: &Path) -> Option<std::path::PathBuf> {
+    let compiled = manifest_dir.join("src");
+    if compiled.is_dir() {
+        return Some(compiled);
+    }
+    cwd.ancestors()
+        .map(|dir| dir.join("crates").join("clud-bin").join("src"))
+        .find(|dir| dir.is_dir())
+}
+
+#[test]
+fn crate_src_dir_falls_back_to_the_checkout_above_cwd() {
+    let checkout = tempfile::tempdir().unwrap();
+    let src = checkout.path().join("crates").join("clud-bin").join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    let nested = checkout.path().join("bundle").join("target");
+    std::fs::create_dir_all(&nested).unwrap();
+    let missing = checkout.path().join("not-the-build-host");
+    assert_eq!(crate_src_dir(&missing, &nested), Some(src.clone()));
+    let host = checkout.path().join("crates").join("clud-bin");
+    assert_eq!(crate_src_dir(&host, &missing), Some(src));
+    let empty = tempfile::tempdir().unwrap();
+    assert_eq!(crate_src_dir(&missing, empty.path()), None);
+}
+
 /// The structural half of the boundary: no source file outside the setup paths
 /// names a Hermes config path or the Hermes environment.
 ///
@@ -210,7 +239,9 @@ fn no_config_is_silent_unless_import_was_requested() {
 /// `doctor` stay outside it.
 #[test]
 fn only_setup_hermes_module_names_hermes_paths_or_env() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let cwd = std::env::current_dir().unwrap();
+    let src = crate_src_dir(Path::new(env!("CARGO_MANIFEST_DIR")), &cwd)
+        .expect("no clud-bin src/ at the build path or above the working directory");
     let allowed = [
         src.join("setup_command/hermes.rs"),
         src.join("setup_command/hermes_tests.rs"),
@@ -221,9 +252,26 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
     let needles = [".hermes", "HERMES_HOME", "HERMES_"];
     let mut stack = vec![src.clone()];
     let mut offenders = Vec::new();
+    let mut scanned = 0usize;
     while let Some(dir) = stack.pop() {
-        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+        // A directory the walker cannot open is a scan gap, not an offender: filesystem layouts
+        // differ per platform and inside CI sandboxes, and panicking here turns a boundary check
+        // into an environment test. Record it loudly, keep walking, and prove below that the scan
+        // was not vacuous.
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(err) => {
+                eprintln!("warning: cannot scan {}: {err}", dir.display());
+                continue;
+            }
+        };
+        for entry in entries.flatten() {
             let path = entry.path();
+            // Follow nothing: a symlink whose target is absent makes read_dir fail, and its
+            // contents are not this crate's source anyway.
+            if std::fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_symlink()) {
+                continue;
+            }
             if path.is_dir() {
                 stack.push(path);
                 continue;
@@ -231,7 +279,11 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
             if path.extension().is_none_or(|ext| ext != "rs") || allowed.contains(&path) {
                 continue;
             }
-            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            scanned += 1;
+            // The public setting spelling is not a filesystem path or an environment read.
+            let text = std::fs::read_to_string(&path)
+                .unwrap_or_default()
+                .replace("context.hermes.enabled", "context-setting");
             for needle in needles {
                 if text.contains(needle) {
                     offenders.push(format!("{} names {needle}", path.display()));
@@ -240,8 +292,44 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
         }
     }
     assert!(
+        scanned > 0,
+        "scanned no Rust sources under {} — the boundary check must not pass vacuously",
+        src.display()
+    );
+    assert!(
         offenders.is_empty(),
         "only the setup and install paths may read Hermes config or env:\n{}",
         offenders.join("\n")
     );
+}
+
+#[test]
+fn optional_personality_reference_does_not_read_or_inject_the_file() {
+    let home = tempfile::tempdir().unwrap();
+    let instance = home.path().join(".hermes");
+    std::fs::create_dir(&instance).unwrap();
+    std::fs::write(
+        instance.join("SOUL.md"),
+        "PERSONA_CONTENT_MUST_NOT_BE_INJECTED",
+    )
+    .unwrap();
+    std::fs::write(instance.join("config.yaml"), "not: [valid yaml").unwrap();
+    let reference = context_reference(home.path(), None).unwrap();
+    assert!(reference.contains("SOUL.md"));
+    assert!(reference.contains("Reading it is optional"));
+    assert!(!reference.contains("PERSONA_CONTENT_MUST_NOT_BE_INJECTED"));
+    let other = tempfile::tempdir().unwrap();
+    std::fs::write(other.path().join("SOUL.md"), "other personality").unwrap();
+    let reference = context_reference(home.path(), Some(other.path().into())).unwrap();
+    let path = other.path().join("SOUL.md").canonicalize().unwrap();
+    let quoted = serde_json::to_string(&path.to_string_lossy()).unwrap();
+    assert!(reference.contains(&quoted));
+}
+
+#[test]
+fn missing_optional_personality_file_is_an_actionable_error() {
+    let home = tempfile::tempdir().unwrap();
+    let error = context_reference(home.path(), None).unwrap_err();
+    assert!(error.contains("context.hermes.enabled=false"));
+    assert!(error.contains("SOUL.md"));
 }

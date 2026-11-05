@@ -111,7 +111,7 @@ pub fn handle(args: &crate::args::Args) -> Option<i32> {
     Some(run(change))
 }
 
-fn run(change: &Mutation) -> i32 {
+pub(crate) fn run(change: &Mutation) -> i32 {
     let result = crate::home::user_home()
         .ok_or_else(|| Failure::Refused("Cannot resolve the user settings directory".into()))
         .and_then(|home| execute(&home, change, gui::approve));

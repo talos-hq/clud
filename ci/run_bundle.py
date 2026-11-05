@@ -148,6 +148,10 @@ def bundle_env(bundle: Path, manifest: dict) -> dict[str, str]:
     env.pop("VIRTUAL_ENV", None)
     env.setdefault("PYTHONUTF8", "1")
     env["RUST_BACKTRACE"] = "1"
+    if "windows" in manifest["target"]:
+        # Args tests call Clap directly, bypassing main.rs::parse_args and
+        # its 4 MiB Windows parser thread. Give libtest the same stack budget.
+        env.setdefault("RUST_MIN_STACK", str(4 * 1024 * 1024))
     env["CARGO_TARGET_DIR"] = str((bundle / "target").resolve())
     env["CLUD_TEST_BIN_DIR"] = str(bin_dir.resolve())
     env["CLUD_TEST_BINARY"] = str((bin_dir / _exe("clud", manifest)).resolve())

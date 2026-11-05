@@ -79,3 +79,9 @@ All `cargo`/`rustc`/`rustfmt` invocations must go through `soldr` (see root `CLA
 Loop dashboard acceptance lives in `integration/pty/loop_console.rs`: real PTYs
 through Bash, cmd and PowerShell cover message queueing, confirmed restart and
 terminal restoration. See [loop dashboard](../../../docs/architecture/loop-subsystem.md#interactive-loop-dashboard).
+
+`cli/remote_proxy_cli.rs` migrates the credential-empty Bosn proof into the normal
+integration harness: actual clud starts mock-agent with only a session bearer,
+and the mock makes a real HTTP Messages request to the session proxy fixture.
+No provider account or Docker daemon is required. See
+[remote assistance](../../../docs/architecture/remote-assistance.md).

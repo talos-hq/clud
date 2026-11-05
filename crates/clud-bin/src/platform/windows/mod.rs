@@ -50,6 +50,7 @@ pub mod self_install_activation;
 pub mod session;
 pub mod session_registry;
 pub mod session_tmp_continuation;
+pub mod session_tmp_live;
 pub mod shim_fs;
 pub mod shim_main;
 pub mod shim_telemetry;
