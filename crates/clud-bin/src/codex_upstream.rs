@@ -744,6 +744,17 @@ pub struct ImagesReply {
     pub body: Vec<u8>,
 }
 
+/// The upstream's answer to a `/v1/responses/compact` request.
+///
+/// A passthrough reply, exactly as [`ImagesReply`]: the compaction answer is the
+/// upstream's own JSON (a summary plus opaque encrypted items), and the client
+/// parses its errors from the same envelope, so clud forwards both verbatim.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactDoorReply {
+    pub status: u16,
+    pub body: Vec<u8>,
+}
+
 /// The upstream's answer to one Codex standalone search request.
 ///
 /// Status, content type and body are kept together because this door is a
@@ -1101,6 +1112,76 @@ impl<C: CredentialSource> UpstreamClient<C> {
                         }
                     })?;
                 Ok(ImagesReply {
+                    status,
+                    body: buffer,
+                })
+            };
+        match request.send_bytes(body) {
+            Ok(response) => {
+                let status = response.status();
+                let mut reader = response.into_reader();
+                read_reply(&mut reader, status)
+            }
+            Err(ureq::Error::Status(status, response)) => {
+                let mut reader = response.into_reader();
+                read_reply(&mut reader, status)
+            }
+            Err(ureq::Error::Transport(error)) => Err(if is_timeout_transport(&error) {
+                UpstreamError::Timeout
+            } else {
+                UpstreamError::Transport("connection failed")
+            }),
+        }
+    }
+
+    /// POST a prepared compaction body and relay the upstream's answer whole.
+    ///
+    /// The served half of CLIProxyAPI's `/v1/responses/compact`
+    /// (`openai_responses_handlers.go:917`, which forwards to
+    /// `<codex base>/responses/compact`). Unlike [`Self::compact`] -- clud's own
+    /// auto-compaction, which parses the answer into a typed
+    /// `CompactResponse` -- this call keeps the bytes: a client's compaction
+    /// answer is the upstream's contract, and re-serialising it would drop the
+    /// fields clud's typed view does not model.
+    ///
+    /// Deliberately ONE attempt with no retry: a non-2xx answer is returned as a
+    /// reply, not an error, because the upstream's own error envelope is the
+    /// contract the client parses.
+    pub fn compact_body(
+        &self,
+        body: &[u8],
+        cancel: &AtomicBool,
+    ) -> Result<CompactDoorReply, UpstreamError> {
+        /// A compaction answer is a summary plus opaque encrypted items, but the
+        /// cap still exists so a hostile upstream cannot grow the bridge's heap
+        /// without bound.
+        const MAX_RESPONSE_BYTES: u64 = 32 * 1024 * 1024;
+
+        if cancel.load(Ordering::Acquire) {
+            return Err(UpstreamError::Cancelled);
+        }
+        let target = self.credentials.resolve()?;
+        *self
+            .last_target
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()) = Some(target.clone());
+        let request = self
+            .identity_request(&target, &target.compact_url(), "application/json")
+            .timeout(self.config.overall_timeout);
+        let read_reply =
+            |reader: &mut dyn Read, status: u16| -> Result<CompactDoorReply, UpstreamError> {
+                let mut buffer = Vec::new();
+                reader
+                    .take(MAX_RESPONSE_BYTES)
+                    .read_to_end(&mut buffer)
+                    .map_err(|error| {
+                        if error.kind() == std::io::ErrorKind::TimedOut {
+                            UpstreamError::Timeout
+                        } else {
+                            UpstreamError::Transport("compact response could not be read")
+                        }
+                    })?;
+                Ok(CompactDoorReply {
                     status,
                     body: buffer,
                 })
@@ -1832,6 +1913,44 @@ mod tests {
         assert!(request.starts_with("POST /v1/responses/compact HTTP/1.1"));
         assert!(request.contains("Accept: application/json"));
         assert!(request.contains("version: 0.157.1"));
+    }
+
+    #[test]
+    fn compact_body_relays_the_upstream_answer_verbatim_and_posts_the_compact_route() {
+        let reply = r#"{"output":[{"type":"compaction","id":"cmp_1","encrypted_content":"opaque"}],"unmodelled":true}"#;
+        let server = FakeUpstream::start(vec![body_response(200, reply, &[])]);
+        let client = client(&server.base_url, fast_config());
+        let answer = client
+            .compact_body(
+                br#"{"model":"gpt-5.1-codex","input":[]}"#,
+                &AtomicBool::new(false),
+            )
+            .expect("compact answer");
+        assert_eq!(answer.status, 200);
+        // Byte-for-byte: a field clud's typed view does not model survives.
+        assert_eq!(String::from_utf8(answer.body).unwrap(), reply);
+        let request = server.requests().remove(0);
+        assert!(
+            request.starts_with("POST /v1/responses/compact HTTP/1.1"),
+            "{request}"
+        );
+        assert!(request.contains("Accept: application/json"), "{request}");
+        assert_eq!(server.hits(), 1, "compaction is never retried");
+    }
+
+    #[test]
+    fn compact_body_returns_a_non_2xx_envelope_as_a_reply() {
+        // The client parses the upstream's own error object, so a 4xx must not
+        // be flattened into clud's generic upstream failure.
+        let envelope =
+            r#"{"error":{"message":"context too large","code":"context_length_exceeded"}}"#;
+        let server = FakeUpstream::start(vec![body_response(400, envelope, &[])]);
+        let client = client(&server.base_url, fast_config());
+        let answer = client
+            .compact_body(br#"{"model":"gpt-5.1-codex"}"#, &AtomicBool::new(false))
+            .expect("a 4xx envelope is a reply, not an error");
+        assert_eq!(answer.status, 400);
+        assert_eq!(String::from_utf8(answer.body).unwrap(), envelope);
     }
 
     #[test]

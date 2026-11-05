@@ -1244,8 +1244,44 @@ pub enum Command {
         #[arg(long = "settings-file", conflicts_with = "rules")]
         settings_file: Option<PathBuf>,
     },
+    /// Hidden test seam for the legacy completions ingress. Without
+    /// `--response` it translates a `/v1/completions` request into a Messages
+    /// request; with it, the reverse: an upstream Messages body into a
+    /// `text_completion` body or chunk stream.
+    #[command(name = "__openai-completions-translate", hide = true)]
+    InternalOpenAiCompletionsTranslate {
+        /// Translate an Anthropic Messages response, not an OpenAI request.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one chunk per line.
+        #[arg(long, requires = "response")]
+        stream: bool,
+        /// Model to report when the response body carries none.
+        #[arg(long = "for-model")]
+        for_model: Option<String>,
+        /// Emit the exact HTTP body the route writes, not one JSON per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
+    /// Hidden test seam for the Responses ingress. Without `--response` it
+    /// translates a Responses request into a Messages request; with it, the
+    /// reverse: an upstream Messages body into a Responses `response` object or
+    /// event stream.
     #[command(name = "__openai-responses-translate", hide = true)]
-    InternalOpenAiResponsesTranslate,
+    InternalOpenAiResponsesTranslate {
+        /// Translate an Anthropic Messages response, not an OpenAI request.
+        #[arg(long)]
+        response: bool,
+        /// Read the response as SSE and emit one `response.*` event per line.
+        #[arg(long, requires = "response")]
+        stream: bool,
+        /// Model to report when the response body carries none.
+        #[arg(long = "for-model")]
+        for_model: Option<String>,
+        /// Emit the exact HTTP body the route writes, not one JSON per line.
+        #[arg(long, requires = "response")]
+        http: bool,
+    },
     /// Hidden test seam for xAI's RFC 8628 device login: run discovery, request
     /// a device code, poll until authorized, and print progress as JSON lines.
     /// Never used by a launched session.
@@ -1920,6 +1956,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "__worker",
     "__start-cmd",
     "__openai-chat-translate",
+    "__openai-completions-translate",
     "__gemini-client-translate",
     "__claude-gemini-translate",
     "__apply-payload-rules",
@@ -1952,8 +1989,7 @@ fn subtree_has_long(cmd: &clap::Command, name: &str) -> bool {
 /// reported with the reordered call instead of clap's bare usage dump
 /// (#2521). `None` when every flag is where clap accepts it.
 pub(crate) fn misplaced_global_flag(raw: &[String]) -> Option<String> {
-    use clap::CommandFactory;
-    let root = Args::command();
+    let root = parser_command();
     let root_arg = |name: &str| {
         root.get_arguments()
             .find(|arg| arg.get_long() == Some(name))
@@ -2008,42 +2044,94 @@ pub(crate) fn misplaced_global_flag(raw: &[String]) -> Option<String> {
     None
 }
 
+/// Stack floor for clap's derived parse entry point.
+///
+/// Both halves of a parse are big single frames in a debug build: clap's
+/// derived `CommandFactory::command()` builds the whole nested command tree,
+/// and the derived `from_arg_matches` frame grows with every `Command`
+/// variant. A test-harness thread only gets 2 MiB, so the shard aborted with
+/// `fatal runtime error: stack overflow` before a single test reported (issue
+/// #2629). The whole parse therefore runs on a dedicated thread with this
+/// explicit floor on every platform, so neither a growing `Command` enum nor a
+/// small caller stack can abort the process mid-parse.
+const ARG_PARSER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+fn on_arg_parser_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+    std::thread::Builder::new()
+        .name("clud-arg-parser".to_string())
+        .stack_size(ARG_PARSER_STACK_BYTES)
+        .spawn(work)
+        .expect("spawn clud argument parser")
+        .join()
+        .expect("clud argument parser panicked")
+}
+
+/// Clap's derived `CommandFactory::command()` on [`ARG_PARSER_STACK_BYTES`].
+///
+/// Building the nested command tree is one large debug-build frame, so every
+/// inspector of the tree (argument splitting, misplaced-flag hints, suggestion
+/// matching) goes through here instead of `Args::command()`.
+pub(crate) fn parser_command() -> clap::Command {
+    use clap::CommandFactory;
+    on_arg_parser_stack(Args::command)
+}
+
 impl Args {
     pub fn parse_with_passthrough() -> Self {
         let raw: Vec<String> = std::env::args().collect();
         Self::parse_from_raw(raw)
     }
 
+    /// Clap's `Parser::try_parse_from`, run on [`ARG_PARSER_STACK_BYTES`].
+    ///
+    /// Shadowing the trait method keeps every `Args::try_parse_from(..)` call
+    /// site (production and tests alike) off the caller's stack.
+    pub fn try_parse_from<I, T>(itr: I) -> Result<Self, clap::Error>
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let argv: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
+        on_arg_parser_stack(move || <Self as Parser>::try_parse_from(argv))
+    }
+
+    /// Clap's `Parser::parse_from`, run on [`ARG_PARSER_STACK_BYTES`].
+    pub fn parse_from<I, T>(itr: I) -> Self
+    where
+        I: IntoIterator<Item = T>,
+        T: Into<std::ffi::OsString> + Clone,
+    {
+        let argv: Vec<std::ffi::OsString> = itr.into_iter().map(Into::into).collect();
+        on_arg_parser_stack(move || <Self as Parser>::parse_from(argv))
+    }
+
     pub fn parse_from_raw(raw: Vec<String>) -> Self {
+        on_arg_parser_stack(move || Self::parse_from_raw_on_parser_stack(raw))
+    }
+
+    fn parse_from_raw_on_parser_stack(raw: Vec<String>) -> Self {
         let (normalized, continue_index) = extract_continue_index(&raw);
         let normalized = normalize_bare_resume_before_subcommand(&normalized);
         let normalized = split_unicode_space_glued_flags(&normalized);
         let normalized = normalize_known_option_dashes(&normalized);
         let normalized = match split_inline_key_assignments(&normalized) {
             Ok(normalized) => normalized,
-            Err(message) => {
-                use clap::CommandFactory;
-                Args::command()
-                    .error(clap::error::ErrorKind::InvalidValue, message)
-                    .exit()
-            }
+            Err(message) => parser_command()
+                .error(clap::error::ErrorKind::InvalidValue, message)
+                .exit(),
         };
         let (known, unknown) = match split_known_unknown(&normalized) {
             Ok(parts) => parts,
-            Err(message) => {
-                use clap::CommandFactory;
-                Args::command()
-                    .error(clap::error::ErrorKind::UnknownArgument, message)
-                    .exit()
-            }
+            Err(message) => parser_command()
+                .error(clap::error::ErrorKind::UnknownArgument, message)
+                .exit(),
         };
         if let Some(message) = misplaced_global_flag(&known) {
-            use clap::CommandFactory;
-            Args::command()
+            parser_command()
                 .error(clap::error::ErrorKind::UnknownArgument, message)
                 .exit()
         }
-        let mut args = Args::parse_from(known.clone());
+        let mut args = <Args as Parser>::parse_from(known.clone());
         if let Some(Command::SafeRm { args: command_args }) = &mut args.command {
             // Clap consumes global options even after a trailing subcommand.
             // For this command, every token after its name belongs to its
@@ -2073,8 +2161,7 @@ impl Args {
 /// Only correct an exact, public clud option while still in the top-level
 /// option region. In particular, never rewrite prompt values or backend argv.
 fn normalize_known_option_dashes(raw: &[String]) -> Vec<String> {
-    use clap::CommandFactory;
-    let command = Args::command();
+    let command = parser_command();
     let public_longs: std::collections::HashSet<&str> = command
         .get_arguments()
         .filter(|argument| !argument.is_hide_set())
@@ -2496,8 +2583,7 @@ fn suggest_public_subcommand(token: &str) -> Option<String> {
     if token.chars().any(char::is_whitespace) || looks_like_api_key(token) {
         return None;
     }
-    use clap::CommandFactory;
-    let command = Args::command();
+    let command = parser_command();
     let mut suggestions = clap::Command::default().name("clud");
     let visible: std::collections::HashSet<String> = command
         .get_subcommands()
@@ -2524,7 +2610,6 @@ fn suggest_public_subcommand(token: &str) -> Option<String> {
 }
 
 fn validate_top_level_unknown(token: &str, following: Option<&str>) -> Result<(), String> {
-    use clap::CommandFactory;
     let name = token.split_once('=').map_or(token, |(name, _)| name);
     let canonical = if let Some(name) = name.strip_prefix("--") {
         format!("--{name}")
@@ -2539,7 +2624,7 @@ fn validate_top_level_unknown(token: &str, following: Option<&str>) -> Result<()
     } else {
         return Ok(());
     };
-    let command = Args::command();
+    let command = parser_command();
     let all_options: std::collections::HashSet<String> = command
         .get_arguments()
         .filter_map(|argument| argument.get_long().map(|name| format!("--{name}")))
@@ -2554,7 +2639,7 @@ fn validate_top_level_unknown(token: &str, following: Option<&str>) -> Result<()
             "clud's option splitter omitted {name}; this is a clud bug"
         ));
     }
-    let suggestion = Args::command()
+    let suggestion = parser_command()
         .try_get_matches_from(["clud", canonical.as_str()])
         .err()
         .and_then(|error| {
@@ -2588,6 +2673,31 @@ fn validate_top_level_unknown(token: &str, following: Option<&str>) -> Result<()
 #[cfg(test)]
 #[path = "args_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod arg_parser_stack_tests {
+    use super::*;
+
+    /// The parser must not depend on the caller's stack. A debug build needs
+    /// several MiB for clap's derived `from_arg_matches` frame while libtest
+    /// gives each test only 2 MiB, which used to abort the whole `args::`
+    /// shard (issue #2629). Parsing on [`ARG_PARSER_STACK_BYTES`] means even a
+    /// deliberately tiny caller stack parses fine.
+    #[test]
+    fn parsing_survives_a_small_caller_stack() {
+        let parsed = std::thread::Builder::new()
+            .name("clud-small-stack-caller".to_string())
+            .stack_size(256 * 1024)
+            .spawn(|| Args::try_parse_from(["clud", "grind-facts", "path"]))
+            .expect("spawn small-stack caller")
+            .join()
+            .expect("small-stack caller panicked");
+        assert!(matches!(
+            parsed.expect("parse on a small caller stack").command,
+            Some(Command::GrindFacts { .. })
+        ));
+    }
+}
 
 #[cfg(test)]
 mod grind_scripts_parse_tests {

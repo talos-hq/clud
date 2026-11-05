@@ -195,7 +195,6 @@ pub fn validate_plan(plan: &crate::command::LaunchPlan) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::Parser;
     const BEARER: &str = "ct_ephemeral_session_bearer_only_123456";
 
     #[test]

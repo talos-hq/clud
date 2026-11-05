@@ -1,11 +1,9 @@
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use clap::CommandFactory;
-
 use super::registry::now_unix;
 use super::{uv_cache, uv_cache_repair};
-use crate::args::{Args, GcSubcommand};
+use crate::args::{parser_command, Args, GcSubcommand};
 use crate::gc::{EXTERN_REPO_KIND, SIBLING_CLONE_KIND, WORKTREE_KIND};
 use crate::worktrees;
 
@@ -520,7 +518,7 @@ pub(super) fn format_bytes(bytes: u64) -> String {
 }
 
 fn print_help_and_exit_zero() -> i32 {
-    let mut top = Args::command();
+    let mut top = parser_command();
     match top.find_subcommand_mut("gc") {
         Some(gc) => {
             let _ = gc.print_help();

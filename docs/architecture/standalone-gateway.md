@@ -72,23 +72,22 @@ clud serve --codex --claude
 Use `/v1/models` to discover the advertised Codex IDs (for example,
 `clud-claude-codex-sol`) and pass one as `model` to `/v1/messages`.
 Codex-only discovery does not contact Anthropic. This is an Anthropic-compatible
-frontend, `/v1/responses` is not exposed.
-
-Two other client dialects are translated at the door and answered in the shape
-they were asked in. Both run over the same ladder, credentials and allowlist as
-`/v1/messages`; nothing is duplicated and no route learns a second protocol:
+frontend. Several client dialects are translated at the door and answered in the
+shape they were asked in. All of them run over the same ladder, credentials and
+allowlist as `/v1/messages`; nothing is duplicated and no route learns a second
+protocol:
 
 | Route | Client dialect |
 |---|---|
 | `POST /v1/chat/completions` | OpenAI Chat Completions (`openai_ingress`) |
+| `POST /v1/completions` | OpenAI legacy Completions (`completions_ingress`) |
+| `POST /v1/responses` | OpenAI Responses (`responses_ingress`) |
+| `POST /v1/responses/compact` | Responses compaction passthrough (`responses_compact`, Codex lane) |
 | `POST /v1beta/models/<model>:generateContent` | Gemini `GenerateContentResponse` (`gemini_client_ingress`) |
 | `POST /v1beta/models/<model>:streamGenerateContent` | Gemini SSE chunks |
 
-The Gemini verb lives in the path, not the body, so `<model>` is the clud model
-to route to (`clud-claude-*`, `@effort` and `(budget)` suffixes included) — clud
-has no Gemini provider, so a Google model id is only routable when a catalog row
-maps it. Refusals on these doors keep the HTTP status and use that client's own
-error envelope.
+The translated doors are exposed only when the launch has a unified gateway,
+because the relay they share lives there.
 
 ## OpenAI Responses client bodies
 
@@ -96,9 +95,12 @@ error envelope.
 (`POST /v1/responses`) request body into the Anthropic Messages body the routes
 above already serve, ported from CLIProxyAPI
 `internal/translator/claude/openai/responses/claude_openai-responses_request.go`.
-It is a translator and a hidden seam (`clud __openai-responses-translate`, stdin
-request in, Messages body out) — **no route exposes it yet**, so nothing changes
-for a running server. `instructions` plus every role=system/developer input item
+It is reachable on the loopback gateway and on `clud serve` as
+`POST /v1/responses`, behind the same `X-Clud-Gateway-Token` / client-token
+contract as every other door, when the launch has a unified gateway; without one
+the turn is refused `501` in the Responses error envelope. The hidden seam
+`clud __openai-responses-translate` reads a request from stdin and writes the
+Messages body. `instructions` plus every role=system/developer input item
 become top-level `system` blocks in source order; `message` items become
 user/assistant turns; `function_call`/`custom_tool_call` become `tool_use` and
 their `*_output` partners `tool_result`; a `reasoning` item with
@@ -118,6 +120,58 @@ orphan `tool_result`), and a `tool_use` with no result is closed with an
 `response_format` structured-output synthesis, tool-search discovery replay and
 the namespace/custom-tool name map are not ported yet; `cache_control` markers
 are not replayed.
+
+## OpenAI Responses answers
+
+The same module renders the other direction, ported from CLIProxyAPI
+`internal/translator/claude/openai/responses/claude_openai-responses_response.go`:
+`translate_responses_response` turns one buffered Messages body into a Responses
+`response` object, and `ResponsesStreamTranslator` turns the Messages SSE frames
+into `response.created` / `response.in_progress` / `response.output_item.*` /
+`response.content_part.*` / `response.output_text.delta` /
+`response.function_call_arguments.*` / `response.reasoning_summary_*` /
+`response.completed` events, each carrying a monotonic `sequence_number`.
+`thinking` becomes a `reasoning` item whose `encrypted_content` is the Claude
+signature — the request half reads it back — and `redacted_thinking` rides in
+`encrypted_content` behind upstream's `claude-redacted-thinking:` marker.
+`max_tokens` / `model_context_window_exceeded` end the response `incomplete`
+with `incomplete_details.reason = max_output_tokens`; a `refusal` stop reason is
+`incomplete` with `content_filter`, because Responses clients treat it as a
+retryable refusal rather than a finished answer; `pause_turn` stays `completed`,
+since the client continues it by replaying the assistant turn.
+
+Deliberate differences from upstream: a stream whose upstream body ends without
+`message_stop` is sealed as `response.failed` with code `server_error` rather
+than `response.completed` — a truncated answer is not a finished one; the
+`web_search_call` item is not synthesised, because clud refuses server tools at
+the door instead of injecting them; and the websocket verb upstream also serves
+at `/v1/responses` is not ported, since this bridge is plain HTTP/1.1.
+
+## Legacy text completions
+
+`crates/clud-bin/src/completions_ingress.rs` serves OpenAI's older
+`POST /v1/completions` contract, ported from CLIProxyAPI
+`sdk/api/handlers/openai/openai_handlers.go` (`Completions`,
+`convertCompletionsRequestToChatCompletions`,
+`convertChatCompletionsResponseToCompletions`), which upstream exposes at
+`internal/api/server_routes.go:74`. Upstream implements it as a thin adapter
+over its chat-completions handler; clud does the same: the one-`prompt` body is
+rewritten into the single-user-turn chat request and handed to
+`openai_ingress::translate_chat_request`, and the Messages answer is rendered
+back as `text_completion` (buffered) or `text_completion` chunks plus
+`data: [DONE]` (streamed). Model resolution, routing, failover and effort
+suffixes are unchanged. The hidden seam is
+`clud __openai-completions-translate [--response [--stream]] [--for-model M]`.
+
+Deliberate differences from upstream, all refusals by name rather than a
+silently different answer: an empty prompt is refused (`MissingPrompt`) instead
+of being served with upstream's invented `"Complete this:"` prefix; a token-id
+prompt array is refused (`prompt:token_ids`) instead of collapsing to the empty
+string gjson returns for an array; `prompt` as an array of strings is joined with
+newlines; and `n > 1`, `echo: true`, `suffix`, `best_of`, `logprobs: true` and
+`top_logprobs` are refused (`UnsupportedField`) because Anthropic Messages
+returns one choice, cannot echo a prompt and reports no token
+log-probabilities.
 
 ## Images
 

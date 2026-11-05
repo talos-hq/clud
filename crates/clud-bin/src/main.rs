@@ -35,20 +35,11 @@ fn main() {
 }
 
 fn parse_args() -> args::Args {
-    if !clud::platform::host::WINDOWS {
-        return args::Args::parse_with_passthrough();
-    }
-    // Clap builds the complete nested command tree while parsing argv. Keep
-    // only that work off Windows' small default main-thread stack so adding a
-    // maintenance command cannot make even `clud --help` overflow, while the
-    // rest of clud remains on the process main thread for console/OLE APIs.
-    std::thread::Builder::new()
-        .name("clud-arg-parser".to_string())
-        .stack_size(4 * 1024 * 1024)
-        .spawn(args::Args::parse_with_passthrough)
-        .expect("spawn clud argument parser")
-        .join()
-        .expect("clud argument parser panicked")
+    // `Args::parse_with_passthrough` already runs clap on its own parser-stack
+    // thread (see `args::ARG_PARSER_STACK_BYTES`), so the whole launch — Windows
+    // included — keeps the rest of clud on the process main thread for
+    // console/OLE APIs.
+    args::Args::parse_with_passthrough()
 }
 
 /// The whole `clud` launch, as an ordered list of phases.
@@ -314,6 +305,32 @@ fn run_openai_chat_translate_seam(
     clud::openai_ingress::run_translate_stdin()
 }
 
+/// Run the JSON-path payload-rules seam (`__apply-payload-rules`).
+///
+/// `dispatch_fast_path_command` is at the line cap, so the seam's argument
+/// plumbing lives here rather than inline.
+fn run_payload_rules_seam(cmd: &args::Command) -> i32 {
+    let args::Command::InternalApplyPayloadRules {
+        rules,
+        settings_file,
+        model,
+        protocol,
+        from_protocol,
+        headers,
+    } = cmd
+    else {
+        unreachable!("run_payload_rules_seam is only called for its own arm")
+    };
+    clud::payload_rules::run_apply_stdin(
+        rules.as_deref(),
+        settings_file.as_deref(),
+        model.as_deref().unwrap_or_default(),
+        protocol,
+        from_protocol,
+        headers.to_vec(),
+    )
+}
+
 fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
     let code = match cmd? {
         // #1189: Claude Code runs `clud statusline` as its statusLine command
@@ -358,6 +375,19 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             for_model,
             http,
         } => run_openai_chat_translate_seam(*response, *stream, for_model.as_deref(), *http),
+        args::Command::InternalOpenAiCompletionsTranslate {
+            response,
+            stream,
+            for_model,
+            http,
+        } => clud::completions_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
+        args::Command::InternalApplyPayloadRules { .. } => run_payload_rules_seam(cmd?),
+        args::Command::InternalOpenAiResponsesTranslate {
+            response,
+            stream,
+            for_model,
+            http,
+        } => clud::responses_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
         args::Command::InternalGeminiClientTranslate { .. } => {
             run_gemini_client_translate_seam(cmd)
         }
@@ -365,24 +395,6 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
         // translated body out. `--response` runs the ingress direction. No
         // session, backend or daemon.
         args::Command::InternalClaudeGeminiTranslate { .. } => run_claude_gemini_seam(cmd),
-        args::Command::InternalApplyPayloadRules {
-            rules,
-            settings_file,
-            model,
-            protocol,
-            from_protocol,
-            headers,
-        } => clud::payload_rules::run_apply_stdin(
-            rules.as_deref(),
-            settings_file.as_deref(),
-            model.as_deref().unwrap_or_default(),
-            protocol,
-            from_protocol,
-            headers.to_vec(),
-        ),
-        args::Command::InternalOpenAiResponsesTranslate => {
-            clud::responses_ingress::run_translate_stdin()
-        }
         args::Command::InternalXaiDeviceLogin {
             discovery_url,
             device_endpoint,

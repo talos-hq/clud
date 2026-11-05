@@ -1,6 +1,5 @@
 //! The command advertised by clud.bot must be consumed by clud itself.
 use crate::args::Args;
-use clap::Parser;
 
 #[test]
 fn advertised_remote_connect_is_not_backend_passthrough() {
