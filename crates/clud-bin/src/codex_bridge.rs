@@ -1146,7 +1146,8 @@ fn drain_before_close(stream: &mut TcpStream) {
     }
     let mut buffer = [0u8; 8192];
     let mut drained = 0;
-    while drained < CLOSE_DRAIN_LIMIT {
+    let deadline = Instant::now() + CLOSE_DRAIN_TIMEOUT;
+    while drained < CLOSE_DRAIN_LIMIT && Instant::now() < deadline {
         match stream.read(&mut buffer) {
             Ok(read) if read > 0 => drained += read,
             _ => return,

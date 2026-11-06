@@ -399,7 +399,7 @@ pub(super) fn register(
             let _ = init_tx.send(Ok(()));
 
             if let Err(hr) = run_registration_loop(&*worker_registrar, config, &worker_shutdown) {
-                eprintln!(
+                crate::loop_console::diagnostic!(
                     "[clud:dnd] RegisterDragDrop failed (HRESULT 0x{:08x})",
                     hr as u32
                 );

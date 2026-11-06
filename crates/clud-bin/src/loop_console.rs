@@ -703,13 +703,13 @@ impl Drop for LoopConsole {
         if !crate::platform::host::WINDOWS {
             let _ = execute!(io::stderr(), crossterm::event::DisableBracketedPaste);
         }
-        let _ = execute!(
-            io::stderr(),
-            crossterm::event::DisableMouseCapture,
-            cursor::Show,
-            terminal::EnableLineWrap,
-            terminal::LeaveAlternateScreen
-        );
+        // One at a time: `execute!` stops at the first failure, and a failed
+        // console-mode call must not leave the user on the alternate screen.
+        let mut err = io::stderr();
+        let _ = execute!(err, crossterm::event::DisableMouseCapture);
+        let _ = execute!(err, cursor::Show);
+        let _ = execute!(err, terminal::EnableLineWrap);
+        let _ = execute!(err, terminal::LeaveAlternateScreen);
         let _ = terminal::disable_raw_mode();
         // The alternate screen is gone: this is the only copy left in scrollback.
         let transcript = self.transcript();
