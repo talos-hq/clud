@@ -4626,6 +4626,8 @@ fn finish_proxy_body(stream: &mut TcpStream, relayed: ProxyRelay, content_type: 
     let _ = stream.shutdown(Shutdown::Both);
 }
 
+const RESPONSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(250);
+const RESPONSE_DRAIN_BYTES: usize = 1024 * 1024;
 const MESSAGE_JSON_LIMIT: u64 = 16 * 1024 * 1024;
 
 /// Verify the response before committing HTTP 200 to Claude Code. Once that
@@ -6593,8 +6595,30 @@ fn write_response_with(
         stream.write_all(body)?;
     }
     stream.flush()?;
-    let _ = stream.shutdown(Shutdown::Both);
+    close_after_response(stream);
     Ok(())
+}
+
+/// Finish a response without destroying it. A rejection can be written before
+/// the request body is read, and closing with bytes unread makes the OS send a
+/// reset that can discard the response in flight. Half-close, then drain what
+/// the client already sent, bounded so a silent client cannot hold the worker.
+fn close_after_response(stream: &mut TcpStream) {
+    let _ = stream.shutdown(Shutdown::Write);
+    let deadline = Instant::now() + RESPONSE_DRAIN_TIMEOUT;
+    let mut remaining = RESPONSE_DRAIN_BYTES;
+    let mut buffer = [0_u8; 16 * 1024];
+    while remaining > 0 {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
+            break;
+        }
+        match stream.read(&mut buffer) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => remaining = remaining.saturating_sub(read),
+        }
+    }
+    let _ = stream.shutdown(Shutdown::Both);
 }
 
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
@@ -6812,6 +6836,36 @@ mod tests {
     /// from `read_to_string` and reads like a hang rather than the timing
     /// artefact it is. 10s sat under the ladder; this sits over it.
     const CLIENT_READ_TIMEOUT: Duration = Duration::from_secs(60);
+
+    /// A rejection is written before the request body is read. Closing with
+    /// those bytes unread makes the OS send a reset, which can destroy the
+    /// response the client has not read yet (WinError 10054 on Windows CI).
+    #[test]
+    fn rejection_survives_an_unread_request_body() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        client.write_all(&[b'x'; 64 * 1024]).unwrap();
+        thread::sleep(Duration::from_millis(200));
+        write_error(&mut server, 404).unwrap();
+        drop(server);
+        client.set_read_timeout(Some(CLIENT_READ_TIMEOUT)).unwrap();
+        let mut response = Vec::new();
+        client
+            .read_to_end(&mut response)
+            .expect("the response must end cleanly, not with a reset");
+        assert!(response.starts_with(b"HTTP/1.1 404"));
+    }
+
+    #[test]
+    fn response_drain_cannot_be_held_open_by_a_silent_client() {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
+        let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        let started = Instant::now();
+        write_error(&mut server, 404).unwrap();
+        assert!(started.elapsed() < RESPONSE_DRAIN_TIMEOUT + Duration::from_secs(5));
+    }
 
     fn request(addr: SocketAddr, request: &str) -> String {
         let mut stream = TcpStream::connect(addr).expect("connect to bridge");
