@@ -239,6 +239,7 @@ fn backend_prompt_launch_plan(
         unsafe_mode: args.unsafe_mode,
         unattended: args.unattended,
         allow_plan_mode: args.allow_plan_mode,
+        allow_secrets: false,
         last: args.last,
         resume_mode: args.resume_mode,
         coauthor: args.coauthor.clone(),

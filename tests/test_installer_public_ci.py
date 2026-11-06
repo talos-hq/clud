@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import sys
 from pathlib import Path, PureWindowsPath
 from urllib.request import Request, urlopen
@@ -158,6 +159,78 @@ def public_bytes(url: str, limit: int = 200 * 1024 * 1024) -> bytes:
     return data
 
 
+def installer_prompt_failure(process: PseudoTerminalProcess, reason: str) -> AssertionError:
+    code = process.poll()
+    status = "None (still running)" if code is None else str(code)
+    # A PTY merges stdout and stderr. Keep the full stream in the evidence artifact.
+    return AssertionError(
+        f"{reason}; exit_code={status}; stdout/stderr terminal tail:\n"
+        f"{process.output_text[-8192:]}"
+    )
+
+
+def expect_installer_prompt(
+    process: PseudoTerminalProcess, pattern: str | re.Pattern[str], timeout: float = 30,
+) -> None:
+    try:
+        process.expect(pattern, timeout=timeout)
+    except (EOFError, TimeoutError) as error:
+        raise installer_prompt_failure(process, f"Missing installer prompt {pattern!r}") from error
+
+
+def expect_install_confirmation(
+    process: PseudoTerminalProcess, version: str, timeout: float = 30,
+) -> None:
+    # Match any selected version first: a stale catalog must fail immediately,
+    # rather than waiting for a confirmation for a version that was not selected.
+    expect_installer_prompt(
+        process, re.compile(r"Install clud [^\r\n]+ at this destination\?"), timeout,
+    )
+    expected = f"Install clud {version} at this destination?"
+    if expected not in process.output_text:
+        raise installer_prompt_failure(
+            process, f"Installer selected a different release; expected {expected!r}",
+        )
+
+
+@pytest.mark.parametrize("exits", [True, False])
+def test_missing_installer_prompt_reports_terminal_tail_and_exit_code(exits: bool) -> None:
+    script = (
+        "import sys; print('catalog fetch started', flush=True); "
+        "print('catalog unavailable: HTTP 503', file=sys.stderr, flush=True)"
+    )
+    script += "; sys.exit(7)" if exits else "; input()"
+    process = PseudoTerminalProcess([sys.executable, "-c", script], capture=True)
+    try:
+        with pytest.raises(AssertionError) as error:
+            expect_installer_prompt(process, "Choose a clud release", timeout=5)
+        message = str(error.value)
+        assert "catalog unavailable: HTTP 503" in message
+        assert "catalog fetch started" in message
+        assert "Choose a clud release" in message
+        assert f"exit_code={7 if exits else 'None (still running)'}" in message
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.close()
+
+
+def test_wrong_installer_selection_fails_at_the_actual_confirmation() -> None:
+    script = "print('Install clud 2.8.56 at this destination?', flush=True); input()"
+    process = PseudoTerminalProcess([sys.executable, "-c", script], capture=True)
+    try:
+        with pytest.raises(AssertionError) as error:
+            expect_install_confirmation(process, "2.8.59", timeout=5)
+        message = str(error.value)
+        assert "selected a different release" in message
+        assert "2.8.56" in message
+        assert "2.8.59" in message
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.close()
+
+
 def assert_public_latest_install(
     binary: Path,
     env: dict[str, str],
@@ -169,11 +242,11 @@ def assert_public_latest_install(
     """Choose the latest-default release in the shipped interactive picker."""
     process = PseudoTerminalProcess([str(binary), "--installer"], env=env, capture=True)
     try:
-        process.expect("Install clud", timeout=30)
+        expect_installer_prompt(process, "Install clud", timeout=30)
         process.write("\x1b[B\r")
-        process.expect("Choose a clud release", timeout=120)
+        expect_installer_prompt(process, "Choose a clud release", timeout=120)
         process.write("\r")
-        process.expect(f"Install clud {version} at this destination?", timeout=30)
+        expect_install_confirmation(process, version, timeout=30)
         process.write("\x1b[A\r")
         try:
             process.expect("Setup for:", timeout=120)
@@ -184,6 +257,8 @@ def assert_public_latest_install(
             process.write("\x1b[B\r")  # Claude: subscription, no key needed
         assert process.wait(timeout=120) == 0, process.output_text
         assert "verified fresh name-based lookup" in process.output_text
+    except (EOFError, TimeoutError) as error:
+        raise installer_prompt_failure(process, f"Installer interaction failed: {error}") from error
     finally:
         if process.poll() is None:
             process.kill()

@@ -689,6 +689,16 @@ fn build_launch_plan_for_target_at(
         );
     }
 
+    let secrets_catalog = (args.allow_secrets && matches!(backend, Backend::Claude))
+        .then(crate::secrets_catalog::claude_mcp_config_arg)
+        .flatten();
+    if secrets_catalog.is_some() {
+        append_instructions(
+            &mut deletion_instructions,
+            crate::secrets_catalog::DIRECTIVE,
+        );
+    }
+
     if matches!(backend, Backend::Claude) && !deletion_instructions.is_empty() {
         cmd.push("--append-system-prompt".into());
         cmd.push(deletion_instructions);
@@ -790,6 +800,7 @@ fn build_launch_plan_for_target_at(
         cmd.push(format!("--disallowedTools={}", disallowed.join(",")));
     }
     cmd.extend(mcp_bridge);
+    cmd.extend(secrets_catalog);
 
     // A Claude-harness gateway must receive its catalog discovery id, not the
     // provider wire id. Claude Code sees and classifies this value before the
@@ -1003,6 +1014,8 @@ fn build_launch_plan_for_target_at(
         Some(Command::Remote { .. })
         | Some(Command::Serve { .. })
         | Some(Command::Secret(_))
+        | Some(Command::SecretsMcp)
+        | Some(Command::SecretsDaemon)
         | Some(Command::Auth { .. })
         | Some(Command::Models { .. })
         | Some(Command::CodexUpdate)

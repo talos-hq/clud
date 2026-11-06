@@ -228,13 +228,18 @@ pub struct Args {
 
     /// Keep Claude Code's `Artifact` tool available to the model. clud strips
     /// it by default: the tool's description plus input schema is 58.7 KiB of
-    /// the 122.8 KiB tool payload clud ships on every request, and it is used
-    /// a handful of times per day. The tool publishes pages to clud's Claude
-    /// account, so an unattended fleet run has nothing to do with it. Pass this
-    /// flag (or set `CLUD_ARTIFACT_TOOL=1`) when a session genuinely needs to
-    /// publish an artifact.
+    /// the 122.8 KiB tool payload clud sends on every request, and it is used
+    /// a handful of times a day. The tool publishes a page to an account, so a
+    /// forge-cli loop or codex run never needs it. Pass this flag when a
+    /// session genuinely wants to publish an artifact.
     #[arg(long = "artifact-tool")]
     pub artifact_tool: bool,
+
+    /// Tell the agent which credentials exist on this machine. Adds the lokr
+    /// MCP server and its background scanner to the session; values are never
+    /// returned to the agent.
+    #[arg(long = "allow-secrets")]
+    pub allow_secrets: bool,
 
     /// Opt in to Claude Code commit/PR attribution (#1317). clud hides the
     /// `Co-Authored-By: Claude …` trailer and "Generated with Claude Code"
@@ -739,6 +744,12 @@ pub enum Command {
     },
     /// Acquire a credential in a masked window and deliver it directly to a sink.
     Secret(crate::secret_prompt::Options),
+    /// lokr's MCP server for `--allow-secrets` sessions.
+    #[command(hide = true)]
+    SecretsMcp,
+    /// lokr's background credential scanner.
+    #[command(hide = true)]
+    SecretsDaemon,
     /// Explicit compatibility spelling for a normal backend launch.
     Run,
     /// Query clud's cached OpenRouter model and pricing catalog.
@@ -2034,6 +2045,8 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "test",
     "auth",
     "secret",
+    "secrets-mcp",
+    "secrets-daemon",
     "models",
     "codex-update",
     "dsh-update",
@@ -2538,6 +2551,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--unattended",
         "--allow-plan-mode",
         "--artifact-tool",
+        "--allow-secrets",
         "--coauthor",
         "--dry-run",
         "--detach",
