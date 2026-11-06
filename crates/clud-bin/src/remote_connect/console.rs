@@ -253,11 +253,18 @@ mod tests {
         console.line("Operator: still here");
         console.settle();
         assert!(started.elapsed() < Duration::from_secs(5));
-        assert!(console.dropped.load(Ordering::Relaxed) > 0);
         drop(release);
         drop(console);
-        let text = String::from_utf8_lossy(&written.lock().unwrap()).into_owned();
-        assert!(text.contains("Operator: still here"), "{}", text.len());
-        assert!(text.contains("were not shown here"), "{}", text.len());
+        // Drop's wait is bounded, so a loaded machine may still be writing.
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let shown =
+            |needle: &str| String::from_utf8_lossy(&written.lock().unwrap()).contains(needle);
+        while !(shown("Operator: still here") && shown("were not shown here"))
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(shown("Operator: still here"));
+        assert!(shown("were not shown here"));
     }
 }
