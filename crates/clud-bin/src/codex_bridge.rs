@@ -12374,18 +12374,8 @@ Connection: close
         (sse, full_input)
     }
 
-    /// Whether to pause after this write, which is what ends a read there: a
-    /// line or frame break, an escaped quote inside `partial_json`, or a byte
-    /// of a multi-byte character. Pausing after every write adds no boundary
-    /// of a new kind and cost 14.7 s on a Windows lane.
-    fn pause_after_write(segment: &[u8]) -> bool {
-        segment
-            .iter()
-            .any(|byte| matches!(byte, b'\n' | b'\\') || !byte.is_ascii())
-    }
-
     /// An upstream that answers every request with `body`, written in
-    /// `piece`-byte writes with pauses between them, so the bridge's reads
+    /// `piece`-byte writes with a pause between them, so the bridge's reads
     /// land mid-frame, mid-JSON and mid-UTF-8.
     fn dribbling_sse_upstream(
         body: String,
@@ -12411,9 +12401,7 @@ Connection: close
                 for segment in body.as_bytes().chunks(piece) {
                     stream.write_all(segment).unwrap();
                     stream.flush().unwrap();
-                    if pause_after_write(segment) {
-                        thread::sleep(Duration::from_millis(2));
-                    }
+                    thread::sleep(Duration::from_millis(2));
                 }
                 let _ = stream.shutdown(Shutdown::Write);
             }
@@ -12467,9 +12455,9 @@ Connection: close
     }
 
     /// #1532: a streamed `tool_use` whose arguments arrive as fragmented
-    /// `input_json_delta` frames -- delivered in 1-, 5- and 7-byte writes, with
-    /// the 1-byte run pausing inside every frame, escaped JSON string and
-    /// multi-byte character -- reaches the client byte-for-byte on the OpenRouter,
+    /// `input_json_delta` frames -- delivered in 1-, 5- and 7-byte writes, so
+    /// every frame, JSON string and multi-byte character straddles a read
+    /// boundary -- reaches the client byte-for-byte on the OpenRouter,
     /// DeepSeek and Kimi compat routes. The relay forwards response bytes
     /// verbatim and never re-frames SSE, so an empty tool call seen on a
     /// compat route did not originate in the bridge.
