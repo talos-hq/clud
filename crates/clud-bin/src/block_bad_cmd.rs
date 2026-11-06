@@ -271,6 +271,13 @@ pub fn run_with_args<I: IntoIterator<Item = String>>(args: I) -> i32 {
     run_for_event(&hook_event_from_args(args))
 }
 
+/// [`run_with_args`] over a payload already read from stdin, for normal `clud`
+/// when a hook reaches it without its alias (`hook_payload_guard`).
+pub fn run_for_payload<I: IntoIterator<Item = String>>(payload: String, args: I) -> i32 {
+    let _ = PRELOADED_STDIN.set(payload);
+    run_with_args(args)
+}
+
 /// Which hook event this invocation serves, and whether it said so.
 ///
 /// The distinction matters: a bare `clud-cmd-scan` and a compiled

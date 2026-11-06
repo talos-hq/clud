@@ -62,6 +62,17 @@ re-grows an argv\[0\] chain. It also fails if dispatch or the installers
 hardcode an alias name. `shim_registry`'s own tests keep the key literals in
 that one file and require every deletion-rules safe alias to have a row.
 
+## A hook that lost its alias
+
+A launcher script in front of `clud-cmd-scan` (`exec clud "$@"`) loses
+argv\[0\], so the hook runs as plain `clud` with its JSON on piped stdin. That
+used to become a harness prompt, whose own tool calls fired the hook again.
+`hook_payload_guard` now owns the pipe-mode read: stdin that is one JSON object
+with a string `hook_event_name` gets the scanner's verdict and the process
+exits, before routing or any daemon, session or backend phase. The scanner
+runs in-process rather than relaying to the session's launcher, since stdin is
+already consumed. `clud doctor` reports such a script as `script_scanner`.
+
 ## Version skew
 
 The alias directories are per user, so every live session of every

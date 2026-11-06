@@ -25,6 +25,9 @@ pub enum Finding {
     Missing { path: PathBuf },
     /// The first `clud-cmd-scan` on PATH is another build.
     ForeignScanner { path: PathBuf, found: String },
+    /// The first `clud-cmd-scan` on PATH resolves to a script, which hands
+    /// `clud` no alias name: every hook then runs as plain `clud`.
+    ScriptScanner { path: PathBuf },
     /// This session runs another build's aliases than the running `clud`.
     SessionMismatch { path: PathBuf, active: PathBuf },
 }
@@ -34,7 +37,9 @@ impl Finding {
     pub fn path(&self) -> &Path {
         match self {
             Self::Stale { path, .. } | Self::Retired { path } | Self::Missing { path } => path,
-            Self::ForeignScanner { path, .. } | Self::SessionMismatch { path, .. } => path,
+            Self::ForeignScanner { path, .. }
+            | Self::ScriptScanner { path }
+            | Self::SessionMismatch { path, .. } => path,
         }
     }
 
@@ -44,6 +49,7 @@ impl Finding {
             Self::Retired { .. } => "retired",
             Self::Missing { .. } => "missing",
             Self::ForeignScanner { .. } => "foreign_scanner",
+            Self::ScriptScanner { .. } => "script_scanner",
             Self::SessionMismatch { .. } => "session_mismatch",
         }
     }
@@ -66,6 +72,11 @@ impl std::fmt::Display for Finding {
                 f,
                 "this session runs aliases from {path}, not {}; restart it to use this build",
                 active.display()
+            ),
+            Self::ScriptScanner { .. } => write!(
+                f,
+                "first clud-cmd-scan on PATH, {path}, resolves to a script that loses the alias \
+                 name, so hooks run as plain clud; point it at the clud binary"
             ),
             Self::ForeignScanner { found, .. } => {
                 let note = "hooks relay to the launcher";
@@ -185,7 +196,10 @@ pub fn inspect(exe: &Path, own: &str, home: Option<&Path>, path_env: &str) -> Di
     }
     let scanner = crate::shim_registry::file_name(crate::multicall::CMD_SCAN);
     if let Some(first) = crate::shim_resolve::which(&scanner, path_env) {
-        if let Some(found) = fingerprint(&first).filter(|found| found != own) {
+        if resolves_to_script(&first) {
+            report.findings.retain(|finding| finding.path() != first);
+            report.findings.push(Finding::ScriptScanner { path: first });
+        } else if let Some(found) = fingerprint(&first).filter(|found| found != own) {
             if !report.findings.iter().any(|f| f.path() == first) {
                 report
                     .findings
@@ -194,6 +208,16 @@ pub fn inspect(exe: &Path, own: &str, home: Option<&Path>, path_env: &str) -> Di
         }
     }
     report
+}
+
+/// Whether `path`, through any symlinks, starts with a `#!` line.
+fn resolves_to_script(path: &Path) -> bool {
+    use std::io::Read;
+    let mut magic = [0u8; 2];
+    std::fs::File::open(path)
+        .and_then(|mut file| file.read_exact(&mut magic))
+        .is_ok()
+        && &magic == b"#!"
 }
 
 /// The tool names a hook harness may report for a guarded tool besides its
@@ -404,7 +428,7 @@ pub fn repair(exe: &Path, report: &DirReport, home: Option<&Path>) -> Vec<String
         let path = finding.path();
         let replace = match finding {
             Finding::Stale { .. } | Finding::Missing { .. } => true,
-            Finding::ForeignScanner { .. } => in_owned_dir(path),
+            Finding::ForeignScanner { .. } | Finding::ScriptScanner { .. } => in_owned_dir(path),
             Finding::Retired { .. } | Finding::SessionMismatch { .. } => continue,
         };
         if !replace {
