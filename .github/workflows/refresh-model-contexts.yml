@@ -49,9 +49,23 @@ jobs:
       # the branch is pushed and the PR opened with a bot token instead; the
       # PR then runs normal CI and auto-enqueues. Without the token the job
       # fails loudly rather than retrying a push `main` will always reject.
+      # Mint a short-lived installation token from the clud-refresh App. A PR
+      # opened with GITHUB_TOKEN triggers no `pull_request` workflows at all
+      # (GitHub's recursion guard), so the refresh bot needs its own actor
+      # (#2518). A GitHub App is used instead of a long-lived PAT: the token
+      # lives at most an hour and there is no secret a human has to rotate.
+      - name: Mint refresh App token
+        id: refresh-app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          app-id: ${{ vars.CLUD_REFRESH_APP_ID }}
+          private-key: ${{ secrets.CLUD_REFRESH_APP_PRIVATE_KEY }}
+          owner: talos-hq
+          repositories: clud
+
       - name: Commit the refreshed section
         env:
-          REFRESH_BOT_TOKEN: ${{ secrets.REFRESH_BOT_TOKEN }}
+          REFRESH_BOT_TOKEN: ${{ steps.refresh-app.outputs.token }}
         run: |
           if git diff --quiet -- crates/clud-bin/assets/server-settings.json; then
             echo "model_contexts already fresh"
