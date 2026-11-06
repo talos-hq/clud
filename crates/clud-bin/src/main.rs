@@ -9,7 +9,7 @@ use clud::{
     verbose_log, wasm, webterm, workspace_trust, worktrees,
 };
 
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, IsTerminal, Write};
 
 fn main() {
     // #1551: `clud` is the only executable clud ships. A helper name in
@@ -78,11 +78,17 @@ fn run(mut args: args::Args) {
     if let Some(code) = dispatch_maintenance(&args) {
         std::process::exit(code);
     }
+    // Before routing and every daemon, session or backend phase: a hook payload
+    // on stdin exits here and can never become a harness prompt.
+    let piped_prompt = read_piped_prompt(&args);
     resolve_do_target(&mut args);
     enter_video_command(&args);
 
     let launch = resolve_launch(&mut args);
     let auto_fix_hooks = resolve_auto_fix_hooks(&args, launch);
+    if piped_prompt.is_some() {
+        args.prompt = piped_prompt;
+    }
     prepare_launch_inputs(&mut args, launch.target);
 
     let interrupted = startup::install_ctrl_c_flag(args.verbose);
@@ -1506,22 +1512,32 @@ fn resolve_auto_fix_hooks(args: &args::Args, launch: LaunchResolution) -> bool {
     auto_fix_hooks
 }
 
-/// Inputs that shape the launch but are not routing: piped stdin, the
+/// Pipe mode: when nothing else names the work, stdin is the prompt. A hook
+/// payload is not a prompt: it means a hook lost its argv\[0\] alias, so it
+/// gets the scanner's verdict and this process exits without launching.
+fn read_piped_prompt(args: &args::Args) -> Option<String> {
+    if args.prompt.is_some()
+        || args.message.is_some()
+        || args.command.is_some()
+        || console_setup::atty_is_terminal()
+    {
+        return None;
+    }
+    match clud::hook_payload_guard::read_piped_stdin(&mut io::stdin().lock()) {
+        clud::hook_payload_guard::PipedStdin::HookPayload(payload) => std::process::exit(
+            clud::hook_payload_guard::run_scanner(payload, std::env::args().skip(1)),
+        ),
+        clud::hook_payload_guard::PipedStdin::Prompt(input) => {
+            Some(input.trim().to_string()).filter(|prompt| !prompt.is_empty())
+        }
+        clud::hook_payload_guard::PipedStdin::Unreadable => None,
+    }
+}
+
+/// Inputs that shape the launch but are not routing: the
 /// `wasm`/`loop`/`grind` commands, an inline API key, and the provider
 /// credential preflight.
 fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::ResolvedLaunchTarget) {
-    // Pipe mode: if stdin is not a terminal, read it as the prompt.
-    if args.prompt.is_none()
-        && args.message.is_none()
-        && args.command.is_none()
-        && !console_setup::atty_is_terminal()
-    {
-        let mut input = String::new();
-        if io::stdin().read_to_string(&mut input).is_ok() && !input.trim().is_empty() {
-            args.prompt = Some(input.trim().to_string());
-        }
-    }
-
     if let Some(args::Command::Workflow {
         script,
         args_json,

@@ -104,6 +104,7 @@ pub mod harness_picker;
 pub mod home;
 pub mod hook_handshake;
 pub mod hook_health;
+pub mod hook_payload_guard;
 pub mod hook_trust;
 pub mod images_ingress;
 pub mod install;

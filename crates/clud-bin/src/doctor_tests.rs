@@ -196,3 +196,34 @@ fn fix_leaves_a_foreign_scanner_outside_clud_dirs_alone() {
     assert!(actions[0].starts_with("left alone:"), "{actions:?}");
     assert_eq!(std::fs::read(&foreign).unwrap(), vec![b'x'; 7]);
 }
+
+#[test]
+fn a_script_first_on_path_is_reported_and_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let exe_dir = dir.path().join("exe");
+    let path_dir = dir.path().join("path");
+    for sub in [&home, &exe_dir, &path_dir] {
+        std::fs::create_dir_all(sub).unwrap();
+    }
+    let exe = exe_dir.join(crate::shim_registry::file_name("clud"));
+    write(&exe, 10);
+    let own = fingerprint(&exe).unwrap();
+    let stub = path_dir.join(crate::shim_registry::file_name(crate::multicall::CMD_SCAN));
+    let body = b"#!/bin/sh\nexec clud \"$@\"\n";
+    std::fs::write(&stub, body).unwrap();
+    crate::platform::shim_fs::set_mode(&stub, 0o755).unwrap();
+    let path_env = std::env::join_paths([&path_dir])
+        .unwrap()
+        .into_string()
+        .unwrap();
+
+    let report = inspect(&exe, &own, Some(&home), &path_env);
+    assert_eq!(
+        report.findings,
+        vec![Finding::ScriptScanner { path: stub.clone() }]
+    );
+    let actions = repair(&exe, &report, Some(&home));
+    assert!(actions[0].starts_with("left alone:"), "{actions:?}");
+    assert_eq!(std::fs::read(&stub).unwrap(), body);
+}

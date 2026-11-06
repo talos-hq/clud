@@ -1,6 +1,16 @@
 use super::*;
 
+/// Stdin another entry already consumed; see [`super::run_for_payload`].
+pub(super) static PRELOADED_STDIN: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 pub(super) fn read_stdin_bounded() -> StdinRead {
+    if let Some(text) = PRELOADED_STDIN.get() {
+        return StdinRead {
+            text: text.clone(),
+            log_messages: Vec::new(),
+            incomplete: None,
+        };
+    }
     if let Some(read) = read_stdin_nonblocking() {
         return read;
     }
