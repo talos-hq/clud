@@ -242,9 +242,11 @@ fn run_selected(intent: InstallIntent, options: InstallOptions) -> Outcome {
     let destination = plan.destination.clone();
     match transaction::execute(plan) {
         Ok(()) => {
+            super::trace("executed");
             let outcome =
                 finish_activation(activation, &version, !options.yes && terminal_available());
             print_terminal_commands(&destination);
+            super::trace("activated");
             outcome.committed(&version, &destination)
         }
         Err(error) => {

@@ -670,7 +670,9 @@ fn init_foreground_process(args: &args::Args) {
     }
 
     // Windows: rename ourselves so pip can always overwrite clud.exe.
+    self_install::trace("unlock");
     trampoline::unlock_exe();
+    self_install::trace("unlocked");
 
     // Stamp the console title with `clud <cwd-name>` so the active
     // window is identifiable at a glance. Windows-only effective; a

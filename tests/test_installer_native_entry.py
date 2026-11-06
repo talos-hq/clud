@@ -121,7 +121,9 @@ def installer_target_scope(tmp_path: Path):  # noqa: C901
     except FileNotFoundError:
         prior = None
     try:
-        yield os.environ.copy(), destination
+        diag = os.environ.copy()
+        diag["CLUD_INSTALLER_TRACE"] = os.path.join(os.environ.get("GITHUB_WORKSPACE", "."), "logs", "installer-trace.log")
+        yield diag, destination
     finally:
         if prior is None:
             try:

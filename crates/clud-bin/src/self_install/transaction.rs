@@ -61,6 +61,7 @@ impl Fingerprint {
 }
 
 pub fn plan(intent: InstallIntent, modify_path: bool) -> Result<InstallPlan, String> {
+    super::trace("plan");
     let destination = approved_destination()?;
     inspect_destination(&destination, false)?;
     let backup = destination.with_extension("clud-backup");
@@ -158,6 +159,7 @@ impl InstallPlan {
     reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
 )]
 pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
+    super::trace("execute");
     let parent = plan.destination.parent().ok_or("missing install parent")?;
     inspect_destination(&plan.destination, false)?;
     fs_host::create_install_dir(parent)?;
@@ -190,8 +192,10 @@ pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
     if fs_host::is_reparse_point(&lock_meta) {
         return Err("installer lock is a reparse point".into());
     }
+    super::trace("lock-wait");
     lock.lock_exclusive()
         .map_err(|error| format!("lock installer: {error}"))?;
+    super::trace("lock-held");
     inspect_destination(&plan.destination, false)?;
     recover(&plan.destination)?;
     inspect_destination(&plan.destination, true)?;
@@ -209,6 +213,7 @@ pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
         .suffix(suffix)
         .tempfile_in(parent)
         .map_err(|error| format!("create private stage: {error}"))?;
+    super::trace("stage-copy");
     match &mut plan.source {
         Source::Current {
             path,
@@ -239,6 +244,7 @@ pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
         }
         Source::Published(asset) => stage_published(asset, stage.as_file_mut())?,
     }
+    super::trace("stage-copied");
     stage
         .as_file_mut()
         .flush()
@@ -247,6 +253,7 @@ pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
         .as_file()
         .sync_all()
         .map_err(|error| error.to_string())?;
+    super::trace("stage-synced");
     let stage_path = stage.path().to_path_buf();
     let (stage_digest, _) = hash_path(&stage_path, MAX_BINARY_BYTES)?;
     match &plan.source {
@@ -266,8 +273,11 @@ pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
     };
     validate_native_header(stage.as_file_mut(), current_os(), current_arch(), flavor)?;
     make_executable(&stage_path)?;
+    super::trace("stage-hashed");
     let stage = stage.into_temp_path();
+    super::trace("stage-probe");
     verify_version(&stage_path, &plan.version)?;
+    super::trace("commit");
     commit(&plan.destination, &stage, &plan.version, &stage_digest)?;
     Ok(())
 }
@@ -445,6 +455,7 @@ fn validate_native_header(
 }
 
 fn run_version(path: &Path) -> Result<String, String> {
+    super::trace("run-version");
     let command = vec![path.to_string_lossy().to_string(), "--version".to_owned()];
     let process =
         crate::subprocess::ManagedSubprocess::start_inheriting_env(command, None, true, None)
@@ -771,6 +782,7 @@ fn commit(destination: &Path, stage: &Path, version: &str, digest: &str) -> Resu
         }
         return Err(format!("activate staged clud: {error}"));
     }
+    super::trace("renamed");
     let verified = hash_path(destination, MAX_BINARY_BYTES)
         .and_then(|(actual, _)| {
             if actual == digest {
