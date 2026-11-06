@@ -228,43 +228,6 @@ pub fn argv_is_batch_wrapped(argv: &[String]) -> bool {
     imp::is_batch_wrapper(argv.first().map(String::as_str))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{argv_is_batch_wrapped, command_spec_for_subprocess, use_suspended_spawn};
-
-    #[test]
-    fn suspended_spawn_selection_matches_the_pipe_ownership_boundary() {
-        if crate::platform::host::WINDOWS {
-            assert!(use_suspended_spawn(true, true, true));
-            assert!(use_suspended_spawn(false, false, false));
-            assert!(use_suspended_spawn(false, false, true));
-            assert!(use_suspended_spawn(false, true, false));
-            assert!(!use_suspended_spawn(false, true, true));
-        } else {
-            assert!(!use_suspended_spawn(true, false, false));
-        }
-    }
-
-    #[test]
-    fn argv_is_batch_wrapped_false_for_native_and_empty_argv() {
-        assert!(!argv_is_batch_wrapped(&["claude.exe".into()]));
-        assert!(!argv_is_batch_wrapped(&["claude".into()]));
-        assert!(!argv_is_batch_wrapped(&[]));
-    }
-
-    #[test]
-    fn native_executable_stays_argv() {
-        let spec =
-            command_spec_for_subprocess(vec!["codex.exe".into(), "exec".into(), "hello".into()]);
-        match spec {
-            running_process::CommandSpec::Argv(argv) => {
-                assert_eq!(argv, vec!["codex.exe", "exec", "hello"]);
-            }
-            other => panic!("expected Argv for native executable, got {other:?}"),
-        }
-    }
-}
-
 /// Capture independent raw streams using the shared command, environment and
 /// invisible-helper policy. Readers run concurrently inside running-process.
 /// A deadline failure kills and reaps the child and is never a successful exit.
@@ -307,4 +270,41 @@ pub struct CapturedOutput {
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{argv_is_batch_wrapped, command_spec_for_subprocess, use_suspended_spawn};
+
+    #[test]
+    fn suspended_spawn_selection_matches_the_pipe_ownership_boundary() {
+        if crate::platform::host::WINDOWS {
+            assert!(use_suspended_spawn(true, true, true));
+            assert!(use_suspended_spawn(false, false, false));
+            assert!(use_suspended_spawn(false, false, true));
+            assert!(use_suspended_spawn(false, true, false));
+            assert!(!use_suspended_spawn(false, true, true));
+        } else {
+            assert!(!use_suspended_spawn(true, false, false));
+        }
+    }
+
+    #[test]
+    fn argv_is_batch_wrapped_false_for_native_and_empty_argv() {
+        assert!(!argv_is_batch_wrapped(&["claude.exe".into()]));
+        assert!(!argv_is_batch_wrapped(&["claude".into()]));
+        assert!(!argv_is_batch_wrapped(&[]));
+    }
+
+    #[test]
+    fn native_executable_stays_argv() {
+        let spec =
+            command_spec_for_subprocess(vec!["codex.exe".into(), "exec".into(), "hello".into()]);
+        match spec {
+            running_process::CommandSpec::Argv(argv) => {
+                assert_eq!(argv, vec!["codex.exe", "exec", "hello"]);
+            }
+            other => panic!("expected Argv for native executable, got {other:?}"),
+        }
+    }
 }
