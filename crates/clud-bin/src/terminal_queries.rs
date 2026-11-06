@@ -61,6 +61,29 @@ impl TerminalQueryScanner {
         self.carry = open_query_tail(&buf).to_vec();
         replies
     }
+
+    /// `chunk` without its queries, for a stream shown on a real terminal that
+    /// must not answer them. Holds back a tail that may be the start of a query
+    /// until the next chunk. A scanner serves either this or [`Self::replies`].
+    pub(crate) fn strip(&mut self, chunk: &[u8]) -> Vec<u8> {
+        let mut buf = std::mem::take(&mut self.carry);
+        buf.extend_from_slice(chunk);
+        let end = buf.len() - open_query_tail(&buf).len();
+        let mut visible = Vec::with_capacity(end);
+        let mut at = 0;
+        while at < end {
+            let rest = &buf[at..end];
+            match QUERY_REPLIES.iter().find(|(q, _)| rest.starts_with(q)) {
+                Some((query, _)) => at += query.len(),
+                None => {
+                    visible.push(buf[at]);
+                    at += 1;
+                }
+            }
+        }
+        self.carry = buf[end..].to_vec();
+        visible
+    }
 }
 
 /// The longest tail of `buf` that starts at an ESC and is a proper prefix of

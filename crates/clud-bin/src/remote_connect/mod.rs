@@ -1,4 +1,5 @@
 //! Native client for the clud.bot operator protocol.
+mod console;
 pub mod proxy;
 mod terminal;
 #[cfg(test)]
@@ -91,7 +92,7 @@ fn run_session(host: &str) -> Result<i32, String> {
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))
         .map_err(|_| "cannot install remote cancellation handler")?;
     let input = stdin_lines();
-    let mut state = State::default();
+    let mut state = State::new(console::Console::stdout());
     state.terminal.configure_proxy(proxy::SessionProxy::new(
         base.as_str(),
         &session.client_token,
@@ -104,6 +105,7 @@ fn run_session(host: &str) -> Result<i32, String> {
             let Some(output) = state.terminal.output()? else {
                 break;
             };
+            state.mirror(&output);
             socket.send(output).map_err(|_| "remote connection lost")?;
         }
         if heartbeat.elapsed() >= Duration::from_secs(20) {
@@ -135,8 +137,8 @@ fn run_session(host: &str) -> Result<i32, String> {
     Ok(130)
 }
 
-#[derive(Default)]
 struct State {
+    console: console::Console,
     terminal: terminal::Terminal,
     connected: bool,
     granted: bool,
@@ -145,6 +147,26 @@ struct State {
 }
 
 impl State {
+    fn new(console: console::Console) -> Self {
+        Self {
+            console,
+            terminal: terminal::Terminal::default(),
+            connected: false,
+            granted: false,
+            pending: None,
+            approved: None,
+        }
+    }
+
+    /// The consenting user watches everything the server is sent.
+    fn mirror(&self, output: &Message) {
+        match output {
+            Message::Binary(frame) => self.console.output(&frame[1..]),
+            // The only text frame is `pty_exit`: the remote program has ended.
+            _ => self.console.settle(),
+        }
+    }
+
     fn read_consent(
         &mut self,
         input: &mpsc::Receiver<String>,
@@ -169,6 +191,7 @@ impl State {
         self.pending = None;
         self.approved = None;
         self.terminal.stop();
+        self.console.settle();
     }
 
     fn event(&mut self, event: &Value, socket: &mut transport::Socket) -> Result<bool, String> {
@@ -180,20 +203,18 @@ impl State {
                     json!({"type":"caps", "caps":["pty"], "client":concat!("clud/", env!("CARGO_PKG_VERSION"))}),
                 )?;
                 if let Some(message) = end_message(event["state"].as_str().unwrap_or("")) {
-                    println!("{message}");
+                    self.console.line(message);
                     return Ok(true);
                 }
             }
             "state" if event["state"] == "accepted" => {
                 self.connected = true;
-                println!("Operator accepted the connection.");
+                self.console.line("Operator accepted the connection.");
             }
             "control_request" if self.connected && self.pending.is_none() => {
                 self.pending = event["request_id"].as_str().map(str::to_owned);
-                println!("Allow Remote Control by Zach Vorhies? [y/N]");
-                std::io::stdout()
-                    .flush()
-                    .map_err(|_| "cannot print consent prompt")?;
+                self.console
+                    .line("Allow Remote Control by Zach Vorhies? [y/N]");
             }
             "control_granted"
                 if self.approved.is_some()
@@ -201,7 +222,7 @@ impl State {
             {
                 self.approved = None;
                 self.granted = true;
-                println!("Remote control granted to Zach Vorhies.");
+                self.console.line("Remote control granted to Zach Vorhies.");
             }
             "control_revoked" => {
                 if let Some(exit) = self.terminal.close_event() {
@@ -225,10 +246,12 @@ impl State {
             }
             "message" => {
                 if let Some(body) = event["body"].as_str() {
-                    println!("Operator: {body}");
+                    self.console.line(format!("Operator: {body}"));
                 }
             }
-            "proxy_ended" => println!("clud.bot disconnected remote AI inference."),
+            "proxy_ended" => self
+                .console
+                .line("clud.bot disconnected remote AI inference."),
             "key_request" => {
                 eprintln!("Remote key storage is unavailable in this client.");
                 send(
@@ -237,14 +260,16 @@ impl State {
                 )?;
             }
             "disconnect" | "denied" => {
-                println!("{}", end_message(event["type"].as_str().unwrap()).unwrap());
+                // Leave a remote full-screen program first, or the notice goes with it.
                 self.revoke();
+                self.console
+                    .line(end_message(event["type"].as_str().unwrap()).unwrap());
                 return Ok(true);
             }
             "state" => {
                 if let Some(message) = end_message(event["state"].as_str().unwrap_or("")) {
-                    println!("{message}");
                     self.revoke();
+                    self.console.line(message);
                     return Ok(true);
                 }
             }
