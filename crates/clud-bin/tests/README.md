@@ -85,3 +85,7 @@ integration harness: actual clud starts mock-agent with only a session bearer,
 and the mock makes a real HTTP Messages request to the session proxy fixture.
 No provider account or Docker daemon is required. See
 [remote assistance](../../../docs/architecture/remote-assistance.md).
+
+`cli/remote_connect_e2e_cli.rs` runs the real `clud remote connect` and a real shell
+against an in-process operator server on each host: consent, output to both ends,
+exit status, revocation and denial. Native coverage comes from the integration lanes.

@@ -82,6 +82,8 @@ this command never persists an OpenAI key.
 
 ## Validation
 
+`cli::remote_connect_e2e_cli` runs the actual client and a real shell against an
+in-process operator server on every host, without clud.bot or credentials.
 The CLI parsing regression is `remote_connect::tests`. Transport unit tests
 reject insecure origins and cross-origin bearer handoff. The site's
 `tests/e2e/native_client.py` launches the actual built Rust executable against
