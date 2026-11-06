@@ -226,6 +226,16 @@ pub struct Args {
     #[arg(long = "allow-plan-mode")]
     pub allow_plan_mode: bool,
 
+    /// Keep Claude Code's `Artifact` tool available to the model. clud strips
+    /// it by default: the tool's description plus input schema is 58.7 KiB of
+    /// the 122.8 KiB tool payload clud ships on every request, and it is used
+    /// a handful of times per day. The tool publishes pages to clud's Claude
+    /// account, so an unattended fleet run has nothing to do with it. Pass this
+    /// flag (or set `CLUD_ARTIFACT_TOOL=1`) when a session genuinely needs to
+    /// publish an artifact.
+    #[arg(long = "artifact-tool")]
+    pub artifact_tool: bool,
+
     /// Opt in to Claude Code commit/PR attribution (#1317). clud hides the
     /// `Co-Authored-By: Claude …` trailer and "Generated with Claude Code"
     /// PR line by default; `--coauthor` keeps Claude Code's own, and
@@ -2527,6 +2537,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--unsafe",
         "--unattended",
         "--allow-plan-mode",
+        "--artifact-tool",
         "--coauthor",
         "--dry-run",
         "--detach",

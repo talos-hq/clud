@@ -99,6 +99,11 @@ fn command_without_deletion_policy(p: &LaunchPlan) -> Vec<String> {
         assert_eq!(index, 1);
         assert!(command[index + 1].contains(&crate::deletion_rules::generated().instructions));
         command.drain(index..index + 2);
+        // Every Claude launch also carries the Artifact strip (#2233); it is
+        // policy, not part of the prompt argv these tests pin. Drop the
+        // standalone token; a combined policy token stays visible to tests
+        // that assert the whole `--disallowedTools` value.
+        command.retain(|arg| arg != "--disallowedTools=Artifact");
     } else if command[0] == "codex" {
         for prefix in [
             "hooks.PreToolUse=",
@@ -180,7 +185,7 @@ fn test_loop_automatically_disallows_interactive_tools() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion"));
+        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion,Artifact"));
 }
 
 #[test]
@@ -189,7 +194,7 @@ fn test_repeat_loop_automatically_disallows_interactive_tools() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion"));
+        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion,Artifact"));
     assert_eq!(
         p.repeat_schedule.as_ref().map(|s| s.interval_secs),
         Some(60)
@@ -211,7 +216,7 @@ fn test_loop_under_codex_provider_claude_harness_disallows_interactive_tools() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,Task,AskUserQuestion"));
+        .any(|a| a == "--disallowedTools=EnterPlanMode,Task,AskUserQuestion,Artifact"));
 }
 
 /// Issue #955 acceptance path: Sol stays selected when `loop` turns the
@@ -442,14 +447,17 @@ fn test_bridge_disallows_plan_mode_even_when_interactive() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,Task"));
+        .any(|a| a == "--disallowedTools=EnterPlanMode,Task,Artifact"));
 }
 
 #[test]
 fn test_bridge_permanently_disallows_task_subagents() {
     let args = parse(&["clud", "--allow-plan-mode"]);
     let p = build_launch_plan_for_target(&args, bridge_target(), "claude");
-    assert!(p.command.iter().any(|a| a == "--disallowedTools=Task"));
+    assert!(p
+        .command
+        .iter()
+        .any(|a| a == "--disallowedTools=Task,Artifact"));
 }
 
 #[test]
@@ -466,7 +474,10 @@ fn test_allow_plan_mode_restores_plan_mode_on_the_bridge() {
     let args = parse(&["clud", "--allow-plan-mode"]);
     let p = build_launch_plan_for_target(&args, bridge_target(), "claude");
     assert!(p.allow_plan_mode);
-    assert!(p.command.iter().any(|a| a == "--disallowedTools=Task"));
+    assert!(p
+        .command
+        .iter()
+        .any(|a| a == "--disallowedTools=Task,Artifact"));
     // And the flag itself must not leak to the backend as passthrough.
     assert!(!p.command.iter().any(|a| a == "--allow-plan-mode"));
 }
@@ -481,15 +492,66 @@ fn test_allow_plan_mode_does_not_re_enable_it_for_unattended_runs() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,Task,AskUserQuestion"));
+        .any(|a| a == "--disallowedTools=EnterPlanMode,Task,AskUserQuestion,Artifact"));
 }
 
 #[test]
 fn test_plain_claude_keeps_plan_mode_interactively() {
     // Narrow rule: only non-Claude providers routing through the Claude harness
-    // (Codex, DeepSeek) are affected.
+    // (Codex, DeepSeek) are affected. The Artifact strip is not a plan-mode
+    // rule and reaches every Claude launch.
     let p = plan(&["clud"]);
-    assert!(!p.command.iter().any(|a| a.starts_with("--disallowedTools")));
+    assert!(!p
+        .command
+        .iter()
+        .any(|a| a.starts_with("--disallowedTools") && a.contains("EnterPlanMode")));
+    assert!(p.command.iter().any(|a| a == "--disallowedTools=Artifact"));
+}
+
+/// #2233: Claude Code's `Artifact` tool carried 58.7 KiB of the 122.8 KiB
+/// tool payload (21.6 KiB description + a schema that repeats it) on every
+/// request, and the model called it three times in 24 h. Pin the strip so a
+/// future plan change cannot quietly restore the schema.
+#[test]
+fn every_claude_launch_drops_the_artifact_tool() {
+    for raw in [
+        vec!["clud"],
+        vec!["clud", "-p", "hi"],
+        vec!["clud", "loop", "fix the build"],
+        vec!["clud", "--unattended", "-p", "hi"],
+        vec!["clud", "--allow-plan-mode"],
+    ] {
+        let p = plan(&raw);
+        let token = p
+            .command
+            .iter()
+            .find(|a| a.starts_with("--disallowedTools"))
+            .unwrap_or_else(|| panic!("{raw:?} emitted no --disallowedTools token"));
+        assert!(
+            token.ends_with("Artifact"),
+            "{raw:?} kept the Artifact tool: {token}"
+        );
+    }
+}
+
+/// The escape hatch: a session that really publishes an artifact keeps the
+/// tool, and nothing else is reintroduced with it.
+#[test]
+fn the_artifact_tool_flag_restores_it() {
+    // `--artifact-tool` is a global flag: it goes before any subcommand.
+    let p = plan(&["clud", "--artifact-tool"]);
+    assert!(!p.command.iter().any(|a| a.contains("Artifact")));
+    assert!(!p
+        .command
+        .iter()
+        .any(|a| a.starts_with("--disallowedTools") && a.contains("EnterPlanMode")));
+
+    let looped = plan(&["clud", "--artifact-tool", "loop", "fix the build"]);
+    assert!(looped
+        .command
+        .iter()
+        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion"));
+    assert!(!looped.command.iter().any(|a| a.contains("Artifact")));
 }
 
 #[test]
@@ -660,7 +722,7 @@ fn unified_initial_routes_use_discovery_ids_and_keep_plan_mode() {
         assert!(!plan
             .command
             .iter()
-            .any(|arg| arg == "--disallowedTools=EnterPlanMode"));
+            .any(|arg| arg == "--disallowedTools=EnterPlanMode,Artifact"));
         assert_eq!(plan.codex_model, None);
     }
 }
@@ -796,7 +858,7 @@ fn test_unattended_disallows_interactive_tools() {
         vec![
             "claude",
             "--dangerously-skip-permissions",
-            "--disallowedTools=EnterPlanMode,AskUserQuestion",
+            "--disallowedTools=EnterPlanMode,AskUserQuestion,Artifact",
             "--output-format",
             "stream-json",
             "--verbose",
@@ -818,7 +880,7 @@ fn test_unattended_emits_a_single_argv_token() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion"));
+        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion,Artifact"));
     // The prompt must survive intact directly after its own flag.
     let idx = p.command.iter().position(|a| a == "-p").unwrap();
     assert_eq!(p.command[idx + 1], "hello");
