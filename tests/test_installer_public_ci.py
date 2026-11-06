@@ -49,18 +49,17 @@ def test_public_windows_lookup_accepts_mixed_path_separators() -> None:
 def test_prior_discovery_version_ignores_binaries_that_cannot_reach_the_catalog() -> None:
     catalog = {
         "releases": [
-            {"version": "2.8.31"},
-            {"version": "2.8.36"},
-            {"version": "2.8.47"},
             {"version": "2.8.48"},
+            {"version": "2.8.56"},
+            {"version": "2.8.59"},
         ]
     }
-    assert prior_discovery_version(catalog, "2.8.49") == "2.8.48"
+    assert prior_discovery_version(catalog, "2.8.60") == "2.8.59"
     # The first release that fetches the catalog's domain has nothing it can
-    # reach behind it (2.8.47 hits the github.io redirect), so discovery is
+    # reach behind it (2.8.56's picker defaults to the previous stable), so discovery is
     # unprovable rather than broken.
-    assert prior_discovery_version(catalog, "2.8.48") is None
-    assert prior_discovery_version(catalog, "2.8.47") is None
+    assert prior_discovery_version(catalog, "2.8.59") is None
+    assert prior_discovery_version(catalog, "2.8.56") is None
 
 
 def test_older_installer_discovery_records_an_unreachable_prior(tmp_path: Path) -> None:
@@ -80,7 +79,7 @@ def test_older_installer_discovery_records_an_unreachable_prior(tmp_path: Path) 
     )
     assert evidence == {
         "unavailable": "no catalog-aware prior release",
-        "catalog_move_version": "2.8.48",
+        "catalog_move_version": CATALOG_MOVE_VERSION,
         "legacy_host": LEGACY_ONLINE_HOST,
     }
 
@@ -203,11 +202,14 @@ def assert_public_latest_install(
     assert installed.stdout.strip() == f"clud {version}".encode()
 
 
-# The oldest public release whose installer can still fetch today's catalog.
-# 2.8.48 is the first release with a GitHub release fallback (#2449); older
-# binaries are unsupported.
-CATALOG_MOVE_VERSION = "2.8.48"
-LEGACY_ONLINE_HOST = "zackees.github.io"
+# The oldest public release whose installer defaults to the newest release.
+# 2.8.59 is the first to read the Pages catalog. 2.8.48-2.8.56 fetch the retired
+# talosbot.ai and fall back to the GitHub release manifest (#2449). It lists the
+# new release, but it was written before promotion, so it names the previous
+# stable as latest and the picker's default stays there; those binaries can
+# still choose the new release by hand. Legacy hosts are unsupported (#2648).
+CATALOG_MOVE_VERSION = "2.8.59"
+LEGACY_ONLINE_HOST = "talosbot.ai"
 
 
 def prior_discovery_version(catalog: dict, version: str) -> str | None:
