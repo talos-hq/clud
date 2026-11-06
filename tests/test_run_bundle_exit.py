@@ -160,6 +160,7 @@ def test_run_pytest_records_junit_and_progress(monkeypatch) -> None:
 
     assert argv.index(junit_flag) < argv.index("-v")
     assert argv.index("-o") < argv.index("-v")
+    assert argv.index("--durations=25") < argv.index("-v")
 
     assert argv[:5] == [sys.executable, "-m", "pytest", "-m", "integration"]
     assert log_path == pytest_log_path("integration")

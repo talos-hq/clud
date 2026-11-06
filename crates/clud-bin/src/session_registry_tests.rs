@@ -34,6 +34,11 @@ fn open_with_alive_set(path: &Path, alive: Vec<u32>) -> SessionRegistry {
 /// Raw insert that bypasses `register_self` (the public path sets
 /// the `registered` flag, which we *don't* want for most tests).
 fn raw_insert(reg: &SessionRegistry, pid: u32) {
+    raw_insert_all(reg, &[pid]);
+}
+
+/// [`raw_insert`] for many rows in one transaction: each commit syncs to disk.
+fn raw_insert_all(reg: &SessionRegistry, pids: &[u32]) {
     let row = SessionRow {
         started_unix: 0,
         backend: None,
@@ -44,7 +49,9 @@ fn raw_insert(reg: &SessionRegistry, pid: u32) {
     let wtxn = reg.db.begin_write().unwrap();
     {
         let mut table = wtxn.open_table(SESSIONS).unwrap();
-        table.insert(pid, bytes.as_slice()).unwrap();
+        for pid in pids {
+            table.insert(*pid, bytes.as_slice()).unwrap();
+        }
     }
     wtxn.commit().unwrap();
 }
@@ -123,9 +130,7 @@ fn fork_bomb_regression_max_instances_zero_disables_cap() {
     // 1000 fake-alive PIDs.
     let alive: Vec<u32> = (10_000..11_000).collect();
     let reg = open_with_alive_set(&path, alive.clone());
-    for pid in &alive {
-        raw_insert(&reg, *pid);
-    }
+    raw_insert_all(&reg, &alive);
     let cfg = CapConfig { max: 0, warn: 0 };
     assert_eq!(reg.count_live().unwrap(), 1000);
     assert_eq!(reg.check_cap(&cfg).unwrap(), CapDecision::Allow);
