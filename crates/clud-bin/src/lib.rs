@@ -23,6 +23,7 @@ macro_rules! impl_from_redb {
     };
 }
 
+pub mod ab;
 pub mod alias_link;
 pub mod alpha_search_ingress;
 pub mod anthropic_usage;
