@@ -1097,6 +1097,7 @@ fn handle_connection(
         log,
         header_deadline,
     ) else {
+        drain_before_close(&mut stream);
         return;
     };
     let standalone_root =
@@ -1127,6 +1128,30 @@ fn handle_connection(
         sessionless_standalone: standalone_root.is_some(),
     };
     route_request(&mut stream, &connection, parsed, &conversation_key);
+    drain_before_close(&mut stream);
+}
+
+const CLOSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(200);
+const CLOSE_DRAIN_LIMIT: usize = 1 << 20;
+
+/// Finish the response, then consume what the client is still sending. A
+/// handler can answer without reading the body, and closing a socket with
+/// unread data sends a reset that can destroy the response before the client
+/// has read it. Windows does this routinely. Bounded in time and bytes.
+fn drain_before_close(stream: &mut TcpStream) {
+    if stream.shutdown(Shutdown::Write).is_err()
+        || stream.set_read_timeout(Some(CLOSE_DRAIN_TIMEOUT)).is_err()
+    {
+        return;
+    }
+    let mut buffer = [0u8; 8192];
+    let mut drained = 0;
+    while drained < CLOSE_DRAIN_LIMIT {
+        match stream.read(&mut buffer) {
+            Ok(read) if read > 0 => drained += read,
+            _ => return,
+        }
+    }
 }
 
 /// The per-connection state every route handler reads.
@@ -6714,6 +6739,24 @@ fn resolve_test_upstream_override(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_response_survives_closing_with_an_unread_request_body() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        client.write_all(&[b'x'; 64 * 1024]).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        server.write_all(b"response").unwrap();
+        let started = Instant::now();
+        drain_before_close(&mut server);
+        drop(server);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let mut received = Vec::new();
+        client.read_to_end(&mut received).unwrap();
+        assert_eq!(received, b"response");
+    }
+
     mod redaction_http;
 
     use super::*;
