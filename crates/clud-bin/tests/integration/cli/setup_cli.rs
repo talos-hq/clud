@@ -129,14 +129,16 @@ fn snapshot(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
 }
 
 fn shim_names(home: &Path) -> Vec<String> {
-    let mut names: Vec<String> = fs::read_dir(home.join(".clud/state/shims"))
-        .map(|entries| {
-            entries
-                .flatten()
-                .map(|entry| entry.file_name().to_string_lossy().into_owned())
-                .collect()
-        })
+    // One build directory per binary (DD-203); this fixture runs one binary.
+    let builds = fs::read_dir(home.join(".clud/state/versions"))
+        .map(|entries| entries.flatten().collect::<Vec<_>>())
         .unwrap_or_default();
+    let mut names: Vec<String> = builds
+        .iter()
+        .filter_map(|build| fs::read_dir(build.path().join("shims")).ok())
+        .flat_map(|entries| entries.flatten())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .collect();
     names.sort();
     names
 }
