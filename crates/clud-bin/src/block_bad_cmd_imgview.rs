@@ -19,10 +19,22 @@
 //!   loop, and a `Read` carries no command text to hang a per-call override on,
 //!   so a permanent wall would have no escape at all.
 //!
+//! The per-path budget is not enough on its own, because the thing that costs
+//! money is the *session's* retained frames, whatever their paths. Measured on
+//! 24 h of transcripts (`reports/rows-2026-11-05.jsonl`): one audit session
+//! returned **31 frames across 29 distinct paths** (~180 KB each), so the
+//! per-path counter peaked at 2 and never asked once — the agent paid for all
+//! 31 frames on every later request. So the same state also records each
+//! distinct frame's bytes (a content hash, so a re-read or a copy cannot
+//! inflate the count) and applies a session-wide budget: a note past
+//! [`SESSION_NUDGE`] frames, one refusal past [`SESSION_LIMIT`]. Byte-identical
+//! re-reads are **not** handled here — `block_bad_cmd_reread` already hashes
+//! file bytes and refuses them.
+//!
 //! Deliberately narrow: `Read`-class tools only (a shell `cat x.png` is not
 //! counted), image extensions only, existing files at least [`MIN_BYTES`].
 //! **Fail open** on every missing fact: no session id, no state dir, a path
-//! that cannot be stat-ed.
+//! that cannot be stat-ed, a file that cannot be read.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -41,6 +53,18 @@ pub(super) const RESET_SECS: u64 = 60 * 60;
 pub(super) const MIN_BYTES: u64 = 8 * 1024;
 /// Session-wide limit override; `0` disables the guard.
 pub(super) const LIMIT_ENV: &str = "CLUD_IMAGE_READ_LIMIT";
+/// Session-wide frame budget override; `0` keeps the per-path budget only.
+pub(super) const SESSION_ENV: &str = "CLUD_IMAGE_SESSION_LIMIT";
+/// Distinct frames in one session before the advisory note starts.
+pub(super) const SESSION_NUDGE: u32 = 12;
+/// Distinct frames in one session before the one session-wide refusal.
+pub(super) const SESSION_LIMIT: u32 = 24;
+/// Files above this size are not hashed: the read is allowed untouched rather
+/// than paying a large synchronous read inside the hook.
+pub(super) const MAX_HASH_BYTES: u64 = 8 * 1024 * 1024;
+/// Distinct frames remembered per session. Above [`SESSION_LIMIT`] so the
+/// budget is never under-counted; the oldest go first.
+const MAX_FRAMES: usize = 48;
 /// Directory under the clud state dir.
 pub(super) const DIR_NAME: &str = "image-view-guard";
 const HASH_DOMAIN: &str = "clud-image-view-guard-v1\0";
@@ -65,11 +89,37 @@ pub(super) struct View {
     pub denied: bool,
 }
 
-/// The persisted per-session map: resolved path -> view count.
+/// What one image read contributes to the budget. A struct because the two
+/// decisions already take the state, the clock and both limits.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Facts<'a> {
+    pub path: &'a str,
+    /// Content hash; `None` when the file could not be read or was too large.
+    pub hash: Option<&'a str>,
+    pub size: u64,
+}
+
+/// One image's bytes seen in a session.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Frame {
+    /// When these bytes were first returned.
+    pub first: u64,
+    /// Their payload size on disk: what the frame costs on every later request.
+    #[serde(default)]
+    pub size: u64,
+}
+
+/// The persisted per-session map: resolved path -> view count, and image
+/// content hash -> first sighting.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct State {
     #[serde(default)]
     pub views: BTreeMap<String, View>,
+    #[serde(default)]
+    pub frames: BTreeMap<String, Frame>,
+    /// The session-wide refusal has been spent.
+    #[serde(default)]
+    pub session_denied: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,6 +132,16 @@ pub(super) enum Verdict {
     /// The one refusal for this file in this session.
     DenyOnce {
         count: u32,
+    },
+    /// This session now retains `frames` frames between them `kb` KB.
+    SessionNudge {
+        frames: u32,
+        kb: u64,
+    },
+    /// The one session-wide refusal.
+    SessionDeny {
+        frames: u32,
+        kb: u64,
     },
 }
 
@@ -132,6 +192,71 @@ pub(super) fn decide(
     );
     trim(&mut state);
     (verdict, state)
+}
+
+/// The decision table including the session-wide frame budget.
+///
+/// A frame's bytes are recorded once per session (content hash, so a re-read or
+/// a copy is not a new frame). Past [`SESSION_NUDGE`] distinct frames the allow
+/// carries a note naming the retained payload; past [`SESSION_LIMIT`] the next
+/// frame is refused **once**, then the retry runs and the refusal is spent.
+/// The per-path [`decide`] budget still applies underneath and wins when it
+/// fires first. `session_limit == 0` disables only this budget.
+pub(super) fn decide_frame(
+    previous: Option<&State>,
+    facts: &Facts<'_>,
+    now: u64,
+    limit: u32,
+    session_limit: u32,
+) -> (Verdict, State) {
+    let (path, hash, size) = (facts.path, facts.hash, facts.size);
+    let mut state = previous.cloned().unwrap_or_default();
+    if limit == 0 {
+        return (Verdict::Allow, state);
+    }
+    if let Some(hash) = hash.filter(|hash| !hash.is_empty()) {
+        let known = state
+            .frames
+            .get(hash)
+            .is_some_and(|frame| now.saturating_sub(frame.first) <= RESET_SECS);
+        if !known {
+            state
+                .frames
+                .insert(hash.to_string(), Frame { first: now, size });
+            trim_frames(&mut state);
+        }
+    }
+    let frames = u32::try_from(state.frames.len()).unwrap_or(u32::MAX);
+    let kb = state.frames.values().map(|frame| frame.size).sum::<u64>() / 1024;
+    if session_limit > 0 && frames > session_limit && !state.session_denied {
+        state.session_denied = true;
+        return (Verdict::SessionDeny { frames, kb }, state);
+    }
+    let (verdict, state) = decide(Some(&state), path, now, limit);
+    if !matches!(verdict, Verdict::Allow) {
+        return (verdict, state);
+    }
+    if session_limit > 0 && frames > SESSION_NUDGE {
+        return (Verdict::SessionNudge { frames, kb }, state);
+    }
+    (verdict, state)
+}
+
+/// Drop the oldest remembered image bytes so one long session cannot grow the
+/// state file without bound.
+fn trim_frames(state: &mut State) {
+    if state.frames.len() <= MAX_FRAMES {
+        return;
+    }
+    let mut entries: Vec<(String, u64)> = state
+        .frames
+        .iter()
+        .map(|(hash, frame)| (hash.clone(), frame.first))
+        .collect();
+    entries.sort_by_key(|(_, first)| *first);
+    for (hash, _) in entries.into_iter().take(state.frames.len() - MAX_FRAMES) {
+        state.frames.remove(&hash);
+    }
 }
 
 /// Drop the least recently viewed entries so one long session cannot grow the
@@ -198,6 +323,31 @@ fn resolve(path: &Path, cwd: &Path, home: Option<&Path>) -> PathBuf {
         .collect()
 }
 
+/// SHA-256 of the file's bytes, truncated to 16 hex bytes.
+///
+/// `None` when the file cannot be read or is above [`MAX_HASH_BYTES`]: the hook
+/// does not pay a large synchronous read to answer a question it can skip.
+fn content_hash(path: &Path, size: u64) -> Option<String> {
+    if size > MAX_HASH_BYTES {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    let digest = Sha256::digest(&bytes);
+    Some(
+        digest[..16]
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect(),
+    )
+}
+
+/// [`SESSION_ENV`] wins, else [`SESSION_LIMIT`]. Unparsable values fall back to
+/// the default; `0` disables only the session-wide budget.
+pub(super) fn session_limit_from(env: Option<&str>) -> u32 {
+    env.and_then(|value| value.trim().parse::<u32>().ok())
+        .unwrap_or(SESSION_LIMIT)
+}
+
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
     let hash: String = digest[..8]
@@ -245,9 +395,10 @@ pub(super) fn prune(dir: &Path, now: SystemTime) {
 pub(super) fn record(
     state_dir: &Path,
     session_id: &str,
-    path: &str,
+    facts: &Facts<'_>,
     now: u64,
     limit: u32,
+    session_limit: u32,
 ) -> Verdict {
     if limit == 0 || session_id.is_empty() {
         return Verdict::Allow;
@@ -257,7 +408,7 @@ pub(super) fn record(
     let previous = existing
         .as_deref()
         .and_then(|bytes| serde_json::from_slice::<State>(bytes).ok());
-    let (verdict, state) = decide(previous.as_ref(), path, now, limit);
+    let (verdict, state) = decide_frame(previous.as_ref(), facts, now, limit, session_limit);
     let Ok(bytes) = serde_json::to_vec(&state) else {
         return Verdict::Allow;
     };
@@ -323,21 +474,35 @@ pub(super) fn outcome(
     let Ok(state_dir) = crate::daemon::default_state_dir() else {
         return Outcome::Allow;
     };
+    let session_limit = session_limit_from(std::env::var(SESSION_ENV).ok().as_deref());
+    let hash = content_hash(&path, size);
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
     let kb = size / 1024;
+    let facts = Facts {
+        path: &path.to_string_lossy(),
+        hash: hash.as_deref(),
+        size,
+    };
     match record(
         &state_dir,
         session_id,
-        &path.to_string_lossy(),
+        &facts,
         now_secs(),
         limit,
+        session_limit,
     ) {
         Verdict::Allow => Outcome::Allow,
         Verdict::Nudge { count } => Outcome::Note(nudge_message(&name, count, limit, kb)),
         Verdict::DenyOnce { count } => Outcome::Deny(deny_message(&name, count, limit, kb)),
+        Verdict::SessionNudge { frames, kb } => {
+            Outcome::Note(session_nudge_message(&name, frames, kb))
+        }
+        Verdict::SessionDeny { frames, kb } => {
+            Outcome::Deny(session_deny_message(&name, frames, kb))
+        }
     }
 }
 
@@ -354,6 +519,31 @@ pub(super) fn nudge_message(name: &str, count: u32, limit: u32, kb: u64) -> Stri
          all of them again. For an iteration loop capture less — clip or scale the capture \
          (quarter-scale, region-clipped) or crop the area that changed — and view the full frame \
          only when the change should be visible. {closer}"
+    )
+}
+
+/// The session-wide advisory: the count and the payload the agent keeps buying.
+pub(super) fn session_nudge_message(name: &str, frames: u32, kb: u64) -> String {
+    format!(
+        "[clud image-view] this session now holds {frames} image frames (~{kb} KB of payload) and \
+         `{name}` is the newest. Every frame stays in the conversation, so every later request \
+         re-sends all of them. The per-file budget cannot see this: it counts one path, and these \
+         frames are spread over many. Review what you already have before capturing more, capture \
+         at reduced scale, and crop to the region that changed. Past {SESSION_LIMIT} frames the next \
+         read is refused once. Set {SESSION_ENV}=0 to disable the session budget.",
+    )
+}
+
+/// The session-wide refusal: once per session, then the retry runs.
+pub(super) fn session_deny_message(name: &str, frames: u32, kb: u64) -> String {
+    format!(
+        "[clud image-view] `{name}` would be image frame {frames} of this session: ~{kb} KB of \
+         image payload already retained, re-sent with every later request. A per-file count never \
+         sees this because the frames sit on different paths. Stop and work from what you have — \
+         compare the frames already read, or capture the smaller thing you actually need (clipped \
+         or quarter-scale, the changed region only). This refusal happens once per session: repeat \
+         the read to go ahead. Set {SESSION_ENV}=0 to disable the session budget, {LIMIT_ENV}=0 to \
+         disable both.",
     )
 }
 
