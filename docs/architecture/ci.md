@@ -301,9 +301,11 @@ executed. Require each actual shard and `CI OK` to pass.
 The `CI mode` job probes `main` pushes with the pinned checker's
 `ci-lint reuse-check --mode enforce`. It compares the merged tree with its
 associated PR head and requires a successful PR run no older than 12 hours
-containing all seven routine check cells: static checks, Dylint, Clippy,
-build, and the three unit shards. Attested PR jobs that were skipped do not
-count as successful executed jobs for this probe.
+containing all ten routine check cells: static checks, three Dylint passes,
+Clippy, build, and four unit shards. A green `merge_group` run on the pushed
+commit itself can also prove reuse when the queue's merged tree differs from
+the PR head. Attested PR jobs that were skipped do not count as successful
+executed jobs for this probe.
 
 A verified decision skips only Static checks, Clippy and the Linux unit
 caller. Dylint and Build linux-x64 still run as default-branch cache writers.
@@ -318,6 +320,26 @@ hosted name from workflow source, then verifies distinct proving job IDs
 against their live name, head SHA, run ID and successful conclusion. Missing,
 ambiguous or mismatched evidence refuses the skip. Local attestations do not
 provide a hosted skip path.
+
+The schema-1 consumer contract requires `schema: 1`, `reuse: true`,
+`event_name: "push"`, `sha` equal to the current push SHA, and a nonempty
+`jobs` array containing `name` (hosted display name) and numeric `job_id`
+(GitHub's job ID). Native-workflow verification also requires numeric
+`run_id` and a proving SHA: `proving_sha`, falling back to `pr_head_sha`.
+Every selected leaf must have exactly one matching entry with a distinct job
+ID; its live successful job must match that name, proving SHA and run ID.
+`required_jobs` is producer metadata, not a list of plan job IDs for the gate.
+No lane digest is required by this native-workflow path; the separate
+plan-lane path checks digest-qualified names.
+
+When queue evidence proves the pushed commit itself, `proving_sha` is the
+push SHA even if `pr_head_sha` differs (the queue merged a different tree).
+Do not rename hosted evidence to plan IDs or overwrite the PR head to make
+it match. The November 2026 failures instead came from ci-lint rejecting an
+unrelated include-only macOS matrix while deriving all workflow names. The
+shared resolver ([upstream fix](https://github.com/forge-ci/ci.yml/pull/524))
+must preserve the source key order for these literal rows;
+canonical identity JSON sorts keys and cannot supply GitHub's display order.
 
 The mode job and `CI OK` record the reason, tree and proving PR/run in their
 summaries. Default-branch reuse enforcement predates PR #1887, which
