@@ -246,6 +246,16 @@ pub struct Args {
     #[arg(long = "product-tools")]
     pub product_tools: bool,
 
+    /// Keep Claude Code's own `general-purpose` subagent definition. clud
+    /// replaces it by default with a worker definition (Read, Bash, Edit,
+    /// Write, Skill, ToolSearch); the built-in one is 27,930 B per subagent
+    /// request, including the `Agent` tool (8,763 B) that 702 subagent
+    /// sidechains reached for 19 times in 7 days, and `ListAgents` (2,081 B)
+    /// naming peers that a subagent cannot message. Pass this flag when a
+    /// subagent should be able to spawn nested subagents.
+    #[arg(long = "builtin-subagents")]
+    pub builtin_subagents: bool,
+
     /// Tell the agent which credentials exist on this machine. Adds the lokr
     /// MCP server and its background scanner to the session; values are never
     /// returned to the agent.
@@ -2570,6 +2580,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--allow-plan-mode",
         "--artifact-tool",
         "--product-tools",
+        "--builtin-subagents",
         "--allow-secrets",
         "--coauthor",
         "--dry-run",

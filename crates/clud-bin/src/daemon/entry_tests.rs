@@ -223,6 +223,7 @@ fn transcript_forces_centralized_daemon() {
         kitty_term: false,
         artifact_tool: false,
         product_tools: false,
+        builtin_subagents: false,
         shell: None,
         set_web_term: None,
         provider: None,

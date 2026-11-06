@@ -145,6 +145,10 @@ fn command_without_deletion_policy(p: &LaunchPlan) -> Vec<String> {
         // stays visible to tests that assert the whole `--disallowedTools`
         // value.
         command.retain(|arg| !is_dropped_tools_only_token(arg));
+        // clud also declares the bounded `general-purpose` subagent, which is
+        // policy argv rather than prompt argv (#2233). `--agents` is pinned by
+        // `every_claude_launch_bounds_the_general_purpose_subagent`.
+        command.retain(|arg| !arg.starts_with("--agents="));
     } else if command[0] == "codex" {
         for prefix in [
             "hooks.PreToolUse=",
@@ -594,6 +598,100 @@ fn the_artifact_tool_flag_restores_only_the_artifact_family() {
         .command
         .iter()
         .any(|a| *a == format!("--disallowedTools={}", expected.join(","))));
+}
+
+/// #2233: Claude Code builds a subagent's tool list from its agent definition,
+/// not from the parent's `--disallowedTools` strip, so an Artifact-free parent
+/// still paid 58,413 B per subagent request. clud declares the definition.
+#[test]
+fn every_claude_launch_bounds_the_general_purpose_subagent() {
+    for raw in [
+        vec!["clud"],
+        vec!["clud", "-p", "hi"],
+        vec!["clud", "loop", "fix the build"],
+        vec![
+            "clud",
+            "grind",
+            "https://github.com/talos-hq/clud/issues/2233",
+        ],
+    ] {
+        let p = plan(&raw);
+        assert!(
+            !p.command.iter().any(|a| a == "--agents"),
+            "{raw:?} used the variadic spelling, which eats the next argv token"
+        );
+        let token = p
+            .command
+            .iter()
+            .find(|a| a.starts_with("--agents="))
+            .unwrap_or_else(|| panic!("{raw:?} emitted no --agents token"));
+        let json: serde_json::Value =
+            serde_json::from_str(token.trim_start_matches("--agents=")).expect("valid json");
+        let def = &json["general-purpose"];
+        let tools: Vec<&str> = def["tools"]
+            .as_array()
+            .expect("tools")
+            .iter()
+            .map(|v| v.as_str().expect("tool name"))
+            .collect();
+        // `Agent` is the whole 19 KiB prize: a subagent called it 19 times in
+        // 7 days across 702 sidechains.
+        assert!(!tools.contains(&"Agent"), "{raw:?} kept Agent: {tools:?}");
+        // `ToolSearch` is what keeps deferred WebFetch/WebSearch/MCP reachable;
+        // dropping it would cut another 2.6 KiB and break those subagents. The
+        // two web tools are declared so `ToolSearch` is emitted at all — Claude
+        // Code defers them, exactly as it does for the built-in agent.
+        for tool in [
+            "Read",
+            "Bash",
+            "Edit",
+            "Write",
+            "Skill",
+            "ToolSearch",
+            "WebFetch",
+            "WebSearch",
+        ] {
+            assert!(tools.contains(&tool), "{raw:?} dropped {tool}: {tools:?}");
+        }
+        // `ListAgents` names peers for `SendMessage`, which a subagent does not
+        // get: in a subagent the pair is unusable, so it is not restored.
+        assert!(
+            !tools.contains(&"ListAgents"),
+            "{raw:?} kept ListAgents: {tools:?}"
+        );
+        assert!(!def["description"].as_str().expect("description").is_empty());
+        assert!(
+            !def["prompt"].as_str().expect("prompt").is_empty(),
+            "empty prompt would leave the subagent unbriefed"
+        );
+        // `model` is deliberately absent so the subagent inherits the parent's.
+        assert!(def.get("model").is_none(), "{raw:?} pinned a model");
+    }
+}
+
+/// The escape hatch: a session that wants nested subagents keeps Claude Code's
+/// own definition, and clud emits no `--agents` token at all.
+#[test]
+fn the_builtin_subagents_flag_restores_the_built_in_definition() {
+    let p = plan(&["clud", "--builtin-subagents"]);
+    assert!(
+        !p.command.iter().any(|a| a.starts_with("--agents")),
+        "the escape hatch still emitted --agents: {:?}",
+        p.command
+    );
+}
+
+/// The Codex->Claude bridge strips `Task`, so no subagent can exist there and
+/// the definition would be dead argv.
+#[test]
+fn the_codex_bridge_does_not_ship_an_agent_definition() {
+    let args = parse(&["clud", "--codex"]);
+    let p = build_launch_plan_for_target(&args, bridge_target(), "claude");
+    assert!(
+        !p.command.iter().any(|a| a.starts_with("--agents")),
+        "bridge launch emitted --agents: {:?}",
+        p.command
+    );
 }
 
 /// #2233: the product-surface tools (`SendFeedback`, `ReportFindings`,
