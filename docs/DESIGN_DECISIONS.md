@@ -7654,3 +7654,34 @@ registry and durable API. That needs its own decision.
 **Consequences:** session, durable API and `session_*` MCP behaviour across an
 upgrade is unchanged by this decision, including the existing termination of an
 older daemon's tree. An in-use daemon no longer locks the install path on Windows.
+## DD-205: grind is one editor, one integrator and N chaperones
+
+**Context:** Workers could not compile, and their PRs then queued behind the one
+integrator, which ran full suites before each push and took every later red check
+and queue ejection back, while a lander blocked on green. Edits were done
+long before anything could land.
+
+**Decision:** Supersedes [DD-195](#dd-195-grind-goals-end-at-enqueue-a-haiku-chaperone-follows-the-queue)'s
+lander wait, haiku checkout-free chaperone and integrator fixups.
+
+- One `grind-editor` at a time (renamed from `grind-worker`, one agent per goal).
+- One integrator at a time, gated on the focused test and the multi-platform
+  lint gate instead of full suites, which returns at push.
+- One chaperone chain per PR, outside every lock: checks, pinned enqueue (or the
+  feature-branch merge), queue, fixup. It keeps the red-base breaker, the fix
+  budgets and STUCK.
+- Fixups run in a bounded pool of recycled worktrees (`fixupPool`, default 2), so
+  N failing PRs neither pile on the integrator nor make N cold target directories.
+- Chaperones use the large model with an empty context and a written handoff.
+- The lander shrinks to the final feature PR.
+
+**Why this is a real trade:** two PRs can now fail lint or tests only after push,
+since no one runs the full suite locally. Required CI catches them, and the
+chaperone spends a fix round. A large-model agent per PR costs more than haiku,
+and waiting is mostly background idle. Fixups also compile concurrently, up to
+`fixupPool`.
+
+**Not chosen:** a true forked handoff (Workflow `agent()` documents no such option,
+and it could not keep the capped role); a chaperone that holds a slot for its
+whole life (idle watchers would starve fixups); `NEEDS-FIXUP` to the integrator
+(the bottleneck itself).

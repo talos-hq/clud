@@ -21,7 +21,7 @@ every backend's skills dir on launch. `clud-loop` was retired once
   per-role models and local-CI questions, then the bundled `grind-run` workflow.
   Leaves: [grind-intake/](grind-intake/SKILL.md),
   [grind-prework/](grind-prework/SKILL.md),
-  [grind-plan/](grind-plan/SKILL.md), [grind-work/](grind-work/SKILL.md),
+  [grind-plan/](grind-plan/SKILL.md), [grind-edit/](grind-edit/SKILL.md),
   [grind-review/](grind-review/SKILL.md),
   [grind-integrate/](grind-integrate/SKILL.md),
   [grind-land/](grind-land/SKILL.md), [grind-cron/](grind-cron/SKILL.md).

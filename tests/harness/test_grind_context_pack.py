@@ -109,17 +109,13 @@ def _run(harness: Harness) -> RunResult:
     return result
 
 
-def test_workers_are_byte_identical_up_to_the_end_of_the_pack(harness: Harness) -> None:
+def test_the_one_editor_reads_the_pack_before_any_task(harness: Harness) -> None:
     result = _run(harness)
-    prefixes = {t: _prefix(_first(result, f"worker:g:{t}")) for t in TASKS}
-    assert len(set(prefixes.values())) == 1, (
-        "worker requests differ before the pack ends; the shared prefix cannot cache:\n"
-        + _divergence(prefixes)
-    )
-    assert "make the three files" in prefixes["t1"]
-    assert "shared_context_159" in prefixes["t1"]
+    prefix = _prefix(_first(result, "worker:g:t1"))
+    assert "make the three files" in prefix
+    assert "shared_context_159" in prefix
     for t in TASKS:
-        assert f"Task {t}." not in prefixes[t], "task-specific text precedes the pack"
+        assert f"Task {t}." not in prefix, "task-specific text precedes the pack"
 
 
 def test_the_reviewer_starts_from_the_same_pack(harness: Harness) -> None:

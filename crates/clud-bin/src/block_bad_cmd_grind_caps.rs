@@ -34,7 +34,7 @@ use serde_json::Value;
 use super::block_bad_cmd_gate::statement_words;
 
 pub(super) const PLANNER: &str = "grind-planner";
-pub(super) const WORKER: &str = "grind-worker";
+pub(super) const EDITOR: &str = "grind-editor";
 pub(super) const REVIEWER: &str = "grind-reviewer";
 pub(super) const INTEGRATOR: &str = "grind-integrator";
 pub(super) const LANDER: &str = "grind-lander";
@@ -353,7 +353,7 @@ pub(super) fn is_grind_role(agent_type: &str) -> bool {
     matches!(
         agent_type,
         PLANNER
-            | WORKER
+            | EDITOR
             | REVIEWER
             | INTEGRATOR
             | LANDER
@@ -382,9 +382,9 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
         return statements
             .iter()
             .map(|words| strip_gh_repo_flag(words))
-            .find_map(|words| chaperone_reason(&words));
+            .find_map(|words| chaperone_reason(&words, run));
     }
-    if role == INTEGRATOR && is_script_retry_loop(&statements) {
+    if builds(role) && is_script_retry_loop(&statements) {
         return Some(format!(
             "{role} may not rerun lint or test in a shell loop: read the failing tests first, and \
              rerun unchanged only an infrastructure error, at most twice (#1425)"
@@ -396,43 +396,124 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
         .find_map(|words| statement_reason(role, &words, run))
 }
 
-/// The queue chaperone (#2467, DD-192) holds no checkout and never builds:
-/// it waits on one queued PR with `pr_merge_watch`, reads CI, reruns a failed
-/// run once (`gh run rerun <id> --failed`) and re-enqueues with `pr_merge.py`
-/// after a batch-mate's ejection. Everything else is refused.
-fn chaperone_reason(words: &[String]) -> Option<String> {
+/// The roles that build, so they share the integrator's shell denylist and
+/// deletion scope.
+fn builds(role: &str) -> bool {
+    matches!(role, INTEGRATOR | CHAPERONE)
+}
+
+/// Whether `path` is a slot of the fixup pool: `.clud/worktrees/<repo>-wt-grind-fixup-<n>`.
+fn is_fixup_slot(path: &str) -> bool {
+    let path = path.trim_end_matches('/');
+    let Some((parent, name)) = path.rsplit_once('/') else {
+        return false;
+    };
+    parent.ends_with(".clud/worktrees")
+        && name
+            .rsplit_once("-wt-grind-fixup-")
+            .is_some_and(|(repo, n)| {
+                !repo.is_empty() && !n.is_empty() && n.chars().all(|c| c.is_ascii_digit())
+            })
+}
+
+/// What a chaperone may do to worktrees, branches and history (DD-205): fix one
+/// PR in a pool slot. Slots only, detached only, and never a bare force push.
+fn chaperone_git_reason(sub: &[String]) -> Option<String> {
+    match sub.first().map(String::as_str) {
+        Some("worktree") => match sub.get(1).map(String::as_str) {
+            Some("list" | "prune") => None,
+            Some("add") if !sub.iter().any(|w| w == "--detach") => Some(format!(
+                "{CHAPERONE} adds fixup worktrees with `--detach` only"
+            )),
+            Some("add" | "remove") if worktree_add_path(&sub[2..]).as_deref().is_some_and(is_fixup_slot) => None,
+            _ => Some(format!(
+                "{CHAPERONE} may touch only its fixup pool worktrees, `.clud/worktrees/<repo>-wt-grind-fixup-<n>`"
+            )),
+        },
+        Some("push") if sub[1..].iter().any(|w| {
+            w == "-f" || w == "--force" || w == "--mirror" || w == "--delete" || w == "-d" || w.starts_with('+') || w.starts_with(':')
+        }) => Some(format!(
+            "{CHAPERONE} pushes with `--force-with-lease=<branch>:<head>` only, and deletes nothing"
+        )),
+        Some("reset") if sub.iter().any(|w| w == "--hard") => Some(format!(
+            "{CHAPERONE} recycles a slot with `git switch --detach --discard-changes`, not `git reset --hard`"
+        )),
+        Some("clean") if sub[1..].iter().any(|w| w.starts_with('-') && !w.starts_with("--") && w.contains(['x', 'X'])) => Some(format!(
+            "{CHAPERONE} keeps ignored build caches: `git clean -fd`, never `-x`"
+        )),
+        _ => None,
+    }
+}
+
+/// What a chaperone may do on GitHub: read, rerun failed jobs and, in a feature
+/// stage, merge its goal PR into the queue-less feature branch and record that.
+/// The final feature PR stays the lander's, and `pr_merge.py` is the only way
+/// into a merge queue, so a direct `gh pr merge` is refused everywhere else.
+fn chaperone_gh_reason(words: &[String], run: &RunFacts) -> Option<String> {
+    if is_gh_read(words) {
+        return None;
+    }
+    if let Some(verdict) = lander_records_landing(CHAPERONE, words, run) {
+        return verdict;
+    }
+    let sub = (
+        words.get(1).map(String::as_str),
+        words.get(2).map(String::as_str),
+    );
+    match sub {
+        (Some("run"), Some("rerun")) if words.iter().any(|w| w == "--failed") => None,
+        (Some("pr"), Some("merge")) => {
+            let goal_pr = run
+                .feature_pr()
+                .is_some_and(|pr| merge_targets_feature(&words[3..], run, pr) == Some(false));
+            let has = |flag: &str| words[3..].iter().any(|w| w == flag);
+            // `pr_merge.py`'s own no-queue path: pinned to the head, no `--admin`.
+            let is_feature_pr = run
+                .feature_pr()
+                .is_some_and(|pr| merge_targets_feature(&words[3..], run, pr) == Some(true));
+            let pinned = has("--match-head-commit") && !has("--admin") && !is_feature_pr;
+            (!goal_pr && !pinned).then(|| {
+                format!(
+                    "{CHAPERONE} merges only pinned to the head without `--admin` \
+                     (`github/pr_merge.py`), or a goal PR into its feature branch"
+                )
+            })
+        }
+        _ => Some(format!(
+            "{CHAPERONE} may read `gh`, run `gh run rerun <id> --failed` and, in a feature stage, \
+             record a landing; it never creates PRs or issues"
+        )),
+    }
+}
+
+/// The chaperone (DD-205, superseding #2467's checkout-free role) owns one PR
+/// from push to merge and fixes it up itself, so it builds like the integrator
+/// but with narrower git and GitHub reach.
+fn chaperone_reason(words: &[String], run: &RunFacts) -> Option<String> {
     if creates_issue(words) || closes_issue(words) {
         return Some(format!(
             "{CHAPERONE} never files or closes issues; report in your structured output"
         ));
     }
-    if let Some(reason) = remote_ci_reason(CHAPERONE, words) {
+    if let Some(reason) = feature_reason(CHAPERONE, words, run)
+        .or_else(|| remote_ci_reason(CHAPERONE, words))
+        .or_else(|| native_watch_reason(CHAPERONE, words))
+    {
         return Some(reason);
     }
-    if is_gh_read(words) {
-        return None;
+    let program = program_name(&words[0]);
+    if program == "gh" {
+        return chaperone_gh_reason(words, run);
     }
-    let rerun_failed = program_name(&words[0]) == "gh"
-        && words.get(1).is_some_and(|w| w == "run")
-        && words.get(2).is_some_and(|w| w == "rerun")
-        && words.iter().any(|w| w == "--failed");
-    if rerun_failed {
-        return None;
+    if program == "git" {
+        let Some(sub) = git_subcommand(words) else {
+            return Some(format!(
+                "{CHAPERONE} may not pass git global options other than -C"
+            ));
+        };
+        return chaperone_git_reason(&sub);
     }
-    let tool = bundled_tool(words);
-    if tool.is_some_and(|t| {
-        t.starts_with("github/pr_merge_watch")
-            || t == "github/pr_merge.py"
-            || t == "github/ci_failure_report.py"
-    }) {
-        return None;
-    }
-    Some(format!(
-        "{CHAPERONE} may only watch (`github/pr_merge_watch.py --until merged`), read CI \
-         (`gh pr|run view|list|checks`, `github/ci_failure_report.py`), rerun failed jobs \
-         (`gh run rerun <id> --failed`) and re-enqueue (`github/pr_merge.py`); it has no \
-         checkout and never builds, pushes or merges directly"
-    ))
+    statement_reason(CHAPERONE, words, run)
 }
 
 /// Unlike a planner, the run orchestrator never fetches or creates a worktree.
@@ -629,7 +710,7 @@ fn remote_ci_reason(role: &str, words: &[String]) -> Option<String> {
 /// `pr_merge_watch`, which judges the newest run per workflow and has a
 /// deadline; `gh run watch` and `gh pr checks --watch` have neither.
 fn native_watch_reason(role: &str, words: &[String]) -> Option<String> {
-    if !matches!(role, LANDER | INTEGRATOR) || program_name(&words[0]) != "gh" {
+    if !matches!(role, LANDER | INTEGRATOR | CHAPERONE) || program_name(&words[0]) != "gh" {
         return None;
     }
     let stripped = strip_gh_repo_flag(words);
@@ -792,7 +873,7 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
     // #1339 item 6: every role may search and preview with ast-grep; only
     // the integrator applies a rewrite.
     if bundled_tool(words) == Some("code/ast_grep.py") {
-        return (role != INTEGRATOR && ast_grep_writes(&words[4..])).then(|| {
+        return (!builds(role) && ast_grep_writes(&words[4..])).then(|| {
             format!(
                 "{role} may search and preview with ast-grep, but not apply a rewrite \
                  (`-U`, `--update-all`, `-i`, `new`); report the rewrite for the integrator (#1339)"
@@ -943,7 +1024,7 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             }
             deny(&program)
         }
-        INTEGRATOR => {
+        INTEGRATOR | CHAPERONE => {
             // A denylist is only as good as what it sees, so look through
             // wrappers (`env act`, `xargs bosn`): every word counts. A nested
             // shell's code (`bash -c "docker run …"`) is parsed into
@@ -985,14 +1066,14 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
         }
         // Workers and reviewers hold a shell only to investigate on GitHub:
         // read-only `gh`.
-        WORKER | REVIEWER if is_gh_read(words) => None,
+        EDITOR | REVIEWER if is_gh_read(words) => None,
         // The patch tool refuses files outside the run facts' task list itself.
-        WORKER | REVIEWER if bundled_tool(words) == Some("code/patch.py") => None,
-        WORKER | REVIEWER if runs_repo_script(words) => Some(format!(
+        EDITOR | REVIEWER if bundled_tool(words) == Some("code/patch.py") => None,
+        EDITOR | REVIEWER if runs_repo_script(words) => Some(format!(
             "{role} may not run the repo's lint or test scripts; the grind-integrator runs \
              lint/test before every push"
         )),
-        WORKER | REVIEWER => Some(format!(
+        EDITOR | REVIEWER => Some(format!(
             "{role} may only run read-only `gh` (issue/pr/run view|list, search) and `safe-rm` \
              on literal paths in its task's directories; it cannot build, lint or test"
         )),
@@ -1079,8 +1160,9 @@ pub(super) fn rm_tool_verdict(
     cwd: &Path,
 ) -> Option<Option<String>> {
     let profile = match role {
-        INTEGRATOR => crate::deletion_rules::Profile::GrindIntegrator,
-        WORKER => crate::deletion_rules::Profile::GrindWorker,
+        // A chaperone deletes as an integrator does: only inside its own checkout.
+        INTEGRATOR | CHAPERONE => crate::deletion_rules::Profile::GrindIntegrator,
+        EDITOR => crate::deletion_rules::Profile::GrindEditor,
         REVIEWER => crate::deletion_rules::Profile::GrindReviewer,
         PLANNER => crate::deletion_rules::Profile::GrindPlanner,
         PREWORK => crate::deletion_rules::Profile::GrindPrework,
@@ -1113,10 +1195,10 @@ pub(super) fn rm_tool_verdict(
         .join(", ");
     for statement in &parsed {
         let (operands, is_find) = match statement {
-            None if role == INTEGRATOR => continue,
+            None if builds(role) => continue,
             // A worker's deletion is allowed only on its own.
             None => return None,
-            Some(RmStatement::Find(_)) if role != INTEGRATOR => {
+            Some(RmStatement::Find(_)) if !builds(role) => {
                 return Some(Some(format!(
                     "{role} may not run `find -exec` deletions; name each path to safe-rm"
                 )))
@@ -1134,7 +1216,7 @@ pub(super) fn rm_tool_verdict(
             // directory before it, so the integrator may use one.
             let dynamic = operand.contains(['$', '`', '~', '{', '}', '\\']);
             let globbed = operand.contains(['*', '?', '[']);
-            if dynamic || (globbed && role != INTEGRATOR) {
+            if dynamic || (globbed && !builds(role)) {
                 return Some(Some(format!(
                     "{role} may pass only literal paths to safe-rm, not {operand:?}"
                 )));
@@ -1157,7 +1239,7 @@ pub(super) fn rm_tool_verdict(
             }
         }
     }
-    (role != INTEGRATOR).then_some(None)
+    (!builds(role)).then_some(None)
 }
 
 fn policy_name(policy: FeatureMerge) -> &'static str {
@@ -1777,7 +1859,7 @@ mod tests {
     #[test]
     fn workers_cannot_run_repo_lint_or_test_scripts() {
         let facts = run(true, true);
-        for role in [WORKER, REVIEWER] {
+        for role in [EDITOR, REVIEWER] {
             for command in [
                 "./lint",
                 "./test",
@@ -1820,7 +1902,7 @@ mod tests {
         let verdict = |role: &str, command: &str| rm_tool_verdict(role, command, &facts, &wt);
 
         // A worker deletes only under its task's directories, literally.
-        assert_eq!(verdict(WORKER, "safe-rm src/cache/old.rs"), Some(None));
+        assert_eq!(verdict(EDITOR, "safe-rm src/cache/old.rs"), Some(None));
         assert_eq!(
             verdict(REVIEWER, "safe-rm --purge -r src/cache/tmp"),
             Some(None)
@@ -1838,23 +1920,23 @@ mod tests {
             "safe-rm",
         ] {
             assert!(
-                matches!(verdict(WORKER, command), Some(Some(_))),
+                matches!(verdict(EDITOR, command), Some(Some(_))),
                 "{command}"
             );
         }
         // Mixed with anything else, a worker's usual rules decide.
-        assert_eq!(verdict(WORKER, "safe-rm src/cache/a && ls"), None);
-        assert_eq!(verdict(WORKER, "ls"), None);
+        assert_eq!(verdict(EDITOR, "safe-rm src/cache/a && ls"), None);
+        assert_eq!(verdict(EDITOR, "ls"), None);
 
         // With no recorded tasks for this checkout, its whole checkout.
         let untracked = RunFacts::default();
         assert_eq!(
-            rm_tool_verdict(WORKER, "safe-rm docs/x.md", &untracked, &wt),
+            rm_tool_verdict(EDITOR, "safe-rm docs/x.md", &untracked, &wt),
             Some(None)
         );
         assert!(matches!(
             rm_tool_verdict(
-                WORKER,
+                EDITOR,
                 &format!("safe-rm -r {}", wt.display()),
                 &untracked,
                 &wt
@@ -1937,7 +2019,7 @@ mod tests {
             "gh pr edit 12 --remove-label CI-Windows",
             "gh workflow disable ci.yml",
         ];
-        for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+        for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
             for command in refused {
                 let reason = shell_reason(role, command, &facts)
                     .unwrap_or_else(|| panic!("{role} allowed `{command}`"));
@@ -2010,10 +2092,19 @@ mod tests {
     /// #2467: the chaperone has no checkout and no build. It watches a queued
     /// PR, reads CI, reruns failed jobs once and re-enqueues; nothing else.
     #[test]
-    fn chaperone_watches_reruns_and_reenqueues_only() {
+    fn chaperone_watches_fixes_in_its_pool_and_never_bypasses() {
         let facts = run(false, false);
         assert!(is_grind_role(CHAPERONE));
         for command in [
+            "git -C /r worktree add --detach ~/.clud/worktrees/r-wt-grind-fixup-1 origin/main",
+            "git -C /r worktree remove --force ~/.clud/worktrees/r-wt-grind-fixup-1",
+            "git -C ~/.clud/worktrees/r-wt-grind-fixup-1 switch --detach --discard-changes origin/b",
+            "git -C ~/.clud/worktrees/r-wt-grind-fixup-1 clean -fd",
+            "git -C ~/.clud/worktrees/r-wt-grind-fixup-1 rebase origin/main",
+            "git -C ~/.clud/worktrees/r-wt-grind-fixup-1 push --force-with-lease=b:abc origin HEAD:refs/heads/b",
+            "gh pr merge 5 --repo o/r --squash --match-head-commit abc",
+            "bash lint",
+            "soldr lint rust",
             "clud tool run github/pr_merge_watch.py -- 5 --repo o/r --until merged --timeout 540",
             "\"$CLUD_EXE\" tool run github/pr_merge.py -- 5 --repo o/r --match-head-commit abc",
             "clud tool run github/ci_failure_report.py -- --repo o/r --run 9 --job 3",
@@ -2026,13 +2117,50 @@ mod tests {
         for command in [
             "gh run rerun 99",
             "gh pr merge 5 --admin --squash",
-            "git push origin grind/5",
-            "git status",
-            "cargo test",
-            "bash lint",
+            "gh pr merge 5 --squash",
+            "gh pr merge 5 --admin --squash --match-head-commit abc",
+            "gh pr create --title x",
             "gh run watch 99",
             "gh issue close 5",
-            "safe-rm x",
+            "gh issue create --title x",
+            "git worktree add ~/.clud/worktrees/r-wt-grind-fixup-1 -b x origin/main",
+            "git worktree add --detach /tmp/elsewhere origin/main",
+            "git worktree add --detach ~/.clud/worktrees/r-wt-feature origin/main",
+            "git worktree remove --force /repo",
+            "git push --force origin b",
+            "git push origin +b",
+            "git push origin :b",
+            "git reset --hard origin/b",
+            "git clean -fdx",
+            "git commit -m '[skip ci]'",
+            "docker run x",
+        ] {
+            assert!(!allowed(CHAPERONE, command, &facts), "{command}");
+        }
+    }
+
+    /// DD-205: a feature-stage goal PR has no queue, so its chaperone merges it
+    /// into the feature branch and records the landing; the feature PR is not its.
+    #[test]
+    fn chaperone_lands_a_goal_pr_on_the_feature_branch_but_never_the_feature_pr() {
+        let mut facts = run(false, false);
+        facts.feature = Some(FeatureFacts {
+            branch: "grind/meta-1-x".to_string(),
+            pr: Some("77".to_string()),
+            worktree: Some("/w".to_string()),
+        });
+        for command in [
+            "gh pr merge 5 --admin --merge --repo o/r",
+            "gh issue comment 5 --repo o/r --body landed",
+            "gh pr edit 77 --repo o/r --body x",
+        ] {
+            assert!(allowed(CHAPERONE, command, &facts), "{command}");
+        }
+        for command in [
+            "gh pr merge 77 --merge --repo o/r",
+            "gh pr merge 5 --admin --merge --delete-branch --repo o/r",
+            "gh pr edit 5 --repo o/r --body x",
+            "gh pr ready 77 --repo o/r",
         ] {
             assert!(!allowed(CHAPERONE, command, &facts), "{command}");
         }
@@ -2078,7 +2206,7 @@ mod tests {
         assert!(is_grind_role(role));
         let input = serde_json::json!({"subagent_type": role});
         assert!(agent_spawn_reason("Agent", Some(&input), None).is_none());
-        for internal in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK, GATE] {
+        for internal in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK, GATE] {
             let input = serde_json::json!({"subagent_type": internal});
             assert!(agent_spawn_reason("Agent", Some(&input), None).is_some());
         }
@@ -2240,7 +2368,7 @@ mod tests {
             assert!(reason.contains("plan-only"), "{reason}");
         }
         assert!(tool_reason(PLANNER, "Read", &plan).is_none());
-        assert!(tool_reason(WORKER, "Write", &plan).is_none());
+        assert!(tool_reason(EDITOR, "Write", &plan).is_none());
     }
 
     #[test]
@@ -2250,7 +2378,7 @@ mod tests {
             ..run(true, false)
         };
         for facts in [run(false, false), plan.clone()] {
-            for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+            for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
                 for tool in ["AskUserQuestion", "askuserquestion"] {
                     let reason = tool_reason(role, tool, &facts)
                         .unwrap_or_else(|| panic!("{role} allowed {tool}"));
@@ -2259,14 +2387,14 @@ mod tests {
                     assert!(reason.contains("before prework"), "{role}: {reason}");
                 }
             }
-            assert!(tool_reason(WORKER, "Read", &facts).is_none());
+            assert!(tool_reason(EDITOR, "Read", &facts).is_none());
             assert!(tool_reason(PLANNER, "Write", &facts).is_some());
         }
     }
 
     #[test]
     fn workers_and_reviewers_only_investigate_with_gh() {
-        for role in [WORKER, REVIEWER] {
+        for role in [EDITOR, REVIEWER] {
             assert!(allowed(
                 role,
                 "gh issue view 12 --comments",
@@ -2296,7 +2424,7 @@ mod tests {
     #[test]
     fn every_role_may_read_the_git_state_tool() {
         let facts = run(true, false);
-        for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+        for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
             assert!(
                 allowed(role, "clud tool run git/state.py", &facts),
                 "{role}"
@@ -2345,7 +2473,7 @@ mod tests {
     #[test]
     fn roles_may_outline_and_writers_may_patch() {
         let facts = run(true, false);
-        for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+        for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
             assert!(
                 allowed(
                     role,
@@ -2356,7 +2484,7 @@ mod tests {
             );
         }
         let patch = "\"$CLUD_EXE\" tool run code/patch.py <<'EOF'\n=== a.rs\nEOF";
-        for role in [WORKER, REVIEWER, INTEGRATOR] {
+        for role in [EDITOR, REVIEWER, INTEGRATOR] {
             assert!(allowed(role, patch, &facts), "{role}");
         }
         for role in [PLANNER, LANDER] {
@@ -2369,7 +2497,7 @@ mod tests {
     fn only_the_integrator_applies_ast_grep_rewrites() {
         let facts = run(true, false);
         let tool = "\"$CLUD_EXE\" tool run code/ast_grep.py";
-        for role in [PLANNER, WORKER, REVIEWER, LANDER, INTEGRATOR] {
+        for role in [PLANNER, EDITOR, REVIEWER, LANDER, INTEGRATOR] {
             for args in [
                 "run -p 'foo($A)' -l rust src",
                 "run -p 'f($A)' -r 'g($A)' src",
@@ -2390,7 +2518,7 @@ mod tests {
                 allowed(INTEGRATOR, &format!("{tool} {args}"), &facts),
                 "{args}"
             );
-            for role in [PLANNER, WORKER, REVIEWER, LANDER] {
+            for role in [PLANNER, EDITOR, REVIEWER, LANDER] {
                 assert!(
                     !allowed(role, &format!("{tool} {args}"), &facts),
                     "{role}: {args}"
@@ -2515,7 +2643,7 @@ mod tests {
     #[test]
     fn no_grind_subagent_can_create_issues() {
         for facts in [run(false, false), run(true, false)] {
-            for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+            for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
                 for command in [
                     "gh issue create --title x --body y",
                     "gh issue create --label grind:followup --title x --body y",
@@ -2544,7 +2672,7 @@ mod tests {
             shell_reason(role, command, &facts)
                 .is_some_and(|r| r.contains("never close issues") && r.contains("#1393"))
         };
-        for role in [INTEGRATOR, LANDER, WORKER, PLANNER, REVIEWER, PREWORK] {
+        for role in [INTEGRATOR, LANDER, EDITOR, PLANNER, REVIEWER, PREWORK] {
             for command in [
                 "gh issue close 12",
                 "gh issue close 12 --comment done",
@@ -2669,7 +2797,7 @@ mod tests {
     #[test]
     fn agent_calls_for_grind_roles_are_refused_unless_opted_in() {
         let call = |ty: &str| serde_json::json!({"subagent_type": ty, "prompt": "x"});
-        let worker = call("grind-worker");
+        let worker = call("grind-editor");
         assert!(agent_spawn_reason("Agent", Some(&worker), None).is_some());
         assert!(agent_spawn_reason("Agent", Some(&worker), Some("0")).is_some());
         assert!(agent_spawn_reason("Agent", Some(&worker), Some("1")).is_none());
@@ -2684,7 +2812,7 @@ mod tests {
     #[test]
     fn codex_spawn_agent_calls_for_grind_roles_are_refused() {
         // #1954: Codex reports `spawn_agent` and names the role `agent_type`.
-        let worker = serde_json::json!({"agent_type": "grind-worker", "message": "x"});
+        let worker = serde_json::json!({"agent_type": "grind-editor", "message": "x"});
         assert!(agent_spawn_reason("spawn_agent", Some(&worker), None).is_some());
         assert!(agent_spawn_reason("spawn_agent", Some(&worker), Some("1")).is_none());
         let explorer = serde_json::json!({"agent_type": "explorer", "message": "x"});
@@ -2771,7 +2899,7 @@ mod tests {
             assert!(!allowed(PREWORK, command, &facts), "{command}");
         }
         // Only prework may run printf at all.
-        assert!(!allowed(WORKER, "printf '%s' x", &facts));
+        assert!(!allowed(EDITOR, "printf '%s' x", &facts));
     }
 
     /// #2468: in a multi-repository run each sister lane's prework posts on
@@ -3146,7 +3274,7 @@ mod tests {
     fn issue_1897_scoped_reads_and_quoted_plan_body_fit_role_caps() {
         let mut facts = run(false, false);
         facts.meta = Some("10".into());
-        for role in [PLANNER, PREWORK, LANDER, WORKER, REVIEWER] {
+        for role in [PLANNER, PREWORK, LANDER, EDITOR, REVIEWER] {
             for command in [
                 "gh issue view 12 --comments --repo fork/project",
                 "gh -R fork/project issue view 12 --json comments",
@@ -3165,14 +3293,14 @@ mod tests {
             "printf '%s' 'plan' | gh issue comment 11 --repo fork/project --body-file -",
             &facts,
         ));
-        for role in [PLANNER, PREWORK, WORKER, REVIEWER] {
+        for role in [PLANNER, PREWORK, EDITOR, REVIEWER] {
             assert!(!allowed(
                 role,
                 "gh pr merge 34 --repo fork/project --squash",
                 &facts
             ));
         }
-        for role in [PLANNER, PREWORK, LANDER, WORKER, REVIEWER] {
+        for role in [PLANNER, PREWORK, LANDER, EDITOR, REVIEWER] {
             assert!(!allowed(
                 role,
                 "gh issue close 12 --repo fork/project",

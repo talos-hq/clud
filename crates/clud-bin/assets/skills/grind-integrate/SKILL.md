@@ -1,9 +1,8 @@
 ---
 name: grind-integrate
-description: "Integrate one reviewed /grind goal: commit, rebase onto its base, lint, build and test until green, optionally replay ci.yml jobs under bosn, then push and open the PR, or park a failed sequential goal's changes on a local wip branch. The only grind role that builds; runs one at a time."
+description: "Integrate one reviewed /grind goal: commit, rebase onto its base, focused test and multi-platform lint gate until green, optionally replay ci.yml jobs under bosn, then push, open the PR and return, or park a failed sequential goal's changes on a local wip branch. One at a time; ends at push."
 triggers:
   - When the grind workflow integrates a reviewed goal
-  - When the grind lander hands back a failing PR for a fix round
 disable-model-invocation: true
 ---
 <!-- managed-by: clud -->
@@ -35,50 +34,30 @@ You hold the run's build lock, so nothing else builds while you do.
 3. **RED -> GREEN.** Run the goal's focused regression test and show it
    fails without the fix (check out the test alone on the base, or cite the
    reproduction), then passes with it.
-3b. **Cross-check every target the project's CI tests** only when the diff
-   changes platform implementation code (Rust repos; scopes #1430).
-   First inspect the changed code: native API/FFI handling, OS-specific
-   branches, platform adapters/selectors and native runtime contracts
-   qualify. Shared business logic, callers of unchanged platform APIs,
-   helper extraction and moving OS code unchanged do not. For those changes,
-   proceed to step 4 without adding cross-target passes or native CI labels.
-   Keep the repository's declared routine lint/check/test gate.
-
-   For a platform implementation change, run
-   `clud tool run git/ci_targets.py --host <host triple>` to inventory
-   available targets, then select only targets exercising the changed
-   platform implementation. The inventory includes release-only targets;
-   it is not a requirement to run them all. Record the implementation,
-   selected targets and native behavior being checked. A non-Rust repo
-   prints `not a Rust project`: skip this stage. Report an affected target
-   under `skipped` and its reason rather than claiming coverage.
-
-   Per affected target, use the repository's isolated validation runner and
-   declared platform-crate commands, with warnings denied. If the platform
-   implementation is in a mixed workspace without a narrower check, the
-   command is `soldr cargo check --workspace --all-targets --target <triple>`;
-   otherwise scope it to the platform crate with `-p <platform-crate>`.
-   Use the repo's CI feature set and lint flags. Do not duplicate its
-   routine Dylint/cross-target checks with a second ad hoc loop.
-   Here "every target" means every affected selected target, not every
-   target found in the inventory. Host lint and test (step 4) run only after every target passes.
-   A failure must be fixed or reported with evidence, never silently dropped.
-   Apply the same implementation-based selection to `ci-windows`/`ci-full`;
-   a local coverage gap or a platform caller alone never justifies a label.
-4. **Verify.** Run the plan's lint, build and test commands. Fix failures by
+3b. **Multi-platform lint gate, required before every push (DD-205).** In a
+   Rust workspace that declares `[workspace.metadata.soldr].targets`, run
+   Clippy and Dylint for every declared target through soldr: `soldr lint rust`
+   covers cross-target Clippy; Dylint uses the repo's lint script or CI recipe,
+   normally `soldr dylint prepare --target <triple>` then
+   `soldr dylint --all -- --workspace --all-targets --target <triple>`. A
+   finding blocks the push: fix it. If a target's toolchain cannot be
+   provisioned on this machine, name it in your summary rather than claiming
+   coverage. A non-Rust repo or one with no declared targets uses its plain
+   lint. Native CI labels follow the changed platform implementation alone;
+   this gate is lint, not coverage, and never justifies a label.
+4. **Verify.** Run the plan's focused commands. Fix failures by
    editing, commit, and rerun until green. Do not skip or weaken a test.
    **Run must_verify.** The reviewer cannot run anything, so the checks it
    lists under `must_verify` arrive in your verify commands: run every one
    before pushing. A failure there is a real defect: fix it.
-   **Run scripts.** When the prompt lists the repo's `./lint` / `./test`,
-   run lint before test before every push, fix rounds included, after the
-   focused test:
+   **Run the lint script.** When the prompt lists the repo's `./lint`, run
+   it before every push, after the focused test. Full test suites belong to
+   required CI, not to you:
    - A script likely to exceed the 600s Bash cap runs with
      `run_in_background`; judge it by its exit code, not by its output.
-   - After any fix, rerun both scripts until both are green.
-   - If a script fails on untouched `origin/<main>` too, fix it and commit
-     that fix separately as `fix: pre-existing lint failure` (or
-     `fix: pre-existing test failure`), apart from the goal's commit.
+   - After any fix, rerun it until green.
+   - If it fails on untouched `origin/<main>` too, fix it and commit that fix
+     separately as `fix: pre-existing lint failure`, apart from the goal's commit.
    **After a failed run: read, then decide.** A deterministic failure does
    not go away when rerun, so:
    - **Read before retrying.** After any failed lint or test run, read the
@@ -117,30 +96,21 @@ You hold the run's build lock, so nothing else builds while you do.
    on merges into the default branch and a premature close would lose the
    issue. Either keyword names the goal's own issue, never the parent of a
    meta issue. So feature-stage goal PRs (base = the feature branch) use
-   `Refs #N`. Do not edit the feature PR: the lander adds the goal's
+   `Refs #N`. Do not edit the feature PR: its chaperone adds the goal's
    `Closes #N` line to it only after the goal PR merges into the feature
    branch, so a goal that never lands is never closed by the feature merge.
-   Return `pushed=true` and the PR URL. The lander watches CI; do not wait
-   for it here. **Remote-only verification:** when a verify command can only
-   run in remote CI (a native lane), push, then run
-   `clud tool run github/pr_merge_watch.py <PR> --timeout 540` with
-   `run_in_background` and judge by its exit code; on exit 1 read the failing
-   job's log from its report. Never `sleep N; gh run view` (#1894). For a one-off read ask only for unresolved
+   Return `pushed=true`, the PR URL, `head_sha` and a compact `handoff` for
+   the chaperone (what changed and why, what you verified, what is fragile)
+   immediately. Never wait for CI: a verify command that can run only in remote
+   CI goes in the handoff as a check for the chaperone to read. For a one-off read ask only for unresolved
    jobs: [Reading CI status](https://github.com/zackees/clud/blob/main/docs/architecture/ci.md#reading-ci-status-without-flooding-context-2312).
 
-**Queue fixup (#2467).** When the prompt says `QUEUE FIXUP`, the merge queue
-ejected an already-enqueued PR (or it now conflicts). Switch to its branch,
-fetch, rebase onto `origin/<base>`, fix what the chaperone reported, rerun the
-verify commands, push with `--force-with-lease`, return the checkout to
-`origin/<base>`, and return `pushed=true`. The lander then re-enqueues it.
+**Later failures are not yours.** After your push a chaperone owns the PR:
+red checks and queue ejections are fixed by that chaperone in its own worktree
+(DD-205), so a push is your last act on a goal.
 
-**Fix round.** When the prompt carries a failure from the lander: read it,
-reproduce locally when possible, fix, rerun the verify commands (and the run
-scripts, lint then test), commit and
-push to the same branch. Return the same PR URL.
-
-On a failure you cannot fix, return `pushed=false` with the failing command
-and its last 60 lines in `failure_log`.
+On a failure you cannot fix before pushing, return `pushed=false` with the
+failing command and its last 60 lines in `failure_log`.
 
 **Park (sequential mode, when the prompt says `PARK goal`).** The goal was
 rejected, blocked or failed before its work was pushed, and its changes must

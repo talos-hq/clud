@@ -20,7 +20,7 @@ from tests.harness.harness import Harness, RunResult
 
 MARK = {
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
@@ -92,28 +92,33 @@ def _goal_roles(
         ),
     ]
     rounds = land or ["merged"]
-    # Fix rounds first: their prompts also contain the goal marker.
-    for n in range(1, len(rounds)):
-        fix = _structured({"pushed": True, "pr_url": url, "summary": f"fix {n}"})
-        roles.append(
-            _role(f"integrator:{goal}:fix{n}", "integrator", [at, f"FIX ROUND {n} of"], [fix])
-        )
     first = [
         _bash(push),
         _after(ok, _structured({"pushed": True, "pr_url": url, "summary": "pushed"})),
     ]
     roles.append(_role(f"integrator:{goal}", "integrator", at, first))
+    # A red round's fix is the chaperone's own, in a pool slot (DD-205).
+    for n in range(1, len(rounds)):
+        fix = _structured({"pushed": True, "pr_url": url, "summary": f"fix {n}"})
+        roles.append(
+            _role(f"chaperone-fix:{goal}:{n}", "chaperone", [at, f"FIX ROUND {n}:"], [fix])
+        )
+    if len(rounds) > 1:
+        cleaned = _structured({"summary": "removed"})
+        roles.append(_role(f"chaperone-cleanup:{goal}", "chaperone", "CLEANUP", [cleaned]))
     for n, verdict in enumerate(rounds):
         if verdict == "merged":
             steps = [
-                _bash(f"gh pr merge {branch} --admin --squash"),
-                _after(ok, _structured({"status": "merged", "summary": "green"})),
+                _bash(f"gh pr merge {branch} --squash --match-head-commit HEAD"),
+                _after(ok, _structured({"verdict": "merged", "summary": "green"})),
             ]
         else:
             steps = [
-                _structured({"status": verdict, "summary": "red", "failure_log": "test_x failed"})
+                _structured({"verdict": verdict, "summary": "red", "failure_log": "test_x failed"})
             ]
-        roles.append(_role(f"lander:{goal}:{n}", "lander", [at, f"Fix rounds used: {n} of"], steps))
+        roles.append(
+            _role(f"chaperone:{goal}:{n}", "chaperone", [at, f"Fix rounds used: {n} of"], steps)
+        )
     return roles
 
 
@@ -184,14 +189,14 @@ def test_sequential_two_goals_land_in_order(harness: Harness) -> None:
     _no_notes(result)
     assert _merged(harness) == ["grind/g1", "grind/g2"]
     order = _by_role(result)
-    g1_last = max(n for role, ns in order.items() if ":g1" in role for n in ns)
+    g1_last = max(order["integrator:g1"])
     assert g1_last < min(order["planner:g2"])
     types = {
         h["agent_type"]
         for h in result.hooks
         if h.get("event") == "PreToolUse" and h.get("agent_type")
     }
-    assert {"grind-planner", "grind-worker", "grind-integrator", "grind-lander"} <= types
+    assert {"grind-planner", "grind-editor", "grind-integrator", "grind-chaperone"} <= types
 
 
 def test_parallel_caps_light_agents_at_four_and_integrators_at_one(harness: Harness) -> None:
@@ -210,9 +215,11 @@ def test_parallel_caps_light_agents_at_four_and_integrators_at_one(harness: Harn
     _no_notes(result)
     assert _merged(harness) == [f"grind/{g}" for g in ids]
     spans = _intervals(result)
-    light = [v for k, v in spans.items() if k.split(":")[0] in ("planner", "worker", "reviewer")]
+    light = [v for k, v in spans.items() if k.split(":")[0] in ("planner", "reviewer")]
     peak = _max_overlap(light)
-    assert 2 <= peak <= 4, f"plan/work/review concurrency was {peak}"
+    assert 2 <= peak <= 4, f"plan/review concurrency was {peak}"
+    editors = [v for k, v in spans.items() if k.startswith("worker:")]
+    assert _max_overlap(editors) == 1
     integrators = [v for k, v in spans.items() if k.startswith("integrator:")]
     assert _max_overlap(integrators) == 1
 
@@ -225,7 +232,7 @@ def test_dependent_goal_integrates_after_its_dependency_merges(harness: Harness)
     assert result.returncode == 0, result.stdout[-3000:]
     assert _merged(harness) == ["grind/a", "grind/b"]
     spans = _intervals(result)
-    assert spans["integrator:b"][0] >= spans["lander:a:0"][1]
+    assert spans["integrator:b"][0] >= spans["chaperone:a:0"][1]
 
 
 def test_fix_round_then_merge(harness: Harness) -> None:
@@ -234,7 +241,7 @@ def test_fix_round_then_merge(harness: Harness) -> None:
         "start grind", _script(harness, "sequential", _goals("f"), roles), timeout=300
     )
     assert result.returncode == 0, result.stdout[-3000:]
-    assert "integrator:f:fix1" in _by_role(result)
+    assert "chaperone-fix:f:1" in _by_role(result)
     assert _merged(harness) == ["grind/f"]
 
 
@@ -245,7 +252,7 @@ def test_fix_rounds_are_capped_and_the_pr_stays_open(harness: Harness) -> None:
     assert result.returncode == 0, result.stdout[-3000:]
     assert _merged(harness) == []
     assert [p["state"] for p in harness.read_gh_state()["prs"]] == ["OPEN"]
-    assert "lander:c:1" in _by_role(result)
+    assert "chaperone:c:1" in _by_role(result)
 
 
 def test_worker_shell_is_capped_by_clud_hook(harness: Harness) -> None:
@@ -269,7 +276,7 @@ def test_worker_shell_is_capped_by_clud_hook(harness: Harness) -> None:
     bash = [
         h
         for h in result.hooks
-        if h.get("agent_type") == "grind-worker" and h.get("tool_name") == "Bash"
+        if h.get("agent_type") == "grind-editor" and h.get("tool_name") == "Bash"
     ]
     assert [h["tool_input"]["command"] for h in bash] == ["cargo build", "gh pr merge 5 --admin"]
     assert _merged(harness) == ["grind/w"]
@@ -304,22 +311,22 @@ def test_each_agent_runs_as_its_type_with_its_procedure(harness: Harness) -> Non
         first.setdefault(r["role"].split(":")[0], r)
     leaf = {
         "planner": "grind-plan",
-        "worker": "grind-work",
+        "worker": "grind-edit",
         "reviewer": "grind-review",
         "integrator": "grind-integrate",
-        "lander": "grind-land",
+        "chaperone": "grind-land",
     }
     for role, skill in leaf.items():
         assert f"## Procedure (`/{skill}`" in first[role]["system"], role
         tools = set(first[role]["tools"])
         assert "Agent" not in tools, (role, tools)
         assert "Workflow" not in tools, (role, tools)
-    assert "Edit" not in set(first["lander"]["tools"])
+    assert "Edit" in set(first["chaperone"]["tools"])
     assert "Bash" in set(first["worker"]["tools"])
 
 
 def test_the_main_session_cannot_delegate_to_a_grind_role(harness: Harness) -> None:
-    call = {"subagent_type": "grind-worker", "description": "x", "prompt": "write a file"}
+    call = {"subagent_type": "grind-editor", "description": "x", "prompt": "write a file"}
     refused = {"is_error": True, "content_contains": "internal /grind role"}
     script = {
         "default_text": "OK",
@@ -355,33 +362,14 @@ def test_router_skill_carries_the_bosn_and_ci_preconditions(harness: Harness) ->
 
 
 def test_goal_ends_at_enqueue_and_the_chaperone_reports_the_merge(harness: Harness) -> None:
-    """#2467: the lander enqueues and the next goal starts; a haiku chaperone follows."""
+    """DD-205: the next goal starts at push; each PR's own chaperone reports the merge."""
     roles = _goal_roles(harness, "q1") + _goal_roles(harness, "q2")
-    for role in roles:
-        if role["name"].startswith("lander:"):
-            goal = role["name"].split(":")[1]
-            role["steps"] = [
-                _bash(f"gh pr merge grind/{goal} --admin --squash"),
-                _after(
-                    {"is_error": False},
-                    _structured({"status": "enqueued", "summary": "green", "head_sha": "a" * 40}),
-                ),
-            ]
-    for goal in ("q1", "q2"):
-        roles.append(
-            _role(
-                f"chaperone:{goal}",
-                "chaperone",
-                f"Goal {goal}:",
-                [_structured({"verdict": "merged", "exit_code": 0, "summary": "merged"})],
-            )
-        )
     result = harness.run(
         "start grind", _script(harness, "sequential", _goals("q1", "q2"), roles), timeout=300
     )
     assert result.returncode == 0, result.stdout[-3000:]
     ran = _by_role(result)
-    assert "chaperone:q1" in ran
-    assert "chaperone:q2" in ran
-    assert "--until merged" in result.prompt_text("chaperone:q1")
+    assert "chaperone:q1:0" in ran
+    assert "chaperone:q2:0" in ran
+    assert "--until merged" in result.prompt_text("chaperone:q1:0")
     assert _merged(harness) == ["grind/q1", "grind/q2"]

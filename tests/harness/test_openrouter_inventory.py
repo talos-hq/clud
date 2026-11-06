@@ -19,7 +19,7 @@ LEGACY = {
         "Executes only its exact assigned check and reports the observed result; "
         "never implements work or changes a repository."
     ),
-    "grind-worker": (
+    "grind-editor": (
         "Internal to the grind-run workflow; do not delegate to it (clud's hook "
         "refuses). /grind worker. Reads and writes only the files it is assigned; may"
         " investigate with read-only gh and web search. Cannot build, lint or test."
@@ -143,7 +143,7 @@ def _adversaries(production: dict):
     bad = deepcopy(production)
     bad["messages"].append({"role": "user", "content": "unrelated context"})
     yield "extra context", bad
-    description = _catalog(production)["grind-worker"]
+    description = _catalog(production)["grind-editor"]
     bad = deepcopy(production)
     bad["messages"] = _normalized_legacy(
         bad["messages"], {"worker": description}, {"worker": description + " changed tools"}
@@ -151,7 +151,7 @@ def _adversaries(production: dict):
     yield "changed role tool catalog", bad
     bad = deepcopy(production)
     bad["messages"] = _normalized_legacy(
-        bad["messages"], {"worker": "- grind-worker:"}, {"worker": "- missing-worker:"}
+        bad["messages"], {"worker": "- grind-editor:"}, {"worker": "- missing-worker:"}
     )
     yield "missing workflow role", bad
 
@@ -194,8 +194,8 @@ def test_openrouter_compact_role_catalog_preserves_capabilities(harness: Harness
     report["rejected_adversaries"] = rejected
     assert (h.repo / "CLAUDE.md").read_text(encoding="utf-8") == guidance
     h.new_session()
-    worker = _request(h, args=["--agent", "grind-worker"])
-    assert "You are a /grind worker." in worker["system"], "workflow role instructions were lost"
+    worker = _request(h, args=["--agent", "grind-editor"])
+    assert "You are the /grind editor." in worker["system"], "workflow role instructions were lost"
     report["role_entrypoint_verified"] = True
     (h.logs / "inventory-audit.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     print(json.dumps(report))

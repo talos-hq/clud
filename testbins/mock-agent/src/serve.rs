@@ -768,7 +768,7 @@ mod tests {
         json!({
             "default_text": "END",
             "roles": [
-                {"name": "worker", "match": "You are a /grind worker", "steps": [
+                {"name": "worker", "match": "You are the /grind editor", "steps": [
                     {"tool_use": {"name": "Bash", "input": {"command": "cargo build"}}},
                     {"expect": {"is_error": true, "content_contains": "BLOCKED"}, "text": "denied as expected"}
                 ]},
@@ -783,7 +783,7 @@ mod tests {
     fn role_is_chosen_by_system_prompt_marker_with_a_fallback() {
         let (role, ..) = plan(
             &script(),
-            &request("You are a /grind worker.", json!([]), &["Bash"]),
+            &request("You are the /grind editor.", json!([]), &["Bash"]),
         );
         assert_eq!(role, "worker");
         let (role, ..) = plan(&script(), &request("main session", json!([]), &["Bash"]));
@@ -822,7 +822,7 @@ mod tests {
         ]);
         let ok = plan(
             &script(),
-            &request("You are a /grind worker", denied, &["Bash"]),
+            &request("You are the /grind editor", denied, &["Bash"]),
         );
         assert_eq!(ok.2["text"], "denied as expected");
         assert!(ok.3.is_none());
@@ -834,7 +834,7 @@ mod tests {
         ]);
         let failed = plan(
             &script(),
-            &request("You are a /grind worker", allowed, &["Bash"]),
+            &request("You are the /grind editor", allowed, &["Bash"]),
         );
         assert!(failed.2["text"]
             .as_str()

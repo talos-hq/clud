@@ -214,9 +214,9 @@ def test_native_resume_only_reobserves_deferred_branch(
     assert _merged(h) == [f"grind/{goal}" for goal in ("a", "b", "c", "d", "e")]
     for row in result.requests:
         if row["role"] in ("gate:e", "planner:a", "worker:a", "reviewer:a", "integrator:a",
-                           "lander:a:0", "planner:d", "worker:d", "reviewer:d", "integrator:d",
-                           "lander:d:0", "planner:e", "worker:e", "reviewer:e", "integrator:e",
-                           "lander:e:0"):
+                           "chaperone:a:0", "planner:d", "worker:d", "reviewer:d", "integrator:d",
+                           "chaperone:d:0", "planner:e", "worker:e", "reviewer:e", "integrator:e",
+                           "chaperone:e:0"):
             assert row["n"] < boundary, row["role"]
     assert any(row["role"] == "gate:b:resume" and row["n"] > boundary for row in result.requests)
     assert any(row["role"] == "planner:b" and row["n"] > boundary for row in result.requests)
@@ -277,8 +277,8 @@ def test_native_resume_preserves_completed_work_across_three_generations(
     assert "resume" not in outputs[2]
     assert _merged(h) == [f"grind/{goal}" for goal in ("a", "b", "c", "d")]
     for goal in ("a", "b", "c", "d"):
-        for role in ("planner", "worker", "reviewer", "integrator", "lander"):
-            label = f"lander:{goal}:0" if role == "lander" else f"{role}:{goal}"
+        for role in ("planner", "worker", "reviewer", "integrator", "chaperone"):
+            label = f"chaperone:{goal}:0" if role == "chaperone" else f"{role}:{goal}"
             turns = [row for row in result.requests
                      if row["role"] == label and row.get("turn") == 0]
             assert len(turns) == 1, (goal, role, turns)

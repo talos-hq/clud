@@ -54,7 +54,7 @@ fn do_and_grind_skills_install_with_explicit_only_invocation() {
         "grind-intake",
         "grind-plan",
         "grind-prework",
-        "grind-work",
+        "grind-edit",
         "grind-review",
         "grind-integrate",
         "grind-land",
@@ -357,7 +357,7 @@ fn bundled_includes_all_known_skills() {
     assert!(names.contains(&"do"));
     assert!(names.contains(&"grind-intake"));
     assert!(names.contains(&"grind-plan"));
-    assert!(names.contains(&"grind-work"));
+    assert!(names.contains(&"grind-edit"));
     assert!(names.contains(&"grind-review"));
     assert!(names.contains(&"grind-integrate"));
     assert!(names.contains(&"grind-land"));
@@ -1115,8 +1115,8 @@ fn grind_skill_renders_scripts_through_clud_grind_scripts() {
     assert!(grind.contains("allowed-tools: Bash(clud grind-scripts:*)"));
     let integrate = skill("grind-integrate");
     assert!(
-        integrate.contains("run lint before test before every push"),
-        "grind-integrate must run lint before test before every push"
+        integrate.contains("it before every push, after the focused test"),
+        "grind-integrate must run the lint script before every push"
     );
 }
 

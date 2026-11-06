@@ -136,7 +136,7 @@ capped agent types:
 /grind ─ reconcile ─ /grind-intake (routing) ─ grind-run planOnly (classify) ─ preflight ─ ONE question round ─┐
   ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   ├─ parallel   ─┐
-  ├─ sequential ─┴─ workflow grind-run: prework → [bug stage, then feature stage]: plan → work → review → integrate → land ─ Finish
+  ├─ sequential ─┴─ workflow grind-run: prework → [bug stage, then feature stage]: plan → edit → review → integrate ⇒ chaperone per PR ─ Finish
   └─ cron ─ /grind-cron ─ /loop: one sequential run per tick
 ```
 
@@ -151,8 +151,8 @@ The sections below follow that order: [routing](#input-routing), the
 
 | Asset | Source | Installed to |
 |---|---|---|
-| Skills `grind`, `grind-intake`, `grind-prework`, `grind-plan`, `grind-work`, `grind-review`, `grind-integrate`, `grind-land`, `grind-cron` | `crates/clud-bin/assets/skills/` (`skills.rs::BUNDLED_SKILLS`) | `~/.claude/skills/`, `~/.codex/skills/` |
-| Agents `grind-orchestrator`, `grind-gate`, `grind-prework`, `grind-planner`, `grind-worker`, `grind-reviewer`, `grind-integrator`, `grind-lander`, `grind-chaperone` | `crates/clud-bin/assets/agents/` (`claude_files.rs`) | `~/.claude/agents/` |
+| Skills `grind`, `grind-intake`, `grind-prework`, `grind-plan`, `grind-edit`, `grind-review`, `grind-integrate`, `grind-land`, `grind-cron` | `crates/clud-bin/assets/skills/` (`skills.rs::BUNDLED_SKILLS`) | `~/.claude/skills/`, `~/.codex/skills/` |
+| Agents `grind-orchestrator`, `grind-gate`, `grind-prework`, `grind-planner`, `grind-editor`, `grind-reviewer`, `grind-integrator`, `grind-chaperone`, `grind-lander` (final feature PR only) | `crates/clud-bin/assets/agents/` (`claude_files.rs`) | `~/.claude/agents/` |
 | Workflow `grind-run` | `crates/clud-bin/assets/workflows/grind-run.js` (`claude_files.rs`) | `~/.claude/workflows/` |
 
 Each workflow agent runs as its `grind-<role>` type and is told to invoke
@@ -271,14 +271,14 @@ hand; a model must never pick them up from an ordinary prompt.
 A workflow cannot ask questions while it runs, so the `/grind` skill asks
 everything first:
 
-- **Mode.** *Parallel*: each goal gets a git worktree; workers only read and
+- **Mode.** *Parallel*: each goal gets a git worktree; one editor at a time reads and
   write. *Sequential*: one goal at a time from `origin/<main>` in the local
   checkout, no worktrees or sister clones, so a heavy C++/Rust build cache is
   reused. *Cron*: the harness's `/loop`, one issue per tick, each tick a
   sequential run. Parallel Rust worktrees keep private Cargo targets if builds
   or tests may overlap. The measured, opt-in shared-target option for strictly
   sequential work is in [skill-system.md](skill-system.md#worktree-cargo-targets-1685).
-- **Models** for planner, worker, reviewer and integrator (the lander shares
+- **Models** for planner, editor, reviewer and integrator (the lander shares
   the integrator's). The default is the session's own model, whatever route
   resolved it; an unchanged default is omitted so the agent inherits it.
   `grind-run.js` maps `args.models` onto each `agent()`'s `model`. On a
@@ -486,7 +486,7 @@ Issue [#1408](https://github.com/zackees/clud/issues/1408); spec
 [#1392](https://github.com/zackees/clud/issues/1392) §0.
 
 - **Role.** `grind-prework` is the first agent of the real run, after the
-  question round and before any planner or worker. It does not plan; it
+  question round and before any planner or editor. It does not plan; it
   records the plan the router assembled.
 - **Local copy.** The router writes the full `grind-plan/v1` object to
   `.clud/grind/plan.json` and passes it to `grind-run` as `args.plan`, with
@@ -714,22 +714,23 @@ Issue [#1336](https://github.com/zackees/clud/issues/1336).
 - **Recording.** The answer goes into the run facts as `scripts`,
   for example `{"lint": "bash ./lint", "test": "bash ./test --integration"}`,
   and reaches the workflow as `args.scripts`. `{}` means neither.
-- **Integrator.** Before **every** push, fix rounds included, it runs the
-  goal's focused RED → GREEN test, then lint, then test. A failure loops
-  inside the integrator (fix, re-run), because nothing has been pushed yet,
-  so it doesn't use up a lander fix round. When scripts are chosen, the
-  planner supplies only the focused test.
+- **Integrator.** Before **every** push it runs the goal's focused RED → GREEN
+  test, then the lint script, then the multi-platform lint gate. A failure
+  loops inside the integrator (fix, re-run), because nothing has been pushed
+  yet. When scripts are chosen, the planner supplies only the focused test.
+  A chosen `test` script stays in the run facts but **no role runs it**
+  (DD-205): required CI runs the suites, and a chaperone fixes what it finds.
 - **Long scripts.** Anything that may run past the Bash tool's 600-second
   limit runs in the background, and the integrator waits for its exit code.
   Never pipe a script through `tail`, which hides its exit status (#1331).
-- **Main already red.** If lint or test already fails on `origin/main`, the
+- **Main already red.** If lint already fails on `origin/main`, the
   integrator fixes that too. The fix goes in its own commit ahead of the
   goal's commit, in the same PR, titled like
   `fix: pre-existing lint failure on main`.
 - **Caps.** The integrator's shell is a denylist, so the scripts run.
-  `grind-worker` and `grind-reviewer` are denied them like any other build,
+  `grind-editor` and `grind-reviewer` are denied them like any other build,
   lint or test command.
-- **Checks are never worker tasks (#1397).** Every planned task writes at
+- **Checks are never editor tasks (#1397).** Every planned task writes at
   least one file. `grind-run.js::routeCheckTasks` moves a file-less task
   (for example "verify build and tests") into the integrator's verify
   commands, and a plan left with no file-writing tasks ends the goal
@@ -771,94 +772,97 @@ The rationale is in
   branches not merged into `origin/<main>`.
 - **Dependents.** `depends_on` is known only after planning, so a goal
   whose dependency already settled unmerged stops right after its plan,
-  before any worker writes, with `blocked: dependency X was rejected` (or
+  before the editor writes, with `blocked: dependency X was rejected` (or
   `did not land`, `is blocked`). In parallel mode a dependency that is still
   running is awaited before integration, as before.
 
-### Integration order
+### Integration order: one editor, one integrator, N chaperones
 
-- Plan, work and review run at most **4** agents at a time.
-- **Cross-check platform implementations before host verification (#1430,
-  scoped).** Inspect the diff first. Native API/FFI code, OS branches,
-  platform adapters/selectors and runtime contracts select the affected
-  targets. Shared business logic calling unchanged platform APIs, helper
-  extraction and unchanged moved OS code use the routine gate without
-  extra target passes or native labels. `git/ci_targets.py` inventories
-  available targets, including release-only lanes; it does not select them.
-  Check only affected targets through the repository's isolated runner and
-  platform-crate commands (a mixed workspace may require a workspace check).
-  Preserve declared routine lint/check/test gates and report unsupported
-  affected targets explicitly. Avoid duplicating routine cross-target
-  Dylint checks with an ad hoc loop. Label selection follows the changed
-  platform implementation; release validation still covers every target.
-- Exactly **one** integrator runs at a time. It is the only role that
-  builds, so builds never overlap and caches stay warm. Builds are not wrapped
-  in `bosn`; the integrator runs the run's chosen scripts (`./lint`,
-  `./test`, or the planner's verify commands) directly, in the background
-  when they may exceed 600s and never piped through `tail`.
-  **Local CI is bosn** (#2432, superseding the #1818 "denied" stance and the
-  `act` route). When the run's Local CI answer is on, the integrator may run
-  `bosn ci run|show|report|logs|cancel|runners` and `clud ci`, its own run
-  only; the caps hook still refuses other `bosn` verbs (`init`, daemon
-  control), `pkill`/`pgrep`/`killall` aimed at bosn, direct `act`, and
-  `docker`/`podman`. At most one full plan per change. GitHub CI on the PR
-  remains the CI of record.
-  Native-platform coverage gaps are reported, never claimed as covered.
-- The planner declares `depends_on`. An isolated goal rebases onto
-  `origin/<base>` (`<main>` in the bug stage, the feature branch in the
-  feature stage). A dependent goal waits until its dependency merges, then
-  rebases onto the new `origin/<base>`.
-- Landing does not hold the build lock: while one PR's CI runs on GitHub, the
-  next goal integrates locally.
+The shape ([DD-205](../DESIGN_DECISIONS.md#dd-205-grind-is-one-editor-one-integrator-and-n-chaperones)),
+in `grind-run.js`:
+
+```
+plan (up to maxAgents) → editor (1) → review (up to maxAgents) → integrator (1) → push
+                                                                                   └⇒ chaperone per PR, unlocked
+                                                                                        checks → enqueue → queue
+                                                                                        exception → fixup pool (fixupPool, 2)
+```
+
+- **One editor.** One `grind-editor` agent at a time across the run, holding
+  every task of its goal. It cannot build. Planners and reviewers run at most
+  `maxAgents` (4) at a time.
+- **One integrator, ending at push.** Exactly one at a time. Its gate is the
+  planner's focused test, `must_verify`, the run's lint script and the
+  **multi-platform lint gate**: in a Rust workspace declaring
+  `[workspace.metadata.soldr].targets`, Clippy and Dylint for each declared
+  target through soldr. Full test suites are left to required CI, and no role
+  runs the `test` script. It then pushes, opens the PR and returns with
+  `head_sha` and a compact `handoff`, so nothing queues behind CI.
+  **Local CI is bosn** (#2432): when the run's Local CI answer is on, it may run
+  `bosn ci run|show|report|logs|cancel|runners` and `clud ci`, its own run only;
+  the hook refuses other `bosn` verbs, `pkill`/`pgrep`/`killall` aimed at bosn,
+  direct `act`, and `docker`/`podman`. GitHub CI on the PR is the CI of record.
+- **Dependencies.** The planner declares `depends_on`. An isolated goal rebases
+  onto `origin/<base>` (`<main>` in the bug stage, the feature branch in the
+  feature stage). A dependent's integration waits on `landed[dep]`, which its
+  dependency's chaperone settles, then rebases onto the new `origin/<base>`.
 - **Dedup preflight (#2467).** The planner first searches open and merged PRs
   for `Closes #N` (and `#N` titles, `*/N-*` branches). A covered goal returns
   `covered_by` and is skipped and reported `covered by #PR`.
-- The lander runs `pr_merge_watch` on the PR's checks. On red CI or new review
-  it hands the failure back to the integrator, which fixes, re-verifies and
-  pushes. That is at most 10 rounds; after that the PR is left open and
-  reported. **Red-base breaker:** a failing required job that also fails on
-  `<main>`'s latest `push`/`merge_group` run is `base_red`: no fix round, no
-  rerun; the goal is reported `base-red` and the run moves on.
-- **A goal is done at enqueue** ([DD-195](../DESIGN_DECISIONS.md#dd-195-grind-goals-end-at-enqueue-a-haiku-chaperone-follows-the-queue),
-  the [ci.md agent landing contract](ci.md#agent-landing-workers-end-at-enqueue-chaperones-own-the-merge)).
-  When checks are green the lander submits a bug-stage PR with
-  `clud tool run github/pr_merge.py -- <PR> --repo <o/r> --match-head-commit <sha>`
-  and returns `enqueued`; the workflow starts the next goal at once. Nobody
-  rebases before landing: the queue's `merge_group` run tests the merged
-  tree. A feature-stage goal PR still merges into the feature branch with
-  `--admin --merge`, synchronously, since that branch has no queue.
-- **Chaperone.** At enqueue the workflow starts, per PR, one guaranteed,
-  deadline-bounded `pr_merge_watch.py --until merged --timeout <queueWatchSeconds, 540>`
-  call, run by a `grind-chaperone` agent (haiku, `tools: Bash`, no checkout),
-  and collects its verdict by exit code (`0` merged, `4` timeout, `13`
-  ejected, `14` unmergeable). The chaperone self-serves per DD-192 (rerun
-  `--failed` once for an infra failure, re-enqueue after a batch-mate's
-  ejection) and returns `merged`, `queued`, `needs_fixup`, `stuck` or
-  `base_red` (MERGED / NEEDS-FIXUP / STUCK).
-- **Queue-drop sweep.** Between goals (sequential) and at Finish, the
-  workflow sweeps its list of enqueued PRs. A NEEDS-FIXUP PR goes back to the
-  integrator ahead of new work (`QUEUE FIXUP`: rebase onto `origin/<base>`,
-  re-verify, push), then the lander re-enqueues it; at most `queueFixups`
-  (2) automatic fixups, then `stuck`. A still-queued PR is re-watched between
-  goals. In parallel mode each goal's chain runs its own fixups under the
-  integrator lock. At Finish a still-queued PR gets one final bounded wait
-  (`chaperone:<goal>#final`) and is then reported `queued`, not a failure.
-- **Dependents of an enqueued goal** wait for its chaperone, not for a sweep:
-  `landed[goal]` settles `true` on MERGED and `false` once the chaperone
-  pauses on a fixup or timeout, so a dependent is blocked rather than
-  deadlocked behind a sweep that cannot run while it does.
+- **Chaperone.** At push the workflow starts one chain per PR, holding no lock;
+  the next goal starts immediately. WATCH (`chaperone:<goal>#<n>`): wait for
+  required checks (`pr_merge_watch --no-merge-wait`), enqueue pinned to the head
+  (`github/pr_merge.py --match-head-commit`), then one bounded
+  `--until merged --timeout <queueWatchSeconds, 540>`. A verdict of `queued` is
+  watched again without re-enqueueing, up to 3 times. Verdicts: `merged`,
+  `queued`, `needs_fix`, `needs_fixup`, `stuck`, `base_red`, `tool_misuse`.
+- **A feature-stage goal PR has no queue.** Its chaperone waits for checks,
+  merges into the feature branch with `--admin --merge`, and records the landing
+  (marker comment, `Closes #N` on the feature PR), per
+  [never losing issues](#never-losing-issues-in-feature-mode). The final feature
+  PR stays with `grind-lander`, the only thing it does in a run.
+- **Fixups, by the chaperone itself.** `needs_fix` (red check or new review before
+  the queue) spends one of `maxFixRounds` (10); `needs_fixup` (ejection or conflict)
+  one of `queueFixups` (2). Past either: `stuck`. A tool mistake spends
+  neither (`agentErrors`, 3). **Red-base breaker:** a failing required job that
+  also fails on the base's latest `push`/`merge_group` run is `base_red`: no
+  fixup, no rerun; the goal is reported `base-red`.
+- **The fixup pool.** `fixupPool` (default 2, 1 to 8) numbered worktrees,
+  `~/.clud/worktrees/<repo>-wt-grind-fixup-<n>`; at most that many fixups build at
+  once, and others wait for a slot, not for the integrator. The most recently
+  freed slot goes first, because its `target/` is warmest. A slot is created
+  detached on first use. **Recycling:** fetch the PR branch and base, `git switch
+  --detach --discard-changes origin/<branch>`, `git clean -fd`: ignored build
+  caches survive (`-x` and `reset --hard` are refused). It pushes `HEAD` to the
+  branch with `--force-with-lease=<branch>:<head>`, detached, so it never collides
+  with the goal's own checkout. **Cleanup:** at Finish one `chaperone-cleanup`
+  agent removes the used slots. A failed cleanup is logged; the daemon's worktree
+  reclaim is the backstop. A slot the daemon reclaimed mid-run is re-added by
+  step 1 of the next fixup. A run with no exception creates no worktree.
+- **Handoff and context.** A chaperone runs the large model (`model: opus`;
+  `models.chaperone` overrides) from an **empty context**. Workflow `agent()`
+  documents no forked-history option, and the `Agent` tool's `fork` type
+  would need a parent conversation and drop the capped role, so a true fork is
+  unavailable. Instead each chaperone prompt starts with a handoff built from, in
+  order: the integrator's `handoff` (else its push summary), the context
+  pack, the planned tasks, the reviewer's summary and the goal context.
+- **Finish** awaits every chain. A still-queued PR gets one final bounded wait
+  (`chaperone:<goal>#final`), then is reported `queued`, not a failure.
+- **Dependents of a handed-off goal:** `landed[goal]` settles `true` on MERGED and
+  `false` on any terminal failure, or once a PR is still queued after its bounded
+  watches, so a dependent is blocked, never deadlocked behind Finish.
 - `pr_merge_watch` exits `0` green, `1` failed, `2` new review, `3` closed,
   `4` timeout, `5` approval required (fork `action_required`; report, no
   retry), `6` never reported (required check never ran; blocked), `7` stale
   (older than 14 days; re-run once), `8` no checks (no workflows, a
   `[skip ci]` marker, or nothing registered within the grace period; the
-  lander merges only when the base branch has no workflows and
+  chaperone merges only when the base branch has no workflows and
   `mergeStateStatus` is `CLEAN`, and otherwise returns `needs_fix`, never
-  `merged`, #1429), `9` conflict (back to the integrator),
+  `merged`, #1429), `9` conflict (back to the chaperone's fixup),
   `10` GitHub unreachable (never reported as closed), `11` queued too long
   (opt-in `--max-queued`). A `clud tool run` resumable watchdog stop exits
-  `124` with `status: in-progress`; the lander watches again and never merges
-  on that code. The lander passes `--timeout 540`, below its
+  `124` with `status: in-progress`; the chaperone watches again and never merges
+  on that code. A chaperone passes `--timeout 540`, below its
   600 s tool cap, so the watch always exits on its own; a watch never cancels
   runs on a head SHA it did not start on (#1418). Green never waits for
   CodeRabbit by default: nothing can reproduce it under the local
@@ -880,11 +884,11 @@ The rationale is in
 | `grind-gate` | Bash | exactly one assigned read-only Bash check, bound to native agent identity and approved run facts; readiness requires its successful native outcome |
 | `grind-planner` | Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill | read-only git and `gh`; `git worktree add` in parallel mode only, never in the plan-only phase (the hook also refuses it Write/Edit); `clud grind-facts task` to record each task's files |
 | `grind-prework` | Bash, Read, Grep, Glob | read-only git and `gh`; `gh issue comment` on the run facts' meta issue only, fed by `printf '%s' '<body>'`; no edits, worktrees or builds |
-| `grind-worker` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | read-only `gh`; `safe-rm` on literal paths inside its task's directories ([rm-tools.md](rm-tools.md#location-policy)) |
-| `grind-reviewer` | same as worker | same as worker |
+| `grind-editor` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | read-only `gh`; `safe-rm` on literal paths inside its task's directories ([rm-tools.md](rm-tools.md#location-policy)) |
+| `grind-reviewer` | same as editor | same as editor |
 | `grind-integrator` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | anything except non-`ci` bosn verbs, `bosn ci run` / `clud ci` when CI is off, `pkill`/`pgrep` on bosn, direct `act`/`docker`/`podman`, `git worktree add`, and a shell loop around lint/test; `safe-rm` only inside its checkout |
-| `grind-lander` | Read, Grep, Glob, Bash, Skill | `gh pr view\|checks\|diff\|list\|merge`, `gh pr ready` on the feature PR under `feature_merge: auto` only, `gh run view\|list\|rerun`, read-only git, plain `git push`, `pr_merge_watch`, `pr_merge.py` (enqueue) |
-| `grind-chaperone` | Bash (haiku) | read-only `gh` (`pr\|run view\|list\|checks`), `gh run rerun <id> --failed`, `pr_merge_watch`, `pr_merge.py` (re-enqueue), `ci_failure_report.py`; no git, checkout, build, push or direct merge |
+| `grind-lander` (final feature PR) | Read, Grep, Glob, Bash, Skill | `gh pr view\|checks\|diff\|list\|merge`, `gh pr ready` on the feature PR under `feature_merge: auto` only, `gh run view\|list\|rerun`, read-only git, plain `git push`, `pr_merge_watch`, `pr_merge.py` (enqueue) |
+| `grind-chaperone` | Read, Edit, Write, Grep, Glob, Bash (opus) | the integrator's denylist, plus: `git worktree add --detach\|remove` only on `.clud/worktrees/<repo>-wt-grind-fixup-<n>`; no bare force push, branch delete, `reset --hard` or `clean -x`; `gh` limited to reads, `gh run rerun --failed`, `gh pr merge` pinned with `--match-head-commit` and no `--admin` (or a goal PR into a recorded feature branch) and that feature landing's records; `safe-rm` only inside its checkout. The hook cannot confirm cwd, so "build only in the slot" is prompt-enforced |
 
 Claude Code enforces the tool lists. Shell commands are enforced by clud's
 native PreToolUse hook (`clud-block-bad-cmd`): the harness puts the calling
@@ -892,15 +896,15 @@ subagent's `agent_type` in the payload, and
 `block_bad_cmd_grind_caps.rs` applies that role's policy. Commands it cannot
 decompose (command substitution, subshells) are refused for capped roles, as
 are `find -exec`/`-delete`, `tail -f`, and git global options other than
-`-C`. The lander and integrator wait on CI only through `pr_merge_watch`:
+`-C`. The lander, integrator and chaperone wait on CI only through `pr_merge_watch`:
 `gh run watch`, `gh run view --watch` and `gh pr checks --watch` are refused
 with a message naming it (#1339). Every capped role searches with the Grep
 and Glob tools: a shell `grep -r` and a `find` without `-maxdepth` are
 refused, and `git grep` is a read-only git command (#1339). Every role may
-run the read-only `git/state.py` and `code/outline.py` tools; workers and
+run the read-only `git/state.py` and `code/outline.py` tools; the editor and
 reviewers may run `code/patch.py`, which itself refuses files outside the
 recorded task list. Every role may search and preview with
-`code/ast_grep.py`; only the integrator applies a rewrite (`-U`, `-i`, `new`). The integrator's bans also look inside wrappers such as `bash -c`.
+`code/ast_grep.py`; only the integrator and a chaperone apply a rewrite (`-U`, `-i`, `new`). The integrator's bans also look inside wrappers such as `bash -c`.
 A legacy planner dependency may name only goals listed before it. An approved
 run graph is validated for cycles and ordered before scheduling; the planner
 cannot drop its merge dependencies. `CLUD_ALLOW_ALL_CMDS=1` turns the whole command hook off, these caps
@@ -914,21 +918,13 @@ denied `AskUserQuestion`, `gh issue create` and closing an issue.
 The planner returns `context` with its plan: the goal issue's body and
 comments verbatim, and the code excerpts the goal needs (`{path, start, end,
 why, text}`). `grind-run.js` renders it once per goal (`packOf`) and puts it
-**first** in every worker's and the reviewer's prompt, ending at
-`--- end of context pack ---`; nothing per-agent (task id, file list, round)
-may precede that line. Workers then neither re-fetch the issue nor re-read
-the excerpted ranges. Claude Code puts system reminders ahead of each
+**first** in the editor's and the reviewer's prompt, and in every chaperone's
+handoff, ending at `--- end of context pack ---`; nothing per-agent (round,
+slot) may precede that line. Each agent then neither re-fetches the issue nor
+re-reads the excerpted ranges. Claude Code puts system reminders ahead of each
 agent's prompt, including a **git status snapshot taken when that agent
-starts**, and indents every line of a workflow's computed task text. So
-workers' requests are byte-identical up to the pack's end only while they
-start against the same checkout state: a worker started after another has
-written files sees `?? <file>` where the first saw `(clean)`. Parallel
-workers therefore start together (a staggered start, tried first, made the
-first worker's prefix diverge from the rest), but startup order is still not
-guaranteed: a worker that starts after a sibling's first write misses the
-shared prefix at that status line; sequential workers each see
-the previous one's changes and do not share. The reviewer, a different agent
-type, reads the same pack without sharing the workers' cache.
+starts**, so the editor and reviewer of a goal share no cache: the editor's
+changes change the snapshot, and they are different agent types.
 `tests/harness/test_grind_context_pack.py` asserts the prefix on the real
 Claude Code with that status block masked. The real-model cost measurement #1344 calls for stays manual.
 
@@ -961,6 +957,9 @@ it covers:
 - `test_grind_review_gate.py` — the review gate, parking, dependents of a
   rejected goal, and the integrator's retry rules.
 - `test_grind_scripts.py` — the repository lint/test scripts.
+- `tests/test_grind_editor_integrator_chaperones.py` (offline host, not a
+  harness suite) — the editor, integrator, chaperone and pool scheduling of
+  [Integration order](#integration-order-one-editor-one-integrator-n-chaperones).
 - `test_grind_facts.py` — run facts: a workflow agent's payload carries the
   parent session id, `clud grind-facts path` names the file the hook reads,
   and each session is capped by its own run's facts.

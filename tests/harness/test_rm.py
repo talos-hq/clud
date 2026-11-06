@@ -25,7 +25,7 @@ from tests.harness.harness import Harness, RunResult
 
 OK = {"is_error": False}
 MARK = {
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "integrator": "You are the /grind integrator",
 }
 
@@ -296,7 +296,7 @@ def test_grind_worker_and_integrator_have_their_own_roots(harness: Harness) -> N
     worker = {
         "name": "worker",
         "match": MARK["worker"],
-        "match_prompt": "RMTEST worker",
+        "match_prompt": "RMTEST editor",
         "steps": [
             _bash("safe-rm src/cache/old.txt"),
             _after(OK, _bash("safe-rm docs/notes.txt")),
@@ -314,14 +314,14 @@ def test_grind_worker_and_integrator_have_their_own_roots(harness: Harness) -> N
     }
     main = {
         "name": "main",
-        "steps": [agent("worker"), agent("integrator"), {"text": "DONE"}],
+        "steps": [agent("editor"), agent("integrator"), {"text": "DONE"}],
     }
     script = {"default_text": "OK", "roles": [worker, integrator, main]}
     result = h.run("clean up", script, timeout=300, extra_env={"CLUD_ALLOW_GRIND_AGENTS": "1"})
     assert result.returncode == 0, (result.stdout + result.stderr)[-3000:]
     _no_notes(result)
     roles = {r.get("agent_type") for r in result.hooks if r.get("tool_name") == "Bash"}
-    assert roles == {"grind-worker", "grind-integrator"}, roles
+    assert roles == {"grind-editor", "grind-integrator"}, roles
     assert not (h.repo / "src/cache/old.txt").exists()
     assert (h.repo / "docs/notes.txt").exists(), "outside the worker's task directories"
     assert not (h.repo / "build").exists()

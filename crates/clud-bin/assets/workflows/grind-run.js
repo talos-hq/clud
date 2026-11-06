@@ -1,18 +1,18 @@
 // managed-by: clud
 export const meta = {
   name: 'grind-run',
-  description: 'Engine behind clud /grind (start it with /grind): plan, write, review, integrate and land a list of goals, in parallel worktrees or sequentially in the local checkout, with per-role caps.',
+  description: 'Engine behind clud /grind (start it with /grind): plan, edit, review and integrate a list of goals one editor and one integrator at a time, then hand each pushed PR to its own chaperone, with per-role caps.',
   whenToUse: 'Started by the /grind router skill, which gathers the goals, mode, models and CI choice first. Do not start it directly.',
   phases: [
     { title: 'Classify', detail: 'grind-planner plan-only: classify children, feature groups, threshold' },
     { title: 'Prework', detail: 'grind-prework: post the plan JSON comment on the meta issue' },
     { title: 'Gate', detail: 'grind-gate: observe one approved publication check' },
     { title: 'Plan', detail: 'grind-planner: split each goal into disjoint file tasks' },
-    { title: 'Work', detail: 'grind-worker: read/write files only' },
+    { title: 'Edit', detail: 'grind-editor: one at a time; read/write files only' },
     { title: 'Review', detail: 'grind-reviewer: read/edit only' },
-    { title: 'Integrate', detail: 'grind-integrator: one at a time; lint, build, test, push' },
-    { title: 'Land', detail: 'grind-lander: PR checks green, then enqueue (the goal is done) or hand back for fixes' },
-    { title: 'Chaperone', detail: 'grind-chaperone (haiku): bounded pr_merge_watch --until merged per queued PR; MERGED / NEEDS-FIXUP / STUCK' },
+    { title: 'Integrate', detail: 'grind-integrator: one at a time; focused test, multi-platform lint gate, push, return' },
+    { title: 'Land', detail: 'grind-lander: the final feature PR only' },
+    { title: 'Chaperone', detail: 'grind-chaperone (large model), one per PR: checks, enqueue, queue, fix up in a recycled worktree; MERGED / NEEDS-FIXUP / STUCK' },
   ],
 }
 
@@ -20,9 +20,10 @@ export const meta = {
 //   repo: '/abs/repo', github_repo: 'owner/name', main: 'main', mode: 'parallel' | 'sequential',
 //   // github_repo may be omitted when plan.repo supplies the same forge identity.
 //   goals: [{ id, title, brief }], ci: false, lane?: 'job-id',
-//   models?: { planner, worker, reviewer, integrator },   // omitted = session model
+//   models?: { planner, editor, reviewer, integrator, chaperone },   // omitted = session model; chaperone defaults to opus
 //   scripts?: { lint?: './lint', test?: './test' },     // omitted = planner picks verify
-//   queueWatchSeconds?: 540, queueFixups?: 2,           // merge-queue chaperone watch deadline and automatic fixups (#2467)
+//   queueWatchSeconds?: 540, queueFixups?: 2,           // chaperone watch deadline and automatic fixups after a queue ejection (#2467)
+//   fixupPool?: 2,                                      // chaperone fixup worktrees that may exist and build at once (DD-205)
 //   maxAgents?: 4, maxFixRounds?: 10, agentErrors?: 3,   // agentErrors: tool-misuse allowance, apart from fix rounds (#1331)
 //   gateAttempts?: 3, gateBackoffMs?: 1000, gateEpoch?: 0, gateEpochs?: {goalId: 0},
 //   planOnly?: true, meta?: '<meta issue number>',
@@ -214,24 +215,31 @@ const gateEpoch = (id) => replayEpoch ?? requestedEpoch(id)
 
 // The repo's ./lint and ./test, chosen once by the /grind router (#1336).
 const SCRIPTS = (args.scripts && (args.scripts.lint || args.scripts.test)) ? args.scripts : null
-const scriptLines = () => [SCRIPTS.lint, SCRIPTS.test].filter(Boolean)
+const scriptLines = () => [SCRIPTS.lint].filter(Boolean)
+// The integrator and a fixing chaperone stop at lint; full suites belong to CI
+// (DD-205). Cross-target lint is what a local host cannot leave to a native lane.
+const LINT_GATE = `MULTI-PLATFORM LINT GATE, required before every push: run the repo's lint, then in a Rust workspace that declares [workspace.metadata.soldr].targets, run Clippy and Dylint for every declared target through soldr (\`soldr lint rust\` runs cross-target Clippy; for Dylint use the repo's lint script or CI recipe, normally \`soldr dylint prepare --target <triple>\` then \`soldr dylint --all -- --workspace --all-targets --target <triple>\`). A finding blocks the push; fix it. If a target's toolchain cannot be provisioned on this machine, name the target in your summary; never claim it passed. A repo with no declared targets uses its plain lint. Do not run full test suites: required CI runs them.`
 const verifyBlock = (p) => SCRIPTS
   ? `Verify commands, in this order, before every push (fix rounds included):\n` +
     `1. planner's focused test:\n${p.verify}\n` +
     scriptLines().map((c, i) => `${i + 2}. ${c}`).join('\n') +
-    `\nThe repo scripts (${scriptLines().join(', ')}) were chosen for this run; run them lint first, then test, and rerun after every fix until green.`
-  : `Verify commands:\n${p.verify}`
+    (scriptLines().length ? `\nThe lint script (${scriptLines().join(', ')}) was chosen for this run; rerun after every fix until green.` : '') +
+    `\n${LINT_GATE}`
+  : `Verify commands:\n${p.verify}\n${LINT_GATE}`
 
 // Model per role; the lander shares the integrator's choice, prework the planner's.
 const opts = (role, label, phase, schema) => {
   const o = { label, phase, schema, agentType: `grind-${role}` }
-  const m = MODELS[role === 'lander' ? 'integrator' : role === 'prework' ? 'planner' : role]
+  // Chaperones default to the large model: they diagnose and fix on their own.
+  const m = role === 'editor' ? MODELS.editor || MODELS.worker
+    : role === 'chaperone' ? MODELS.chaperone || 'opus'
+    : MODELS[role === 'lander' ? 'integrator' : role === 'prework' ? 'planner' : role]
   if (m) o.model = m
   return o
 }
 
-// Counting semaphore for plan/work/review agents, and a mutex for the
-// integrator: builds never overlap, so caches stay warm and the CPU stays sane.
+// Counting semaphore for plan/review agents, a mutex for the one editor, and a
+// mutex for the one integrator, so its builds never overlap.
 const semaphore = (n) => {
   let free = n
   const queue = []
@@ -264,6 +272,7 @@ const semaphore = (n) => {
 }
 const light = semaphore(MAX_AGENTS)
 const exclusive = semaphore(1)
+const editing = semaphore(1)
 
 // Problems found outside a task (#1411): optional on every role's schema,
 // recorded once per run however many rounds or roles report them.
@@ -318,17 +327,22 @@ const GATE = { type: 'object', required: ['ready', 'evidence'], properties: {
 } }
 const INTEG = { type: 'object', required: ['pushed', 'summary'], properties: {
   pushed: { type: 'boolean' }, pr_url: { type: 'string' }, summary: { type: 'string' }, failure_log: { type: 'string' },
+  head_sha: { type: 'string', description: 'the full SHA you pushed' },
+  handoff: { type: 'string', description: 'compact notes for the chaperone that takes this PR from here with no other history: what changed and why, what you verified, what is fragile' },
   artifacts: ARTIFACTS, problems: PROBLEMS } }
 const LAND = { type: 'object', required: ['status', 'summary'], properties: {
   status: { type: 'string', enum: ['merged', 'enqueued', 'needs_fix', 'base_red', 'gave_up', 'tool_misuse'] }, summary: { type: 'string' }, failure_log: { type: 'string' },
   head_sha: { type: 'string', description: 'enqueued only: the full head SHA passed to --match-head-commit' },
   command: { type: 'string', description: 'tool_misuse only: the command that failed' }, artifacts: ARTIFACTS, problems: PROBLEMS } }
-// The queue chaperone's verdict (#2467, DD-192): MERGED, still queued,
-// NEEDS-FIXUP (ejected or conflicting), STUCK, or a red base.
+// The chaperone's verdict (#2467, DD-192, DD-205): needs_fix is a red check or
+// new review before the queue, needs_fixup an ejection or conflict after it.
 const CHAPERONE = { type: 'object', required: ['verdict', 'summary'], properties: {
-  verdict: { type: 'string', enum: ['merged', 'queued', 'needs_fixup', 'stuck', 'base_red'] },
+  verdict: { type: 'string', enum: ['merged', 'queued', 'needs_fix', 'needs_fixup', 'stuck', 'base_red', 'tool_misuse'] },
+  enqueued: { type: 'boolean', description: 'queued only: the PR is already in the merge queue' },
   exit_code: { type: 'integer', description: 'pr_merge_watch exit code (0 merged, 4 timeout, 13 ejected, 14 unmergeable)' },
-  summary: { type: 'string' }, failure_log: { type: 'string' }, problems: PROBLEMS } }
+  command: { type: 'string', description: 'tool_misuse only: the command that failed' },
+  summary: { type: 'string' }, failure_log: { type: 'string' }, artifacts: ARTIFACTS, problems: PROBLEMS } }
+const CLEANUP = { type: 'object', required: ['summary'], properties: { summary: { type: 'string' }, problems: PROBLEMS } }
 const PARK = { type: 'object', required: ['parked', 'clean', 'summary'], properties: {
   parked: { type: 'boolean', description: "true when the goal's changes were committed to the park branch" },
   branch: { type: 'string' }, files: { type: 'array', items: { type: 'string' } },
@@ -648,7 +662,7 @@ const featureIntegrateNote = (g) => !isFeatureGoal(g) ? '' :
   `merge ${MAIN} into the feature branch in the feature worktree (first git merge --ff-only origin/${FEATURE.branch}, then git merge --no-ff origin/${MAIN}), then plain push of ${FEATURE.branch} (no force). ` +
   `Never rebase the feature branch.\n` +
   `2. Rebase the goal branch onto origin/${FEATURE.branch}. The goal PR's base is ${FEATURE.branch}, not ${MAIN}; its body uses \`Refs #${g.id}\`, not Closes.\n` +
-  `3. Do not edit the feature PR: the lander adds \`Closes #${g.id}\` to it only once this goal has landed on the feature branch, so a goal that never lands is never closed by the feature merge.`
+  `3. Do not edit the feature PR: the goal's chaperone adds \`Closes #${g.id}\` to it only once this goal has landed on the feature branch, so a goal that never lands is never closed by the feature merge.`
 const featureLandNote = (g) => {
   if (!isFeatureGoal(g)) return ''
   const fpr = featurePrNum() || '<feature pr>'
@@ -720,16 +734,13 @@ const packOf = (p) => {
   return parts.join('\n\n') + PACK_END
 }
 
-// Parallel workers start together on purpose (#1344): Claude Code puts a
-// git status snapshot ahead of each agent's prompt, so a worker started
-// after another has written files would see a different prefix.
-const work = (p, g) => (PARALLEL
-  ? parallel(p.tasks.map(t => () => light(() => runTask(p, g, t))))
-  : p.tasks.reduce((acc, t) => acc.then(rs => runTask(p, g, t).then(r => [...rs, r])), Promise.resolve([])))
-  .then(rs => ({ p, results: rs.filter(Boolean) }))
-const runTask = (p, g, t) => agent(
-  `${packOf(p)}Follow your built-in /grind-work procedure.\n\n${ctx(g)}\n\nCheckout: ${p.checkout}\nTask ${t.id}. Files you own: ${t.files.join(', ')}\n\n${t.instructions}`,
-  opts('worker', `work:${g.id}/${t.id}`, 'Work', WORK)).then(r => collect(r, 'worker', g.id))
+// One editor at a time, whatever the mode: it takes every task of its goal in
+// one agent, so edits never queue behind a worker pool (DD-205).
+const work = (p, g) => editing(() => agent(
+  `${packOf(p)}Follow your built-in /grind-edit procedure.\n\n${ctx(g)}\n\nCheckout: ${p.checkout}\n` +
+  p.tasks.map(t => `Task ${t.id}. Files you own: ${t.files.join(', ')}\n${t.instructions}`).join('\n\n'),
+  opts('editor', `edit:${g.id}`, 'Edit', WORK)).then(r => collect(r, 'editor', g.id)))
+  .then(r => ({ p, results: [r].filter(Boolean) }))
 
 const review = ({ p, results }, g) => light(() => agent(
   `${packOf(p)}Follow your built-in /grind-review procedure.\n\n${ctx(g)}\n\nCheckout: ${p.checkout}\nWorker reports:\n${JSON.stringify(results, null, 1)}`,
@@ -738,18 +749,8 @@ const review = ({ p, results }, g) => light(() => agent(
 const integrate = (p, g, note) => exclusive(() => agent(
   `Follow your built-in /grind-integrate procedure.\n\n${ctx(g)}\n\nCheckout: ${p.checkout}\nBranch: ${p.branch}\n` +
   `Base: origin/${baseOf(g)}${p.depends_on.length ? ` (it already contains ${p.depends_on.join(', ')}, which landed first)` : ''}\n` +
-  `${verifyBlock(p)}\n\n${note}${featureIntegrateNote(g)}\nReturn any release version, tag and release URL produced by this goal in artifacts; omit unknown values.`,
+  `${verifyBlock(p)}\n\n${note}${featureIntegrateNote(g)}\nReturn as soon as the PR is pushed, with head_sha and a compact handoff: a chaperone takes the PR from there, so never wait for CI. Return any release version, tag and release URL produced by this goal in artifacts; omit unknown values.`,
   opts('integrator', `integrate:${g.id}`, 'Integrate', INTEG)).then(r => collect(r, 'integrator', g.id)))
-
-// The lander ends at enqueue (#2467, DD-192): once required PR checks are
-// green it submits with pr_merge.py and returns `enqueued`; it never waits
-// for the merge and never rebases. A chaperone follows the queue.
-const ENQUEUE_NOTE = `\nWhen the PR's required checks are green, enqueue it with \`clud tool run github/pr_merge.py -- <n> --repo ${GITHUB_REPO} --match-head-commit <full-head-sha>\`` +
-  ` and return status=enqueued with head_sha. Do not wait for the merge: a grind-chaperone follows the queue. If pr_merge.py reports the PR merged at once (no queue), return status=merged.` +
-  `\nRed-base breaker: on a failed required check, compare it with ${MAIN}'s latest push and merge_group runs; if the same job fails there, return status=base_red (no fix round, no rerun).`
-const land = (p, g, pr, round, label = `land:${g.id}#${round}`) => agent(
-  `Follow your built-in /grind-land procedure.\n\n${ctx(g)}\n\nPR: ${pr}\nBranch: ${p.branch}\nFix rounds used: ${round} of ${MAX_FIX}.${isFeatureGoal(g) ? '' : ENQUEUE_NOTE}${featureLandNote(g)}\nReturn any observed release version, tag and release URL in artifacts; omit unknown values.`,
-  opts('lander', label, 'Land', LAND)).then(r => collect(r, 'lander', g.id))
 
 // Parking (#1424): in sequential mode every goal shares one checkout, so a
 // goal that ends unmerged with work nobody pushed would leak its files into
@@ -846,11 +847,12 @@ const depNote = (dep) => {
   return `blocked: dependency ${dep} ${r && r.rejected ? 'was rejected' : r && r.blocked ? 'is blocked' : 'did not land'}`
 }
 const settledBlock = (p) => {
-  const dep = p.depends_on.find(d => String(d) in outcome && !outcome[String(d)].merged)
+  // A dependency still with its chaperone has not settled; landed[dep] decides.
+  const dep = p.depends_on.find(d => String(d) in outcome && !outcome[String(d)].merged && !outcome[String(d)].chaperoned)
   return dep === undefined ? null : { merged: false, blocked: true, note: depNote(dep) }
 }
 
-const integrateAndLand = async ({ p: planned, review: rv }, g) => {
+const integrateAndHandOff = async ({ p: planned, review: rv }, g) => {
   const gate = reviewGate(rv)
   if (!gate.ok) return { merged: false, rejected: !!rv, note: `review rejected: ${rv ? rv.summary : 'no review'}` }
   if (gate.overridden) log(`goal ${g.id}: the reviewer only said nothing had been run; integrating (the integrator runs the checks)`)
@@ -858,44 +860,22 @@ const integrateAndLand = async ({ p: planned, review: rv }, g) => {
   for (const dep of p.depends_on) {
     if (!(await landed[dep])) return { merged: false, blocked: true, note: depNote(dep) }
   }
-  let integ = await integrate(p, g, reviewNote(rv, gate))
-  let agentErrors = 0
-  // One watch per push: the first push, then one per fix round.
-  for (let fixes = 0; ; fixes++) {
-    if (!integ || !integ.pushed) return { merged: false, pushed: false, pr: integ && integ.pr_url, note: integ ? integ.failure_log || integ.summary : 'integrator died' }
-    let l = await land(p, g, integ.pr_url, fixes)
-    // The lander's own tool mistake: retry the landing, never the integrator,
-    // and never spend a fix round (#1331).
-    while (l && l.status === 'tool_misuse') {
-      agentErrors++
-      if (agentErrors > MAX_AGENT_ERRORS) return { merged: false, pushed: true, pr: integ.pr_url, note: `gave_up: tool misuse (${l.command || l.summary})` }
-      log(`goal ${g.id}: lander tool misuse ${agentErrors} of ${MAX_AGENT_ERRORS} (${l.command || l.summary}); landing again, no fix round`)
-      l = await land(p, g, integ.pr_url, fixes)
-    }
-    if (l && l.status === 'merged') return {
-      merged: true, pushed: true, pr: integ.pr_url, note: l.summary,
-      artifacts: { ...(integ.artifacts || {}), ...(l.artifacts || {}) },
-    }
-    if (l && l.status === 'enqueued') return enqueue(p, g, integ, l)
-    if (l && l.status === 'base_red') return baseRed(integ.pr_url, l)
-    if (!l || l.status === 'gave_up' || fixes >= MAX_FIX) return { merged: false, pushed: true, pr: integ.pr_url, note: l ? l.failure_log || l.summary : 'lander died' }
-    log(`goal ${g.id}: PR not green, fix round ${fixes + 1} of ${MAX_FIX}`)
-    integ = await integrate(p, g, `FIX ROUND ${fixes + 1} of ${MAX_FIX}: the PR ${integ.pr_url} failed. Fix, re-verify${SCRIPTS ? ` (focused test, then ${scriptLines().join(', then ')})` : ''}, push to the same branch.\n${l.failure_log || l.summary}`)
-  }
+  const integ = await integrate(p, g, reviewNote(rv, gate))
+  if (!integ || !integ.pushed) return { merged: false, pushed: false, pr: integ && integ.pr_url, note: integ ? integ.failure_log || integ.summary : 'integrator died' }
+  return handOff(p, g, integ, rv)
 }
 
-// Merge-queue follow-through (#2467, DD-192). A goal is done at enqueue; each
-// queued PR gets one deadline-bounded `pr_merge_watch --until merged` call,
-// run by a checkout-free grind-chaperone on the cheapest model, whose verdict
-// the workflow collects. NEEDS-FIXUP goes back to the integrator ahead of new
-// work (sequential: between goals; parallel: in the goal's own chain), at most
-// MAX_QUEUE_FIXUPS times, then STUCK. Finish gives a still-queued PR one more
-// bounded wait and reports it `queued`, which is not a failure.
+// Chaperones (DD-205, superseding DD-195's lander wait and integrator fixups).
+// At push each PR gets its own chaperone chain, outside every lock: wait for
+// checks, enqueue pinned to the head (or, in a feature stage with no queue,
+// merge into the feature branch), follow the queue. On an exception it fixes up
+// itself in a slot of a bounded worktree pool, then watches the new head. The
+// next goal never waits for any of this; a dependent waits on landed[goal].
 const QUEUE_WATCH_S = gateInteger('queueWatchSeconds', 540, 60, 3600)
 const MAX_QUEUE_FIXUPS = gateInteger('queueFixups', 2, 0, 5)
-const QUEUE = []
-const baseRed = (pr, l) => ({ merged: false, pushed: true, pr, status: 'base-red',
-  note: `base-red: ${l.summary}${l.failure_log ? ` (${l.failure_log})` : ''}; the same required job fails on ${MAIN}, so no fix round was spent` })
+const POOL_SIZE = gateInteger('fixupPool', 2, 1, 8)
+const MAX_QUEUED_WATCHES = 3
+const CHAINS = []
 const settleOnce = (e, merged) => {
   if (e.settled) return
   e.settled = true
@@ -903,94 +883,152 @@ const settleOnce = (e, merged) => {
 }
 const finish = (e, status, merged, note) => {
   e.state = 'done'
-  Object.assign(e.result, { merged, status, note, enqueued: false })
+  Object.assign(e.result, { merged, status, note, chaperoned: false })
   settleOnce(e, merged)
 }
-const watchQueued = (e, tag) => agent(
-  `You are following one enqueued /grind PR to its merge.\n${REPO_HEADER}\nGoal ${e.g.id}: ${e.g.title}${PLAN_URL ? `\nPlan comment: ${PLAN_URL}` : ''}\nPR: ${e.pr}\nHead: ${e.head || '(read it with gh pr view)'}\n` +
-  `Run once, in the background, and wait for its notification: clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --until merged --timeout ${QUEUE_WATCH_S}\n` +
-  `Queue fixups used: ${e.fixups} of ${MAX_QUEUE_FIXUPS}. Return your verdict by the exit code.`,
+// Workflow agent() has no forked-history option, so a chaperone starts empty and
+// reads this. Fallback order: the integrator's handoff, then the push summary;
+// the plan, pack and reviewer summary are always present.
+const handoffOf = (p, g, integ, rv) => `${packOf(p)}Handoff. You have no other history of this goal; this is all of it.\n${ctx(g)}\n` +
+  `Branch: ${p.branch}\nBase: origin/${baseOf(g)}\nPR: ${integ.pr_url}\nPlanned tasks: ${p.tasks.map(t => `${t.id} (${t.files.join(', ')})`).join('; ')}\n` +
+  `Reviewer: ${rv ? rv.summary : '(none)'}\nIntegrator: ${nonempty(integ.handoff) ? integ.handoff : integ.summary}\n`
+const headLine = (e) => `Head: ${e.head || '(resolve the full SHA with gh pr view --json headRefOid)'}\n`
+const landSteps = (e) => {
+  const watchChecks = `clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --no-merge-wait --timeout ${QUEUE_WATCH_S}`
+  if (isFeatureGoal(e.g)) return `1. Wait for the PR's checks: ${watchChecks}\n2. The feature branch has no merge queue.${featureLandNote(e.g)}\nReturn merged only after you observe the merge.`
+  const follow = `clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --until merged --timeout ${QUEUE_WATCH_S}`
+  if (e.enqueued) return `The PR is already in the queue. Run once: ${follow}`
+  return `1. Wait for the PR's required checks: ${watchChecks}\n` +
+    `2. Enqueue it pinned to the head: clud tool run github/pr_merge.py -- ${e.pr} --repo ${GITHUB_REPO} --match-head-commit <full-head-sha>\n` +
+    `3. Follow the queue, once: ${follow}`
+}
+const watch = (e, tag) => agent(
+  `${e.handoff}\nFollow your WATCH procedure.\n${headLine(e)}${landSteps(e)}\n` +
+  `Run each waiter in the background and wait for its notification. ` +
+  `Fix rounds used: ${e.fixes} of ${MAX_FIX}. Queue fixups used: ${e.fixups} of ${MAX_QUEUE_FIXUPS}. Return your verdict by the exit codes.`,
   opts('chaperone', `chaperone:${e.g.id}#${tag}`, 'Chaperone', CHAPERONE)).then(r => collect(r, 'chaperone', e.g.id))
+
+// The pool: at most POOL_SIZE fixups build at once, each in a numbered worktree.
+// The most recently used free slot goes first, because its target/ is warmest.
+const fixSlots = semaphore(POOL_SIZE)
+const FREE_SLOTS = Array.from({ length: POOL_SIZE }, (_, i) => i + 1)
+const USED_SLOTS = new Set()
+const repoName = String(REPO).replace(/[\\/]+$/, '').split(/[\\/]/).pop()
+const slotPath = (n) => `~/.clud/worktrees/${repoName}-wt-grind-fixup-${n}`
+const inSlot = (fn) => fixSlots(async () => {
+  const n = FREE_SLOTS.shift()
+  USED_SLOTS.add(n)
+  try { return await fn(n) } finally { FREE_SLOTS.unshift(n) }
+})
+const fixPrompt = (e, kind, n, slot) => {
+  const path = slotPath(slot)
+  const base = baseOf(e.g)
+  return `${e.handoff}\nFollow your FIXUP procedure.\n${headLine(e)}${kind} ${n}: fix this PR in fixup worktree ${path}, never in ${REPO}.\n` +
+    `1. If it is missing: git -C ${REPO} fetch origin, then git -C ${REPO} worktree add --detach ${path} origin/${base}\n` +
+    `2. Recycle it (ignored files such as target/ stay warm): git -C ${path} fetch origin +refs/heads/${e.p.branch}:refs/remotes/origin/${e.p.branch} ${base}, git -C ${path} switch --detach --discard-changes origin/${e.p.branch}, git -C ${path} clean -fd\n` +
+    `3. Rebase onto origin/${base} when the failure is a conflict or the queue dropped it. Fix what is reported, by name; never weaken a test or skip CI.\n` +
+    `4. ${verifyBlock(e.p)}\n` +
+    `5. Push: git -C ${path} push --force-with-lease=${e.p.branch}:<the head you started from> origin HEAD:refs/heads/${e.p.branch}. Return pushed=true and head_sha; a watch follows.\n` +
+    `What failed:\n${e.why}`
+}
+// Returns true when the chain should watch the new head.
+const fixInPool = async (e, kind) => {
+  const n = kind === 'FIX ROUND' ? ++e.fixes : ++e.fixups
+  const tag = `${e.fixes + e.fixups}`
+  log(`goal ${e.g.id}: chaperone ${kind.toLowerCase()} ${n} for ${e.pr}`)
+  const fixed = await inSlot(slot => agent(fixPrompt(e, kind, n, slot),
+    opts('chaperone', `chaperone-fix:${e.g.id}#${tag}`, 'Chaperone', INTEG)).then(r => collect(r, 'chaperone', e.g.id)))
+  if (!fixed || !fixed.pushed) {
+    finish(e, 'stuck', false, `stuck: ${kind.toLowerCase()} ${n} not pushed: ${fixed ? fixed.failure_log || fixed.summary : 'chaperone died'}`)
+    return false
+  }
+  e.head = fixed.head_sha || null
+  e.enqueued = false
+  return true
+}
+const stuckNote = (e, what, why) => `stuck: ${what}: ${why}`
+// What the chain does next: 'watch', 'fix round', 'queue fixup', 'queued' or 'done'.
 const judge = (e, v) => {
   const verdict = (v && v.verdict) || 'stuck'
   const why = v ? v.failure_log || v.summary : 'chaperone died'
-  if (verdict === 'merged') return finish(e, 'merged', true, v.summary || 'merged by the queue')
-  if (verdict === 'base_red') return finish(e, 'base-red', false, `base-red: ${why}`)
-  if (verdict === 'queued') { e.state = 'queued'; return null }
-  if (verdict === 'needs_fixup' && e.fixups < MAX_QUEUE_FIXUPS) { e.state = 'needs_fixup'; e.why = why; return null }
-  if (verdict === 'needs_fixup') return finish(e, 'stuck', false, `stuck: dropped by the merge queue after ${e.fixups} fixup(s): ${why}`)
-  return finish(e, 'stuck', false, `stuck: ${why}`)
+  e.why = why
+  if (v && v.artifacts) e.result.artifacts = { ...(e.result.artifacts || {}), ...v.artifacts }
+  if (verdict === 'merged') { finish(e, 'merged', true, v.summary || 'merged'); return 'done' }
+  if (verdict === 'base_red') {
+    finish(e, 'base-red', false, `base-red: ${why}; the same required job fails on ${MAIN}, so no fix round was spent`)
+    return 'done'
+  }
+  if (verdict === 'queued') { e.enqueued = e.enqueued || v.enqueued === true; return 'queued' }
+  if (verdict === 'tool_misuse') {
+    e.agentErrors++
+    if (e.agentErrors <= MAX_AGENT_ERRORS) return 'watch'
+    finish(e, 'stuck', false, `gave_up: tool misuse (${v.command || v.summary})`)
+    return 'done'
+  }
+  if (verdict === 'needs_fix' && e.fixes < MAX_FIX) return 'FIX ROUND'
+  if (verdict === 'needs_fix') { finish(e, 'stuck', false, stuckNote(e, `checks still red after ${e.fixes} fix round(s)`, why)); return 'done' }
+  if (verdict === 'needs_fixup' && e.fixups < MAX_QUEUE_FIXUPS) return 'QUEUE FIXUP'
+  if (verdict === 'needs_fixup') { finish(e, 'stuck', false, stuckNote(e, `dropped by the merge queue after ${e.fixups} fixup(s)`, why)); return 'done' }
+  finish(e, 'stuck', false, `stuck: ${why}`)
+  return 'done'
 }
-const follow = async (e, tag) => {
+const observe = async (e, tag) => {
   let v = null
-  try { v = await watchQueued(e, tag) } catch (err) { v = { verdict: 'stuck', summary: `chaperone failed: ${err && err.message ? err.message : err}` } }
+  try { v = await watch(e, tag) } catch (err) { v = { verdict: 'stuck', summary: `chaperone failed: ${err && err.message ? err.message : err}` } }
   return judge(e, v)
 }
-const fixup = async (e) => {
-  e.fixups++
-  const n = e.fixups
-  log(`goal ${e.g.id}: queue fixup ${n} of ${MAX_QUEUE_FIXUPS} for ${e.pr}`)
-  const integ = await exclusive(() => agent(
-    `Follow your built-in /grind-integrate procedure.\n\n${ctx(e.g)}\n\nCheckout: ${e.p.checkout}\nBranch: ${e.p.branch}\n${verifyBlock(e.p)}\n\n` +
-    `QUEUE FIXUP ${n} of ${MAX_QUEUE_FIXUPS}: the merge queue dropped ${e.pr}. Switch to ${e.p.branch}, rebase onto origin/${baseOf(e.g)} (git fetch first), ` +
-    `fix what the queue reported, re-verify, push to the same branch (--force-with-lease), then return the checkout to origin/${baseOf(e.g)}.\n${e.why}`,
-    opts('integrator', `fixup:${e.g.id}#${n}`, 'Integrate', INTEG)).then(r => collect(r, 'integrator', e.g.id)))
-  if (!integ || !integ.pushed) return finish(e, 'stuck', false, `stuck: queue fixup ${n} not pushed: ${integ ? integ.failure_log || integ.summary : 'integrator died'}`)
-  const l = await land(e.p, e.g, e.pr, 0, `land:${e.g.id}#fixup${n}`)
-  if (l && l.status === 'enqueued') { e.state = 'enqueued'; e.head = l.head_sha || e.head; return null }
-  if (l && l.status === 'merged') return finish(e, 'merged', true, l.summary)
-  if (l && l.status === 'base_red') return finish(e, 'base-red', false, baseRed(e.pr, l).note)
-  return finish(e, 'stuck', false, `stuck: re-enqueue after fixup ${n} failed: ${l ? l.failure_log || l.summary : 'lander died'}`)
-}
-// One chain per enqueue. Sequential mode never runs a fixup here: the shared
-// checkout belongs to the goal in progress, so the sweep between goals does.
+// Bounded by the fix budgets, the misuse allowance and MAX_QUEUED_WATCHES.
 const chain = async (e) => {
-  for (let watches = 0; ; watches++) {
+  for (let queued = 0; queued < MAX_QUEUED_WATCHES;) {
     e.watches++
-    await follow(e, e.watches)
-    if (PARALLEL && e.state === 'needs_fixup') { await fixup(e); if (e.state === 'enqueued') continue }
-    if (PARALLEL && e.state === 'queued' && watches < 2) continue
-    break
+    const next = await observe(e, e.watches)
+    if (next === 'done') return
+    if (next === 'queued') { queued++; continue }
+    if (next === 'watch') continue
+    if (!(await fixInPool(e, next))) return
+    queued = 0
   }
-  // A dependent never waits on a sweep that cannot run while it does.
-  if (e.state !== 'done') settleOnce(e, false)
+  e.state = 'queued'
+  // A dependent never waits on Finish, which cannot run while it does.
+  settleOnce(e, false)
 }
 const startChain = (e) => {
-  e.idle = false
-  e.running = chain(e).catch(err => finish(e, 'stuck', false, `stuck: ${err && err.message ? err.message : err}`)).finally(() => { e.idle = true })
+  e.running = chain(e).catch(err => finish(e, 'stuck', false, `stuck: ${err && err.message ? err.message : err}`))
 }
-const enqueue = (p, g, integ, l) => {
-  const result = { merged: false, pushed: true, enqueued: true, status: 'enqueued', pr: integ.pr_url,
-    note: l.summary, artifacts: { ...(integ.artifacts || {}), ...(l.artifacts || {}) } }
-  const e = { g, p, pr: integ.pr_url, head: l.head_sha, result, fixups: 0, watches: 0, state: 'enqueued', settled: false }
-  QUEUE.push(e)
+const handOff = (p, g, integ, rv) => {
+  const result = { merged: false, pushed: true, chaperoned: true, status: 'pushed', pr: integ.pr_url,
+    note: integ.summary, artifacts: { ...(integ.artifacts || {}) } }
+  const e = { g, p, pr: integ.pr_url, head: integ.head_sha || null, handoff: handoffOf(p, g, integ, rv), result,
+    enqueued: false, fixes: 0, fixups: 0, agentErrors: 0, watches: 0, why: '', state: 'watching', settled: false }
+  CHAINS.push(e)
   startChain(e)
-  log(`goal ${g.id}: enqueued ${integ.pr_url}; done, the chaperone follows the queue`)
+  log(`goal ${g.id}: pushed ${integ.pr_url}; its chaperone takes it from here`)
   return result
 }
-// Between goals (sequential) and at Finish: NEEDS-FIXUP first, ahead of new work.
-const sweep = async (final) => {
-  for (let progressed = true; progressed;) {
-    progressed = false
-    if (final) await Promise.all(QUEUE.map(e => e.running))
-    for (const e of QUEUE.filter(q => q.idle)) {
-      if (e.state === 'needs_fixup') {
-        await fixup(e)
-        if (e.state === 'enqueued') startChain(e)
-        progressed = true
-      } else if (e.state === 'queued' && !final) {
-        startChain(e)
-      } else if (e.state === 'queued' && !e.finalDone) {
-        e.finalDone = true
-        await follow(e, 'final')
-        progressed = true
-      }
+// Finish: every chain has stopped; a PR still queued gets one last bounded wait.
+const finishChains = async () => {
+  await Promise.all(CHAINS.map(e => e.running))
+  await Promise.all(CHAINS.filter(e => e.state === 'queued').map(async e => {
+    const next = await observe(e, 'final')
+    if (next === 'done') return
+    if (next === 'queued' || next === 'watch') {
+      return finish(e, 'queued', false, `queued: ${e.pr} is still in the merge queue at Finish (not a failure)`)
     }
-  }
-  if (!final) return
-  for (const e of QUEUE.filter(q => q.state !== 'done')) {
-    if (e.state === 'queued') finish(e, 'queued', false, `queued: ${e.pr} is still in the merge queue at Finish (not a failure)`)
-    else finish(e, 'stuck', false, `stuck: ${e.why || 'unresolved in the merge queue'}`)
+    if (await fixInPool(e, next)) {
+      startChain(e)
+      await e.running
+      if (e.state === 'queued') finish(e, 'queued', false, `queued: ${e.pr} is still in the merge queue at Finish (not a failure)`)
+    }
+  }))
+  if (USED_SLOTS.size) {
+    const paths = [...USED_SLOTS].sort().map(slotPath)
+    try {
+      await agent(`Follow your CLEANUP procedure. The run is over. Remove these fixup worktrees of ${REPO}, and nothing else:\n` +
+        paths.map(path => `git -C ${REPO} worktree remove --force ${path}`).join('\n') + `\nA missing one is fine. Report what you removed.`,
+        opts('chaperone', 'chaperone-cleanup', 'Chaperone', CLEANUP))
+    } catch (err) {
+      log(`fixup worktree cleanup failed (the daemon reclaims them later): ${err && err.message ? err.message : err}`)
+    }
   }
 }
 
@@ -1150,7 +1188,7 @@ const attemptGoal = async (g, state) => {
     },
     async () => { worked = await work(state.p, g); state.results = worked.results },
     async () => { reviewed = await review(worked, g); state.review = reviewed.review },
-    () => integrateAndLand(reviewed, g),
+    () => integrateAndHandOff(reviewed, g),
   ])
 }
 
@@ -1202,8 +1240,8 @@ const runGoal = async (g) => {
     log(`goal ${g.id}: park step failed: ${e && e.message ? e.message : e}`)
   } finally {
     outcome[String(g.id)] = result
-    // An enqueued goal settles when its chaperone reports (#2467).
-    if (!result.enqueued) settle[g.id](!!result.merged)
+    // A handed-off goal settles when its chaperone chain does (DD-205).
+    if (!result.chaperoned) settle[g.id](!!result.merged)
   }
   return result
 }
@@ -1212,10 +1250,7 @@ const runBatch = async (goals) => {
   if (PARALLEL) return parallel(goals.map(g => () => runGoal(g)))
   // One goal at a time, all in the local checkout, so the build cache is reused.
   const rs = []
-  for (const g of goals) {
-    await sweep(false)
-    rs.push(await runGoal(g))
-  }
+  for (const g of goals) rs.push(await runGoal(g))
   return rs
 }
 
@@ -1259,6 +1294,8 @@ if (!ORCHESTRATION && STAGES.some(isBugStage) && featureStages.length) {
   for (const b of batches.filter(b => b.goals.length)) {
     log(`${b.label}: ${b.goals.length} goal(s)`)
     const rs = await runBatch(b.goals)
+    // A stage is over when its PRs are: the next one builds on what they land.
+    await Promise.all(CHAINS.map(e => e.running))
     b.goals.forEach((g, i) => { byId[idKey(g.id)] = rs[i] })
   }
   results = args.goals.map(g => byId[idKey(g.id)])
@@ -1267,7 +1304,7 @@ if (!ORCHESTRATION && STAGES.some(isBugStage) && featureStages.length) {
 }
 
 phase('Chaperone')
-await sweep(true)
+await finishChains()
 const summary = args.goals.map((g, i) => ({ goal: g.id, ...(results[i] || { merged: false, note: 'dropped' }), problems: problemsOf(g.id) }))
 summary.filter(s => !s.merged).forEach(s => log(`NOT merged: goal ${s.goal}: ${s.note}`))
 DEFERRED_GOALS.forEach(d => {
@@ -1308,7 +1345,7 @@ if (resume) {
 } else if (FEATURE_MERGE === 'auto') {
   phase('Land')
   const l = collect(await agent(
-    `Follow your built-in /grind-land procedure for the FEATURE PR.\n\n${REPO_HEADER}` +
+    `Follow your built-in /grind-land procedure for the FEATURE PR (the last step of a feature stage; goal PRs have chaperones).\n\n${REPO_HEADER}` +
     (PLAN_URL ? `\nPlan comment: ${PLAN_URL} (read it before you start; it is the recorded plan and never changes).` : '') +
     `\nFeature PR: ${FEATURE.pr}\nFeature branch: ${FEATURE.branch}\n\n` +
     `1. gh pr ready ${FEATURE.pr} --repo ${GITHUB_REPO}\n2. Wait for CI with github/pr_merge_watch.\n` +

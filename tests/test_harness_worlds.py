@@ -140,12 +140,12 @@ def test_questions_after_and_prework_default() -> None:
     hooks = [
         _ask(),
         {"tool_name": "Bash", "agent_type": "grind-prework"},
-        _ask("grind-worker"),
+        _ask("grind-editor"),
         _ask(),
     ]
     result = RunResult(returncode=0, stdout="", requests=[], hooks=hooks)
     assert len(result.questions_before()) == 1
-    assert [q["agent_type"] for q in questions_after(result)] == ["grind-worker", None]
+    assert [q["agent_type"] for q in questions_after(result)] == ["grind-editor", None]
     assert questions_after(result, "grind-lander") == []
 
 

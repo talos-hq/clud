@@ -23,7 +23,7 @@ from tests.harness.test_grind_tracks import _told
 
 
 def report_upstream_artifacts(roles: list[dict]) -> None:
-    upstream_lander = next(role for role in roles if role["name"] == "lander:a:0")
+    upstream_lander = next(role for role in roles if role["name"] == "chaperone:a:0")
     upstream_lander["steps"][-1]["tool_use"]["input"]["artifacts"] = {
         "version": "0.9.0", "tag": "v0.9.0",
         "release_url": "https://github.com/o/r/releases/tag/v0.9.0",
@@ -74,7 +74,7 @@ def test_approved_merge_dependency_gates_planning(
     _no_notes(result)
     ran = _by_role(result)
     if upstream_succeeds:
-        assert max(ran["lander:a:0"]) < min(ran["planner:b"])
+        assert max(ran["chaperone:a:0"]) < min(ran["planner:b"])
         assert _merged(h) == ["grind/a", "grind/b", "grind/c"]
         downstream = json.dumps(result.first_request("planner:b")["messages"])
         assert "Upstream results (approved blockers):" in downstream
@@ -121,7 +121,7 @@ def test_reported_release_artifacts_do_not_open_publication_gate(
     assert result.returncode == 0, result.stderr + result.stdout[-3000:]
     _no_notes(result)
     ran = _by_role(result)
-    assert "lander:a:0" in ran
+    assert "chaperone:a:0" in ran
     assert "gate:b" in ran
     assert not any(role in ran for role in ("planner:b", "worker:b", "reviewer:b", "integrator:b"))
     assert not any(role.startswith("lander:b:") for role in ran)
@@ -164,7 +164,7 @@ def test_successful_native_publication_check_opens_dependent_goal(
     _no_notes(result)
     ran = _by_role(result)
     assert "gate:b" in ran, ran
-    assert max(ran["lander:a:0"]) < min(ran["gate:b"])
+    assert max(ran["chaperone:a:0"]) < min(ran["gate:b"])
     assert max(ran["gate:b"]) < min(ran["planner:b"])
     assert _merged(h) == ["grind/a", "grind/b"]
     checks = [row for row in result.hooks if row.get("agent_type") == "grind-gate"

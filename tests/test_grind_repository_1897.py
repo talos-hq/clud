@@ -95,11 +95,12 @@ def test_every_workflow_role_receives_the_selected_repository(tmp_path: Path) ->
         feature_merge="auto",
     )
     assert "error" not in result, result
-    assert {item["role"] for item in result["prompts"]} == {
-        "grind-prework", "grind-planner", "grind-worker", "grind-reviewer",
-        "grind-integrator", "grind-lander",
+    calls = [item for item in result["prompts"] if "role" in item]
+    assert {item["role"] for item in calls} == {
+        "grind-prework", "grind-planner", "grind-editor", "grind-reviewer",
+        "grind-integrator", "grind-lander", "grind-chaperone",
     }, result
-    for item in result["prompts"]:
+    for item in calls:
         assert "GitHub repository: fork/project" in item["prompt"], item
         starts = list(re.finditer(
             r"\bgh (?:pr|issue|label) (?:view|edit|comment|create|merge|ready)\b",
@@ -108,7 +109,7 @@ def test_every_workflow_role_receives_the_selected_repository(tmp_path: Path) ->
         for index, match in enumerate(starts):
             end = starts[index + 1].start() if index + 1 < len(starts) else len(item["prompt"])
             assert "--repo fork/project" in item["prompt"][match.start():end], item
-    feature = next(item for item in result["prompts"] if item["label"] == "land:feature")
+    feature = next(item for item in calls if item["label"] == "land:feature")
     commands = re.findall(r"(?m)^\d+\. (gh .+)$", feature["prompt"])
     assert len(commands) == 2, feature
     for command in commands:

@@ -28,7 +28,7 @@ def test_counts_repeats_within_a_run(tmp_path: Path) -> None:
     _agent(
         run,
         "a",
-        "grind-worker",
+        "grind-editor",
         [
             [_use(1, "Read", file_path="/r/a.rs"), _use(2, "Bash", command="gh issue view 7")],
             [_result(1, "x" * 30), _result(2, "body")],
@@ -50,8 +50,8 @@ def test_counts_repeats_within_a_run(tmp_path: Path) -> None:
     )
     result = stats.report(stats.collect([run]))
     assert result["runs"] == 1
-    assert result["agents_by_role"] == {"worker": 1, "integrator": 1}
-    assert result["calls_per_agent_by_role"] == {"worker": 2.0, "integrator": 4.0}
+    assert result["agents_by_role"] == {"editor": 1, "integrator": 1}
+    assert result["calls_per_agent_by_role"] == {"editor": 2.0, "integrator": 4.0}
     assert (result["read"], result["read_repeat"], result["read_sliced"]) == (2, 1, 1)
     assert (result["gh_issue_view"], result["gh_issue_view_repeat"]) == (2, 1)
     assert result["bash_wait_loops"] == 1

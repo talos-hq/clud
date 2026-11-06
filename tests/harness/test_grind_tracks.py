@@ -37,10 +37,11 @@ from tests.harness.worlds import _issue, _world
 MARK = {
     "prework": "You are the /grind prework role",
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 META = "100"
 RUN_ID = "1f3a"
@@ -175,11 +176,11 @@ def _goal(h: Harness, goal: str, *, feature: bool, stuck: bool = False) -> list[
     )
     url = f"https://github.com/o/r/pull/{branch}"
     land = (
-        [_structured({"status": "gave_up", "summary": "stuck", "failure_log": "red"})]
+        [_structured({"verdict": "stuck", "summary": "stuck", "failure_log": "red"})]
         if stuck
         else [
-            _bash(f"gh pr merge {branch} --merge"),
-            _after(OK, _structured({"status": "merged", "summary": "green"})),
+            _bash(f"gh pr merge {branch} --merge --match-head-commit HEAD"),
+            _after(OK, _structured({"verdict": "merged", "summary": "green"})),
         ]
     )
     return [
@@ -205,7 +206,7 @@ def _goal(h: Harness, goal: str, *, feature: bool, stuck: bool = False) -> list[
                 _after(OK, _structured({"pushed": True, "pr_url": url, "summary": "p"})),
             ],
         ),
-        _role(f"lander:{goal}", "lander", [at, "Fix rounds used: 0 of"], land),
+        _role(f"chaperone:{goal}", "chaperone", [at, "Follow your WATCH"], land),
     ]
 
 
@@ -424,7 +425,7 @@ def test_t3_t6_mixed_bugs_land_before_the_feature_branch_is_cut(harness: Harness
     # T3: every bug lander finished before the router created the branch ref,
     # and no feature goal started before it.
     for b in bugs:
-        assert last[f"lander:{b}"] < cut, (b, cut, last)
+        assert last[f"chaperone:{b}"] < cut, (b, cut, last)
     for f in features:
         assert first[f"planner:{f}"] > cut, (f, cut, first)
     for b in bugs:

@@ -38,10 +38,11 @@ from tests.harness.worlds import _issue, _world
 
 MARK = {
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 META = "100"
 RUN_ID = "1f3a"
@@ -221,7 +222,7 @@ def _goal_roles(
     land = lander or [
         _bash(f"gh pr merge {branch} --merge"),
         _after(OK, _bash(_record(goal))),
-        _after(OK, _structured({"status": "merged", "summary": "green"})),
+        _after(OK, _structured({"verdict": "merged", "summary": "green"})),
     ]
     return [
         _role(f"planner:{goal}", "planner", at, planner),
@@ -252,7 +253,7 @@ def _goal_roles(
                 )
             ],
         ),
-        _role(f"lander:{goal}", "lander", [at, "Fix rounds used: 0 of"], land),
+        _role(f"chaperone:{goal}", "chaperone", [at, "Follow your WATCH"], land),
     ]
 
 
@@ -418,7 +419,7 @@ def test_f2_goal_prs_target_the_feature_branch_and_main_is_unchanged(harness: Ha
         assert f"Base: origin/{FEATURE}" in text, text[-3000:]
         assert "Base: origin/main" not in text
         assert f"Feature-stage goal: merge this PR into the feature branch {FEATURE}" in _prompt(
-            result, f"lander:{g}"
+            result, f"chaperone:{g}"
         )
     assert _origin(harness, "main") == main_sha
     # Goal merges land on the feature branch, so they close nothing yet.
@@ -436,11 +437,11 @@ def test_f3_feature_pr_body_collects_closes_lines(harness: Harness) -> None:
     # integrator never touches the feature PR (a goal that never lands must
     # not be closed by the feature merge).
     for g in GOALS:
-        land = _prompt(result, f"lander:{g}")
+        land = _prompt(result, f"chaperone:{g}")
         assert f"Closes #{g}" in land, land[-3000:]
         assert _marker("<n>") in land, land[-3000:]
         assert "Do not edit the feature PR" in _prompt(result, f"integrator:{g}")
-    assert _attempted(result, "grind-lander", f"gh pr edit {PR}")
+    assert _attempted(result, "grind-chaperone", f"gh pr edit {PR}")
     assert not _attempted(result, "grind-integrator", "gh pr edit")
     assert _calls(harness, "pr", "edit", PR), harness.read_gh_state()["calls"]
 
@@ -504,7 +505,7 @@ def test_f4_auto_readies_then_merge_commits_and_closes_issues(harness: Harness) 
     for n in (META, *GOALS):
         assert issues[n]["state"] == "closed", (n, issues[n])
         assert issues[n]["closed_by"] == {"kind": "pr", "pr": int(PR)}, (n, issues[n])
-    assert _first(result)["lander:feature"] > max(_first(result)[f"lander:{g}"] for g in GOALS)
+    assert _first(result)["lander:feature"] > max(_first(result)[f"chaperone:{g}"] for g in GOALS)
 
 
 def test_f5_required_review_leaves_the_pr_open_waiting_for_review(harness: Harness) -> None:
@@ -569,7 +570,7 @@ def test_f7_decide_later_readies_the_pr_and_denies_merging_it(harness: Harness) 
         _bash(denied),
         _after(_denied("decide later"), _bash("gh pr merge grind/102 --merge")),
         _after(OK, _bash(_record("102"))),
-        _after(OK, _structured({"status": "merged", "summary": "green"})),
+        _after(OK, _structured({"verdict": "merged", "summary": "green"})),
     ]
     roles = _goals(harness, "sequential", landers={"102": lander})
     # Finish under `later`: every goal landed, so the router marks the PR
@@ -580,11 +581,11 @@ def test_f7_decide_later_readies_the_pr_and_denies_merging_it(harness: Harness) 
     ]
     result = _run(harness, roles, merge="decide_later", post=post)
     _no_notes(result)
-    assert _attempted(result, "grind-lander", denied)
+    assert _attempted(result, "grind-chaperone", denied)
     assert _main_attempted(result, denied)
     assert not _calls(harness, "pr", "merge", PR)
     assert _calls(harness, "pr", "ready", PR)
-    assert not _attempted(result, "grind-lander", f"gh pr ready {PR}")
+    assert not _attempted(result, "grind-chaperone", f"gh pr ready {PR}")
     pr = _pr(harness, PR)
     assert pr["state"] == "OPEN", pr
     assert pr["draft"] is False, pr
@@ -639,7 +640,7 @@ def test_f10_parallel_goal_worktrees_are_based_on_the_feature_branch(harness: Ha
     plain = {
         g: [
             _bash(f"gh pr merge grind/{g} --merge"),
-            _after(OK, _structured({"status": "merged", "summary": "green"})),
+            _after(OK, _structured({"verdict": "merged", "summary": "green"})),
         ]
         for g in GOALS
     }
@@ -678,7 +679,7 @@ def test_f12_no_grind_branch_deletion_while_the_feature_pr_is_open(harness: Harn
         _after(OK, _bash(delete)),
         _after(
             _denied("may not delete grind/* branches"),
-            _structured({"status": "merged", "summary": "green"}),
+            _structured({"verdict": "merged", "summary": "green"}),
         ),
     ]
     roles = _goals(harness, "sequential", landers={"102": lander})
@@ -688,7 +689,7 @@ def test_f12_no_grind_branch_deletion_while_the_feature_pr_is_open(harness: Harn
     post = [_after(OK, _bash(router_delete))]
     result = _run(harness, roles, post=post)
     _no_notes(result)
-    assert _attempted(result, "grind-lander", delete)
+    assert _attempted(result, "grind-chaperone", delete)
     assert _main_attempted(result, router_delete)
     for branch in ("grind/102", "grind/103", FEATURE):
         assert _origin_has(harness, branch), branch

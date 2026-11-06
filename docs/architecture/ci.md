@@ -609,8 +609,12 @@ and [DD-192](../DESIGN_DECISIONS.md#dd-192-workers-end-at-enqueue-and-a-chaperon
 and the harness can run background agents. With no required queue, or without
 background agents, the agent observes the PR until it merges, per repository
 policy (a repository with no hosted required checks merges after the local
-gate). One checkout per worker; parallelism comes from cheap chaperones, not
-worktrees.
+gate). One checkout per worker; parallelism comes from chaperones, not
+worktrees. `/grind` runs a stricter form of this contract: one large-model
+chaperone per PR, handed off at push, that fixes up itself in a bounded recycled
+worktree pool instead of returning `NEEDS-FIXUP` to a worker; see
+[grind.md](grind.md#integration-order-one-editor-one-integrator-n-chaperones)
+and [DD-205](../DESIGN_DECISIONS.md#dd-205-grind-is-one-editor-one-integrator-and-n-chaperones).
 
 - **Worker:** fix, test, lint, push. Apply the repository's native-coverage
   labels, if any, at creation with `gh pr create --label`, never later. Wait

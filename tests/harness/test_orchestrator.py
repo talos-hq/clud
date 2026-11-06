@@ -144,7 +144,7 @@ def test_orchestrator_exception_keeps_workers_internal(harness: Harness) -> None
     """T2: adding the router advisor must not open direct worker delegation."""
     script = orchestrator_script([])
     call = script["roles"][-1]["steps"][0]["tool_use"]["input"]
-    call["subagent_type"] = "grind-worker"
+    call["subagent_type"] = "grind-editor"
     script["roles"][-1]["steps"][1] = _after(
         {"is_error": True, "content_contains": "internal /grind role"}, {"text": "REFUSED"},
     )

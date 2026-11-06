@@ -45,10 +45,11 @@ from tests.harness.worlds import (
 MARK = {
     "prework": "You are the /grind prework role",
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 TOP = 1
 V1 = "<!-- grind:v1 -->"
@@ -632,12 +633,12 @@ def _goal_roles(h: Harness, goal: str) -> list[dict[str, Any]]:
             [_bash(push), _after(OK, _structured({"pushed": True, "pr_url": url, "summary": "p"}))],
         ),
         _role(
-            f"lander:{goal}",
-            "lander",
-            [at, "Fix rounds used: 0 of"],
+            f"chaperone:{goal}",
+            "chaperone",
+            [at, "Follow your WATCH"],
             [
-                _bash(f"gh pr merge {branch} --admin --squash"),
-                _after(OK, _structured({"status": "merged", "summary": "green"})),
+                _bash(f"gh pr merge {branch} --squash --match-head-commit HEAD"),
+                _after(OK, _structured({"verdict": "merged", "summary": "green"})),
             ],
         ),
     ]

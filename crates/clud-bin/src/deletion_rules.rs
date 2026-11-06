@@ -157,7 +157,7 @@ pub fn redirect_for_in(
 pub enum Profile {
     Main,
     GrindIntegrator,
-    GrindWorker,
+    GrindEditor,
     GrindReviewer,
     GrindPlanner,
     GrindPrework,
@@ -206,7 +206,7 @@ pub fn compile(profile: Profile) -> Result<BTreeSet<&'static str>, String> {
     let (add, revoke): (&[&str], &[&str]) = match profile {
         Profile::Main => (&[], &[]),
         Profile::GrindIntegrator => (&["delete/roots.checkout"], &["delete/roots.session"]),
-        Profile::GrindWorker | Profile::GrindReviewer => {
+        Profile::GrindEditor | Profile::GrindReviewer => {
             (&["delete/roots.task-dirs"], &["delete/roots.session"])
         }
         Profile::GrindPlanner | Profile::GrindPrework | Profile::GrindLander => {
@@ -270,7 +270,7 @@ mod tests {
         for profile in [
             Profile::Main,
             Profile::GrindIntegrator,
-            Profile::GrindWorker,
+            Profile::GrindEditor,
             Profile::GrindReviewer,
             Profile::GrindPlanner,
             Profile::GrindPrework,
@@ -321,7 +321,7 @@ mod tests {
             scope(Profile::GrindIntegrator).unwrap(),
             DeleteScope::Checkout
         );
-        assert_eq!(scope(Profile::GrindWorker).unwrap(), DeleteScope::TaskDirs);
+        assert_eq!(scope(Profile::GrindEditor).unwrap(), DeleteScope::TaskDirs);
         assert_eq!(
             scope(Profile::GrindReviewer).unwrap(),
             DeleteScope::TaskDirs

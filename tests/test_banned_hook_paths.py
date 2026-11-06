@@ -43,7 +43,7 @@ def test_hook_config_selection() -> None:
     assert is_hook_config("sub/.codex/hooks.json")
     assert is_hook_config(".claude/settings.local.json")
     assert not is_hook_config("docs/settings.json")
-    assert not is_hook_config(".claude/agents/grind-worker.md")
+    assert not is_hook_config(".claude/agents/grind-editor.md")
 
 
 def test_this_repo_hook_configs_are_portable() -> None:

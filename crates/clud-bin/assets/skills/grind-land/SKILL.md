@@ -1,8 +1,9 @@
 ---
 name: grind-land
-description: "Land one /grind PR: watch its checks with pr_merge_watch, enqueue it when green (the goal is done at enqueue; a chaperone follows the queue), or diagnose the failure and hand it back to the integrator. Never edits or builds."
+description: "Land one /grind PR: watch its checks with pr_merge_watch, enqueue it when green, follow the queue, and classify every exit code. The grind-chaperone uses it for goal PRs and the grind-lander for the final feature PR."
 triggers:
-  - When the grind workflow lands a pushed PR
+  - When a grind chaperone watches a pushed PR
+  - When the grind workflow lands the final feature PR
   - When the user asks to watch a PR and merge it once green
 disable-model-invocation: true
 ---
@@ -14,11 +15,11 @@ Use the prompt's **GitHub repository** (`OWNER/REPO`) as `<github-repo>`. Keep t
 
 Keep tool output bounded (narrow searches, capped lists, ranged reads, bulk on disk, no identical repeats): https://github.com/zackees/clud/blob/main/docs/architecture/bounded-output.md
 
-The integrator already proved RED -> GREEN locally; you confirm it on the
-server and enqueue. **You end at enqueue** ([DD-192](https://github.com/talos-hq/clud/blob/main/docs/DESIGN_DECISIONS.md#dd-192-workers-end-at-enqueue-and-a-chaperone-owns-the-merge), #2467):
-never wait for the merge and never rebase before landing; the queue's
+The integrator already proved RED -> GREEN and the lint gate locally; you
+confirm it on the server and enqueue. Never rebase before landing: the queue's
 `merge_group` run tests the merged tree and a real conflict shows up as an
-ejection, which the workflow's `grind-chaperone` reports back.
+ejection. In a /grind run a `grind-chaperone` goes on to follow the queue and
+fix what fails ([DD-205](https://github.com/talos-hq/clud/blob/main/docs/DESIGN_DECISIONS.md#dd-205-grind-is-one-editor-one-integrator-and-n-chaperones)); its agent file maps the statuses below to verdicts.
 
 1. **Choose the wait budget and scope.** Check the declared execution tools
    and the slowest selected CI lane, including queue/setup time. With a
@@ -42,8 +43,8 @@ ejection, which the workflow's `grind-chaperone` reports back.
    - `0` (checks green, mergeable): satisfy required review, resolve the full
      head SHA, then submit with `clud tool run github/pr_merge.py -- <n>
      --repo <github-repo> --match-head-commit <head-sha>`. This honors a
-     required merge queue. Return `status=enqueued` with `head_sha` at once;
-     do not run `--until merged` (the workflow's chaperone does). Return
+     required merge queue. Without a chaperone's prompt saying to follow the queue, return
+     `status=enqueued` with `head_sha` at once. Return
      `status=merged` only when pr_merge.py itself reports the PR merged (a
      base with no queue). The watch never waits for
      CodeRabbit unless you pass `--coderabbit-wait N`; never pass it for a
@@ -167,10 +168,9 @@ ejection, which the workflow's `grind-chaperone` reports back.
    merge, stop and return "waiting for review". Under `later` or `comment`
    leave the feature PR alone. clud's command hook enforces these rules for
    the lander.
-4. You cannot edit or build. The workflow gives a `needs_fix` to the
-   integrator and calls you again, up to 10 rounds. Each fix round goes back
-   through the integrator, which reruns the run's lint and test scripts
-   before pushing.
+4. A `needs_fix` returns to the chaperone's own FIXUP procedure, up to 10
+   rounds, each rerunning the verify commands and multi-platform lint gate
+   before pushing. Direct use of this skill reports it instead.
 
 ## Platform coverage selection
 
