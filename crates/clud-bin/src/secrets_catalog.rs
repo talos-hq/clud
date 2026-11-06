@@ -93,7 +93,7 @@ mod tests {
         assert_eq!(built.daemon_command[1], "secrets-daemon");
         assert!(built
             .ask_command
-            .contains(&OsString::from("/h/.lokr/store/{name}")));
+            .contains(&Path::new("/h/.lokr/store").join("{name}").into_os_string()));
     }
 
     #[test]

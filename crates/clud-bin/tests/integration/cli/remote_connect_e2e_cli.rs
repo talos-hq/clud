@@ -336,13 +336,15 @@ fn shell_output_reaches_the_server_and_the_client_terminal() {
     let (command, marker) = print_marker();
     operator.type_into_shell(command);
     operator.wait_shell_output(marker);
-    client.wait_for(marker);
     operator.send(json!({"type":"pty_resize", "pty_id":"shell", "rows":40, "cols":100}));
     operator.type_into_shell("exit 7");
     assert_eq!(operator.wait_event("pty_exit")["code"], 7);
     operator.send(json!({"type":"disconnect"}));
     client.wait_for("clud.bot has ended a connection");
     assert_eq!(client.wait_exit(), 0);
+    // Only now: ConPTY positions text without newlines, and this harness reads lines.
+    let shown = client.text();
+    assert!(shown.contains(marker), "client terminal missed it: {shown}");
 }
 
 #[test]
