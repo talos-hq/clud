@@ -37,6 +37,10 @@ before printing anything else. A single worker owns stdout: past 2 MiB waiting
 on a stalled local terminal, mirrored output is dropped and the gap is reported,
 while the session and the server's copy carry on unaffected.
 
+ConPTY holds a new shell until its first `ESC[6n` is answered. The Windows client
+answers that one query and removes it from the stream: the operator's terminal may
+not be attached or hold control, and a second reply would reach the shell as input.
+
 Terminal writes run on a separate bounded worker so a program that stops reading
 input cannot prevent session cancellation. Output frames are at most 16 KiB and
 the forwarding queue holds at most 128 frames (2 MiB). An overloaded input/output pump
