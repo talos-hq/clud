@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 
 use crate::subprocess::{capture_separate, CapturedOutput};
 
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct AbArgs {
     #[arg(long, value_delimiter = ',', required = true)]
     pub backends: Vec<String>,
