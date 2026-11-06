@@ -170,6 +170,7 @@ pub mod setup_command;
 pub mod shell;
 pub mod shell_ast;
 pub mod shim_install;
+pub mod version_dir;
 pub mod shim_main;
 pub mod shim_registry;
 pub mod shim_resolve;

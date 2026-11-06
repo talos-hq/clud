@@ -87,6 +87,8 @@ def test_rm_identity_tests_pass_under_exported_session_vars() -> None:
 SESSION_PATH_DIRS = [
     str(Path("home", ".clud", "state", "rm-shim")),
     str(Path("home", ".clud", "state", "shims")),
+    str(Path("home", ".clud", "state", "versions", "v1-abc", "rm-shim")),
+    str(Path("home", ".clud", "state", "versions", "v1-abc", "shims")),
 ]
 
 

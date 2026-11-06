@@ -713,6 +713,7 @@ mod tests {
             "clud safe-rm -r build",
             "\"$CLUD_EXE\" safe-rm a",
             "/home/u/.clud/state/rm-shim/safe-rm --purge -r build",
+            "/home/u/.clud/state/versions/v2.8.57-0123456789abcdef/rm-shim/safe-rm a",
             "find build -name '*.o' -type f -exec safe-rm {} +",
             "find . -name '*.tmp' -print0 | xargs -0 safe-rm",
         ] {

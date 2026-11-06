@@ -387,6 +387,11 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// RED stub.
+pub fn session_mismatch(_session: Option<&Path>, _active: &Path) -> Option<Finding> {
+    None
+}
+
 /// `clud doctor`: print the report; exit 1 when an alias is wrong. With
 /// `fix`, repair first and report what remains.
 pub fn run(as_json: bool, fix: bool) -> i32 {

@@ -596,6 +596,11 @@ fn path_with_appended(path_env: &str, dir: &Path) -> Option<String> {
         .and_then(|joined| joined.into_string().ok())
 }
 
+/// RED stub.
+fn path_with_helper(path_env: &str, dir: &Path, _home: Option<&Path>) -> Option<String> {
+    path_with_appended(path_env, dir)
+}
+
 fn hook_home_dir() -> Option<PathBuf> {
     std::env::var_os("CLUD_HOOK_HOME")
         .map(PathBuf::from)
@@ -966,6 +971,25 @@ mod tests {
         let alias = tmp.path().join("install").join(native_helper_name());
         crate::alias_link::install_alias(&clud, &alias).unwrap();
         assert_eq!(foreign_helper_warning(&alias, &clud, false), None);
+    }
+
+    /// A clud started inside an older session must not leave that build's
+    /// scanner ahead of its own.
+    #[test]
+    fn the_session_helper_replaces_another_builds_helper_on_path() {
+        let home = Path::new("/home/u");
+        let root = home.join(crate::version_dir::ROOT_SUBDIR);
+        let old = root.join("v1-old/helper-bin");
+        let legacy = home.join(HELPER_BIN_SUBDIR);
+        let new = root.join("v2-new/helper-bin");
+        let base = std::env::join_paths([Path::new("/usr/bin"), &old, &legacy])
+            .unwrap()
+            .into_string()
+            .unwrap();
+        let updated = path_with_helper(&base, &new, Some(home)).unwrap();
+        let entries: Vec<PathBuf> = std::env::split_paths(&updated).collect();
+        assert_eq!(entries, vec![PathBuf::from("/usr/bin"), new.clone()]);
+        assert_eq!(path_with_helper(&updated, &new, Some(home)), None);
     }
 
     /// #2514-style regression: a foreign `clud-cmd-scan` first on PATH made
