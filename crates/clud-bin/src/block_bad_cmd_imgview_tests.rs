@@ -5,6 +5,16 @@ use super::*;
 
 const LIMIT: u32 = DEFAULT_LIMIT;
 const PATH: &str = "/w/cur.png";
+/// A frame of 180 KB, the size the measured audit session captured.
+const FRAME: u64 = 180 * 1024;
+
+fn facts<'a>(path: &'a str, hash: Option<&'a str>) -> Facts<'a> {
+    Facts {
+        path,
+        hash,
+        size: FRAME,
+    }
+}
 
 /// Feed one path through the table `n` times, `gap` seconds apart, and return
 /// the verdicts in order.
@@ -198,14 +208,31 @@ fn a_session_ledger_persists_across_calls() {
     let dir = temp_state_dir("persist");
     let mut verdicts = Vec::new();
     for _ in 0..LIMIT + 2 {
-        verdicts.push(record(&dir, "sess-1", PATH, 1_000, LIMIT));
+        verdicts.push(record(
+            &dir,
+            "sess-1",
+            &facts(PATH, None),
+            1_000,
+            LIMIT,
+            SESSION_LIMIT,
+        ));
     }
     assert_eq!(
         refused(&verdicts),
         vec![usize::try_from(LIMIT).unwrap() + 1]
     );
     // A different session starts clean.
-    assert_eq!(record(&dir, "sess-2", PATH, 1_000, LIMIT), Verdict::Allow);
+    assert_eq!(
+        record(
+            &dir,
+            "sess-2",
+            &facts(PATH, None),
+            1_000,
+            LIMIT,
+            SESSION_LIMIT
+        ),
+        Verdict::Allow
+    );
     assert!(dir.join(DIR_NAME).is_dir());
     let _ = std::fs::remove_dir_all(&dir);
 }
@@ -213,7 +240,10 @@ fn a_session_ledger_persists_across_calls() {
 #[test]
 fn a_zero_limit_writes_no_state() {
     let dir = temp_state_dir("disabled");
-    assert_eq!(record(&dir, "sess-1", PATH, 1_000, 0), Verdict::Allow);
+    assert_eq!(
+        record(&dir, "sess-1", &facts(PATH, None), 1_000, 0, SESSION_LIMIT),
+        Verdict::Allow
+    );
     assert!(!dir.exists());
 }
 
@@ -239,4 +269,221 @@ fn the_notes_name_the_file_the_cost_and_the_way_out() {
         last.contains("The next view of this file asks once"),
         "{last}"
     );
+}
+
+/// Feed `count` distinct frames, one path each, one second apart, and return
+/// the verdicts in order.
+fn walk_session(count: u32) -> Vec<Verdict> {
+    let mut state: Option<State> = None;
+    let mut out = Vec::new();
+    for index in 0..count {
+        let path = format!("/w/frame{index}.png");
+        let hash = format!("h{index}");
+        let (verdict, next) = decide_frame(
+            state.as_ref(),
+            &facts(&path, Some(&hash)),
+            1_000 + u64::from(index),
+            LIMIT,
+            SESSION_LIMIT,
+        );
+        out.push(verdict);
+        state = Some(next);
+    }
+    out
+}
+
+fn session_nudged(history: &[Verdict]) -> usize {
+    history
+        .iter()
+        .filter(|verdict| matches!(verdict, Verdict::SessionNudge { .. }))
+        .count()
+}
+
+fn session_refused(history: &[Verdict]) -> Vec<usize> {
+    history
+        .iter()
+        .enumerate()
+        .filter(|(_, verdict)| matches!(verdict, Verdict::SessionDeny { .. }))
+        .map(|(index, _)| index + 1)
+        .collect()
+}
+
+#[test]
+fn many_paths_get_a_session_budget_the_per_path_count_cannot_see() {
+    // The measured audit session: 31 frames over 29 paths, 2 views per path, so
+    // the per-path budget stayed silent for all 31.
+    let history = walk_session(SESSION_LIMIT + 7);
+    assert_eq!(
+        session_refused(&history),
+        vec![usize::try_from(SESSION_LIMIT).unwrap() + 1]
+    );
+    // Every later frame is nudged: the note keeps riding after the refusal.
+    let late = usize::try_from(SESSION_LIMIT + 7).unwrap();
+    let quiet = usize::try_from(SESSION_NUDGE).unwrap();
+    assert_eq!(session_nudged(&history), late - quiet - 1);
+    // The retry runs and the session refusal is spent.
+    assert!(!matches!(
+        history[usize::try_from(SESSION_LIMIT).unwrap() + 1],
+        Verdict::SessionDeny { .. }
+    ));
+}
+
+#[test]
+fn a_session_denial_names_the_frames_and_the_payload() {
+    let history = walk_session(SESSION_LIMIT + 1);
+    match &history[usize::try_from(SESSION_LIMIT).unwrap()] {
+        Verdict::SessionDeny { frames, kb } => {
+            assert_eq!(*frames, SESSION_LIMIT + 1);
+            // 25 frames of 180 KB, counted in whole KB.
+            assert_eq!(*kb, u64::from(SESSION_LIMIT + 1) * 180);
+        }
+        other => panic!("expected a session denial, got {other:?}"),
+    }
+}
+
+#[test]
+fn the_same_bytes_twice_are_one_frame() {
+    // A re-read or a copy is not a new frame: identity must not inflate the
+    // session budget (block_bad_cmd_reread refuses the read before it lands).
+    let mut state: Option<State> = None;
+    let mut verdicts = Vec::new();
+    for index in 0..SESSION_LIMIT * 3 {
+        let (verdict, next) = decide_frame(
+            state.as_ref(),
+            &facts("/w/one.png", Some("same")),
+            1_000 + u64::from(index),
+            LIMIT,
+            0,
+        );
+        verdicts.push(verdict);
+        state = Some(next);
+    }
+    assert_eq!(state.as_ref().unwrap().frames.len(), 1);
+    assert!(verdicts.iter().all(|verdict| !matches!(
+        verdict,
+        Verdict::SessionDeny { .. } | Verdict::SessionNudge { .. }
+    )));
+}
+
+#[test]
+fn a_zero_session_limit_keeps_only_the_per_path_budget() {
+    let verdicts = walk_session_with(SESSION_LIMIT * 2, 0, Some("h"));
+    assert!(verdicts.iter().all(|verdict| !matches!(
+        verdict,
+        Verdict::SessionDeny { .. } | Verdict::SessionNudge { .. }
+    )));
+}
+
+fn walk_session_with(count: u32, session_limit: u32, _tag: Option<&str>) -> Vec<Verdict> {
+    let mut state: Option<State> = None;
+    let mut out = Vec::new();
+    for index in 0..count {
+        let path = format!("/w/p{index}.png");
+        let hash = format!("k{index}");
+        let (verdict, next) = decide_frame(
+            state.as_ref(),
+            &facts(&path, Some(&hash)),
+            1_000 + u64::from(index),
+            LIMIT,
+            session_limit,
+        );
+        out.push(verdict);
+        state = Some(next);
+    }
+    out
+}
+
+#[test]
+fn a_frame_without_a_hash_fails_open() {
+    // No hash (unreadable, oversized, or hashing skipped) must not disable the
+    // session budget: the frame was still returned and is still retained.
+    let mut state: Option<State> = None;
+    let mut denied = 0;
+    for index in 0..SESSION_LIMIT + 2 {
+        let path = format!("/w/n{index}.png");
+        let (verdict, next) = decide_frame(
+            state.as_ref(),
+            &facts(&path, None),
+            1_000 + u64::from(index),
+            LIMIT,
+            SESSION_LIMIT,
+        );
+        if matches!(verdict, Verdict::SessionDeny { .. }) {
+            denied += 1;
+        }
+        state = Some(next);
+    }
+    // No hash means no frame identity, so this budget stays silent; the
+    // per-path budget is what covers that case. Fail open, never fail closed.
+    assert_eq!(denied, 0);
+}
+
+#[test]
+fn a_state_file_without_frames_still_loads() {
+    let legacy = r#"{"views":{"/w/cur.png":{"count":2,"last":1000,"denied":false}}}"#;
+    let state: State = serde_json::from_str(legacy).unwrap();
+    assert_eq!(state.frames.len(), 0);
+    assert!(!state.session_denied);
+    assert_eq!(state.views.get(PATH).unwrap().count, 2);
+}
+
+#[test]
+fn the_frame_memory_is_bounded() {
+    let mut state: Option<State> = None;
+    for index in 0..MAX_FRAMES * 2 {
+        let path = format!("/w/b{index}.png");
+        let hash = format!("b{index}");
+        let (_, next) = decide_frame(
+            state.as_ref(),
+            &facts(&path, Some(&hash)),
+            1_000 + u64::try_from(index).unwrap(),
+            LIMIT,
+            SESSION_LIMIT,
+        );
+        state = Some(next);
+    }
+    assert_eq!(state.unwrap().frames.len(), MAX_FRAMES);
+}
+
+#[test]
+fn the_session_env_reads_defensively() {
+    assert_eq!(session_limit_from(None), SESSION_LIMIT);
+    assert_eq!(session_limit_from(Some("40")), 40);
+    assert_eq!(session_limit_from(Some(" 0 ")), 0);
+    assert_eq!(session_limit_from(Some("nope")), SESSION_LIMIT);
+}
+
+#[test]
+fn the_session_messages_name_the_cost_and_the_way_out() {
+    let nudge = session_nudge_message("cur.png", 13, 2340);
+    assert!(nudge.contains("13 image frames"));
+    assert!(nudge.contains("2340 KB"));
+    assert!(nudge.contains("cur.png"));
+    assert!(nudge.contains(SESSION_ENV));
+
+    let deny = session_deny_message("cur.png", 25, 4500);
+    assert!(deny.contains("frame 25"));
+    assert!(deny.contains("4500 KB"));
+    assert!(deny.contains("once per session"));
+    assert!(deny.contains(SESSION_ENV));
+    assert!(deny.contains(LIMIT_ENV));
+}
+
+#[test]
+fn the_content_hash_is_stable_and_distinguishes_bytes() {
+    let dir = temp_state_dir("hash");
+    std::fs::create_dir_all(&dir).unwrap();
+    let a = dir.join("a.png");
+    let b = dir.join("b.png");
+    std::fs::write(&a, vec![7u8; 12 * 1024]).unwrap();
+    std::fs::write(&b, vec![7u8; 12 * 1024]).unwrap();
+    let ha = content_hash(&a, 12 * 1024).unwrap();
+    let hb = content_hash(&b, 12 * 1024).unwrap();
+    assert_eq!(ha, hb, "same bytes at two paths must share one hash");
+    assert_eq!(ha.len(), 32);
+    std::fs::write(&b, vec![8u8; 12 * 1024]).unwrap();
+    assert_ne!(ha, content_hash(&b, 12 * 1024).unwrap());
+    assert!(content_hash(&dir.join("missing.png"), 1).is_none());
+    assert!(content_hash(&a, MAX_HASH_BYTES + 1).is_none());
+    let _ = std::fs::remove_dir_all(&dir);
 }
