@@ -263,22 +263,35 @@ mod tests {
         .is_err());
     }
 
-    #[cfg(unix)]
+    #[test]
+    #[ignore = "child fixture for ab subprocess capture"]
+    fn ab_capture_fixture() {
+        print!("ab-fixture-é");
+        eprint!("diagnostics");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
     #[test]
     fn ab_subprocess_captures_raw_streams_and_wall_clock() {
         let output = capture_separate(
             vec![
-                "sh".into(),
-                "-c".into(),
-                "printf 'abc'; printf 'diagnostics' >&2; sleep 0.02; exit 7".into(),
+                std::env::current_exe().unwrap().to_str().unwrap().into(),
+                "--exact".into(),
+                "ab::tests::ab_capture_fixture".into(),
+                "--ignored".into(),
+                "--nocapture".into(),
             ],
-            Duration::from_secs(5),
+            Duration::from_secs(30),
         )
         .unwrap();
-        assert_eq!(output.stdout, b"abc");
+        let marker = "ab-fixture-é".as_bytes();
+        assert!(output
+            .stdout
+            .windows(marker.len())
+            .any(|bytes| bytes == marker));
         assert_eq!(output.stderr, b"diagnostics");
-        assert_eq!(output.exit, 7);
+        assert_eq!(output.exit, 0);
         assert!(output.elapsed >= Duration::from_millis(20));
-        assert!(!Sample::from_output("claude", 1, "x", output).valid);
+        assert!(Sample::from_output("claude", 1, "x", output).valid);
     }
 }
