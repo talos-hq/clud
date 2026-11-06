@@ -15,7 +15,7 @@
 #
 # The binary is verified against the release's SHA256SUMS before it is
 # installed; a mismatch or a missing entry aborts. Windows is not handled
-# here: download the .exe from https://talosbot.ai/clud/.
+# here: download the .exe from https://talos-hq.github.io/clud/.
 
 set -eu
 
@@ -57,7 +57,7 @@ arch="$(uname -m)"
 case "$os" in
     Linux) suffix="unknown-linux-musl" ;;
     Darwin) suffix="apple-darwin" ;;
-    *) die "unsupported platform: $os $arch. Supported: $SUPPORTED. On Windows, download the .exe from https://talosbot.ai/clud/" ;;
+    *) die "unsupported platform: $os $arch. Supported: $SUPPORTED. On Windows, download the .exe from https://talos-hq.github.io/clud/" ;;
 esac
 case "$arch" in
     x86_64|amd64) arch="x86_64" ;;

@@ -17,19 +17,11 @@ from zipfile import ZipFile
 
 SCHEMA = "https://zackees.github.io/manifest.json/v1/manifest.schema.json"
 ONLINE_URL = "https://talos-hq.github.io/clud/install/manifest.json"
-# Catalogs published before the move to talos-hq (#2126) still name the old
-# Pages host; accept it until the next publish rewrites the field.
-# The canonical custom domain; github.io 301-redirects to it (#2449).
-DOMAIN_ONLINE_URL = "https://talosbot.ai/clud/install/manifest.json"
-ACCEPTED_ONLINE_URLS = (
-    ONLINE_URL,
-    "https://zackees.github.io/clud/install/manifest.json",
-    DOMAIN_ONLINE_URL,
-)
-# Fetch order: the domain, then the newest release's catalog on GitHub, so a
-# lost domain degrades instead of breaking. Mirrors published_urls.rs.
+ACCEPTED_ONLINE_URLS = (ONLINE_URL,)
+# Fetch order: GitHub Pages, then the newest release's catalog on GitHub.
+# Mirrors published_urls.rs.
 INSTALL_CATALOG_URLS = (
-    "https://talosbot.ai/clud/install/manifest.json",
+    "https://talos-hq.github.io/clud/install/manifest.json",
     "https://github.com/talos-hq/clud/releases/latest/download/installer-candidate-manifest.json",
 )
 REPO_API = "https://api.github.com/repos/talos-hq/clud/releases"

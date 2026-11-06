@@ -96,21 +96,6 @@ def test_cached_catalog_reuses_only_unchanged_verified_release_assets() -> None:
     assert [item["version"] for item in catalog["releases"]] == ["2.10.0", "2.9.0"]
 
 
-def test_cached_catalog_from_old_pages_host_is_still_reused() -> None:
-    # #2126: the live catalog predates the move to talos-hq and still names
-    # the old host; the next publish must reuse it and rewrite the field.
-    old_wheel = wheel("clud.exe", b"MZprevious")
-    old_release = release("2.9.0", "https://example.com/29", old_wheel)
-    cached = catalog_from_releases([old_release], lambda _: old_wheel)
-    cached["online_url"] = "https://zackees.github.io/clud/install/manifest.json"
-
-    catalog = catalog_from_releases(
-        [old_release], lambda _: pytest.fail("unchanged asset fetched"), verified_catalog=cached
-    )
-
-    assert catalog["online_url"] == "https://talos-hq.github.io/clud/install/manifest.json"
-
-
 def test_cached_catalog_refetches_release_asset_when_digest_changes() -> None:
     old_wheel = wheel("clud.exe", b"MZprevious")
     changed_wheel = wheel("clud.exe", b"MZchanged")

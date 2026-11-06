@@ -14,8 +14,7 @@ from typing import Any
 from installer.site import published_paths
 from models.manifest import merge_manifest, should_publish, validate_manifest
 
-# The canonical custom domain; github.io 301-redirects to it (#2449).
-PAGES = "https://talosbot.ai/clud"
+PAGES = "https://talos-hq.github.io/clud"
 # GitHub-owned fallback for the model document (published by model-pages.yml).
 MODEL_MANIFEST_URLS = (
     f"{PAGES}/models/manifest.json",

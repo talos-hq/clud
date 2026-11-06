@@ -12,7 +12,7 @@ def test_the_tree_passes() -> None:
 
 
 def test_a_stray_published_url_is_flagged_outside_registries_and_tests() -> None:
-    line = 'const URL: &str = "https://talosbot.ai/clud/models/manifest.json";\n'
+    line = 'const URL: &str = "https://talos-hq.github.io/clud/models/manifest.json";\n'
     assert guard.stray_urls("crates/clud-bin/src/foo.rs", line)
     assert not guard.stray_urls(RUST, line)
     assert not guard.stray_urls("crates/clud-bin/src/self_install/catalog.rs", line)
@@ -24,17 +24,15 @@ def test_a_stray_published_url_is_flagged_outside_registries_and_tests() -> None
 
 def test_a_registry_must_end_with_a_github_owned_url() -> None:
     good = (
-        'pub const INSTALL_CATALOG: &[&str] = &["https://talosbot.ai/clud/install/manifest.json",'
+        'pub const INSTALL_CATALOG: &[&str] = &["https://talos-hq.github.io/clud/install/manifest.json",'
         ' "https://github.com/o/r/releases/latest/download/c.json"];\n'
-        'pub const MODEL_MANIFEST: &[&str] = &["https://talosbot.ai/clud/models/manifest.json",'
+        'pub const MODEL_MANIFEST: &[&str] = &["https://talos-hq.github.io/clud/models/manifest.json",'
         ' "https://raw.githubusercontent.com/o/r/main/m.json"];\n'
     )
     assert guard.registry_problems(RUST, good) == []
     no_fallback = good.replace("https://github.com/o/r/releases/latest/download/c.json",
                                "https://mirror.example/c.json")
     assert any("GitHub-owned" in p for p in guard.registry_problems(RUST, no_fallback))
-    redirecting = good.replace("https://talosbot.ai/clud/install", "https://o.github.io/clud/install")
-    assert any("github.io" in p for p in guard.registry_problems(RUST, redirecting))
     missing = good.split("\n", 1)[1]
     assert any("INSTALL_CATALOG" in p for p in guard.registry_problems(RUST, missing))
 
@@ -45,3 +43,9 @@ def test_python_f_string_entries_count() -> None:
         '    "https://github.com/o/r/releases/latest/download/models-manifest.json",\n)\n'
     )
     assert guard.registry_problems("models/publish.py", text) == []
+
+
+def test_no_registry_fetches_the_retired_domain() -> None:
+    # talosbot.ai/clud/ stopped serving and blocked the 2.8.58 release promotion.
+    for rel in guard.REGISTRIES:
+        assert "talosbot.ai" not in (guard.ROOT / rel).read_text(encoding="utf-8"), rel
