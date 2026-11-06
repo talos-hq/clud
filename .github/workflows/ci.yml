@@ -683,8 +683,8 @@ jobs:
   # removing a triple never requires touching branch-protection settings.
   # `always()` stays (#2273): a skipped required check counts as success, so
   # a hand-cancelled run must still publish a failing CI OK. Only a run that a
-  # newer run of this workflow on the same head SHA superseded passes without
-  # verification; the newer run's CI OK, posted later, is the verdict.
+  # newer run of this workflow on the same head SHA superseded may skip the
+  # shared verifier; the attempt-wide API guard still rejects failed jobs.
   ci-ok:
     name: CI OK
     if: always()
@@ -713,15 +713,39 @@ jobs:
       contents: read
       actions: read
     steps:
+      # Inspect the entire current attempt, including jobs absent from needs.
+      # This guard also runs before the superseded-run shortcut below.
+      - name: Reject failed jobs in this run attempt
+        if: always()
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          retries: 3
+          script: |
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+              ...context.repo,
+              run_id: context.runId,
+              attempt_number: Number(process.env.GITHUB_RUN_ATTEMPT),
+              per_page: 100,
+            });
+            if (jobs.length === 0) {
+              core.setFailed('No jobs returned for the current run attempt');
+            }
+            const rejected = new Set([
+              'failure', 'cancelled', 'timed_out', 'startup_failure', 'action_required',
+            ]);
+            for (const job of jobs) {
+              if (rejected.has(job.conclusion)) {
+                core.setFailed(`${job.name}: ${job.conclusion} (${job.html_url})`);
+              }
+            }
       # cache-maint is NOT listed in this job's `needs:`. It is not a gate: it
       # runs only on a default-branch push, and its own step is skipped unless
       # a lockfile changed. Listing it would put a `skipped` result into the
       # `RESULTS` blob the Check results step inspects, which is exactly the
       # malformed-condition class the explicit lists below exist to prevent.
       # #2273: a run that concurrency cancelled because a newer run of this
-      # workflow started on the same head SHA is superseded; it passes so its
-      # stale failure cannot block the replacement's verdict. Any other
-      # cancelled need (a hand-cancelled run) still fails the verifier.
+      # workflow started on the same head SHA is superseded; it skips the
+      # shared verifier, but cannot bypass the attempt-wide API guard above.
       - name: Detect superseded run
         id: superseded
         if: contains(toJSON(needs.*.result), 'cancelled')
