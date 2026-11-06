@@ -96,7 +96,7 @@ def test_every_workflow_role_receives_the_selected_repository(tmp_path: Path) ->
     )
     assert "error" not in result, result
     assert {item["role"] for item in result["prompts"]} == {
-        "grind-prework", "grind-planner", "grind-worker", "grind-reviewer",
+        "grind-prework", "grind-planner", "grind-editor", "grind-reviewer",
         "grind-integrator", "grind-lander",
     }, result
     for item in result["prompts"]:

@@ -38,7 +38,7 @@ from tests.harness.worlds import _issue, _world
 
 MARK = {
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",

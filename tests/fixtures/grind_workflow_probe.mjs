@@ -51,7 +51,7 @@ const agent = async (prompt, options) => {
       checkout: config.args.repo, branch: 'grind/12', depends_on: [], verify: 'true',
       tasks: [{ id: 't1', files: ['src/a.rs'], instructions: 'controlled task' }],
     },
-    'grind-worker': { files_touched: ['src/a.rs'], summary: 'controlled work' },
+    'grind-editor': { files_touched: ['src/a.rs'], summary: 'controlled work' },
     'grind-reviewer': { approved: true, summary: 'controlled review' },
     'grind-integrator': {
       pushed: true, pr_url: 'https://github.com/fork/project/pull/34', summary: 'controlled push',

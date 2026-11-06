@@ -4404,7 +4404,7 @@ mod tests {
         };
         for role in [
             "grind-planner",
-            "grind-worker",
+            "grind-editor",
             "grind-reviewer",
             "grind-integrator",
             "grind-lander",

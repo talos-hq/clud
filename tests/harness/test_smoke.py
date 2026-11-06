@@ -41,7 +41,7 @@ def test_scripted_bash_call_runs_and_is_recorded(harness: Harness) -> None:
         e for e in result.events if e.get("type") == "system" and e.get("subtype") == "init"
     )
     assert "grind" in init.get("slash_commands", [])
-    assert "grind-worker" in [
+    assert "grind-editor" in [
         a if isinstance(a, str) else a.get("name") for a in init.get("agents", [])
     ]
 

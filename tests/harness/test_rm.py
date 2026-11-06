@@ -25,7 +25,7 @@ from tests.harness.harness import Harness, RunResult
 
 OK = {"is_error": False}
 MARK = {
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "integrator": "You are the /grind integrator",
 }
 
@@ -321,7 +321,7 @@ def test_grind_worker_and_integrator_have_their_own_roots(harness: Harness) -> N
     assert result.returncode == 0, (result.stdout + result.stderr)[-3000:]
     _no_notes(result)
     roles = {r.get("agent_type") for r in result.hooks if r.get("tool_name") == "Bash"}
-    assert roles == {"grind-worker", "grind-integrator"}, roles
+    assert roles == {"grind-editor", "grind-integrator"}, roles
     assert not (h.repo / "src/cache/old.txt").exists()
     assert (h.repo / "docs/notes.txt").exists(), "outside the worker's task directories"
     assert not (h.repo / "build").exists()

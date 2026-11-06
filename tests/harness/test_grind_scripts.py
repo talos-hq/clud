@@ -379,7 +379,7 @@ def test_l7_worker_cannot_run_the_scripts(harness: Harness) -> None:
     bash = [
         h["tool_input"]["command"]
         for h in result.hooks
-        if h.get("agent_type") == "grind-worker" and h.get("tool_name") == "Bash"
+        if h.get("agent_type") == "grind-editor" and h.get("tool_name") == "Bash"
     ]
     # Claude Code strips a leading `cd <cwd> &&` from the recorded command.
     assert bash == ["bash ./test", "bash ./lint"]

@@ -200,4 +200,4 @@ and project guidance stay intact. The A/B control owns its fixture copies so
 startup refresh cannot erase it; the captured messages must be identical after
 normalizing exactly those descriptions. It measures received-byte savings,
 checks unchanged tool schemas/system content/catalog entries, and launches
-`grind-worker` by name to verify that its full role instructions still load.
+`grind-editor` by name to verify that its full role instructions still load.

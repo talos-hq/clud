@@ -151,8 +151,8 @@ The sections below follow that order: [routing](#input-routing), the
 
 | Asset | Source | Installed to |
 |---|---|---|
-| Skills `grind`, `grind-intake`, `grind-prework`, `grind-plan`, `grind-work`, `grind-review`, `grind-integrate`, `grind-land`, `grind-cron` | `crates/clud-bin/assets/skills/` (`skills.rs::BUNDLED_SKILLS`) | `~/.claude/skills/`, `~/.codex/skills/` |
-| Agents `grind-orchestrator`, `grind-gate`, `grind-prework`, `grind-planner`, `grind-worker`, `grind-reviewer`, `grind-integrator`, `grind-lander`, `grind-chaperone` | `crates/clud-bin/assets/agents/` (`claude_files.rs`) | `~/.claude/agents/` |
+| Skills `grind`, `grind-intake`, `grind-prework`, `grind-plan`, `grind-edit`, `grind-review`, `grind-integrate`, `grind-land`, `grind-cron` | `crates/clud-bin/assets/skills/` (`skills.rs::BUNDLED_SKILLS`) | `~/.claude/skills/`, `~/.codex/skills/` |
+| Agents `grind-orchestrator`, `grind-gate`, `grind-prework`, `grind-planner`, `grind-editor`, `grind-reviewer`, `grind-integrator`, `grind-lander`, `grind-chaperone` | `crates/clud-bin/assets/agents/` (`claude_files.rs`) | `~/.claude/agents/` |
 | Workflow `grind-run` | `crates/clud-bin/assets/workflows/grind-run.js` (`claude_files.rs`) | `~/.claude/workflows/` |
 
 Each workflow agent runs as its `grind-<role>` type and is told to invoke
@@ -727,7 +727,7 @@ Issue [#1336](https://github.com/zackees/clud/issues/1336).
   goal's commit, in the same PR, titled like
   `fix: pre-existing lint failure on main`.
 - **Caps.** The integrator's shell is a denylist, so the scripts run.
-  `grind-worker` and `grind-reviewer` are denied them like any other build,
+  `grind-editor` and `grind-reviewer` are denied them like any other build,
   lint or test command.
 - **Checks are never worker tasks (#1397).** Every planned task writes at
   least one file. `grind-run.js::routeCheckTasks` moves a file-less task
@@ -880,7 +880,7 @@ The rationale is in
 | `grind-gate` | Bash | exactly one assigned read-only Bash check, bound to native agent identity and approved run facts; readiness requires its successful native outcome |
 | `grind-planner` | Read, Grep, Glob, Bash, WebSearch, WebFetch, Skill | read-only git and `gh`; `git worktree add` in parallel mode only, never in the plan-only phase (the hook also refuses it Write/Edit); `clud grind-facts task` to record each task's files |
 | `grind-prework` | Bash, Read, Grep, Glob | read-only git and `gh`; `gh issue comment` on the run facts' meta issue only, fed by `printf '%s' '<body>'`; no edits, worktrees or builds |
-| `grind-worker` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | read-only `gh`; `safe-rm` on literal paths inside its task's directories ([rm-tools.md](rm-tools.md#location-policy)) |
+| `grind-editor` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | read-only `gh`; `safe-rm` on literal paths inside its task's directories ([rm-tools.md](rm-tools.md#location-policy)) |
 | `grind-reviewer` | same as worker | same as worker |
 | `grind-integrator` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | anything except non-`ci` bosn verbs, `bosn ci run` / `clud ci` when CI is off, `pkill`/`pgrep` on bosn, direct `act`/`docker`/`podman`, `git worktree add`, and a shell loop around lint/test; `safe-rm` only inside its checkout |
 | `grind-lander` | Read, Grep, Glob, Bash, Skill | `gh pr view\|checks\|diff\|list\|merge`, `gh pr ready` on the feature PR under `feature_merge: auto` only, `gh run view\|list\|rerun`, read-only git, plain `git push`, `pr_merge_watch`, `pr_merge.py` (enqueue) |

@@ -1,5 +1,5 @@
 ---
-name: grind-work
+name: grind-edit
 description: "Carry out one /grind worker task: edit only the assigned files in the given checkout. May investigate with read-only gh and web search; never builds, lints or tests."
 triggers:
   - When the grind workflow assigns a worker task
@@ -7,7 +7,7 @@ disable-model-invocation: true
 ---
 <!-- managed-by: clud -->
 
-# /grind-work
+# /grind-edit
 
 Use the prompt's **GitHub repository** (`OWNER/REPO`) as `<github-repo>`. Keep the checkout path separate. For direct use, resolve an explicit GitHub issue/PR URL or `git remote get-url origin` first; report an unresolved identity before running repository commands.
 

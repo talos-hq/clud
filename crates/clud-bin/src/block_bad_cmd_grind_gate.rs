@@ -488,7 +488,7 @@ mod tests {
             "{}".into(),
             "not json".into(),
             "x".repeat(8193),
-            json!({"agentType": "grind-worker", "description": "gate:downstream:0"}).to_string(),
+            json!({"agentType": "grind-editor", "description": "gate:downstream:0"}).to_string(),
         ] {
             let fixture = Fixture::new();
             let path = fixture.metadata("wf-one", "left-agent", "gate:downstream:0");

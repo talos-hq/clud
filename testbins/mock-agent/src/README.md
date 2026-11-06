@@ -117,7 +117,7 @@ Script format:
 {
   "default_text": "DONE",
   "roles": [
-    {"name": "worker", "match": "You are a /grind worker", "steps": [
+    {"name": "worker", "match": "You are the /grind editor", "steps": [
       {"tool_use": {"name": "Bash", "input": {"command": "cargo build"}}},
       {"expect": {"is_error": true, "content_contains": "BLOCKED"}, "text": "denied as expected"}
     ]},

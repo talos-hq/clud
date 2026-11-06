@@ -28,7 +28,7 @@ def test_counts_repeats_within_a_run(tmp_path: Path) -> None:
     _agent(
         run,
         "a",
-        "grind-worker",
+        "grind-editor",
         [
             [_use(1, "Read", file_path="/r/a.rs"), _use(2, "Bash", command="gh issue view 7")],
             [_result(1, "x" * 30), _result(2, "body")],

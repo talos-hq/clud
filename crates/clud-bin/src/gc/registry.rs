@@ -150,7 +150,7 @@ pub struct CreatedEntry {
     /// Canonical absolute path.
     pub path: String,
     pub kind: CreatedKind,
-    /// The creating role (`agent`, `grind-worker`, ...).
+    /// The creating role (`agent`, `grind-editor`, ...).
     pub role: String,
     pub created_unix: i64,
     #[serde(default)]

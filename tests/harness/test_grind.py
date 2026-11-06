@@ -20,7 +20,7 @@ from tests.harness.harness import Harness, RunResult
 
 MARK = {
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
@@ -191,7 +191,7 @@ def test_sequential_two_goals_land_in_order(harness: Harness) -> None:
         for h in result.hooks
         if h.get("event") == "PreToolUse" and h.get("agent_type")
     }
-    assert {"grind-planner", "grind-worker", "grind-integrator", "grind-lander"} <= types
+    assert {"grind-planner", "grind-editor", "grind-integrator", "grind-lander"} <= types
 
 
 def test_parallel_caps_light_agents_at_four_and_integrators_at_one(harness: Harness) -> None:
@@ -269,7 +269,7 @@ def test_worker_shell_is_capped_by_clud_hook(harness: Harness) -> None:
     bash = [
         h
         for h in result.hooks
-        if h.get("agent_type") == "grind-worker" and h.get("tool_name") == "Bash"
+        if h.get("agent_type") == "grind-editor" and h.get("tool_name") == "Bash"
     ]
     assert [h["tool_input"]["command"] for h in bash] == ["cargo build", "gh pr merge 5 --admin"]
     assert _merged(harness) == ["grind/w"]
@@ -304,7 +304,7 @@ def test_each_agent_runs_as_its_type_with_its_procedure(harness: Harness) -> Non
         first.setdefault(r["role"].split(":")[0], r)
     leaf = {
         "planner": "grind-plan",
-        "worker": "grind-work",
+        "worker": "grind-edit",
         "reviewer": "grind-review",
         "integrator": "grind-integrate",
         "lander": "grind-land",
@@ -319,7 +319,7 @@ def test_each_agent_runs_as_its_type_with_its_procedure(harness: Harness) -> Non
 
 
 def test_the_main_session_cannot_delegate_to_a_grind_role(harness: Harness) -> None:
-    call = {"subagent_type": "grind-worker", "description": "x", "prompt": "write a file"}
+    call = {"subagent_type": "grind-editor", "description": "x", "prompt": "write a file"}
     refused = {"is_error": True, "content_contains": "internal /grind role"}
     script = {
         "default_text": "OK",

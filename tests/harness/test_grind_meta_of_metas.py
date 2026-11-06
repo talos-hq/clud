@@ -45,7 +45,7 @@ from tests.harness.worlds import (
 MARK = {
     "prework": "You are the /grind prework role",
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",

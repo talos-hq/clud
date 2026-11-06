@@ -39,7 +39,7 @@ from tests.harness.worlds import _issue, _world, with_user_sub_meta
 MARK = {
     "prework": "You are the /grind prework role",
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
@@ -555,7 +555,7 @@ def test_failed_plan_comment_stops_before_any_worker(harness: Harness) -> None:
     # ... no planner or worker ran, and the workflow says it stopped at prework.
     ran = {r["role"] for r in result.requests}
     assert not ran & {"planner:101", "worker:101"}, ran
-    assert not any(h.get("agent_type") == "grind-worker" for h in result.hooks)
+    assert not any(h.get("agent_type") == "grind-editor" for h in result.hooks)
     told = _told(result)
     assert "prework" in told, told[-3000:]
     assert "stopping before any worker" in told, told[-3000:]

@@ -80,9 +80,9 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
         procedure: Some("grind-prework"),
     },
     BundledClaudeFile {
-        rel_path: "agents/grind-worker.md",
-        body: include_str!("../assets/agents/grind-worker.md"),
-        procedure: Some("grind-work"),
+        rel_path: "agents/grind-editor.md",
+        body: include_str!("../assets/agents/grind-editor.md"),
+        procedure: Some("grind-edit"),
     },
     BundledClaudeFile {
         rel_path: "agents/grind-reviewer.md",
@@ -117,8 +117,9 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
 ///
 /// `workflows/grind.js` was renamed to `grind-run.js`: a workflow named
 /// `grind` listed a second `/grind` beside the router skill, and picking it
-/// skipped the router's questions.
-pub const PURGED_CLAUDE_FILES: &[&str] = &["workflows/grind.js"];
+/// skipped the router's questions. `agents/grind-worker.md` became
+/// `grind-editor.md` when /grind moved to one editor at a time.
+pub const PURGED_CLAUDE_FILES: &[&str] = &["workflows/grind.js", "agents/grind-worker.md"];
 
 /// Result of one install pass.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -206,16 +207,16 @@ mod tests {
 
     /// Issue #1676: the bounded reader is only worth shipping with routing.
     #[test]
-    fn worker_routes_reads_through_the_bounded_slice_tool() {
-        let worker = BUNDLED_CLAUDE_FILES
+    fn editor_routes_reads_through_the_bounded_slice_tool() {
+        let editor = BUNDLED_CLAUDE_FILES
             .iter()
-            .find(|f| f.rel_path == "agents/grind-worker.md")
-            .expect("grind-worker.md must stay bundled");
+            .find(|f| f.rel_path == "agents/grind-editor.md")
+            .expect("grind-editor.md must stay bundled");
         assert!(
-            worker.body.contains("code/slice.py"),
-            "grind-worker must name the bounded reader it is told to use"
+            editor.body.contains("code/slice.py"),
+            "grind-editor must name the bounded reader it is told to use"
         );
-        assert!(worker.body.contains("code/outline.py"));
+        assert!(editor.body.contains("code/outline.py"));
     }
 
     #[test]
@@ -226,7 +227,7 @@ mod tests {
             "gate",
             "planner",
             "prework",
-            "worker",
+            "editor",
             "reviewer",
             "integrator",
             "lander",
@@ -275,7 +276,7 @@ mod tests {
             "gate",
             "planner",
             "prework",
-            "worker",
+            "editor",
             "reviewer",
             "integrator",
             "lander",
@@ -293,7 +294,7 @@ mod tests {
                 .unwrap()
                 .to_string()
         };
-        assert_eq!(tools("reviewer"), tools("worker"));
+        assert_eq!(tools("reviewer"), tools("editor"));
         assert!(!body("lander").contains("Edit"));
         assert!(!body("planner").contains("Edit"));
         assert_eq!(tools("prework"), "tools: Bash, Read, Grep, Glob");

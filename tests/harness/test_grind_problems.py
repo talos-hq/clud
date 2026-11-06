@@ -37,7 +37,7 @@ from tests.harness.worlds import _issue, _world
 
 MARK = {
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
@@ -302,7 +302,7 @@ def test_x1_issue_policy_files_one_followup_that_is_not_a_sub_issue(harness: Har
     state = harness.read_gh_state()["issues"]
     assert int(number) not in [s["number"] for s in state[META]["sub_issues"]]
     assert issue.get("parent") is None
-    worker = _bash_by(result, "grind-worker")
+    worker = _bash_by(result, "grind-editor")
     assert not [c for c in worker if "gh issue create" in c], worker
     # The router, not a subagent, made the only issue-create call.
     assert len(_issue_creates(harness)) == 1, _issue_creates(harness)
@@ -382,7 +382,7 @@ def test_x5_subagent_issue_create_is_denied(harness: Harness) -> None:
     roles = _goal_roles(harness, worker_problems=[FLAKY], worker_tries_create=True)
     result = _run(harness, _script(harness, roles, router))
     _no_notes(result)
-    worker = _bash_by(result, "grind-worker")
+    worker = _bash_by(result, "grind-editor")
     assert [c for c in worker if "gh issue create" in c], worker
     creates = _issue_creates(harness)
     assert len(creates) == 1, creates

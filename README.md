@@ -913,7 +913,7 @@ own agent type with hard caps:
 | Stage | Agent type | May | May not |
 |---|---|---|---|
 | Plan | `grind-planner` | read code; read-only `git`/`gh`; add a worktree in parallel mode | edit files, build |
-| Work | `grind-worker` | edit its assigned files; read-only `gh`; web search | build, lint, test |
+| Work | `grind-editor` | edit its assigned files; read-only `gh`; web search | build, lint, test |
 | Review | `grind-reviewer` | same as worker | same as worker |
 | Integrate | `grind-integrator` | rebase, lint, build, test, push, open the PR; **one at a time** | `bosn`, direct `docker`, new worktrees |
 | Land | `grind-lander` | watch with `pr_merge_watch`, admin-merge when green | edit, build; failures go back to the integrator (≤10 rounds) |
@@ -935,7 +935,7 @@ so it never holds the meta issue open), or one comment each.
 |---|---|
 | Contract and design | [`docs/architecture/grind.md`](docs/architecture/grind.md), [DD-087](docs/DESIGN_DECISIONS.md#dd-087-grind-is-a-skill-dag-with-capped-agent-roles) |
 | Router skill | [`assets/skills/grind/SKILL.md`](crates/clud-bin/assets/skills/grind/SKILL.md) |
-| Leaf skills | [`grind-intake`](crates/clud-bin/assets/skills/grind-intake/SKILL.md), [`grind-prework`](crates/clud-bin/assets/skills/grind-prework/SKILL.md), [`grind-plan`](crates/clud-bin/assets/skills/grind-plan/SKILL.md), [`grind-work`](crates/clud-bin/assets/skills/grind-work/SKILL.md), [`grind-review`](crates/clud-bin/assets/skills/grind-review/SKILL.md), [`grind-integrate`](crates/clud-bin/assets/skills/grind-integrate/SKILL.md), [`grind-land`](crates/clud-bin/assets/skills/grind-land/SKILL.md), [`grind-cron`](crates/clud-bin/assets/skills/grind-cron/SKILL.md) |
+| Leaf skills | [`grind-intake`](crates/clud-bin/assets/skills/grind-intake/SKILL.md), [`grind-prework`](crates/clud-bin/assets/skills/grind-prework/SKILL.md), [`grind-plan`](crates/clud-bin/assets/skills/grind-plan/SKILL.md), [`grind-edit`](crates/clud-bin/assets/skills/grind-edit/SKILL.md), [`grind-review`](crates/clud-bin/assets/skills/grind-review/SKILL.md), [`grind-integrate`](crates/clud-bin/assets/skills/grind-integrate/SKILL.md), [`grind-land`](crates/clud-bin/assets/skills/grind-land/SKILL.md), [`grind-cron`](crates/clud-bin/assets/skills/grind-cron/SKILL.md) |
 | Workflow script | [`assets/workflows/grind-run.js`](crates/clud-bin/assets/workflows/grind-run.js) (named `grind-run` so `/grind` stays the router) |
 | Agent types | [`assets/agents/`](crates/clud-bin/assets/agents/) (`grind-planner.md` … `grind-lander.md`) |
 | Installer for agents + workflow | [`src/claude_files.rs`](crates/clud-bin/src/claude_files.rs) |
@@ -944,7 +944,7 @@ so it never holds the meta issue open), or one comment each.
 | PR watcher used by the lander | [`assets/tools/github/pr_merge_watch.py`](crates/clud-bin/assets/tools/github/pr_merge_watch.py) |
 
 Only `/grind` is offered to the model. The `grind-*` leaf skills are hidden
-from it, though you can still type one (e.g. `/grind-work`) to test it. The
+from it, though you can still type one (e.g. `/grind-edit`) to test it. The
 `grind-*` agent types are refused when the model tries to delegate to them
 directly; set `CLUD_ALLOW_GRIND_AGENTS=1` to start one by hand.
 

@@ -35,7 +35,7 @@ def test_the_plan_schema_carries_the_pack() -> None:
 
 def test_the_pack_comes_first_in_worker_and_reviewer_prompts() -> None:
     js = _workflow()
-    for procedure in ("grind-work", "grind-review"):
+    for procedure in ("grind-edit", "grind-review"):
         assert re.search(
             r"`\$\{packOf\(p\)\}Follow your built-in /" + procedure + " procedure", js
         ), f"{procedure} prompt must start with the pack"
@@ -62,5 +62,5 @@ def test_the_planner_returns_the_pack_and_workers_use_it() -> None:
     assert "**Context pack**" in plan
     assert "verbatim" in plan
     assert "{path, start, end, why, text}" in plan
-    assert "do not re-fetch the issue" in _skill("grind-work")
+    assert "do not re-fetch the issue" in _skill("grind-edit")
     assert "instead of re-fetching the issue" in _skill("grind-review")

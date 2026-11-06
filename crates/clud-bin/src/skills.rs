@@ -81,8 +81,8 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
         skill_md: include_str!("../assets/skills/grind-prework/SKILL.md"),
     },
     BundledSkill {
-        name: "grind-work",
-        skill_md: include_str!("../assets/skills/grind-work/SKILL.md"),
+        name: "grind-edit",
+        skill_md: include_str!("../assets/skills/grind-edit/SKILL.md"),
     },
     BundledSkill {
         name: "grind-review",
@@ -219,6 +219,7 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
 /// are still in daily use. A sweep would also delete newer skills whenever an
 /// older clud binary ran. Retirement is a decision, not an inference.
 pub const PURGED_BUNDLED_SKILLS: &[&str] = &[
+    "grind-work",
     "clud-loop",
     "clud-docker-rust-app",
     "clud-pr",
@@ -395,7 +396,7 @@ fn install_explicit_invocation_policies(base: &Path) -> Result<(), InstallError>
         "grind-intake",
         "grind-plan",
         "grind-prework",
-        "grind-work",
+        "grind-edit",
         "grind-review",
         "grind-integrate",
         "grind-land",

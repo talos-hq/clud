@@ -676,7 +676,7 @@ two), whether or not every goal merged:
 | `/grind-prework` | `grind-prework` | read-only git/gh; `gh issue comment --repo <github-repo>` on the meta issue only; no edits, worktrees or builds |
 | `/grind-plan` | `grind-planner` | read-only git/gh; `git worktree add` in parallel mode |
 | `/grind-plan` (plan-only) | `grind-planner` | read-only git/gh; no Write/Edit, worktree or push |
-| `/grind-work` | `grind-worker` | read/write assigned files; read-only `gh`; web search |
+| `/grind-edit` | `grind-editor` | read/write assigned files; read-only `gh`; web search |
 | `/grind-review` | `grind-reviewer` | same as worker |
 | `/grind-integrate` | `grind-integrator` | full shell, one at a time; bounded `bosn ci` / `clud ci` only (own run), no `act` or containers, no new worktrees |
 | `/grind-land` | `grind-lander` | `gh pr`, `pr_merge_watch`, `pr_merge.py` (enqueue), `git push`; no edits |

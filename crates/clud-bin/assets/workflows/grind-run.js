@@ -8,7 +8,7 @@ export const meta = {
     { title: 'Prework', detail: 'grind-prework: post the plan JSON comment on the meta issue' },
     { title: 'Gate', detail: 'grind-gate: observe one approved publication check' },
     { title: 'Plan', detail: 'grind-planner: split each goal into disjoint file tasks' },
-    { title: 'Work', detail: 'grind-worker: read/write files only' },
+    { title: 'Work', detail: 'grind-editor: read/write files only' },
     { title: 'Review', detail: 'grind-reviewer: read/edit only' },
     { title: 'Integrate', detail: 'grind-integrator: one at a time; lint, build, test, push' },
     { title: 'Land', detail: 'grind-lander: PR checks green, then enqueue (the goal is done) or hand back for fixes' },
@@ -225,7 +225,7 @@ const verifyBlock = (p) => SCRIPTS
 // Model per role; the lander shares the integrator's choice, prework the planner's.
 const opts = (role, label, phase, schema) => {
   const o = { label, phase, schema, agentType: `grind-${role}` }
-  const m = MODELS[role === 'lander' ? 'integrator' : role === 'prework' ? 'planner' : role]
+  const m = role === 'editor' ? MODELS.editor || MODELS.worker : MODELS[role === 'lander' ? 'integrator' : role === 'prework' ? 'planner' : role]
   if (m) o.model = m
   return o
 }
@@ -728,8 +728,8 @@ const work = (p, g) => (PARALLEL
   : p.tasks.reduce((acc, t) => acc.then(rs => runTask(p, g, t).then(r => [...rs, r])), Promise.resolve([])))
   .then(rs => ({ p, results: rs.filter(Boolean) }))
 const runTask = (p, g, t) => agent(
-  `${packOf(p)}Follow your built-in /grind-work procedure.\n\n${ctx(g)}\n\nCheckout: ${p.checkout}\nTask ${t.id}. Files you own: ${t.files.join(', ')}\n\n${t.instructions}`,
-  opts('worker', `work:${g.id}/${t.id}`, 'Work', WORK)).then(r => collect(r, 'worker', g.id))
+  `${packOf(p)}Follow your built-in /grind-edit procedure.\n\n${ctx(g)}\n\nCheckout: ${p.checkout}\nTask ${t.id}. Files you own: ${t.files.join(', ')}\n\n${t.instructions}`,
+  opts('editor', `work:${g.id}/${t.id}`, 'Work', WORK)).then(r => collect(r, 'worker', g.id))
 
 const review = ({ p, results }, g) => light(() => agent(
   `${packOf(p)}Follow your built-in /grind-review procedure.\n\n${ctx(g)}\n\nCheckout: ${p.checkout}\nWorker reports:\n${JSON.stringify(results, null, 1)}`,

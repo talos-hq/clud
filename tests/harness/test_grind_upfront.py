@@ -38,7 +38,7 @@ from tests.harness.worlds import _issue, _world, regroupable
 MARK = {
     "prework": "You are the /grind prework role",
     "planner": "You are the /grind planner",
-    "worker": "You are a /grind worker",
+    "worker": "You are the /grind editor",
     "reviewer": "You are the /grind reviewer",
 }
 TOOL = "clud tool run github/is_meta_issue.py"
@@ -438,7 +438,7 @@ def test_u1_u13_u14_order_is_route_plan_preflight_ask_prework_work(harness: Harn
     preflight = _index(result, _main_bash("status --porcelain"), "preflight")
     ask = _index(result, lambda r: r.get("tool_name") == "AskUserQuestion", "questions")
     prework = _index(result, _by_agent("grind-prework"), "prework")
-    worker = _index(result, _by_agent("grind-worker"), "worker")
+    worker = _index(result, _by_agent("grind-editor"), "worker")
     assert tool < planner < preflight < ask < prework < worker, (
         tool,
         planner,

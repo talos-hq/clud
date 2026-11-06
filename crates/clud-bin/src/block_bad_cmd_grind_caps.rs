@@ -34,7 +34,7 @@ use serde_json::Value;
 use super::block_bad_cmd_gate::statement_words;
 
 pub(super) const PLANNER: &str = "grind-planner";
-pub(super) const WORKER: &str = "grind-worker";
+pub(super) const EDITOR: &str = "grind-editor";
 pub(super) const REVIEWER: &str = "grind-reviewer";
 pub(super) const INTEGRATOR: &str = "grind-integrator";
 pub(super) const LANDER: &str = "grind-lander";
@@ -353,7 +353,7 @@ pub(super) fn is_grind_role(agent_type: &str) -> bool {
     matches!(
         agent_type,
         PLANNER
-            | WORKER
+            | EDITOR
             | REVIEWER
             | INTEGRATOR
             | LANDER
@@ -985,14 +985,14 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
         }
         // Workers and reviewers hold a shell only to investigate on GitHub:
         // read-only `gh`.
-        WORKER | REVIEWER if is_gh_read(words) => None,
+        EDITOR | REVIEWER if is_gh_read(words) => None,
         // The patch tool refuses files outside the run facts' task list itself.
-        WORKER | REVIEWER if bundled_tool(words) == Some("code/patch.py") => None,
-        WORKER | REVIEWER if runs_repo_script(words) => Some(format!(
+        EDITOR | REVIEWER if bundled_tool(words) == Some("code/patch.py") => None,
+        EDITOR | REVIEWER if runs_repo_script(words) => Some(format!(
             "{role} may not run the repo's lint or test scripts; the grind-integrator runs \
              lint/test before every push"
         )),
-        WORKER | REVIEWER => Some(format!(
+        EDITOR | REVIEWER => Some(format!(
             "{role} may only run read-only `gh` (issue/pr/run view|list, search) and `safe-rm` \
              on literal paths in its task's directories; it cannot build, lint or test"
         )),
@@ -1080,7 +1080,7 @@ pub(super) fn rm_tool_verdict(
 ) -> Option<Option<String>> {
     let profile = match role {
         INTEGRATOR => crate::deletion_rules::Profile::GrindIntegrator,
-        WORKER => crate::deletion_rules::Profile::GrindWorker,
+        EDITOR => crate::deletion_rules::Profile::GrindEditor,
         REVIEWER => crate::deletion_rules::Profile::GrindReviewer,
         PLANNER => crate::deletion_rules::Profile::GrindPlanner,
         PREWORK => crate::deletion_rules::Profile::GrindPrework,
@@ -1777,7 +1777,7 @@ mod tests {
     #[test]
     fn workers_cannot_run_repo_lint_or_test_scripts() {
         let facts = run(true, true);
-        for role in [WORKER, REVIEWER] {
+        for role in [EDITOR, REVIEWER] {
             for command in [
                 "./lint",
                 "./test",
@@ -1820,7 +1820,7 @@ mod tests {
         let verdict = |role: &str, command: &str| rm_tool_verdict(role, command, &facts, &wt);
 
         // A worker deletes only under its task's directories, literally.
-        assert_eq!(verdict(WORKER, "safe-rm src/cache/old.rs"), Some(None));
+        assert_eq!(verdict(EDITOR, "safe-rm src/cache/old.rs"), Some(None));
         assert_eq!(
             verdict(REVIEWER, "safe-rm --purge -r src/cache/tmp"),
             Some(None)
@@ -1838,23 +1838,23 @@ mod tests {
             "safe-rm",
         ] {
             assert!(
-                matches!(verdict(WORKER, command), Some(Some(_))),
+                matches!(verdict(EDITOR, command), Some(Some(_))),
                 "{command}"
             );
         }
         // Mixed with anything else, a worker's usual rules decide.
-        assert_eq!(verdict(WORKER, "safe-rm src/cache/a && ls"), None);
-        assert_eq!(verdict(WORKER, "ls"), None);
+        assert_eq!(verdict(EDITOR, "safe-rm src/cache/a && ls"), None);
+        assert_eq!(verdict(EDITOR, "ls"), None);
 
         // With no recorded tasks for this checkout, its whole checkout.
         let untracked = RunFacts::default();
         assert_eq!(
-            rm_tool_verdict(WORKER, "safe-rm docs/x.md", &untracked, &wt),
+            rm_tool_verdict(EDITOR, "safe-rm docs/x.md", &untracked, &wt),
             Some(None)
         );
         assert!(matches!(
             rm_tool_verdict(
-                WORKER,
+                EDITOR,
                 &format!("safe-rm -r {}", wt.display()),
                 &untracked,
                 &wt
@@ -1937,7 +1937,7 @@ mod tests {
             "gh pr edit 12 --remove-label CI-Windows",
             "gh workflow disable ci.yml",
         ];
-        for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+        for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
             for command in refused {
                 let reason = shell_reason(role, command, &facts)
                     .unwrap_or_else(|| panic!("{role} allowed `{command}`"));
@@ -2078,7 +2078,7 @@ mod tests {
         assert!(is_grind_role(role));
         let input = serde_json::json!({"subagent_type": role});
         assert!(agent_spawn_reason("Agent", Some(&input), None).is_none());
-        for internal in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK, GATE] {
+        for internal in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK, GATE] {
             let input = serde_json::json!({"subagent_type": internal});
             assert!(agent_spawn_reason("Agent", Some(&input), None).is_some());
         }
@@ -2240,7 +2240,7 @@ mod tests {
             assert!(reason.contains("plan-only"), "{reason}");
         }
         assert!(tool_reason(PLANNER, "Read", &plan).is_none());
-        assert!(tool_reason(WORKER, "Write", &plan).is_none());
+        assert!(tool_reason(EDITOR, "Write", &plan).is_none());
     }
 
     #[test]
@@ -2250,7 +2250,7 @@ mod tests {
             ..run(true, false)
         };
         for facts in [run(false, false), plan.clone()] {
-            for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+            for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
                 for tool in ["AskUserQuestion", "askuserquestion"] {
                     let reason = tool_reason(role, tool, &facts)
                         .unwrap_or_else(|| panic!("{role} allowed {tool}"));
@@ -2259,14 +2259,14 @@ mod tests {
                     assert!(reason.contains("before prework"), "{role}: {reason}");
                 }
             }
-            assert!(tool_reason(WORKER, "Read", &facts).is_none());
+            assert!(tool_reason(EDITOR, "Read", &facts).is_none());
             assert!(tool_reason(PLANNER, "Write", &facts).is_some());
         }
     }
 
     #[test]
     fn workers_and_reviewers_only_investigate_with_gh() {
-        for role in [WORKER, REVIEWER] {
+        for role in [EDITOR, REVIEWER] {
             assert!(allowed(
                 role,
                 "gh issue view 12 --comments",
@@ -2296,7 +2296,7 @@ mod tests {
     #[test]
     fn every_role_may_read_the_git_state_tool() {
         let facts = run(true, false);
-        for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+        for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
             assert!(
                 allowed(role, "clud tool run git/state.py", &facts),
                 "{role}"
@@ -2345,7 +2345,7 @@ mod tests {
     #[test]
     fn roles_may_outline_and_writers_may_patch() {
         let facts = run(true, false);
-        for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+        for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
             assert!(
                 allowed(
                     role,
@@ -2356,7 +2356,7 @@ mod tests {
             );
         }
         let patch = "\"$CLUD_EXE\" tool run code/patch.py <<'EOF'\n=== a.rs\nEOF";
-        for role in [WORKER, REVIEWER, INTEGRATOR] {
+        for role in [EDITOR, REVIEWER, INTEGRATOR] {
             assert!(allowed(role, patch, &facts), "{role}");
         }
         for role in [PLANNER, LANDER] {
@@ -2369,7 +2369,7 @@ mod tests {
     fn only_the_integrator_applies_ast_grep_rewrites() {
         let facts = run(true, false);
         let tool = "\"$CLUD_EXE\" tool run code/ast_grep.py";
-        for role in [PLANNER, WORKER, REVIEWER, LANDER, INTEGRATOR] {
+        for role in [PLANNER, EDITOR, REVIEWER, LANDER, INTEGRATOR] {
             for args in [
                 "run -p 'foo($A)' -l rust src",
                 "run -p 'f($A)' -r 'g($A)' src",
@@ -2390,7 +2390,7 @@ mod tests {
                 allowed(INTEGRATOR, &format!("{tool} {args}"), &facts),
                 "{args}"
             );
-            for role in [PLANNER, WORKER, REVIEWER, LANDER] {
+            for role in [PLANNER, EDITOR, REVIEWER, LANDER] {
                 assert!(
                     !allowed(role, &format!("{tool} {args}"), &facts),
                     "{role}: {args}"
@@ -2515,7 +2515,7 @@ mod tests {
     #[test]
     fn no_grind_subagent_can_create_issues() {
         for facts in [run(false, false), run(true, false)] {
-            for role in [PLANNER, WORKER, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+            for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
                 for command in [
                     "gh issue create --title x --body y",
                     "gh issue create --label grind:followup --title x --body y",
@@ -2544,7 +2544,7 @@ mod tests {
             shell_reason(role, command, &facts)
                 .is_some_and(|r| r.contains("never close issues") && r.contains("#1393"))
         };
-        for role in [INTEGRATOR, LANDER, WORKER, PLANNER, REVIEWER, PREWORK] {
+        for role in [INTEGRATOR, LANDER, EDITOR, PLANNER, REVIEWER, PREWORK] {
             for command in [
                 "gh issue close 12",
                 "gh issue close 12 --comment done",
@@ -2669,7 +2669,7 @@ mod tests {
     #[test]
     fn agent_calls_for_grind_roles_are_refused_unless_opted_in() {
         let call = |ty: &str| serde_json::json!({"subagent_type": ty, "prompt": "x"});
-        let worker = call("grind-worker");
+        let worker = call("grind-editor");
         assert!(agent_spawn_reason("Agent", Some(&worker), None).is_some());
         assert!(agent_spawn_reason("Agent", Some(&worker), Some("0")).is_some());
         assert!(agent_spawn_reason("Agent", Some(&worker), Some("1")).is_none());
@@ -2684,7 +2684,7 @@ mod tests {
     #[test]
     fn codex_spawn_agent_calls_for_grind_roles_are_refused() {
         // #1954: Codex reports `spawn_agent` and names the role `agent_type`.
-        let worker = serde_json::json!({"agent_type": "grind-worker", "message": "x"});
+        let worker = serde_json::json!({"agent_type": "grind-editor", "message": "x"});
         assert!(agent_spawn_reason("spawn_agent", Some(&worker), None).is_some());
         assert!(agent_spawn_reason("spawn_agent", Some(&worker), Some("1")).is_none());
         let explorer = serde_json::json!({"agent_type": "explorer", "message": "x"});
@@ -2771,7 +2771,7 @@ mod tests {
             assert!(!allowed(PREWORK, command, &facts), "{command}");
         }
         // Only prework may run printf at all.
-        assert!(!allowed(WORKER, "printf '%s' x", &facts));
+        assert!(!allowed(EDITOR, "printf '%s' x", &facts));
     }
 
     /// #2468: in a multi-repository run each sister lane's prework posts on
@@ -3146,7 +3146,7 @@ mod tests {
     fn issue_1897_scoped_reads_and_quoted_plan_body_fit_role_caps() {
         let mut facts = run(false, false);
         facts.meta = Some("10".into());
-        for role in [PLANNER, PREWORK, LANDER, WORKER, REVIEWER] {
+        for role in [PLANNER, PREWORK, LANDER, EDITOR, REVIEWER] {
             for command in [
                 "gh issue view 12 --comments --repo fork/project",
                 "gh -R fork/project issue view 12 --json comments",
@@ -3165,14 +3165,14 @@ mod tests {
             "printf '%s' 'plan' | gh issue comment 11 --repo fork/project --body-file -",
             &facts,
         ));
-        for role in [PLANNER, PREWORK, WORKER, REVIEWER] {
+        for role in [PLANNER, PREWORK, EDITOR, REVIEWER] {
             assert!(!allowed(
                 role,
                 "gh pr merge 34 --repo fork/project --squash",
                 &facts
             ));
         }
-        for role in [PLANNER, PREWORK, LANDER, WORKER, REVIEWER] {
+        for role in [PLANNER, PREWORK, LANDER, EDITOR, REVIEWER] {
             assert!(!allowed(
                 role,
                 "gh issue close 12 --repo fork/project",
