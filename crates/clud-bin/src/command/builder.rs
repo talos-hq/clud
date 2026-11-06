@@ -462,6 +462,36 @@ pub(super) const CLAUDE_PRODUCT_TOOLS: &[&str] = &[
 /// `clud grind` keep them; they are the runs that drive `/loop` and `/grind`.
 pub(super) const CLAUDE_HEADLESS_UNUSED_TOOLS: &[&str] = &["Workflow", "ScheduleWakeup"];
 
+/// Claude Code's built-in `general-purpose` subagent is the second-largest
+/// tool payload clud sends: 27,930 B per subagent request after the artifact
+/// and product strips (#2660, #2666), of which `Agent` is 8,763 B and
+/// `ListAgents` 2,081 B. `Agent` is the subagent's own handle for spawning a
+/// nested subagent, and over 7 days of local transcripts 702 subagent
+/// sidechains made ~22,000 tool calls and reached for it 19 times (0.09 %),
+/// while 6,594 subagent requests in the last 24 h each re-sent the definition.
+/// `ListAgents` names the peers `SendMessage` addresses, and `SendMessage` is
+/// not in the subagent payload at all, so in a subagent it is dead weight.
+///
+/// `--disallowedTools` cannot reach this: Claude Code builds a subagent's list
+/// from its agent definition, not from the parent's strip, which is why
+/// `Artifact`-free parents still paid 83,800 B per subagent request before
+/// #2660. `--agents` replaces the built-in definition, so clud declares its own
+/// `general-purpose` here: Read, Bash, Edit, Write, Skill, plus `ToolSearch` so
+/// the deferred WebFetch/WebSearch/MCP tools stay reachable exactly as they are
+/// for the built-in agent. Measured through clud 2.1.319: 27,930 B -> 17,082 B
+/// per subagent request (−38.8 %), and 83,800 B -> 17,082 B (−79.6 %) for the
+/// sessions still running a pre-#2660 build. `--builtin-subagents` keeps
+/// Claude Code's definition, including nested `Agent` (#2233).
+pub(super) const CLAUDE_WORKER_AGENT: &str = concat!(
+    r#"{"general-purpose":{"description":"General-purpose agent for researching complex "#,
+    r#"questions, searching for code, and executing multi-step tasks.","prompt":"You are an "#,
+    r#"agent for Claude Code. Given the task, use the tools available to complete it fully: "#,
+    r#"search broadly when you do not know where something lives and use Read for a known "#,
+    r#"path, prefer editing an existing file over creating one, do not create documentation "#,
+    r#"unless asked. Report a concise result to the caller: what was done, the file:line "#,
+    r#"evidence, and what remains.","tools":["Read","Bash","Edit","Write","Skill","ToolSearch","WebFetch","WebSearch"]}}"#,
+);
+
 /// The patterns clud's command hooks refuse most often, stated before the
 /// agent tries them: a refused call still costs a full round trip (#2354).
 pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refused call is a wasted round trip): never wait with a while/until/sleep loop, `watch` or `tail -f`, in Bash or Monitor; use run_in_background and its completion notification, or a tool with its own deadline (pr_merge_watch, clud ci). Prefer `(cd DIR && CMD)` or absolute paths over a bare `cd`. Run one GitHub mutation (push, PR create, merge, issue or API write) per call.";
@@ -850,6 +880,20 @@ fn build_launch_plan_for_target_at(
     }
     if !disallowed.is_empty() {
         cmd.push(format!("--disallowedTools={}", disallowed.join(",")));
+    }
+    // `--disallowedTools` reaches the top-level tool list only: Claude Code
+    // builds a subagent's list from its agent definition, so a
+    // `general-purpose` subagent kept paying 83.8 KiB of schema per request
+    // even while its parent's `Artifact` was stripped above (27.9 KiB once
+    // #2660 reached the installed build). Declaring the definition ourselves is
+    // the only lever clud has over that payload (see `CLAUDE_WORKER_AGENT`).
+    // Skipped on the Codex->Claude bridge, which already strips `Task`, so no
+    // subagent can exist there.
+    if matches!(backend, Backend::Claude)
+        && !args.builtin_subagents
+        && !is_codex_claude_bridge(target)
+    {
+        cmd.push(format!("--agents={}", CLAUDE_WORKER_AGENT));
     }
     cmd.extend(mcp_bridge);
     cmd.extend(secrets_catalog);
