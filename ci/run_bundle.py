@@ -453,6 +453,7 @@ def run_pytest(marker: str, env: dict[str, str], extra: list[str], *, suite: str
         f"--junitxml={pytest_junit_path(suite)}",
         "-o",
         "junit_logging=all",
+        "--durations=25",
         *extra,
     ]
     child_env = dict(env)
