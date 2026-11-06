@@ -113,10 +113,9 @@ def test_cli_prints_json_for_a_rust_repo(ct, tmp_path: Path, capsys) -> None:
     assert json.loads(capsys.readouterr().out)["targets"][0]["triple"] == "x86_64-pc-windows-msvc"
 
 
-def test_integrator_cross_checks_before_host_verification() -> None:
+def test_integrator_runs_the_multi_platform_lint_gate_before_verification() -> None:
     text = " ".join(INTEGRATE.read_text(encoding="utf-8").split())
-    assert "3b. **Cross-check every target the project's CI tests**" in text
-    assert text.index("3b. **Cross-check") < text.index("4. **Verify.**")
-    assert "soldr cargo check --workspace --all-targets --target <triple>" in text
-    assert "Host lint and test (step 4) run only after every target passes." in text
-    assert "not a Rust project" in text
+    assert "3b. **Multi-platform lint gate, required before every push" in text
+    assert text.index("3b. **Multi-platform") < text.index("4. **Verify.**")
+    assert "[workspace.metadata.soldr].targets" in text
+    assert "soldr dylint --all -- --workspace --all-targets --target <triple>" in text
