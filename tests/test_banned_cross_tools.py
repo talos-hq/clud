@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from ci import banned_cross_tools
 from ci.banned_cross_tools import _scan_rust, _strip_rust_comments, main, scan_text
 
 # --------------------------------------------------------------- rejected --
@@ -733,3 +734,12 @@ def test_a_violation_reports_file_line_tool_and_the_soldr_replacement():
     assert "x86_64-pc-windows-msvc" in reason
     assert "soldr build --target" in reason, "must name the replacement"
     assert "docs/architecture/ci.md" in reason, "must point at the invariant"
+
+
+def test_every_rule_requires_a_prefilter_needle() -> None:
+    """A new rule the prefilter cannot see would silently never fire."""
+    rules = (*banned_cross_tools.BANNED_ALWAYS, *banned_cross_tools.BANNED_INSTALLS)
+    for tool, pattern in rules:
+        source = pattern.pattern.lower()
+        assert any(needle in source for needle in banned_cross_tools.PREFILTER_NEEDLES), tool
+

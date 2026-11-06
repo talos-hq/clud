@@ -517,6 +517,18 @@ def _install_reason(tool: str) -> str:
     )
 
 
+# Every rule requires one of these literals (compared lowercased), and comment
+# stripping only ever removes text. A file or line with none of them cannot
+# match, so it skips the regexes: nearly every line of the repository is in that
+# position. test_every_rule_requires_a_prefilter_needle keeps this list honest.
+PREFILTER_NEEDLES: tuple[str, ...] = ("xwin", "cross", "zig", "install-action", "[target")
+
+
+def _may_match(text: str) -> bool:
+    lowered = text.lower()
+    return any(needle in lowered for needle in PREFILTER_NEEDLES)
+
+
 def scan_text(text: str, suffix: str = ".py") -> list[tuple[int, str, str]]:
     """Return `(line_number, tool, reason)` for every violation in `text`.
 
@@ -529,6 +541,8 @@ def scan_text(text: str, suffix: str = ".py") -> list[tuple[int, str, str]]:
     # line of a script read as clean. Windows PowerShell writes a BOM by
     # default, so this is what a script authored there actually looks like.
     text = text.lstrip("﻿")
+    if not _may_match(text):
+        return violations
     # The marker is read from the *original* line. Blanking Rust comments
     # first would erase a marker written as a trailing `// cross-lint: allow`,
     # which is where anyone would naturally put one.
@@ -578,7 +592,7 @@ def scan_text(text: str, suffix: str = ".py") -> list[tuple[int, str, str]]:
     for number, line in enumerate(stripped, start=1):
         if number in install_lines:
             continue
-        if not line.strip():
+        if not _may_match(line):
             continue
 
         target = SOLDR_OWNED_TARGET.search(line)

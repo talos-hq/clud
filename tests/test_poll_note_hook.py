@@ -122,39 +122,53 @@ def decision(output: dict[str, Any]) -> str | None:
     return (output.get("hookSpecificOutput") or {}).get("permissionDecision")
 
 
+def fast_forward(state: Path, calls: int) -> None:
+    """Move the persisted streak forward instead of spawning the hook N times.
+
+    The real hook still reads this file and makes every decision the test
+    asserts. Only the walk up to the boundary is skipped; the Rust decision
+    table covers each count in between.
+    """
+    files = list((state / "repeat-guard").glob("*.json"))
+    assert len(files) == 1
+    streak = json.loads(files[0].read_text(encoding="utf-8"))
+    streak["count"] = calls
+    streak["steady"] = calls
+    files[0].write_text(json.dumps(streak), encoding="utf-8")
+
+
 def test_the_patient_poll_is_refused_past_its_limit_through_the_real_hook(
     tmp_path: Path,
 ) -> None:
     binary = scanner(tmp_path)
     state = tmp_path / "state"
     state.mkdir()
-    denied: list[int] = []
-    noted: list[int] = []
-    for index in range(1, 99):
-        output = scan(binary, state, "poll", OBS_POLL)
-        if "poll-note" in context(output):
-            noted.append(index)
-        if decision(output) == "deny":
-            denied.append(index)
-    assert noted == [6, 24]
-    assert denied == [97, 98]
+    # The note positions are walked for real by
+    # test_the_poll_note_appears_at_six_and_twenty_four_only.
+    assert decision(scan(binary, state, "poll", OBS_POLL)) is None
+    fast_forward(state, 94)
+    decisions = [decision(scan(binary, state, "poll", OBS_POLL)) for _ in range(95, 99)]
+    assert decisions == [None, None, "deny", "deny"]
 
 
 def test_a_build_command_is_never_poll_refused(tmp_path: Path) -> None:
     binary = scanner(tmp_path)
     state = tmp_path / "state"
     state.mkdir()
-    for index in range(1, 100):
-        output = scan(binary, state, "build", "soldr cargo test -p clud")
-        assert decision(output) is None, index
+    command = "soldr cargo test -p clud"
+    assert decision(scan(binary, state, "build", command)) is None
+    fast_forward(state, 94)
+    for index in range(95, 100):
+        assert decision(scan(binary, state, "build", command)) is None, index
 
 
 def test_a_different_call_resets_the_poll_count(tmp_path: Path) -> None:
     binary = scanner(tmp_path)
     state = tmp_path / "state"
     state.mkdir()
-    for _ in range(96):
-        scan(binary, state, "reset", OBS_POLL)
+    scan(binary, state, "reset", OBS_POLL)
+    fast_forward(state, 95)
+    assert decision(scan(binary, state, "reset", OBS_POLL)) is None
     scan(binary, state, "reset", "git ls-remote origin")
     output = scan(binary, state, "reset", OBS_POLL)
     assert decision(output) is None

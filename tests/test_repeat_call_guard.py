@@ -77,11 +77,20 @@ def _call(tmp_path: Path, env: dict[str, str], command: str, session: str = "s-1
 
 def test_incident_294_identical_calls_are_denied_from_call_n_plus_one(tmp_path: Path) -> None:
     env = _env(tmp_path)
-    codes = [_call(tmp_path, env, "echo ready") for _ in range(294)]
-    assert codes[:DEFAULT_LIMIT] == [0] * DEFAULT_LIMIT
-    assert codes[DEFAULT_LIMIT:] == [2] * (294 - DEFAULT_LIMIT)
+    assert _call(tmp_path, env, "echo ready") == 0
     state = tmp_path / "state" / "repeat-guard"
-    for file in state.iterdir():
+    files = list(state.iterdir())
+    assert len(files) == 1
+    # One real call wrote the streak; jump to just below the default limit so
+    # the compiled-in boundary is proved without 294 process spawns.
+    streak = json.loads(files[0].read_text(encoding="utf-8"))
+    assert streak["count"] == 1
+    streak["count"] = DEFAULT_LIMIT - 2
+    files[0].write_text(json.dumps(streak), encoding="utf-8")
+    codes = [_call(tmp_path, env, "echo ready") for _ in range(4)]
+    # Calls DEFAULT_LIMIT-1 and DEFAULT_LIMIT pass; the next two are denied.
+    assert codes == [0, 0, 2, 2]
+    for file in files:
         text = file.read_text(encoding="utf-8")
         assert "echo" not in text, "state stores only hashes and counts"
         assert "s-1" not in text, "state never stores the session id"
