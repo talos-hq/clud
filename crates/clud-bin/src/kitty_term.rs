@@ -10,6 +10,10 @@ const ENV_CONFIG_OVERRIDE: &str = "CLUD_KITTY_TERM_CONFIG";
 
 /// Handle only an explicit Kitty terminal request before ordinary startup.
 pub fn handle(args: &Args) -> Option<i32> {
+    clear_shell_wrapper_env();
+    if args.shell.is_some() {
+        return handle_shell(args);
+    }
     if !args.kitty_term {
         return None;
     }
@@ -34,6 +38,121 @@ pub fn handle(args: &Args) -> Option<i32> {
             1
         }
     })
+}
+
+/// Experimental `--shell bash`. Windows runs the launch under Git Bash in the
+/// bundled WezTerm fork; other hosts already have a native shell and PTY.
+fn handle_shell(args: &Args) -> Option<i32> {
+    if args.kitty_term || args.web_term {
+        eprintln!("[clud] --shell cannot be combined with --kitty-term or --web-term");
+        return Some(2);
+    }
+    if !crate::platform::host::WINDOWS {
+        eprintln!("[clud] --shell bash only changes Windows launches; continuing normally");
+        return None;
+    }
+    if !matches!(args.command, None | Some(crate::args::Command::Loop { .. })) {
+        eprintln!("[clud] --shell only applies to a backend launch or `clud loop`");
+        return Some(2);
+    }
+    if std::env::var_os(ENV_KITTY_TERM).is_some()
+        || std::env::var_os(crate::webterm::ENV_WEBTERM).is_some()
+    {
+        eprintln!("[clud] --shell cannot launch inside an existing desktop terminal");
+        return Some(2);
+    }
+    if let Some(error) = platform_error(true, std::env::consts::ARCH) {
+        eprintln!("[clud] {}", error.replace("--kitty-term", "--shell bash"));
+        return Some(1);
+    }
+    Some(match launch_shell(args) {
+        Ok(exit_code) => exit_code,
+        Err(error) => {
+            eprintln!("[clud] --shell bash unavailable: {error}");
+            1
+        }
+    })
+}
+
+fn launch_shell(args: &Args) -> Result<i32, String> {
+    let executable = std::env::current_exe().map_err(|error| format!("locating clud: {error}"))?;
+    let cwd =
+        std::env::current_dir().map_err(|error| format!("reading current directory: {error}"))?;
+    let (binary, config) = companion_paths(&executable)?;
+    let home = crate::home::user_home().ok_or("cannot resolve the home directory")?;
+    let bash = crate::shell::git_bash_resolver::resolve_or_fetch_git_bash(&home)
+        .map_err(|error| format!("resolving Git Bash: {error}"))?;
+    let argv = shell_argv(args, &binary, &config, &bash, &executable, &cwd);
+    let process = ManagedSubprocess::start_inheriting_env(argv, None, false, None)?;
+    process.wait(None)
+}
+
+/// MSYS rewrites arguments that look like POSIX paths when it starts a native
+/// program, which would corrupt a prompt such as `/fix this`. WezTerm closes a
+/// pane on a clean exit, so the script holds it for the closing transcript.
+const SHELL_SCRIPT: &str =
+    "CLUD_SHELL_WRAPPED=1 MSYS2_ARG_CONV_EXCL='*' MSYS_NO_PATHCONV=1 \"$@\"; \
+     status=$?; printf '\\n[clud] finished with exit code %s. Press Enter to close.' \"$status\"; \
+     read -r _; exit \"$status\"";
+const SHELL_WRAPPER_ENV: [&str; 3] = [
+    "CLUD_SHELL_WRAPPED",
+    "MSYS2_ARG_CONV_EXCL",
+    "MSYS_NO_PATHCONV",
+];
+
+/// The wrapper's settings protect only its own exec of clud. Left set, they
+/// would turn path conversion off for the agent and all its tool calls.
+fn clear_shell_wrapper_env() {
+    if std::env::var_os(SHELL_WRAPPER_ENV[0]).is_some() {
+        for name in SHELL_WRAPPER_ENV {
+            // SAFETY: called from startup dispatch, before clud starts threads
+            // that read the environment, as `startup.rs` does.
+            unsafe { std::env::remove_var(name) };
+        }
+    }
+}
+
+fn shell_argv(
+    args: &Args,
+    binary: &Path,
+    config: &Path,
+    bash: &Path,
+    executable: &Path,
+    cwd: &Path,
+) -> Vec<String> {
+    let mut argv = vec![
+        binary.to_string_lossy().into_owned(),
+        "--config-file".into(),
+        config.to_string_lossy().into_owned(),
+        "start".into(),
+        "--no-auto-connect".into(),
+        "--wait-exit".into(),
+        "--cwd".into(),
+        cwd.to_string_lossy().into_owned(),
+        "--".into(),
+        bash.to_string_lossy().into_owned(),
+        "--noprofile".into(),
+        "--norc".into(),
+        "-c".into(),
+        SHELL_SCRIPT.into(),
+        "clud".into(),
+        executable.to_string_lossy().into_owned(),
+    ];
+    // The flag precedes the subcommand, so only its first spelling is clud's;
+    // a later `--shell` belongs to the prompt or a backend.
+    let mut items = args.raw_argv.iter().skip(1);
+    let mut stripped = false;
+    while let Some(item) = items.next() {
+        if !stripped && item == "--shell" {
+            stripped = true;
+            items.next();
+        } else if !stripped && item.starts_with("--shell=") {
+            stripped = true;
+        } else {
+            argv.push(item.clone());
+        }
+    }
+    argv
 }
 
 fn platform_error(is_windows: bool, architecture: &str) -> Option<&'static str> {
@@ -176,6 +295,46 @@ mod tests {
                 "--kitty-term",
             ]
         );
+    }
+
+    #[test]
+    fn shell_flag_precedes_loop_and_is_stripped_from_the_forward() {
+        for raw in [
+            &[
+                "clud", "--shell", "bash", "loop", "/fix it", "--", "--shell", "x",
+            ][..],
+            &[
+                "clud",
+                "--shell=bash",
+                "loop",
+                "/fix it",
+                "--",
+                "--shell",
+                "x",
+            ],
+        ] {
+            let args = parse(raw);
+            assert_eq!(
+                args.shell,
+                Some(crate::args::ExperimentalShell::Bash),
+                "{raw:?}"
+            );
+            assert!(
+                matches!(args.command, Some(crate::args::Command::Loop { .. })),
+                "{raw:?}"
+            );
+            let argv = shell_argv(
+                &args,
+                Path::new("W.exe"),
+                Path::new("c.lua"),
+                Path::new("bash.exe"),
+                Path::new("clud.exe"),
+                Path::new("C:/work"),
+            );
+            let forwarded = &argv[argv.iter().position(|a| a == "clud.exe").unwrap() + 1..];
+            assert_eq!(forwarded, ["loop", "/fix it", "--", "--shell", "x"]);
+            assert_eq!(argv[9], "bash.exe");
+        }
     }
 
     #[test]

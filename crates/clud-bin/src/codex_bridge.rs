@@ -870,7 +870,10 @@ impl BridgeHandle {
                 let mut log = lock_log(log);
                 log.flush();
                 if log.has_notable_records() {
-                    eprintln!("[clud] codex bridge log: {}", log.path().display());
+                    crate::loop_console::diagnostic!(
+                        "[clud] codex bridge log: {}",
+                        log.path().display()
+                    );
                 }
             }
         }
@@ -1094,6 +1097,7 @@ fn handle_connection(
         log,
         header_deadline,
     ) else {
+        drain_before_close(&mut stream);
         return;
     };
     let standalone_root =
@@ -1124,6 +1128,31 @@ fn handle_connection(
         sessionless_standalone: standalone_root.is_some(),
     };
     route_request(&mut stream, &connection, parsed, &conversation_key);
+    drain_before_close(&mut stream);
+}
+
+const CLOSE_DRAIN_TIMEOUT: Duration = Duration::from_millis(200);
+const CLOSE_DRAIN_LIMIT: usize = 1 << 20;
+
+/// Finish the response, then consume what the client is still sending. A
+/// handler can answer without reading the body, and closing a socket with
+/// unread data sends a reset that can destroy the response before the client
+/// has read it. Windows does this routinely. Bounded in time and bytes.
+fn drain_before_close(stream: &mut TcpStream) {
+    if stream.shutdown(Shutdown::Write).is_err()
+        || stream.set_read_timeout(Some(CLOSE_DRAIN_TIMEOUT)).is_err()
+    {
+        return;
+    }
+    let mut buffer = [0u8; 8192];
+    let mut drained = 0;
+    let deadline = Instant::now() + CLOSE_DRAIN_TIMEOUT;
+    while drained < CLOSE_DRAIN_LIMIT && Instant::now() < deadline {
+        match stream.read(&mut buffer) {
+            Ok(read) if read > 0 => drained += read,
+            _ => return,
+        }
+    }
 }
 
 /// The per-connection state every route handler reads.
@@ -1298,9 +1327,10 @@ fn route_request(
         }
         _ => {
             if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
-                eprintln!(
+                crate::loop_console::diagnostic!(
                     "[clud] codex bridge: unhandled {} {}",
-                    parsed.method, parsed.path
+                    parsed.method,
+                    parsed.path
                 );
             }
             record_rejection(log, 404, "unrouted_request");
@@ -1526,7 +1556,7 @@ fn route_messages(
     // A rule that cannot be applied is an operator mistake, not a client one:
     // the request keeps going with every change that did land.
     for problem in &rules_outcome.problems {
-        eprintln!("payload rules: {problem}");
+        crate::loop_console::diagnostic!("payload rules: {problem}");
     }
     record_request_effort(&config.status_usage, &json, parsed.agent_id.is_some());
     let derived = connection.turn_key(&json, parsed);
@@ -1635,7 +1665,7 @@ fn route_chat_completions(
         Err(_) => (translated, crate::payload_rules::Outcome::default()),
     };
     for problem in &rules_outcome.problems {
-        eprintln!("payload rules: {problem}");
+        crate::loop_console::diagnostic!("payload rules: {problem}");
     }
     serve_unified_messages(
         stream,
@@ -3711,14 +3741,14 @@ fn warn_route_exhausted(
         _ => String::new(),
     };
     match taken {
-        Some(rung) => eprintln!(
+        Some(rung) => crate::loop_console::diagnostic!(
             "[clud] route: {} {}{} -> continuing on {}",
             route.as_str(),
             verdict.reason(),
             clock,
             rung.label(),
         ),
-        None => eprintln!(
+        None => crate::loop_console::diagnostic!(
             "[clud] route: {} {}{}; no configured fallback is available",
             route.as_str(),
             verdict.reason(),
@@ -4960,7 +4990,7 @@ fn report_proxy_stall(
         error.kind(),
         io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
     );
-    eprintln!(
+    crate::loop_console::diagnostic!(
         "[clud] codex bridge: upstream stream {} after {forwarded} bytes: {error}",
         if timed_out { "stalled" } else { "failed" }
     );
@@ -5551,7 +5581,10 @@ fn warn_once_on_terminal_failure(error: &PipelineError) {
     }
     // The leading `\x07` is a terminal bell: this is the failure most likely
     // to be waiting on a user who has looked away from an unattended run.
-    eprintln!("\x07[clud] codex bridge: {}", error.client_message());
+    crate::loop_console::eprint_diagnostic(&format!(
+        "\x07[clud] codex bridge: {}",
+        error.client_message()
+    ));
 }
 
 /// Whether a `claude*` id on the direct Codex route names a built-in
@@ -5592,7 +5625,7 @@ fn warn_once_on_anthropic_pick(requested: &str, served: &str) {
         .chars()
         .take(MAX_LOGGED_MODEL_CHARS)
         .collect::<String>();
-    eprintln!(
+    crate::loop_console::diagnostic!(
         "[clud] codex bridge: '{requested}' is a built-in Anthropic model this Codex session \
          cannot serve; requests naming it (a /model pick, or a subagent's `model:` alias) run \
          on {served} instead. Use a \"Codex\" row in /model to change models."
@@ -5636,7 +5669,7 @@ fn log_pipeline_error(error: &PipelineError, log: Option<&SharedBridgeLog>) {
         lock_log(log).record(event);
     }
     if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
-        eprintln!(
+        crate::loop_console::diagnostic!(
             "[clud] codex bridge: {} -> HTTP {}",
             error,
             error.http_status()
@@ -5645,7 +5678,7 @@ fn log_pipeline_error(error: &PipelineError, log: Option<&SharedBridgeLog>) {
         // Without this an operator can see *that* a 502 happened but not
         // whether it came from the edge, the provider, or clud itself (#764).
         if let Some(diagnostic) = error.upstream_diagnostic() {
-            eprintln!("[clud] codex bridge: upstream {diagnostic}");
+            crate::loop_console::diagnostic!("[clud] codex bridge: upstream {diagnostic}");
         }
     }
 }
@@ -5674,7 +5707,7 @@ fn log_continuation_invariant(
         lock_log(log).record(event.clone());
     }
     if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
-        eprintln!("[clud] codex bridge: {event}");
+        crate::loop_console::diagnostic!("[clud] codex bridge: {event}");
     }
 }
 
@@ -5695,7 +5728,7 @@ fn log_orphaned_outputs_repaired(log: Option<&SharedBridgeLog>, repaired: usize)
         lock_log(log).record(event.clone());
     }
     if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
-        eprintln!("[clud] codex bridge: {event}");
+        crate::loop_console::diagnostic!("[clud] codex bridge: {event}");
     }
 }
 
@@ -5717,7 +5750,7 @@ fn log_pending_outputs_recovered(
         lock_log(log).record(event.clone());
     }
     if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
-        eprintln!("[clud] codex bridge: {event}");
+        crate::loop_console::diagnostic!("[clud] codex bridge: {event}");
     }
 }
 
@@ -5741,7 +5774,7 @@ fn log_in_band_failure(
         lock_log(log).record(event.clone());
     }
     if std::env::var_os("CLUD_CODEX_BRIDGE_DEBUG").is_some_and(|value| value == "1") {
-        eprintln!("[clud] codex bridge: {}", event);
+        crate::loop_console::diagnostic!("[clud] codex bridge: {}", event);
     }
 }
 
@@ -5988,10 +6021,10 @@ fn record_cache_usage(
         }));
     }
     match after {
-        CacheHealth::Degraded => eprintln!(
+        CacheHealth::Degraded => crate::loop_console::diagnostic!(
             "\x07[clud] codex bridge: repeated large requests have little cache credit; the next misses may be stopped before more plan usage is consumed"
         ),
-        CacheHealth::FuseTripped => eprintln!(
+        CacheHealth::FuseTripped => crate::loop_console::diagnostic!(
             "\x07[clud] codex bridge: cache-health fuse armed; the next Codex request will be stopped before another large uncached replay"
         ),
         CacheHealth::Cold | CacheHealth::Healthy => {}
@@ -6731,6 +6764,24 @@ fn resolve_test_upstream_override(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_response_survives_closing_with_an_unread_request_body() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (mut server, _) = listener.accept().unwrap();
+        client.write_all(&[b'x'; 64 * 1024]).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        server.write_all(b"response").unwrap();
+        let started = Instant::now();
+        drain_before_close(&mut server);
+        drop(server);
+        assert!(started.elapsed() < Duration::from_secs(2));
+        let mut received = Vec::new();
+        client.read_to_end(&mut received).unwrap();
+        assert_eq!(received, b"response");
+    }
+
     mod redaction_http;
 
     use super::*;

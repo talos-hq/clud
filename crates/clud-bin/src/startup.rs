@@ -155,7 +155,7 @@ pub fn install_ctrl_c_flag(verbose: bool) -> Arc<AtomicBool> {
                 // Stderr so the "press again to exit" notice shows up
                 // even when verbose-mode logging is off — the user
                 // needs to see it regardless of logging configuration.
-                eprintln!("{msg}");
+                crate::loop_console::diagnostic!("{msg}");
             },
         );
     }) {

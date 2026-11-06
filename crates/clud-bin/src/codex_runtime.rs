@@ -623,7 +623,9 @@ fn manifest_or_cached(
     match result {
         Ok(manifest) => Some(manifest),
         Err(error) => {
-            eprintln!("[clud] model manifest unavailable ({error}); checking cached models");
+            crate::loop_console::diagnostic!(
+                "[clud] model manifest unavailable ({error}); checking cached models"
+            );
             cached.cloned()
         }
     }
@@ -663,7 +665,9 @@ fn load_choice() -> Choice {
     let available = match local_low_effort_models() {
         Ok(models) => models,
         Err(error) => {
-            eprintln!("[clud] Codex model/list unavailable ({error}); using built-in Sol/low");
+            crate::loop_console::diagnostic!(
+                "[clud] Codex model/list unavailable ({error}); using built-in Sol/low"
+            );
             Vec::new()
         }
     };
@@ -671,19 +675,24 @@ fn load_choice() -> Choice {
     if !fresh && !recently_attempted {
         if let (Some(path), Some(manifest)) = (path.as_deref(), served.as_ref()) {
             if let Err(error) = write_json_atomic(path, manifest) {
-                eprintln!("[clud] could not cache model manifest: {error}");
+                crate::loop_console::diagnostic!("[clud] could not cache model manifest: {error}");
             }
         }
     }
     if let Some(path) = good_path.as_deref() {
         if let Err(error) = persist_last_good(path, last_good.as_ref(), &choice) {
-            eprintln!("[clud] could not cache last-good Codex models: {error}");
+            crate::loop_console::diagnostic!(
+                "[clud] could not cache last-good Codex models: {error}"
+            );
         }
     }
     if choice.sol_source != Source::Published || choice.luna_source != Source::Published {
-        eprintln!(
+        crate::loop_console::diagnostic!(
             "[clud] Codex model sources: Sol {} ({:?}), Luna {} ({:?}); effort low",
-            choice.sol, choice.sol_source, choice.luna, choice.luna_source
+            choice.sol,
+            choice.sol_source,
+            choice.luna,
+            choice.luna_source
         );
     }
     choice

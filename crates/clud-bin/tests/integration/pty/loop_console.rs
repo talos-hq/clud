@@ -81,6 +81,14 @@ fn wait_text(process: &NativePtyProcess, screen: &mut vt100::Parser, text: &str)
     );
 }
 
+/// One write of text plus Enter is a paste, which must not submit.
+fn type_then_enter(process: &NativePtyProcess, screen: &mut vt100::Parser, text: &str) {
+    process.write_impl(text.as_bytes(), false).unwrap();
+    wait_text(process, screen, &format!("> {text}"));
+    std::thread::sleep(Duration::from_millis(120));
+    process.write_impl(b"\r", false).unwrap();
+}
+
 fn started_pid(path: &Path) -> Option<u64> {
     let body = std::fs::read(path).ok()?;
     let report: serde_json::Value = serde_json::from_slice(&body).ok()?;
@@ -153,16 +161,18 @@ fn exercise(shell: &str) {
     let initial_pid = started_pid(&started).unwrap();
     process.write_impl(b"q", false).unwrap();
     wait_text(&process, &mut screen, "Enter: save");
-    process
-        .write_impl("literal café 🦀 $HOME %PATH% & message\r".as_bytes(), false)
-        .unwrap();
+    type_then_enter(
+        &process,
+        &mut screen,
+        "literal café 🦀 $HOME %PATH% & message",
+    );
     wait_text(&process, &mut screen, "Message queued for next iteration");
     let inbox = root.join(".clud/loop/inbox");
     assert_eq!(std::fs::read_dir(&inbox).unwrap().count(), 1);
     assert_eq!(started_pid(&started), Some(initial_pid));
     process.write_impl(b"i", false).unwrap();
     wait_text(&process, &mut screen, "Enter: review");
-    process.write_impl(b"restart message\r", false).unwrap();
+    type_then_enter(&process, &mut screen, "restart message");
     wait_text(&process, &mut screen, "Are you sure?");
     // Enter is safe; cancellation never queues another message.
     process.write_impl(b"\r", false).unwrap();
@@ -293,5 +303,103 @@ fn codex_dashboard_scrolls_history_with_keys_and_mouse_without_screen_clears() {
     process.write_impl(b"\x03", false).unwrap();
     wait_text(&process, &mut screen, "\x1b[?1049l");
     assert_eq!(process.wait_impl(Some(10.0)).unwrap(), 130);
+    process.close_impl().unwrap();
+}
+
+#[test]
+fn dashboard_wraps_strips_escapes_and_a_pasted_burst_cannot_activate_actions() {
+    require_pty_or_skip!(
+        "dashboard_wraps_strips_escapes_and_a_pasted_burst_cannot_activate_actions"
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let env = isolated_env(root);
+    let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
+    std::fs::write(
+        root.join("colored.txt"),
+        format!("\x1b[31mcolored-text\x1b[0m\n{}END\n", "w".repeat(170)),
+    )
+    .unwrap();
+    let process = NativePtyProcess::new(
+        vec![
+            binary.to_string_lossy().into_owned(),
+            "--no-daemon".into(),
+            "--codex".into(),
+            "--subprocess".into(),
+            "loop".into(),
+            "--loop-count".into(),
+            "1".into(),
+            "test-rendering".into(),
+            "--".into(),
+            "--mock-ansi-script".into(),
+            "colored.txt".into(),
+            "--mock-sleep-ms".into(),
+            "60000".into(),
+        ],
+        Some(root.to_string_lossy().into_owned()),
+        Some(env),
+        12,
+        110,
+        None,
+    )
+    .unwrap();
+    process.set_echo(false);
+    process.start_impl().unwrap();
+    let mut screen = vt100::Parser::new(12, 110, 0);
+    wait_text(&process, &mut screen, "END");
+    let contents = screen.screen().contents();
+    assert!(contents.contains("colored-text"), "{contents}");
+    assert!(!contents.contains("[31m"), "{contents}");
+    // A pasted burst holding every hotkey and Enter leaves the dashboard watching.
+    process.write_impl(b"qiyqiy\r", false).unwrap();
+    std::thread::sleep(Duration::from_millis(300));
+    process.write_impl(b"\x1b[5~", false).unwrap();
+    wait_text(&process, &mut screen, "lines above live");
+    let inbox = root.join(".clud/loop/inbox");
+    let queued = std::fs::read_dir(&inbox).map_or(0, Iterator::count);
+    assert_eq!(queued, 0, "a paste queued a message");
+    process.write_impl(b"\x03", false).unwrap();
+    wait_text(&process, &mut screen, "\x1b[?1049l");
+    assert_eq!(process.wait_impl(Some(10.0)).unwrap(), 130);
+    process.close_impl().unwrap();
+}
+
+#[test]
+fn multi_iteration_loop_keeps_one_alternate_screen_and_keeps_the_transcript() {
+    require_pty_or_skip!(
+        "multi_iteration_loop_keeps_one_alternate_screen_and_keeps_the_transcript"
+    );
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path();
+    let env = isolated_env(root);
+    let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
+    std::fs::write(root.join("out.txt"), "chat-line\n").unwrap();
+    let process = NativePtyProcess::new(
+        vec![
+            binary.to_string_lossy().into_owned(),
+            "--no-daemon".into(),
+            "--codex".into(),
+            "--subprocess".into(),
+            "loop".into(),
+            "--loop-count".into(),
+            "3".into(),
+            "test-iterations".into(),
+            "--".into(),
+            "--mock-ansi-script".into(),
+            "out.txt".into(),
+        ],
+        Some(root.to_string_lossy().into_owned()),
+        Some(env),
+        24,
+        120,
+        None,
+    )
+    .unwrap();
+    process.set_echo(false);
+    process.start_impl().unwrap();
+    let mut screen = vt100::Parser::new(24, 120, 0);
+    let output = wait_text(&process, &mut screen, "\x1b[?1049l");
+    assert_eq!(output.matches("\x1b[?1049h").count(), 1, "{output:?}");
+    wait_text(&process, &mut screen, "chat-line");
     process.close_impl().unwrap();
 }

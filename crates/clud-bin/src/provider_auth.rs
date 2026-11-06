@@ -560,7 +560,9 @@ fn assess_key(key: &str, probe: impl FnOnce(&str) -> ProbeOutcome) -> Result<(),
             fingerprint: key_fingerprint(key),
         }),
         ProbeOutcome::Unavailable => {
-            eprintln!("[clud] warning: could not validate provider API key; continuing offline");
+            crate::loop_console::diagnostic!(
+                "[clud] warning: could not validate provider API key; continuing offline"
+            );
             Ok(())
         }
     }
@@ -598,7 +600,7 @@ pub fn run_for(
     {
         Ok(store) => store,
         Err(error) => {
-            eprintln!(
+            crate::loop_console::diagnostic!(
                 "{}-auth: {error}; unlock the vault or check ~/.clud/credentials",
                 descriptor.settings_id
             );
@@ -625,7 +627,7 @@ pub fn login_with_key(descriptor: &'static AnthropicCompatProvider, key: String)
     {
         Ok(store) => store,
         Err(error) => {
-            eprintln!(
+            crate::loop_console::diagnostic!(
                 "{}-auth: {error}; unlock the vault or check ~/.clud/credentials",
                 descriptor.settings_id
             );
@@ -676,7 +678,7 @@ pub(crate) fn prompt_secret(display_name: &str) -> Result<String, ()> {
         }
     })();
     let _ = terminal::disable_raw_mode();
-    eprintln!();
+    crate::loop_console::diagnostic!("");
     result
 }
 
@@ -759,7 +761,7 @@ fn run_with_probe(
             let secret = match read_secret() {
                 Ok(secret) if stored_key_is_well_formed(&secret) => Zeroizing::new(secret),
                 _ => {
-                    eprintln!(
+                    crate::loop_console::diagnostic!(
                         "{}-auth: invalid API key; nothing was stored",
                         descriptor.settings_id
                     );
@@ -769,7 +771,7 @@ fn run_with_probe(
             match store.set(&secret) {
                 Ok(()) => {
                     if store.backend() == CredentialBackend::File {
-                        eprintln!(
+                        crate::loop_console::diagnostic!(
                             "{}-auth: the native credential vault is unavailable; \
                              using the owner-only fallback file instead",
                             descriptor.settings_id
@@ -784,7 +786,7 @@ fn run_with_probe(
                     0
                 }
                 Err(error) => {
-                    eprintln!(
+                    crate::loop_console::diagnostic!(
                         "{}-auth: {error}; unlock the vault or check ~/.clud/credentials",
                         descriptor.settings_id
                     );
@@ -851,7 +853,7 @@ fn run_with_probe(
                 1
             }
             Err(error) => {
-                eprintln!(
+                crate::loop_console::diagnostic!(
                     "{}-auth: {error}; unlock the vault or check ~/.clud/credentials",
                     descriptor.settings_id
                 );
@@ -872,7 +874,7 @@ fn run_with_probe(
                 0
             }
             Err(error) => {
-                eprintln!(
+                crate::loop_console::diagnostic!(
                     "{}-auth: {error}; unlock the vault or check ~/.clud/credentials",
                     descriptor.settings_id
                 );

@@ -5,6 +5,12 @@ use crate::backend::{HarnessSelection, ModelProvider, RoutingMode};
 use crate::graphics::GraphicsMode;
 
 /// Fast CLI for running supported agent harnesses in YOLO mode.
+/// Shells selectable with the experimental `--shell` flag.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum ExperimentalShell {
+    Bash,
+}
+
 #[derive(Parser, Clone)]
 #[command(
     name = "clud",
@@ -20,6 +26,11 @@ pub struct Args {
     /// Open this backend launch in the Kitty-compatible desktop terminal.
     #[arg(long = "kitty-term", conflicts_with_all = ["web_term", "set_web_term"])]
     pub kitty_term: bool,
+
+    /// Experimental, Windows: run this launch under the named shell in the
+    /// bundled WezTerm fork. Elsewhere the launch runs normally.
+    #[arg(long = "shell", value_enum, value_name = "SHELL")]
+    pub shell: Option<ExperimentalShell>,
 
     /// Persist the web-terminal preference. With no value this enables it;
     /// pass `off` to restore the ordinary console launch.
@@ -2431,6 +2442,7 @@ fn split_inline_key_assignments(raw: &[String]) -> Result<Vec<String>, String> {
 }
 
 const SPLITTER_VALUE_FLAGS: &[&str] = &[
+    "--shell",
     "--install-version",
     "--prompt",
     "--message",

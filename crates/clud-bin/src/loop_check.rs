@@ -14,6 +14,21 @@ pub fn check_loop_markers(plan: &command::LaunchPlan, iteration: u32) -> Option<
     check_loop_markers_with_output(plan, iteration, "")
 }
 
+/// Whether [`check_loop_markers_with_output`] would end the loop, without
+/// printing, for a caller that must leave the alternate screen first.
+pub fn markers_end_loop(plan: &command::LaunchPlan, captured_output: &str) -> bool {
+    plan.loop_markers.as_ref().is_some_and(|markers| {
+        let paths = loop_spec::MarkerPaths {
+            done: std::path::PathBuf::from(&markers.done_path),
+            blocked: std::path::PathBuf::from(&markers.blocked_path),
+        };
+        !matches!(
+            loop_spec::read_markers_or_token(&paths, captured_output),
+            loop_spec::MarkerState::None
+        )
+    })
+}
+
 /// Same as [`check_loop_markers`] but also scans `captured_output` for the
 /// `<<<CLUD_LOOP_DONE: ...>>>` / `<<<CLUD_LOOP_BLOCKED: ...>>>` token
 /// fallback (issue #95).

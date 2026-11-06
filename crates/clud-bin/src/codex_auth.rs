@@ -359,7 +359,7 @@ fn classify_refresh_error_body(status: u16, raw: &[u8]) -> RefreshFailure {
 
 pub fn run(subcommand: &CodexAuthSubcommand, interrupted: &AtomicBool) -> i32 {
     let Some(home) = crate::home::user_home() else {
-        eprintln!("codex-auth: home directory is unavailable");
+        crate::loop_console::diagnostic!("codex-auth: home directory is unavailable");
         return 2;
     };
     match subcommand {
@@ -367,7 +367,7 @@ pub fn run(subcommand: &CodexAuthSubcommand, interrupted: &AtomicBool) -> i32 {
             acknowledge_experimental,
             ..
         } if !acknowledge_experimental => {
-            eprintln!("{EXPERIMENTAL_ACK_MESSAGE}");
+            crate::loop_console::diagnostic!("{EXPERIMENTAL_ACK_MESSAGE}");
             2
         }
         CodexAuthSubcommand::Login { no_browser, .. } => login(&home, !no_browser, interrupted),
@@ -417,7 +417,7 @@ pub fn run(subcommand: &CodexAuthSubcommand, interrupted: &AtomicBool) -> i32 {
                 1
             }
             Err(error) => {
-                eprintln!("codex-auth: {error}");
+                crate::loop_console::diagnostic!("codex-auth: {error}");
                 2
             }
         },
@@ -435,7 +435,7 @@ pub fn run(subcommand: &CodexAuthSubcommand, interrupted: &AtomicBool) -> i32 {
                 0
             }
             Err(error) => {
-                eprintln!("codex-auth: {error}");
+                crate::loop_console::diagnostic!("codex-auth: {error}");
                 2
             }
         },
@@ -446,7 +446,7 @@ fn login(home: &Path, open_browser: bool, interrupted: &AtomicBool) -> i32 {
     let listener = match bind_callback_listener() {
         Ok(listener) => listener,
         Err(error) => {
-            eprintln!("codex-auth: could not bind OAuth callback: {error}");
+            crate::loop_console::diagnostic!("codex-auth: could not bind OAuth callback: {error}");
             return 2;
         }
     };
@@ -471,7 +471,7 @@ fn login(home: &Path, open_browser: bool, interrupted: &AtomicBool) -> i32 {
     ) {
         Ok(code) => code,
         Err(error) => {
-            eprintln!("codex-auth: {error}");
+            crate::loop_console::diagnostic!("codex-auth: {error}");
             return 1;
         }
     };
@@ -483,7 +483,7 @@ fn login(home: &Path, open_browser: bool, interrupted: &AtomicBool) -> i32 {
             0
         }
         Err(error) => {
-            eprintln!("codex-auth: {error}");
+            crate::loop_console::diagnostic!("codex-auth: {error}");
             1
         }
     }

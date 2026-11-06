@@ -80,15 +80,7 @@ pub(super) fn run_with_stream_json_renderer(
         }
         match process.read_stdout(Some(timeout)) {
             ReadStatus::Line(bytes) => {
-                if let Err(error) =
-                    emit_rendered_line(&bytes, captured_output, console.as_deref_mut())
-                {
-                    teardown_interrupted_child(process, batch_wrapped);
-                    crate::launch_log::record_failure_reason(format_args!(
-                        "loop dashboard output: {error}"
-                    ));
-                    return ProcessOutcome::Error;
-                }
+                emit_rendered_line(&bytes, captured_output, console.as_deref_mut());
             }
             ReadStatus::Timeout => {
                 // No new data within the window; check if the child has
@@ -123,21 +115,26 @@ fn emit_rendered_line(
     bytes: &[u8],
     captured_output: &mut String,
     console: Option<&mut crate::loop_console::LoopConsole>,
-) -> std::io::Result<()> {
+) {
     let line = String::from_utf8_lossy(bytes);
     let trimmed = line.trim_end_matches(['\r', '\n']);
     // Issue #95: keep the raw text around so we can scan for the
     // `<<<CLUD_LOOP_DONE: ...>>>` token fallback after the iteration ends.
     captured_output.push_str(trimmed);
     captured_output.push('\n');
-    if let Some(rendered) = stream_json::render_line(trimmed) {
-        if let Some(ui) = console {
-            ui.line(&rendered)?;
-        } else {
-            eprintln!("{rendered}");
+    match console {
+        // The dashboard wraps and scrolls, so it can show the whole message.
+        Some(ui) => {
+            if let Some(rendered) = stream_json::render_chat_line(trimmed) {
+                ui.line(&rendered);
+            }
+        }
+        None => {
+            if let Some(rendered) = stream_json::render_line(trimmed) {
+                eprintln!("{rendered}");
+            }
         }
     }
-    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -616,22 +613,35 @@ pub(super) fn start_subprocess_runtime(
     .map_err(|error| error.to_string())
 }
 
-pub(super) fn finish_loop_console(
-    console: Option<crate::loop_console::LoopConsole>,
+/// Add this iteration's summary to the dashboard's chat stream.
+pub(super) fn note_iteration_summary(
+    console: Option<&mut crate::loop_console::LoopConsole>,
     captured: &str,
     iteration: u32,
 ) {
-    let transcript = console
-        .as_ref()
-        .map(crate::loop_console::LoopConsole::transcript);
-    drop(console);
-    if let Some(transcript) = transcript {
+    if let Some(console) = console {
         let summary = stream_json::IterationSummary::from_output(captured);
         if summary != stream_json::IterationSummary::default() {
-            eprintln!("{}", summary.render_panel(iteration));
-        } else if !transcript.is_empty() {
-            eprintln!("{transcript}");
+            console.line(&summary.render_panel(iteration));
         }
+    }
+}
+
+/// True when the dashboard stays up for another child. Entering and leaving
+/// the alternate screen between iterations would flash, so it closes only
+/// where the loop ends and clud prints to the normal screen.
+pub(super) fn loop_continues(
+    outcome: &ProcessOutcome,
+    plan: &command::LaunchPlan,
+    iteration: u32,
+    captured: &str,
+) -> bool {
+    match outcome {
+        ProcessOutcome::Restart => true,
+        ProcessOutcome::Exited(0) => {
+            iteration < plan.iterations && !crate::loop_check::markers_end_loop(plan, captured)
+        }
+        _ => false,
     }
 }
 
