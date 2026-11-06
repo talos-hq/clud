@@ -673,9 +673,8 @@ jobs:
         # MACOS_X64_INTEGRATION_SHARDS in ci/ci_matrix.py owns the shard names.
         include:
           - { suite: unit, shard: all }
-          - { suite: integration, shard: py1of3 }
-          - { suite: integration, shard: py2of3 }
-          - { suite: integration, shard: py3of3 }
+          - { suite: integration, shard: py1of2 }
+          - { suite: integration, shard: py2of2 }
     uses: ./.github/workflows/_run-tests.yml
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}

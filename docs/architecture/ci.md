@@ -45,7 +45,7 @@ the balance drifts, or from the shard jobs' timestamped logs (`gh run view
 is that file's time). Average at least two runs. A stale or missing entry
 only costs balance, never coverage.
 
-The macOS x64 integration suite runs as three jobs too
+The macOS x64 integration suite runs as two jobs too
 (`MACOS_X64_INTEGRATION_SHARDS`). The Intel runner needed ~25 min of pytest in
 run 42235151834 against a 20 min job ceiling, and a raised ceiling would only
 hold a scarce runner longer. Its weights share the same file, measured from a

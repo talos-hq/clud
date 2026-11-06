@@ -146,14 +146,14 @@ def test_checked_in_weights_split_the_suite_into_balanced_halves() -> None:
 
 
 def test_macos_x64_integration_shards_fit_the_job_ceiling() -> None:
-    """The heaviest shard stays near a third, at the slowest suite time measured."""
+    """~25 min at the slowest speed measured: the heaviest of two stays near half."""
     weights = {k: v for k, v in load_weights().items() if k.startswith("tests/integration/")}
     assert weights, "integration weights are missing"
     count = len(MACOS_X64_INTEGRATION_SHARDS)
     loads = [0.0] * count
     for name, shard in assign_files(dict.fromkeys(weights, 1), weights, count).items():
         loads[shard] += weights[name]
-    assert max(loads) / sum(loads) < 0.45, loads
+    assert max(loads) / sum(loads) < 0.55, loads
 
 
 def test_macos_x64_matrix_matches_the_shard_table() -> None:
