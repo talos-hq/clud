@@ -82,7 +82,12 @@ def installer_json(result, status: str, code: int, committed: bool) -> dict:
 
 
 @pytest.fixture
-def installer_target(tmp_path: Path):  # noqa: C901
+def installer_target(tmp_path: Path):
+    yield from installer_target_scope(tmp_path)
+
+
+def installer_target_scope(tmp_path: Path):  # noqa: C901
+    """Set up one install target; a fixture of any scope may delegate here."""
     if sys.platform != "win32":
         home = tmp_path / "home"
         home.mkdir(mode=0o700)
