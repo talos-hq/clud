@@ -81,6 +81,12 @@ SUITES: tuple[str, ...] = ("unit", "integration")
 #: matrix values in `ci.yml`.
 LINUX_X64_UNIT_SHARDS: tuple[str, ...] = ("rust", "py1of3", "py2of3", "py3of3")
 
+#: The macOS x64 integration suite outgrew `timeout-minutes: 20` on the slow
+#: Intel runner: run 42235151834 spent 3.5 min on setup and reached only 66 % of
+#: the suite in the next 16.6 min (~25 min of pytest). Three jobs keep the
+#: estimated worst case near 12 min. The names are matrix values in `ci.yml`.
+MACOS_X64_INTEGRATION_SHARDS: tuple[str, ...] = ("py1of3", "py2of3", "py3of3")
+
 
 def resolve_tier(  # noqa: C901
     event_name: str,

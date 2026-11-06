@@ -510,8 +510,8 @@ def parse_shard(name: str) -> Shard:
 
     The Linux x64 unit lane is split into independent jobs (see
     `ci/pytest_shard.py`): `rust` runs the Rust harnesses, `py1of3`..`py3of3`
-    each run half of the pytest suite. `all` is the whole suite in one job,
-    which every other lane still uses.
+    each run a share of the pytest suite. `all` is the whole suite in one job.
+    The macOS x64 integration lane also takes `py<k>of<n>`; `rust` is unit-only.
     """
     if name == "all":
         return Shard(rust=True, python=True)
@@ -533,28 +533,37 @@ def run_unit_suite(
         return 1
     if not shard.python:
         return 0
-    extra = list(pytest_args)
-    if shard.spec is not None:
-        extra = ["-p", "ci.pytest_shard", SHARD_OPTION, shard.spec, *extra]
-    rc = run_pytest("not integration", env, extra, suite="unit")
-    if not report_pytest_exit(rc):
-        return 1
-    if shard.spec is not None and not shard_was_applied(shard.spec):
-        # A shard that silently ran the whole suite still passes, doubles the
-        # lane's cost and hides that the split is broken; fail it instead.
-        print(
-            f"::error::pytest shard {shard.spec} did not filter the collection "
-            f"(no '{applied_marker(shard.spec)}' line in {pytest_log_path('unit')})",
-            file=sys.stderr,
-        )
-        return 1
-    return 0
+    rc = run_pytest("not integration", env, shard_pytest_args(shard, pytest_args), suite="unit")
+    return 0 if report_pytest_exit(rc) and shard_filter_held(shard, "unit") else 1
 
 
-def shard_was_applied(spec: str) -> bool:
+def shard_pytest_args(shard: Shard, pytest_args: list[str]) -> list[str]:
+    """`pytest_args`, preceded by the shard plugin when `shard` is a real split."""
+    if shard.spec is None:
+        return list(pytest_args)
+    return ["-p", "ci.pytest_shard", SHARD_OPTION, shard.spec, *pytest_args]
+
+
+def shard_filter_held(shard: Shard, suite: str) -> bool:
+    """False, with an error, if a shard's run did not filter its collection.
+
+    A shard that silently ran the whole suite still passes, doubles the lane's
+    cost and hides that the split is broken; fail it instead.
+    """
+    if shard.spec is None or shard_was_applied(shard.spec, suite):
+        return True
+    print(
+        f"::error::pytest shard {shard.spec} did not filter the collection "
+        f"(no '{applied_marker(shard.spec)}' line in {pytest_log_path(suite)})",
+        file=sys.stderr,
+    )
+    return False
+
+
+def shard_was_applied(spec: str, suite: str = "unit") -> bool:
     """Did the shard plugin announce that it filtered this run's collection?"""
     try:
-        text = pytest_log_path("unit").read_text(encoding="utf-8", errors="replace")
+        text = pytest_log_path(suite).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
     return applied_marker(spec) in text
@@ -572,8 +581,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("pytest_args", nargs="*")
     args = parser.parse_args(argv)
     shard = parse_shard(args.shard)
-    if args.suite != "unit" and args.shard != "all":
-        parser.error("--shard applies to the unit suite only")
+    if args.suite == "integration" and not shard.python:
+        parser.error("--shard rust applies to the unit suite only")
+    if args.suite not in ("unit", "integration") and args.shard != "all":
+        parser.error("--shard applies to the unit and integration suites only")
 
     bundle = args.bundle.resolve()
     manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
@@ -625,13 +636,10 @@ def main(argv: list[str] | None = None) -> int:
     env["CLUD_NO_UNLOCK"] = "1"
     # `-v` prints each test name before it runs, so a hang is pinned to an exact
     # test rather than showing up as silent dead air before the job timeout.
-    return (
-        0
-        if report_pytest_exit(
-            run_pytest("integration", env, ["-v", *args.pytest_args], suite="integration")
-        )
-        else 1
+    rc = run_pytest(
+        "integration", env, ["-v", *shard_pytest_args(shard, args.pytest_args)], suite="integration"
     )
+    return 0 if report_pytest_exit(rc) and shard_filter_held(shard, "integration") else 1
 
 
 if __name__ == "__main__":

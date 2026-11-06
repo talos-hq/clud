@@ -193,7 +193,12 @@ def test_each_target_executes_both_test_suites_and_gate_checks_every_target():
         )
         assert match, name
         block = match.group(1)
-        assert "suite: [unit, integration]" in block, name
+        if name == "macos-x64":
+            # Sharded integration; test_unit_shards.py pins the exact matrix.
+            assert "suite: unit" in block
+            assert "suite: integration" in block
+        else:
+            assert "suite: [unit, integration]" in block, name
         assert f"- test-{name}" in gate, name
 
     unit = text.split("\n  test-linux-x64-unit:\n", 1)[1].split(

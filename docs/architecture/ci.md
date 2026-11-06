@@ -43,7 +43,14 @@ split costs only the extra jobs' setup. Refresh the weights from a run's `logs/p
 the balance drifts, or from the shard jobs' timestamped logs (`gh run view
 --log --job`: each pytest progress line's timestamp minus the previous one's
 is that file's time). Average at least two runs. A stale or missing entry
-only costs balance, never coverage. All other lanes run the whole suite in one job (`--shard all`).
+only costs balance, never coverage.
+
+The macOS x64 integration suite runs as three jobs too
+(`MACOS_X64_INTEGRATION_SHARDS`). The Intel runner needed ~25 min of pytest in
+run 42235151834 against a 20 min job ceiling, and a raised ceiling would only
+hold a scarce runner longer. Its weights share the same file, measured from a
+complete run's `logs/pytest-integration-progress.jsonl`. All other lanes run the
+whole suite in one job (`--shard all`).
 
 ### A release recomputes its own proof (#2202)
 
