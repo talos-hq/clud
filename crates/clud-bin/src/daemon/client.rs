@@ -335,19 +335,40 @@ fn await_daemon_startup(
 /// that session's tag for as long as it lives.
 fn spawn_detached_daemon(state_dir: &Path) -> io::Result<()> {
     let exe = std::env::current_exe()?;
-    // Best effort: without a home or a writable state dir, run in place as before.
-    let exe = crate::home::user_home()
-        .and_then(|home| crate::version_dir::pinned_executable(&home, &exe).ok())
-        .unwrap_or(exe);
-    let mut command = Command::new(exe); // running-process: command-builder
-    command.arg("__daemon").arg("--state-dir").arg(state_dir);
-    command.env_remove(running_process::ORIGINATOR_ENV_VAR);
-    // Dropping a `DaemonChild` does not terminate the process.
-    let _daemon = running_process::spawn_daemon_breaking_away_with_env_policy(
-        &mut command,
-        running_process::EnvironmentPolicy::Inherit,
-    )?;
-    Ok(())
+    let pinned = crate::home::user_home()
+        .and_then(|home| crate::version_dir::pinned_executable(&home, &exe).ok());
+    spawn_preferring_image(pinned.as_deref(), &exe, &|program| {
+        let mut command = Command::new(program); // running-process: command-builder
+        command.arg("__daemon").arg("--state-dir").arg(state_dir);
+        command.env_remove(running_process::ORIGINATOR_ENV_VAR);
+        // Dropping a `DaemonChild` does not terminate the process.
+        running_process::spawn_daemon_breaking_away_with_env_policy(
+            &mut command,
+            running_process::EnvironmentPolicy::Inherit,
+        )
+        .map(|_daemon| ())
+    })
+}
+
+/// Start the daemon from the pinned image, or from the install when the image
+/// cannot be started. A launch never fails over pinning: on Windows
+/// `CreateProcess` refuses a path past `MAX_PATH` that file APIs accepted.
+fn spawn_preferring_image(
+    image: Option<&Path>,
+    install: &Path,
+    spawn: &dyn Fn(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    if let Some(image) = image.filter(|image| *image != install) {
+        match spawn(image) {
+            Ok(()) => return Ok(()),
+            Err(error) => eprintln!(
+                "[clud] note: cannot start the daemon from {}: {error}; using {}",
+                image.display(),
+                install.display()
+            ),
+        }
+    }
+    spawn(install)
 }
 
 pub(super) fn probe_existing(state_dir: &Path) -> Option<DaemonInfo> {
