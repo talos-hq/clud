@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 from running_process import PseudoTerminalProcess
+from running_process.compat import TimeoutExpired
 
 from tests.process import run as run_process
 
@@ -141,6 +142,25 @@ def installer_target_scope(tmp_path: Path):  # noqa: C901
                     if attempt == 19:
                         raise
                     time.sleep(0.25)
+
+
+#: Installs take 1.0-1.5 s (60 timed on a hosted Windows runner, PR #2664). In run
+#: 42235151834 the first two writes to %LOCALAPPDATA% stalled for ~71 s together
+#: while every other test ran at normal speed, then the same install took 1.6 s.
+#: The budget covers that stall and stays below pytest's 90 s per-test timeout.
+INSTALL_STALL_BUDGET_SECONDS = 85
+
+
+def run_first_install(argv: list[str], env: dict[str, str], destination: Path):
+    """Install under the stall budget; on timeout, report how far the install got."""
+    try:
+        return run_process(
+            argv, env=env, capture_output=True, timeout=INSTALL_STALL_BUDGET_SECONDS, check=False
+        )
+    except TimeoutExpired:
+        parent = destination.parent
+        files = {f.name: f.stat().st_size for f in parent.iterdir()} if parent.is_dir() else None
+        pytest.fail(f"install exceeded {INSTALL_STALL_BUDGET_SECONDS} s; {parent} held {files}")
 
 
 def assert_crlf(output: bytes) -> None:
@@ -284,9 +304,10 @@ def test_install_only_preserves_windows_user_path(installer_target) -> None:
             before = winreg.QueryValueEx(key, "Path")
         except FileNotFoundError:
             before = None
-        result = run_process(
+        result = run_first_install(
             [str(clud_binary()), "--installer", "--install-current", "--yes", "--no-modify-path"],
-            env=env, capture_output=True, timeout=30, check=False,
+            env,
+            destination,
         )
         assert result.returncode == 0, result.stderr.decode(errors="replace")
         assert destination.is_file()
@@ -308,10 +329,11 @@ def test_install_only_preserves_windows_user_path(installer_target) -> None:
 ])
 def test_installer_json_reports_committed_state(installer_target, flags, status, verified) -> None:
     env, destination = installer_target
-    result = run_process(
+    result = run_first_install(
         [str(clud_binary()), "--installer", "--install-current", "--yes", "--installer-json",
          *flags],
-        env=env, capture_output=True, timeout=30, check=False,
+        env,
+        destination,
     )
     report = installer_json(result, status, 0, True)
     assert report["activation_verified"] is verified
