@@ -264,6 +264,9 @@ fn borrow<'a>(env: &'a [(&'static str, String)]) -> Vec<(&'static str, &'a str)>
 }
 
 fn mentions_hermes(output: &str) -> bool {
+    // The agent-board directive of a launch with the MCP bridge names Hermes as
+    // a fixed sentence; it says nothing about the user's Hermes config.
+    let output = output.replace("clud, Hermes and other agents", "");
     let lower = output.to_ascii_lowercase();
     lower.contains("hermes") || lower.contains("yaml") || lower.contains("config.yaml")
 }
