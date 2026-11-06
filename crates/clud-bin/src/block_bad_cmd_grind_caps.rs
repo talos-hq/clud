@@ -404,6 +404,8 @@ fn builds(role: &str) -> bool {
 
 /// Whether `path` is a slot of the fixup pool: `.clud/worktrees/<repo>-wt-grind-fixup-<n>`.
 fn is_fixup_slot(path: &str) -> bool {
+    // A home-expanded path on Windows uses backslashes.
+    let path = path.replace('\\', "/");
     let path = path.trim_end_matches('/');
     let Some((parent, name)) = path.rsplit_once('/') else {
         return false;
@@ -2091,6 +2093,12 @@ mod tests {
 
     /// #2467: the chaperone has no checkout and no build. It watches a queued
     /// PR, reads CI, reruns failed jobs once and re-enqueues; nothing else.
+    #[test]
+    fn fixup_slot_accepts_windows_separators() {
+        assert!(is_fixup_slot(r"C:\Users\u\.clud\worktrees\r-wt-grind-fixup-1"));
+        assert!(!is_fixup_slot(r"C:\Users\u\.clud\worktrees\r-wt-feature"));
+    }
+
     #[test]
     fn chaperone_watches_fixes_in_its_pool_and_never_bypasses() {
         let facts = run(false, false);
