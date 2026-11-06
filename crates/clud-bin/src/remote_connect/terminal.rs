@@ -9,6 +9,9 @@ use tungstenite::Message;
 
 const FRAME_BYTES: usize = 16 * 1024;
 const OUTPUT_FRAMES: usize = 128;
+/// ConPTY's first output: a cursor query it holds the shell behind until answered.
+const CONPTY_STARTUP_QUERY: &[u8] = b"\x1b[6n";
+const CONPTY_STARTUP_REPLY: &[u8] = b"\x1b[1;1R";
 
 #[derive(Default)]
 pub(super) struct Terminal {
@@ -48,12 +51,26 @@ fn input_pump(
     }
 }
 
+/// `chunk` without ConPTY's startup query, if it holds one. The operator's
+/// terminal cannot be relied on to answer: it may not be attached, and only the
+/// socket holding control may send input. So the client alone answers this one,
+/// and hides it, since a second reply would reach the shell as typed junk.
+fn without_startup_query(chunk: &[u8]) -> Option<Vec<u8>> {
+    let at = chunk
+        .windows(CONPTY_STARTUP_QUERY.len())
+        .position(|window| window == CONPTY_STARTUP_QUERY)?;
+    let mut rest = chunk[..at].to_vec();
+    rest.extend_from_slice(&chunk[at + CONPTY_STARTUP_QUERY.len()..]);
+    Some(rest)
+}
+
 fn output_pump(
     process: Arc<NativePtyProcess>,
     tx: mpsc::SyncSender<Message>,
     id: String,
     failed: Arc<AtomicBool>,
 ) {
+    let mut awaiting_startup_query = crate::platform::host::WINDOWS;
     loop {
         // running-process owns the reader. Fail closed if its queue grows ahead
         // of this bounded pump, rather than retaining an unlimited noisy shell.
@@ -69,7 +86,13 @@ fn output_pump(
             break;
         }
         match process.read_chunk_impl(Some(0.1)) {
-            Ok(Some(bytes)) => {
+            Ok(Some(mut bytes)) => {
+                if std::mem::take(&mut awaiting_startup_query) {
+                    if let Some(rest) = without_startup_query(&bytes) {
+                        bytes = rest;
+                        let _ = process.write_impl(CONPTY_STARTUP_REPLY, false);
+                    }
+                }
                 for chunk in bytes.chunks(FRAME_BYTES) {
                     let mut frame = vec![0];
                     frame.extend_from_slice(chunk);
@@ -80,7 +103,19 @@ fn output_pump(
                     }
                 }
             }
-            Ok(None) => {}
+            // ConPTY keeps its output open after the child exits, so a reader
+            // never reaches EOF there. Idle means the output is already forwarded.
+            Ok(None) => {
+                let exited =
+                    running_process::pty::poll_pty_process(&process.handles, &process.returncode);
+                if let Ok(Some(code)) = exited {
+                    let event = json!({"type":"pty_exit", "pty_id":id, "code":code, "signal":null});
+                    if tx.try_send(Message::Text(event.to_string().into())).is_ok() {
+                        return;
+                    }
+                    break;
+                }
+            }
             Err(_) if process.wait_for_reader_closed_impl(Some(0.0)) => {
                 // Closed-stream is EOF, not a failed session. Preserve shell status.
                 let code = process.wait_impl(Some(2.0)).ok();
@@ -249,6 +284,16 @@ impl Drop for Terminal {
 mod tests {
     use super::*;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn startup_query_is_removed_once_and_other_output_kept() {
+        assert_eq!(
+            without_startup_query(b"a\x1b[6nb\x1b[6n").unwrap(),
+            b"ab\x1b[6n"
+        );
+        assert_eq!(without_startup_query(b"\x1b[6n").unwrap(), b"");
+        assert_eq!(without_startup_query(b"plain"), None);
+    }
 
     #[test]
     fn isolated_shell_disables_profile_startup() {

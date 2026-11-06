@@ -7,5 +7,6 @@ mod install_products_cli;
 mod metered_policy_cli;
 mod platform;
 mod provider_selection_cli;
+mod remote_connect_e2e_cli;
 mod remote_proxy_cli;
 mod setup_cli;
