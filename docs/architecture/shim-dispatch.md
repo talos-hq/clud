@@ -1,8 +1,8 @@
 # `clud-shim` dispatch: one registry, one entry path, fail open
 
 `clud-shim` is the personality of the one `clud` binary behind every PATH alias
-clud installs: `python` and `python3` in `~/.clud/state/shims`, and `rm`, `gh`, `git`, <!-- python-name-lint: allow -->
-`safe-rm`, `safe-mktemp` in `~/.clud/state/rm-shim`. Each alias is a hardlink, symlink or copy of `clud`
+clud installs: `python` and `python3` in the build directory's `shims` (DD-203), and `rm`, `gh`, `git`, <!-- python-name-lint: allow -->
+`safe-rm`, `safe-mktemp` in its `rm-shim`. Each alias is a hardlink, symlink or copy of `clud`
 (hardlink first; [DD-121](../DESIGN_DECISIONS.md#dd-121-helper-executables-are-argv0-aliases-of-the-one-clud-binary))
 that `multicall::maybe_run` routes here by argv\[0\] before any other startup
 work. The code is `shim_main.rs` and `shim_main/dispatch.rs`. This doc owns the contract every alias shares (#1546). What an
@@ -78,6 +78,10 @@ meaning. A new alias or key needs no bump, because an older session simply
 lacks the key.
 
 ## Running sessions after an upgrade
+
+Since DD-203 aliases live in `~/.clud/state/versions/v<version>-<hash>/`, and a
+session launched there stays on its build until it restarts. The relink below
+applies only to a session an older clud launched on the legacy shared directory.
 
 A session keeps the alias directory it launched with, so after an upgrade
 its aliases would run the old binary until some later launch relinked them.

@@ -185,6 +185,7 @@ pub mod stream_json;
 pub mod subprocess;
 #[cfg(test)]
 pub(crate) mod test_env;
+pub mod version_dir;
 pub mod video;
 
 pub mod kimi_auth;

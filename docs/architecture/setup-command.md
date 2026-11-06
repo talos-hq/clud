@@ -6,7 +6,7 @@ another entry point already uses.
 
 | Step | What it does | Implementation |
 | --- | --- | --- |
-| 1. Aliases | Links the interpreter aliases (`python`, `pip`, ...) under `~/.clud/state/shims/` to the running `clud` | `shim_install::extract_shims_at`, the same call every launch makes |
+| 1. Aliases | Links the interpreter aliases (`python`, `pip`, ...) under the per-build `shims` directory (DD-203) to the running `clud` | `shim_install::extract_shims_at`, the same call every launch makes |
 | 2. Provider | OpenRouter, Claude or Codex; stores an OpenRouter key; picks an OpenRouter model; saves the provider and native harness as defaults | `self_install::setup` (the flow drafted in #2223) |
 | 3. Shell activation | Only with `--write-profile`: runs the native installer for this version, which owns every shell-profile and PATH edit | `self_install::entry::install_current_with_profile` |
 

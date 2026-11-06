@@ -446,7 +446,7 @@ pub fn ensure_helper_on_session_path() {
 /// appended, or `None` when it is already there or cannot be populated.
 fn session_path_with_helper(path_env: &str, clud: &Path, home: &Path) -> Option<String> {
     let dir = expose_helper_at(home, clud).ok()?;
-    path_with_appended(path_env, &dir)
+    path_with_helper(path_env, &dir, Some(home))
 }
 
 /// Login shells can rebuild PATH and discard helper-bin. Keep the scanner
@@ -480,8 +480,12 @@ fn refresh_owned_helper(found: &Path, clud: &Path, home: Option<&Path>) -> bool 
     let beside_clud = clud
         .parent()
         .is_some_and(|clud_dir| same_dir(dir, clud_dir));
-    let helper_bin = home.is_some_and(|home| same_dir(dir, &home.join(HELPER_BIN_SUBDIR)));
-    if !beside_clud && !helper_bin {
+    // A build's helper dir is that build's, never relinked (DD-203); the launch
+    // replaces it on PATH instead.
+    if home.is_some_and(|home| is_clud_helper_dir(dir, home)) {
+        return true;
+    }
+    if !beside_clud {
         return false;
     }
     for name in [
@@ -538,58 +542,49 @@ fn same_dir(a: &Path, b: &Path) -> bool {
 /// Under the user's home: the helper-only PATH directory.
 const HELPER_BIN_SUBDIR: &str = ".clud/state/helper-bin";
 
-/// Place the scanner names alone in the helper-only directory under `home`
-/// as aliases of `clud` (hardlink, then symlink, then copy; see
-/// [`crate::alias_link`]) and return that directory. An up-to-date entry is
-/// left untouched; a stale one (after an upgrade) is replaced through a temp
-/// file and rename. If the replacement fails (on Windows a running helper
-/// cannot be replaced) an existing entry is still used.
+/// Whether `dir` is the legacy helper dir or some build's.
+fn is_clud_helper_dir(dir: &Path, home: &Path) -> bool {
+    dir == home.join(HELPER_BIN_SUBDIR)
+        || crate::version_dir::is_alias_dir_named(home, dir, crate::version_dir::HELPER_LEAF)
+}
+
+/// Place the scanner names alone in this build's helper-only directory (see
+/// [`crate::version_dir`]) and return that directory.
 fn expose_helper_at(home: &Path, clud: &Path) -> io::Result<PathBuf> {
-    let dir = home.join(HELPER_BIN_SUBDIR);
-    std::fs::create_dir_all(&dir)?;
-    for name in [
+    let build = crate::version_dir::place(home, clud)?;
+    let dir = build.helper();
+    let names = [
         crate::multicall::CMD_SCAN,
         crate::multicall::LEGACY_CMD_SCAN,
-    ] {
-        let target = dir.join(crate::shim_registry::file_name(name));
-        if let Err(error) = crate::alias_link::install_alias(clud, &target) {
-            if !target.is_file() {
-                return Err(error);
-            }
-        }
-    }
+    ]
+    .map(crate::shim_registry::file_name);
+    crate::version_dir::install_aliases(&build, &dir, &names, &crate::alias_link::DEFAULT_ORDER)?;
     Ok(dir)
 }
 
 /// The launch step when PATH already finds a `clud-cmd-scan`: refresh it if
-/// clud owns it, and refresh the helper-only directory too. That directory
-/// is not what PATH found, so without the second step its aliases outlive
-/// every upgrade while another `clud-cmd-scan` is first on PATH. Returns the
-/// foreign-helper warning, if any.
+/// clud owns it. Returns the foreign-helper warning, if any.
 fn refresh_found_helper(found: &Path, clud: &Path, home: Option<&Path>) -> Option<String> {
     let owned = refresh_owned_helper(found, clud, home);
-    if let Some(home) = home {
-        refresh_helper_bin(home, clud);
-    }
     foreign_helper_warning(found, clud, owned)
 }
 
-/// Bring an existing helper-only directory up to `clud`. Nothing is created:
-/// a directory clud never populated stays absent. The per-entry check is the
-/// same metadata freshness test [`expose_helper_at`] pays on every launch.
-fn refresh_helper_bin(home: &Path, clud: &Path) {
-    if home.join(HELPER_BIN_SUBDIR).is_dir() {
-        let _ = expose_helper_at(home, clud);
-    }
-}
-
-fn path_with_appended(path_env: &str, dir: &Path) -> Option<String> {
-    let mut entries: Vec<PathBuf> = std::env::split_paths(path_env)
+/// `path_env` with `dir` last and every other clud helper dir gone, or `None`
+/// when that is already so. A clud started inside an older session inherits
+/// that build's helper dir, which would otherwise shadow its own (DD-203).
+fn path_with_helper(path_env: &str, dir: &Path, home: Option<&Path>) -> Option<String> {
+    let all: Vec<PathBuf> = std::env::split_paths(path_env)
         .filter(|entry| !entry.as_os_str().is_empty())
         .collect();
-    if entries.iter().any(|entry| entry == dir) {
+    let other_helper =
+        |entry: &PathBuf| entry != dir && home.is_some_and(|home| is_clud_helper_dir(entry, home));
+    if all.iter().any(|entry| entry == dir) && !all.iter().any(other_helper) {
         return None;
     }
+    let mut entries: Vec<PathBuf> = all
+        .into_iter()
+        .filter(|entry| entry != dir && !other_helper(entry))
+        .collect();
     entries.push(dir.to_path_buf());
     std::env::join_paths(entries)
         .ok()
@@ -919,10 +914,8 @@ mod tests {
         assert!(!refresh_owned_helper(&foreign, &clud, Some(&home)));
 
         assert_eq!(std::fs::read_to_string(&beside).unwrap(), "clud-v2-longer");
-        assert_eq!(
-            std::fs::read_to_string(&helper_bin).unwrap(),
-            "clud-v2-longer"
-        );
+        // Owned, but older sessions run it: never relinked (DD-203).
+        assert_eq!(std::fs::read_to_string(&helper_bin).unwrap(), "clud-v1");
         assert_eq!(std::fs::read_to_string(&foreign).unwrap(), "someone-else");
     }
 
@@ -968,10 +961,29 @@ mod tests {
         assert_eq!(foreign_helper_warning(&alias, &clud, false), None);
     }
 
-    /// #2514-style regression: a foreign `clud-cmd-scan` first on PATH made
-    /// the launch skip helper-bin, so its aliases stayed on the old build.
+    /// A clud started inside an older session must not leave that build's
+    /// scanner ahead of its own.
     #[test]
-    fn a_stale_helper_bin_is_refreshed_while_a_foreign_helper_is_first_on_path() {
+    fn the_session_helper_replaces_another_builds_helper_on_path() {
+        let home = Path::new("/home/u");
+        let root = home.join(crate::version_dir::ROOT_SUBDIR);
+        let old = root.join("v1-old/helper-bin");
+        let legacy = home.join(HELPER_BIN_SUBDIR);
+        let new = root.join("v2-new/helper-bin");
+        let base = std::env::join_paths([Path::new("/usr/bin"), &old, &legacy])
+            .unwrap()
+            .into_string()
+            .unwrap();
+        let updated = path_with_helper(&base, &new, Some(home)).unwrap();
+        let entries: Vec<PathBuf> = std::env::split_paths(&updated).collect();
+        assert_eq!(entries, vec![PathBuf::from("/usr/bin"), new.clone()]);
+        assert_eq!(path_with_helper(&updated, &new, Some(home)), None);
+    }
+
+    /// A foreign `clud-cmd-scan` first on PATH is warned about and left alone,
+    /// and the legacy helper-bin is not rewritten for it (DD-203).
+    #[test]
+    fn the_legacy_helper_bin_is_kept_while_a_foreign_helper_is_first_on_path() {
         let tmp = tempdir().unwrap();
         let clud = tmp
             .path()
@@ -990,11 +1002,7 @@ mod tests {
             warning.is_some(),
             "the foreign helper is still warned about"
         );
-        assert!(
-            crate::alias_link::is_fresh(&clud.canonicalize().unwrap(), &decoy),
-            "helper-bin entry was not refreshed"
-        );
-        assert_eq!(fs::read_to_string(&decoy).unwrap(), "clud-v2-current");
+        assert_eq!(fs::read_to_string(&decoy).unwrap(), "clud-v1");
         assert_eq!(fs::read_to_string(&foreign).unwrap(), "clud-v0");
     }
 
@@ -1055,11 +1063,17 @@ mod tests {
         let exposed = dir.join(native_helper_name());
         assert_eq!(std::fs::read_to_string(&exposed).unwrap(), "clud-v1");
 
-        // An upgraded clud (new file, as an installer writes it) replaces the stale entry.
+        // An upgraded clud (new file, as an installer writes it) gets its own
+        // directory and leaves the old build's helper as it was.
         std::fs::remove_file(&clud).unwrap();
         write(&clud, "clud-v2-longer");
-        assert_eq!(expose_helper_at(&home, &clud).unwrap(), dir);
-        assert_eq!(std::fs::read_to_string(&exposed).unwrap(), "clud-v2-longer");
+        let upgraded = expose_helper_at(&home, &clud).unwrap();
+        assert_ne!(upgraded, dir);
+        assert_eq!(std::fs::read_to_string(&exposed).unwrap(), "clud-v1");
+        assert_eq!(
+            std::fs::read_to_string(upgraded.join(native_helper_name())).unwrap(),
+            "clud-v2-longer"
+        );
     }
 
     #[test]
@@ -1124,11 +1138,9 @@ mod tests {
 
         let entries: Vec<PathBuf> = std::env::split_paths(&updated).collect();
         // Appended after the found copy, so it never shadows it.
-        assert_eq!(entries, vec![other, home.join(HELPER_BIN_SUBDIR)]);
-        assert!(home
-            .join(HELPER_BIN_SUBDIR)
-            .join(native_helper_name())
-            .is_file());
+        let helper = crate::version_dir::locate(&home, &clud).unwrap().helper();
+        assert_eq!(entries, vec![other, helper.clone()]);
+        assert!(helper.join(native_helper_name()).is_file());
         assert_eq!(session_path_with_helper(&updated, &clud, &home), None);
     }
 
@@ -1138,11 +1150,14 @@ mod tests {
         let a = tmp.path().join("a");
         let dir = tmp.path().join("helper");
         let base = std::env::join_paths([&a]).unwrap().into_string().unwrap();
-        let updated = path_with_appended(&base, &dir).unwrap();
+        let updated = path_with_helper(&base, &dir, None).unwrap();
         let entries: Vec<PathBuf> = std::env::split_paths(&updated).collect();
         assert_eq!(entries, vec![a, dir.clone()]);
-        assert_eq!(path_with_appended(&updated, &dir), None);
-        assert_eq!(path_with_appended("", &dir).unwrap(), dir.to_string_lossy());
+        assert_eq!(path_with_helper(&updated, &dir, None), None);
+        assert_eq!(
+            path_with_helper("", &dir, None).unwrap(),
+            dir.to_string_lossy()
+        );
     }
 
     #[test]

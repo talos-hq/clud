@@ -311,7 +311,10 @@ _CLUD_SESSION_PATH_DIRS = ((".clud", "state", "rm-shim"), (".clud", "state", "sh
 def is_clud_session_path_dir(entry: str) -> bool:
     """True for a PATH entry that is one of a clud session's shim directories."""
     parts = tuple(part.lower() for part in Path(entry).parts)
-    return any(parts[-len(tail) :] == tail for tail in _CLUD_SESSION_PATH_DIRS)
+    if any(parts[-len(tail) :] == tail for tail in _CLUD_SESSION_PATH_DIRS):
+        return True
+    # A build's own directories, `.clud/state/versions/<build>/<leaf>` (DD-203).
+    return parts[-5:-2] == (".clud", "state", "versions") and parts[-1] in {"rm-shim", "shims"}
 
 
 def scrub_clud_session_path(env: dict[str, str] | os._Environ[str]) -> list[str]:

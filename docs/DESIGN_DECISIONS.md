@@ -7573,3 +7573,54 @@ read the file when useful. Clud preserves the native system prompt and does not
 eagerly inject the persona or read Hermes credentials/configuration. This keeps
 the existing Hermes integration boundary narrow and gives the user one setting
 for both harnesses. See [optional context](architecture/optional-context.md).
+
+## DD-203: alias directories are per build, pinned and leased
+
+**Context:** DD-121 links `clud` under every name it serves, in directories
+shared by all installs (`~/.clud/state/{shims,rm-shim,helper-bin}`). Two
+versions took those paths from each other, and a session could change build
+halfway through when another launch relinked them. soldr has the same
+multicall shape and isolates versions in `~/.soldr/v<version>/shims` and
+`runtime/*/v<version>-<hash>`; that layer is in the front end, not its v2
+broker, whose per-version placement covers only the daemon image.
+
+**Decision:** every build owns
+`~/.clud/state/versions/v<version>-<hash>/{image,shims,rm-shim,helper-bin}`
+(`version_dir.rs`).
+
+- **Identity is a content hash.** The version alone cannot separate two dev
+  builds, and doctor's `version+size` fingerprint is not a content id. soldr's
+  hash-free name for official builds is not adopted: one rule, and two
+  different binaries can never share a directory. The hash is memoized by
+  path, size and mtime.
+- **Aliases link to `image/clud`,** itself a hardlink or copy of the install,
+  never a symlink. The hardlink, symlink, copy chain stays for aliases, and a
+  symlink fallback now resolves inside the build instead of following the
+  install path to the next version.
+- **A session is pinned.** Nothing in a build directory is relinked, so an
+  upgrade changes nothing for a running session on this layout; its next
+  launch gets the new build. `clud doctor` reports the difference.
+- **Every build's alias dirs count as alias dirs** (`shim_dirs`,
+  `real_program`), so a clud started inside an older session never takes the
+  older `gh` for the real one. Its helper replaces any older clud helper dir on
+  PATH instead of landing behind it.
+- **GC follows soldr:** `last-used` ledger, one sweep per 24 h, 48 h stale
+  window, current build exempt, missing ledger stamped rather than aged by
+  mtime. Added: a shared lock on `<build>/.lease` held for each using clud
+  process's life, taken under the root lock. A locked build is never removed.
+  A sweep renames before deleting, so a failed delete leaves no half-usable
+  build, and on Windows the rename fails while a file in it runs.
+
+**Migration:** the legacy directories are never deleted, because sessions from
+older clud versions have them on PATH. New launches stop writing them, with one
+exception: a session whose `CLUD_RM_SHIM_DIR` is still the legacy `rm-shim` gets
+the existing #1743 relink, so it behaves as it did. Hook configs need no
+rewrite: they use the bare `clud-cmd-scan`, resolved from PATH. Doctor stops
+checking legacy dirs for staleness and lists them as retained.
+
+**Consequences:** a process that outlives its launching clud holds no lease and
+is protected only by the 48 h window. An old build's guards stay in force for a
+session until it restarts, which amends the in-session refresh of #1743 for
+sessions on this layout. A cross-volume home costs one copy per build rather
+than one per alias. Moving the daemon to the running-process v2 broker is a
+separate change.

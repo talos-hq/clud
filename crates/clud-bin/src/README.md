@@ -740,7 +740,7 @@ Skills and hooks:
   rewrites, including the legacy `clud-block-bad-cmd` name. Every scope only ever gets
   the portable bare `clud-cmd-scan`, never an absolute path (#1426, #1334);
   when the helper is not already resolvable, the session links `clud` alone (as `clud-cmd-scan` and
-  `clud-block-bad-cmd`) into `~/.clud/state/helper-bin` and appends that directory to PATH (never the
+  `clud-block-bad-cmd`) into its per-build `helper-bin` under `~/.clud/state/versions/` (DD-203) and appends that directory to PATH (never the
   install directory, whose other programs would leak into descendants), and
   launch warns about hooks whose program does not exist.
   `ci/banned_hook_paths.py` keeps committed hook configs portable.
@@ -997,6 +997,7 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   DD-121): `clud-cmd-scan`/`clud-block-bad-cmd` → `block_bad_cmd::run`,
   `clud-shim` and every `shim_registry::SHIMS` name → `shim_main::run`, plus the
   hidden `clud __cmd-scan`, `clud __shim <name>` and `clud __link-aliases <dir>`.
+  `version_dir.rs` owns the per-build alias directories and their GC (DD-203).
   `alias_link.rs` creates an alias: hardlink, then symlink, then copy, never
   failing a launch, with a freshness check that relinks after an upgrade.
 - `shim_main.rs` also owns the session-local GitHub CLI relay and PR-watch translation;

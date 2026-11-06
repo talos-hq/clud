@@ -300,7 +300,7 @@ def test_launcher_restores_shim_path_in_codex_login_shell(
             timeout=30,
         )
     assert result.returncode == 0, result.stderr
-    shim_dir = home / ".clud" / "state" / "rm-shim"
+    shim_dir = next((home / ".clud" / "state" / "versions").glob("v*/rm-shim"))
     assert f"{shim_dir}|{shim_dir / 'safe-rm'}|" in result.stdout, result.stdout
     _assert_no_daemon_left(home)
 

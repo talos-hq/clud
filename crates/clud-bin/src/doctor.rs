@@ -25,6 +25,8 @@ pub enum Finding {
     Missing { path: PathBuf },
     /// The first `clud-cmd-scan` on PATH is another build.
     ForeignScanner { path: PathBuf, found: String },
+    /// This session runs another build's aliases than the running `clud`.
+    SessionMismatch { path: PathBuf, active: PathBuf },
 }
 
 impl Finding {
@@ -32,7 +34,7 @@ impl Finding {
     pub fn path(&self) -> &Path {
         match self {
             Self::Stale { path, .. } | Self::Retired { path } | Self::Missing { path } => path,
-            Self::ForeignScanner { path, .. } => path,
+            Self::ForeignScanner { path, .. } | Self::SessionMismatch { path, .. } => path,
         }
     }
 
@@ -42,6 +44,7 @@ impl Finding {
             Self::Retired { .. } => "retired",
             Self::Missing { .. } => "missing",
             Self::ForeignScanner { .. } => "foreign_scanner",
+            Self::SessionMismatch { .. } => "session_mismatch",
         }
     }
 }
@@ -59,6 +62,11 @@ impl std::fmt::Display for Finding {
                 write!(f, "retired alias {path} {note}")
             }
             Self::Missing { .. } => write!(f, "alias {path} is missing"),
+            Self::SessionMismatch { active, .. } => write!(
+                f,
+                "this session runs aliases from {path}, not {}; restart it to use this build",
+                active.display()
+            ),
             Self::ForeignScanner { found, .. } => {
                 let note = "hooks relay to the launcher";
                 write!(
@@ -154,19 +162,19 @@ pub fn inspect(exe: &Path, own: &str, home: Option<&Path>, path_env: &str) -> Di
         report.unknown.extend(part.unknown);
     };
     if let Some(home) = home {
-        let dirs = [
-            (
-                crate::shim_registry::INTERPRETER_SUBDIR,
-                file_names_in(ShimDir::Interpreter),
-            ),
-            (
-                crate::shim_registry::SESSION_SUBDIR,
-                file_names_in(ShimDir::Session),
-            ),
-            (".clud/state/helper-bin", scanners.clone()),
-        ];
-        for (subdir, files) in dirs {
-            add(inspect_dir(&home.join(subdir), &files, &retired, own, true));
+        if let Ok(build) = crate::version_dir::locate(home, exe) {
+            let dirs = [
+                (build.interpreter(), file_names_in(ShimDir::Interpreter)),
+                (build.session(), file_names_in(ShimDir::Session)),
+                (build.helper(), scanners.clone()),
+            ];
+            for (dir, files) in dirs {
+                add(inspect_dir(&dir, &files, &retired, own, true));
+            }
+        }
+        // Older sessions may still run these, so only a retired name counts.
+        for dir in legacy_alias_dirs(home) {
+            add(inspect_dir(&dir, &[], &retired, own, false));
         }
     }
     if let Some(beside) = exe.parent() {
@@ -292,10 +300,17 @@ pub fn coverage_report(home: Option<&Path>, repo: Option<&Path>) -> Vec<Coverage
     report
 }
 
-fn json_report(own: &str, exe: &Path, aliases: &DirReport, coverage: &[Coverage]) -> Value {
+fn json_report(
+    own: &str,
+    exe: &Path,
+    active: Option<&Path>,
+    aliases: &DirReport,
+    coverage: &[Coverage],
+) -> Value {
     json!({
         "exe": exe.display().to_string(),
         "build": own,
+        "version_dir": active.map(|dir| dir.display().to_string()),
         "guarded_tools": GUARDED_TOOLS,
         "findings": aliases.findings.iter().map(|f| json!({
             "kind": f.kind(),
@@ -311,8 +326,17 @@ fn json_report(own: &str, exe: &Path, aliases: &DirReport, coverage: &[Coverage]
     })
 }
 
-fn print_report(own: &str, exe: &Path, aliases: &DirReport, coverage: &[Coverage]) {
+fn print_report(
+    own: &str,
+    exe: &Path,
+    active: Option<&Path>,
+    aliases: &DirReport,
+    coverage: &[Coverage],
+) {
     println!("clud {} (build {own})", exe.display());
+    if let Some(active) = active {
+        println!("version dir: {}", active.display());
+    }
     for entry in coverage {
         let gaps = if entry.uncovered.is_empty() {
             "every guarded tool".to_string()
@@ -337,13 +361,23 @@ fn print_report(own: &str, exe: &Path, aliases: &DirReport, coverage: &[Coverage
     println!("a normal `clud` launch refreshes clud's own aliases and removes retired ones");
 }
 
-/// The dirs under `home` that hold only clud's aliases.
-fn owned_alias_dirs(home: &Path) -> [PathBuf; 3] {
+/// The shared alias dirs from before DD-203.
+fn legacy_alias_dirs(home: &Path) -> [PathBuf; 3] {
     [
         home.join(crate::shim_registry::INTERPRETER_SUBDIR),
         home.join(crate::shim_registry::SESSION_SUBDIR),
         home.join(".clud/state/helper-bin"),
     ]
+}
+
+/// The dirs under `home` that hold only clud's aliases: this build's and the
+/// legacy ones.
+fn owned_alias_dirs(home: &Path, exe: &Path) -> Vec<PathBuf> {
+    let mut dirs = legacy_alias_dirs(home).to_vec();
+    if let Ok(build) = crate::version_dir::locate(home, exe) {
+        dirs.extend([build.interpreter(), build.session(), build.helper()]);
+    }
+    dirs
 }
 
 /// `clud doctor --fix`: replace each stale or missing alias with the running
@@ -352,7 +386,15 @@ fn owned_alias_dirs(home: &Path) -> [PathBuf; 3] {
 /// aliases are left to the launch, which already removes them. Returns one
 /// line per action.
 pub fn repair(exe: &Path, report: &DirReport, home: Option<&Path>) -> Vec<String> {
-    let owned = home.map(owned_alias_dirs).unwrap_or_default();
+    let owned = home
+        .map(|home| owned_alias_dirs(home, exe))
+        .unwrap_or_default();
+    // Link the pinned image when there is one, so a symlink stays on this build.
+    let source = home
+        .and_then(|home| crate::version_dir::locate(home, exe).ok())
+        .map(|build| build.image())
+        .filter(|image| image.is_file())
+        .unwrap_or_else(|| exe.to_path_buf());
     let in_owned_dir = |path: &Path| {
         path.parent()
             .is_some_and(|dir| owned.iter().any(|own| same_dir(dir, own)))
@@ -363,7 +405,7 @@ pub fn repair(exe: &Path, report: &DirReport, home: Option<&Path>) -> Vec<String
         let replace = match finding {
             Finding::Stale { .. } | Finding::Missing { .. } => true,
             Finding::ForeignScanner { .. } => in_owned_dir(path),
-            Finding::Retired { .. } => continue,
+            Finding::Retired { .. } | Finding::SessionMismatch { .. } => continue,
         };
         if !replace {
             actions.push(format!(
@@ -372,7 +414,7 @@ pub fn repair(exe: &Path, report: &DirReport, home: Option<&Path>) -> Vec<String
             ));
             continue;
         }
-        actions.push(match crate::alias_link::install_alias(exe, path) {
+        actions.push(match crate::alias_link::install_alias(&source, path) {
             Ok(_) => format!("fixed: {} now runs {}", path.display(), exe.display()),
             Err(error) => format!("could not fix {}: {error}", path.display()),
         });
@@ -385,6 +427,19 @@ fn same_dir(a: &Path, b: &Path) -> bool {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,
     }
+}
+
+/// The finding when the session's alias dir (`CLUD_RM_SHIM_DIR`) is not the
+/// running build's. Reported, never repaired: a session stays on its build.
+pub fn session_mismatch(session: Option<&Path>, active: &Path) -> Option<Finding> {
+    let session = session?;
+    if same_dir(session, active) {
+        return None;
+    }
+    Some(Finding::SessionMismatch {
+        path: session.to_path_buf(),
+        active: active.to_path_buf(),
+    })
 }
 
 /// `clud doctor`: print the report; exit 1 when an alias is wrong. With
@@ -407,14 +462,24 @@ pub fn run(as_json: bool, fix: bool) -> i32 {
         }
         aliases = inspect(&exe, &own, home.as_deref(), &path_env);
     }
+    let build = home
+        .as_deref()
+        .and_then(|home| crate::version_dir::locate(home, &exe).ok());
+    if let Some(build) = &build {
+        let session = std::env::var_os(crate::shim_registry::SESSION_DIR_KEY).map(PathBuf::from);
+        aliases
+            .findings
+            .extend(session_mismatch(session.as_deref(), &build.session()));
+    }
+    let active = build.as_ref().map(|build| build.root.as_path());
     let repo = std::env::current_dir()
         .ok()
         .and_then(|cwd| crate::block_bad_cmd::nearest_repo_root_public(&cwd));
     let coverage = coverage_report(home.as_deref(), repo.as_deref());
     if as_json {
-        println!("{}", json_report(&own, &exe, &aliases, &coverage));
+        println!("{}", json_report(&own, &exe, active, &aliases, &coverage));
     } else {
-        print_report(&own, &exe, &aliases, &coverage);
+        print_report(&own, &exe, active, &aliases, &coverage);
     }
     i32::from(!aliases.findings.is_empty())
 }

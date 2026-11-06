@@ -398,9 +398,11 @@ fn is_tool_word(word: &str) -> bool {
         return true;
     }
     let normalized = crate::path_norm::slash_separators(bare);
-    TOOLS
-        .iter()
-        .any(|tool| normalized.ends_with(&format!("/.clud/state/rm-shim/{tool}")))
+    TOOLS.iter().any(|tool| {
+        normalized.ends_with(&format!("/.clud/state/rm-shim/{tool}"))
+            || (normalized.contains("/.clud/state/versions/")
+                && normalized.ends_with(&format!("/rm-shim/{tool}")))
+    })
 }
 
 /// Whether `word` names clud itself: bare `clud` or `$CLUD_EXE`.
@@ -713,6 +715,7 @@ mod tests {
             "clud safe-rm -r build",
             "\"$CLUD_EXE\" safe-rm a",
             "/home/u/.clud/state/rm-shim/safe-rm --purge -r build",
+            "/home/u/.clud/state/versions/v2.8.57-0123456789abcdef/rm-shim/safe-rm a",
             "find build -name '*.o' -type f -exec safe-rm {} +",
             "find . -name '*.tmp' -print0 | xargs -0 safe-rm",
         ] {
