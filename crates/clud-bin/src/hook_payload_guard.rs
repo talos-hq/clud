@@ -55,6 +55,9 @@ pub fn read_piped_stdin(input: &mut impl Read) -> PipedStdin {
 }
 
 fn complete_payload(bytes: &[u8]) -> Option<&str> {
+    // Most prompts never end in `}`: skip revalidating the whole buffer on
+    // every chunk, which is quadratic on a large piped prompt.
+    bytes.trim_ascii_end().last().filter(|last| **last == b'}')?;
     std::str::from_utf8(bytes)
         .ok()
         .filter(|text| is_hook_payload(text))

@@ -1519,6 +1519,7 @@ fn read_piped_prompt(args: &args::Args) -> Option<String> {
     if args.prompt.is_some()
         || args.message.is_some()
         || args.command.is_some()
+        || args.fix_hooks
         || console_setup::atty_is_terminal()
     {
         return None;
