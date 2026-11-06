@@ -3,7 +3,7 @@
 #
 # Optional local diagnostic run, from a clean, committed tree:
 #
-#   uvx --from git+https://github.com/zackees/ci.yml@839c8f6b03c08a94977d57eb339740407424a434 ci-lint local-gate run
+#   uvx --from git+https://github.com/zackees/ci.yml@442537be9afba8cdfe7270b83a5493e9910aa522 ci-lint local-gate run
 #
 # runs the PR plan once under bosn ci -> act2 and, on success, amends
 # HEAD's message with a tree-bound
