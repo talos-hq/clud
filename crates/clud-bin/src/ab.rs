@@ -16,7 +16,7 @@ pub struct AbArgs {
     pub backends: Vec<String>,
     #[arg(long)]
     pub prompt_file: PathBuf,
-    #[arg(long, default_value = "1", value_parser = clap::value_parser!(u32).range(1..))]
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     pub runs: u32,
     #[arg(long, value_delimiter = ',')]
     pub model_map: Vec<String>,
