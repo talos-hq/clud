@@ -16,10 +16,22 @@
 //! alternatives. A read that names `offset`/`limit` (or any backend's range
 //! spelling) is a partial read and always passes, and a retry of the exact
 //! same whole read passes, so a session can never be wedged. **Fail open**: no
-//! session id, a missing or unreadable file, a non-`tool-results` path, or any
-//! state read or write failure allows the call. This is a nudge, not a
-//! security boundary, and interactive verbosity is unchanged (the refused
-//! call was a re-injection, not new output).
+//! session id, a missing or unreadable file, a path that is not a harness
+//! artifact, or any state read or write failure allows the call. This is a
+//! nudge, not a security boundary, and interactive verbosity is unchanged (the
+//! refused call was a re-injection, not new output).
+//!
+//! # clud's own session artifacts (#2233)
+//!
+//! The same shape recurs under clud's state dir, which is not `.claude`:
+//! `~/.clud/tmp/<backend>/<project>/<session>/scratchpad/<file>` (an agent's
+//! working scratch, digests and handoffs) and `.../tasks/<id>.out` (a captured
+//! child's output). Across the run history probed to 2026-11-05 there are 1,093
+//! whole-file `Read`s of those paths (560 KB of results), 13 of them at or above
+//! 8 KB for 350 KB, and the largest is a single 188 KB `scratchpad/digest.txt`
+//! read that alone is ~19 MB of exposure in its session. Only paths under a
+//! clud `tmp` directory are in scope, so clud *worktrees* (`~/.clud/worktrees`)
+//! and repositories that keep their own `scratchpad/` or `tasks/` are untouched.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -42,6 +54,9 @@ const HASH_DOMAIN: &str = "clud-persisted-read-guard-v1\0";
 /// again the next day.
 const MAX_AGE_SECS: u64 = 24 * 60 * 60;
 const MAX_ENTRIES: usize = 64;
+/// Session-artifact directory names clud creates under its own state dir
+/// (`~/.clud/tmp/<backend>/<project>/<session>/<name>/...`).
+const ARTIFACT_DIRS: &[&str] = &["scratchpad", "tasks"];
 /// Any of these in `tool_input` makes the read a range, not the whole file.
 const RANGE_KEYS: &[&str] = &[
     "offset",
@@ -121,6 +136,32 @@ pub(super) fn is_persisted_output(path: &Path) -> bool {
         && path
             .ancestors()
             .any(|ancestor| ancestor.file_name().is_some_and(|name| name == ".claude"))
+}
+
+/// `~/.clud/tmp/<backend>/<project>/<session>/{scratchpad,tasks}/<file>`.
+///
+/// Every ancestor is checked, not just the parent, because both directories
+/// nest artifacts (`scratchpad/digest.txt`, `tasks/<id>.out`). A clud `tmp`
+/// ancestor is required so that clud worktrees and repositories that happen to
+/// name a directory `scratchpad` or `tasks` are never touched.
+pub(super) fn is_session_artifact(path: &Path) -> bool {
+    let named = |ancestor: &Path, want: &str| -> bool {
+        ancestor
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case(want))
+    };
+    let in_clud_tmp = path.ancestors().any(|ancestor| named(ancestor, ".clud"))
+        && path.ancestors().any(|ancestor| named(ancestor, "tmp"));
+    in_clud_tmp
+        && path
+            .ancestors()
+            .skip(1)
+            .any(|ancestor| ARTIFACT_DIRS.iter().any(|dir| named(ancestor, dir)))
+}
+
+/// Any harness artifact whose whole-file read re-injects a large output.
+pub(super) fn is_agent_artifact(path: &Path) -> bool {
+    is_persisted_output(path) || is_session_artifact(path)
 }
 
 fn guarded_len(path: &Path) -> Option<u64> {
@@ -226,7 +267,7 @@ pub(super) fn reason(
     }
     let session_id = session_id?;
     let path = path_from(tool_input)?;
-    if !is_persisted_output(&path) {
+    if !is_agent_artifact(&path) {
         return None;
     }
     let bytes = guarded_len(&path)?;
@@ -244,12 +285,12 @@ pub(super) fn deny_message(path: &Path, bytes: u64) -> String {
     let kb = bytes / 1024;
     let path_text = path.display();
     format!(
-        "[clud persisted-read-guard] `{name}` is a persisted tool output ({kb} KB) whose preview \
-         is already in this transcript; reading it whole re-sends all {kb} KB on every later \
-         request in this session. Read only the ranges you need: `Read` with `offset` and `limit` \
-         (for example `limit: 150`), `Grep` for the line you are after, or \
+        "[clud persisted-read-guard] `{name}` is a {kb} KB session artifact (a persisted tool \
+         output or a clud scratch/task file); reading it whole re-sends all {kb} KB on every \
+         later request in this session. Read only the ranges you need: `Read` with `offset` and \
+         `limit` (for example `limit: 150`), `Grep` for the line you are after, or \
          `clud tool run code/slice.py {path_text} --lines A-B` (caps the text at 8 KiB and its \
-         footer names the next line). A session launched with `{DISABLE_ENV}=0` reads spills \
+         footer names the next line). A session launched with `{DISABLE_ENV}=0` reads these \
          whole again."
     )
 }
