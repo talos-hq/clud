@@ -151,6 +151,40 @@ mod tests {
     }
 
     #[test]
+    fn readiness_renews_the_production_idle_window_after_slow_initialization() {
+        let started = Instant::now();
+        let activity = DaemonActivity::new(started);
+        let ready = started + Duration::from_secs(3);
+        let timeout = Some(Duration::from_secs(2));
+        assert!(should_idle_shutdown(
+            timeout,
+            activity.snapshot(ready),
+            0,
+            0
+        ));
+
+        activity.note_activity(ready);
+        assert!(!should_idle_shutdown(
+            timeout,
+            activity.snapshot(ready),
+            0,
+            0
+        ));
+        assert!(!should_idle_shutdown(
+            timeout,
+            activity.snapshot(ready + Duration::from_secs(1)),
+            0,
+            0,
+        ));
+        assert!(should_idle_shutdown(
+            timeout,
+            activity.snapshot(ready + Duration::from_secs(2)),
+            0,
+            0,
+        ));
+    }
+
+    #[test]
     fn guards_increment_counts_and_renew_activity_when_work_finishes() {
         let started = Instant::now();
         let activity = DaemonActivity::new(started);

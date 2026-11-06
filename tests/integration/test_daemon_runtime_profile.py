@@ -295,6 +295,20 @@ def test_test_daemon_exits_at_hard_max_without_another_request(
     }
 
 
+def _delay_login(env: dict[str, str], tmp_path: Path) -> None:
+    # Reproduce initialization exceeding the idle window on Linux too;
+    # the hosted macOS login-shell path still needs native CI coverage.
+    shell = tmp_path / "slow-login-shell"
+    delay_command = shutil.which("sleep")
+    assert delay_command is not None
+    shell.write_text(
+        f'#!/bin/sh\n{shlex.quote(delay_command)} 2.5\nexec /bin/sh "$@"\n',
+        encoding="utf-8",
+    )
+    shell.chmod(0o755)
+    env["SHELL"] = str(shell)
+
+
 @pytest.mark.parametrize("slow_login", [False, True])
 def test_test_daemon_exits_after_safe_idle_window(
     clud_binary: Path,
@@ -307,17 +321,7 @@ def test_test_daemon_exits_after_safe_idle_window(
     state_dir = tmp_path / "daemon-state"
     env = managed_env(mock_env, state_dir)
     if slow_login:
-        # Reproduce initialization exceeding the idle window on Linux too;
-        # the hosted macOS login-shell path still needs native CI coverage.
-        shell = tmp_path / "slow-login-shell"
-        delay_command = shutil.which("sleep")
-        assert delay_command is not None
-        shell.write_text(
-            f'#!/bin/sh\n{shlex.quote(delay_command)} 2.5\nexec /bin/sh "$@"\n',
-            encoding="utf-8",
-        )
-        shell.chmod(0o755)
-        env["SHELL"] = str(shell)
+        _delay_login(env, tmp_path)
     env["CLUD_DAEMON_TEST_MAX_LIFETIME_SECS"] = "20"
     env["CLUD_DAEMON_TEST_IDLE_TIMEOUT_SECS"] = "2"
     info = _start_daemon(clud_binary, env, state_dir)
@@ -396,13 +400,19 @@ def test_production_idle_timeout_defaults_to_fifteen_minutes(
     assert stop.returncode == 0, stop.stderr
 
 
+@pytest.mark.parametrize("slow_login", [False, True])
 def test_dashboard_polling_blocks_configured_production_idle_timeout(
     clud_binary: Path,
     mock_env: dict[str, str],
     tmp_path: Path,
+    slow_login: bool,
 ) -> None:
+    if slow_login and sys.platform == "win32":
+        pytest.skip("POSIX login-shell startup regression")
     state_dir = tmp_path / "daemon-state"
     env = _production_idle_env(mock_env, state_dir, tmp_path / "home", 2)
+    if slow_login:
+        _delay_login(env, tmp_path)
     info = _start_daemon(clud_binary, env, state_dir)
 
     deadline = time.monotonic() + 3
@@ -412,7 +422,12 @@ def test_dashboard_polling_blocks_configured_production_idle_timeout(
         time.sleep(0.2)
 
     _wait_for_identity_exit(info, timeout=6, state_dir=state_dir)
-    assert "daemon_idle_shutdown" in {event["op"] for event in _events(state_dir)}
+    events = _events(state_dir)
+    assert "daemon_idle_shutdown" in {event["op"] for event in events}
+    if slow_login:
+        starting = next(event for event in events if event["op"] == "daemon_starting")
+        started = next(event for event in events if event["op"] == "daemon_started")
+        assert int(started["ts_ms"]) - int(starting["ts_ms"]) >= 2500, events
 
 
 def test_detached_worker_blocks_configured_production_idle_timeout(
