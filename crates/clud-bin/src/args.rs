@@ -226,6 +226,12 @@ pub struct Args {
     #[arg(long = "allow-plan-mode")]
     pub allow_plan_mode: bool,
 
+    /// Tell the agent which credentials exist on this machine. Adds the lokr
+    /// MCP server and its background scanner to the session; values are never
+    /// returned to the agent.
+    #[arg(long = "allow-secrets")]
+    pub allow_secrets: bool,
+
     /// Opt in to Claude Code commit/PR attribution (#1317). clud hides the
     /// `Co-Authored-By: Claude …` trailer and "Generated with Claude Code"
     /// PR line by default; `--coauthor` keeps Claude Code's own, and
@@ -729,6 +735,12 @@ pub enum Command {
     },
     /// Acquire a credential in a masked window and deliver it directly to a sink.
     Secret(crate::secret_prompt::Options),
+    /// lokr's MCP server for `--allow-secrets` sessions.
+    #[command(hide = true)]
+    SecretsMcp,
+    /// lokr's background credential scanner.
+    #[command(hide = true)]
+    SecretsDaemon,
     /// Explicit compatibility spelling for a normal backend launch.
     Run,
     /// Query clud's cached OpenRouter model and pricing catalog.
@@ -2024,6 +2036,8 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "test",
     "auth",
     "secret",
+    "secrets-mcp",
+    "secrets-daemon",
     "models",
     "codex-update",
     "dsh-update",
@@ -2527,6 +2541,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--unsafe",
         "--unattended",
         "--allow-plan-mode",
+        "--allow-secrets",
         "--coauthor",
         "--dry-run",
         "--detach",
