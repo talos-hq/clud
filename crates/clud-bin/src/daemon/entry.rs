@@ -526,6 +526,26 @@ fn wait_for_top_tick_or_quit(duration: Duration, raw_mode: bool) -> bool {
     false
 }
 
+/// This build's v2 registration (DD-204), or JSON null when it has no build
+/// directory to name.
+fn service_definition_v2(dir: &Path) -> serde_json::Value {
+    let name = crate::home::user_home()
+        .zip(std::env::current_exe().ok())
+        .and_then(|(home, exe)| crate::version_dir::locate(&home, &exe).ok())
+        .and_then(|build| crate::version_dir::service_name(&build));
+    name.map_or(serde_json::Value::Null, |name| {
+        let path = dir.join(format!(
+            "{name}.{}",
+            running_process::broker::protocol_v2::SERVICE_DEF_V2_EXTENSION
+        ));
+        serde_json::json!({
+            "service_name": name,
+            "path": path_string(&path),
+            "installed_by_clud": path.exists(),
+        })
+    })
+}
+
 fn run_running_process_diagnostics(state_dir: &Path, json: bool) -> i32 {
     let service_def_dir = running_process_service_def_dir();
     let service_def_path =
@@ -549,7 +569,7 @@ fn run_running_process_diagnostics(state_dir: &Path, json: bool) -> i32 {
         "Clud serves a running-process broker v1 frame lane (payload protocol 0x7C4C) next to its TCP wire; the client adopts the broker session (BrokerSession::adopt) and falls back to legacy JSON over TCP on any miss."
     };
     let deferred = [
-        "broker-spawned backend adoption (the clud daemon remains self-managed)",
+        "broker-spawned backend adoption (the clud daemon remains self-managed; DD-204)",
         "Phase 8 escape-hatch removal",
     ];
 
@@ -576,6 +596,7 @@ fn run_running_process_diagnostics(state_dir: &Path, json: bool) -> i32 {
                     .map(|info| info.version.as_deref() == Some(env!("CARGO_PKG_VERSION"))),
                 "current_binary": current_exe.as_ref().map(|path| path_string(path)),
             },
+            "service_definition_v2": service_definition_v2(&service_def_dir),
             "mode": {
                 "current": mode,
                 "wire_mode": wire_mode.as_str(),
@@ -607,6 +628,7 @@ fn run_running_process_diagnostics(state_dir: &Path, json: bool) -> i32 {
         );
         println!("servicedef: {}", service_def_path.display());
         println!("servicedef installed: {servicedef_installed}");
+        println!("v2: {}", service_definition_v2(&service_def_dir));
         println!("daemon state: {}", state_dir.display());
         println!("daemon info: {}", daemon_info_path.display());
         println!("live daemon reachable: {}", live_daemon.is_some());

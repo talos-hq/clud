@@ -46,7 +46,10 @@ pub(in crate::daemon) use endpoint::daemon_identity_path;
 use errors::log_adopt_miss;
 pub(super) use frame_lane::spawn_frame_lane;
 #[cfg(test)]
-pub(super) use frame_lane::{install_service_definition, publish_cache_manifest};
+pub(super) use frame_lane::{
+    install_service_definition, install_service_definition_v2_in, prune_service_definitions_v2,
+    publish_cache_manifest,
+};
 use wire_mode::running_process_disabled;
 pub(super) use wire_mode::WireMode;
 

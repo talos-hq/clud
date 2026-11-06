@@ -335,6 +335,10 @@ fn await_daemon_startup(
 /// that session's tag for as long as it lives.
 fn spawn_detached_daemon(state_dir: &Path) -> io::Result<()> {
     let exe = std::env::current_exe()?;
+    // Best effort: without a home or a writable state dir, run in place as before.
+    let exe = crate::home::user_home()
+        .and_then(|home| crate::version_dir::pinned_executable(&home, &exe).ok())
+        .unwrap_or(exe);
     let mut command = Command::new(exe); // running-process: command-builder
     command.arg("__daemon").arg("--state-dir").arg(state_dir);
     command.env_remove(running_process::ORIGINATOR_ENV_VAR);

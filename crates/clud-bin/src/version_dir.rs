@@ -39,6 +39,9 @@ pub const INTERPRETER_LEAF: &str = "shims";
 pub const SESSION_LEAF: &str = "rm-shim";
 pub const HELPER_LEAF: &str = "helper-bin";
 
+/// Prefix of a per-build service name.
+pub const SERVICE_PREFIX: &str = "clud-";
+
 const LOCK_FILE: &str = ".lock";
 const GC_MARKER: &str = ".last-gc";
 const HASH_MEMO_DIR: &str = ".image-hash";
@@ -217,6 +220,33 @@ pub fn place(home: &Path, source: &Path) -> io::Result<VersionDir> {
     hold_lease(&dir.root)?;
     let _ = sweep_if_due(&root, &dir.root, now);
     Ok(dir)
+}
+
+/// The executable to start a long-lived `clud` process from: this build's
+/// pinned image, so a daemon and its workers never run from a path an upgrade
+/// replaces (soldr's route placement, DD-204). Anything but `clud` itself, a
+/// test harness for one, runs as it is.
+pub fn pinned_executable(home: &Path, exe: &Path) -> io::Result<PathBuf> {
+    if !exe
+        .file_stem()
+        .is_some_and(|stem| stem.eq_ignore_ascii_case("clud"))
+    {
+        return Ok(exe.to_path_buf());
+    }
+    Ok(place(home, exe)?.image())
+}
+
+/// The name this build registers under with the running-process broker: one
+/// per build, so versions never overwrite each other's definition. Valid under
+/// the frozen `[a-z0-9-]{1,64}` rule.
+pub fn service_name(dir: &VersionDir) -> Option<String> {
+    let name = dir.root.file_name()?.to_str()?;
+    let name = format!("{SERVICE_PREFIX}{}", name.replace(['.', '+', '_'], "-"));
+    let valid = name.len() <= 64
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    valid.then_some(name)
 }
 
 /// Install `names` in `alias_dir` as aliases of the pinned image. A failure
