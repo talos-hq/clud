@@ -750,14 +750,16 @@ fn build_launch_plan_for_target_at(
         }
     }
 
-    // Two independent rules feed one `--disallowedTools` token:
+    // Three independent rules feed one `--disallowedTools` token:
     //
     // 1. `clud loop` is unattended by definition; `--unattended` extends the
     //    same policy to any other launch. Strip both tools that park a run on
     //    a human. `--dangerously-skip-permissions` does not cover these; the
     //    model reaches for them on its own, most often at the top of a `/loop`
     //    iteration.
-    // 2. The Codex->Claude bridge allows exactly one Claude process. It strips
+    // 2. Every Claude launch drops the client's `Artifact` tool, whose schema
+    //    is 48% of the tool payload on every request (see below).
+    // 3. The Codex->Claude bridge allows exactly one Claude process. It strips
     //    the `Task` tool on every bridge launch, because Task creates Claude
     //    subagents whose requests all consume the same provider budget. Plan
     //    mode is also stripped unless explicitly restored; `AskUserQuestion`
@@ -782,6 +784,16 @@ fn build_launch_plan_for_target_at(
         }
         if is_unattended {
             disallowed.push("AskUserQuestion");
+        }
+        // Claude Code's `Artifact` tool costs 58.7 KiB of the 122.8 KiB tool
+        // payload on every request (#2233): its description alone is 21.6 KiB
+        // and its input schema 37.1 KiB, because the schema repeats the
+        // description. Measured over 24 h of local transcripts, Artifact was
+        // present in 81 of 105 recorded sessions and the model called it three
+        // times. It publishes a page to the Claude account, which no
+        // forge-ci fleet run wants. `--artifact-tool` restores it.
+        if !args.artifact_tool {
+            disallowed.push("Artifact");
         }
     }
     if !disallowed.is_empty() {

@@ -226,6 +226,15 @@ pub struct Args {
     #[arg(long = "allow-plan-mode")]
     pub allow_plan_mode: bool,
 
+    /// Keep Claude Code's `Artifact` tool available to the model. clud strips
+    /// it by default: the tool's description plus input schema is 58.7 KiB of
+    /// the 122.8 KiB tool payload clud sends on every request, and it is used
+    /// a handful of times a day. The tool publishes a page to an account, so a
+    /// forge-cli loop or codex run never needs it. Pass this flag when a
+    /// session genuinely wants to publish an artifact.
+    #[arg(long = "artifact-tool")]
+    pub artifact_tool: bool,
+
     /// Tell the agent which credentials exist on this machine. Adds the lokr
     /// MCP server and its background scanner to the session; values are never
     /// returned to the agent.
@@ -2541,6 +2550,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--unsafe",
         "--unattended",
         "--allow-plan-mode",
+        "--artifact-tool",
         "--allow-secrets",
         "--coauthor",
         "--dry-run",

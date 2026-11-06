@@ -100,6 +100,8 @@ mod tests {
             assert_eq!(command[1], "--append-system-prompt");
             assert!(command[2].contains(&crate::deletion_rules::generated().instructions));
             command.drain(1..3);
+            // Fixed policy token, not part of the argv these tests pin (#2233).
+            command.retain(|arg| arg != "--disallowedTools=Artifact");
         } else {
             for prefix in [
                 "hooks.PreToolUse=",
