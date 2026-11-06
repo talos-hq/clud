@@ -9,11 +9,6 @@ use sha2::{Digest, Sha256};
 const MAX_CATALOG_BYTES: usize = 8 * 1024 * 1024;
 const SCHEMA: &str = "https://zackees.github.io/manifest.json/v1/manifest.schema.json";
 const ONLINE_URL: &str = "https://talos-hq.github.io/clud/install/manifest.json";
-// Catalogs published before the move to talos-hq (#2126) still name the old
-// Pages host; accept it until the next publish rewrites the field.
-const LEGACY_ONLINE_URL: &str = "https://zackees.github.io/clud/install/manifest.json";
-// The canonical custom domain the catalog is fetched from (#2449).
-const DOMAIN_ONLINE_URL: &str = "https://talosbot.ai/clud/install/manifest.json";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Os {
@@ -233,7 +228,7 @@ impl Catalog {
         }
         require_string(root, "tool", "clud")?;
         let online_url = string(field(root, "online_url")?, "online_url")?;
-        if ![ONLINE_URL, LEGACY_ONLINE_URL, DOMAIN_ONLINE_URL].contains(&online_url) {
+        if online_url != ONLINE_URL {
             return Err("unexpected online_url".into());
         }
         let channels = object(field(root, "channels")?, "channels")?;
@@ -786,11 +781,8 @@ mod tests {
     }
 
     #[test]
-    fn catalog_from_the_pre_transfer_pages_host_still_parses() {
-        // #2126: catalogs published before the move to talos-hq name the old host.
+    fn catalog_with_a_foreign_online_url_is_refused() {
         let mut document = catalog(true, false);
-        document["online_url"] = json!(LEGACY_ONLINE_URL);
-        assert!(Catalog::parse(&serde_json::to_vec(&document).unwrap()).is_ok());
         document["online_url"] = json!("https://example.com/clud/install/manifest.json");
         assert!(Catalog::parse(&serde_json::to_vec(&document).unwrap()).is_err());
     }

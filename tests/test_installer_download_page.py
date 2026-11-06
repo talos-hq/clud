@@ -446,7 +446,7 @@ def test_page_dropdown_references_every_published_asset_of_the_release() -> None
         "arch-override",
         "recommended-name",
     } <= parsed.ids
-    assert "curl -fsSL https://talosbot.ai/clud/install.sh | sh" in page
+    assert "curl -fsSL https://talos-hq.github.io/clud/install.sh | sh" in page
     assert '<meta name="viewport"' in page
     assert DETECT_JS.read_text(encoding="utf-8").strip() in "".join(parsed.scripts)
 

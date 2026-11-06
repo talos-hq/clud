@@ -1,19 +1,16 @@
 """Every published-metadata fetch has a GitHub-owned fallback (#2449).
 
-clud's install catalog and model manifest are published on the org's GitHub
-Pages custom domain. When the org added that domain, every ``*.github.io``
-URL started 301-redirecting, the certificate lagged, and every installed clud
-and every PR's unit shards broke at once (#2433). The fix is one ordered URL
-list per document: the canonical domain first, a GitHub-owned URL
-(``github.com/.../releases/latest/download/...`` or ``raw.githubusercontent.com``)
-last. This guard keeps it that way:
+clud's install catalog and model manifest are published on GitHub Pages. A
+lost custom domain once broke every installed clud (#2433) and later blocked
+releases, so each document has one ordered URL list that ends with a
+GitHub-owned URL (``github.com/.../releases/latest/download/...`` or
+``raw.githubusercontent.com``). This guard keeps it that way:
 
 * A published-metadata URL (``https://<host>/clud/install/manifest.json`` or
   ``.../clud/models/manifest.json``) may appear only in a registry file or an
   allowlisted file below. Any other occurrence is a fetch site that bypasses
   the fallback list.
-* Every registry list must end with a GitHub-owned URL and must not fetch a
-  ``*.github.io`` URL (it redirects to the custom domain).
+* Every registry list must end with a GitHub-owned URL.
 
 Tests (``tests/``, ``*_tests.rs`` and a trailing ``#[cfg(test)] mod tests``)
 are not scanned. Run via ``bash lint`` (see ``ci/lint.py``).
@@ -47,7 +44,7 @@ ALLOWED_FILES = frozenset(
         # accepted values; already-installed binaries compare it verbatim.
         "crates/clud-bin/src/self_install/catalog.rs",
         # Publication smoke checks: they verify what Pages serves, so they
-        # must read the domain itself, never a fallback.
+        # must read Pages itself, never a fallback.
         ".github/workflows/auto-release.yml",
         ".github/workflows/install-pages.yml",
         ".github/workflows/model-pages.yml",
@@ -133,8 +130,6 @@ def registry_problems(rel: str, text: str) -> list[str]:
             continue
         if not urls[-1].startswith(GITHUB_OWNED):
             problems.append(f"{name} must end with a GitHub-owned URL, ends with {urls[-1]}")
-        if any(".github.io/" in url for url in urls):
-            problems.append(f"{name} fetches a *.github.io URL, which redirects")
     return problems
 
 

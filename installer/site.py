@@ -12,7 +12,7 @@ INSTALLER_SITE_FILES = ("index.html", "install/index.html", "install/manifest.js
 _HERE = Path(__file__).resolve().parent
 DETECT_SCRIPT = (_HERE / "download.js").read_text(encoding="utf-8").strip()
 STATIC_ASSETS: dict[str, bytes] = {"install.sh": (_HERE / "install.sh").read_bytes()}
-ONE_LINER = "curl -fsSL https://talosbot.ai/clud/install.sh | sh"
+ONE_LINER = "curl -fsSL https://talos-hq.github.io/clud/install.sh | sh"
 CATALOG_HREF = "/clud/install/manifest.json"
 STYLE = """
 :root{color-scheme:dark;--bg:#0b0e14;--panel:#121722;--line:#232b3a;--text:#e6edf3;--muted:#9aa7b8;

@@ -4,14 +4,14 @@ Issue #1468 uses GitHub Pages as the installer discovery endpoint. The catalog
 is a `manifest.json` v1 Catalog, not the repository's internal test-bundle
 manifest. Its `online_url` identity field stays
 `https://talos-hq.github.io/clud/install/manifest.json` (installed binaries
-compare it verbatim), but nothing fetches that URL: the org's Pages custom
-domain makes every `*.github.io` URL 301-redirect.
+compare it verbatim), and Pages serves it there directly. The `talosbot.ai`
+custom domain is retired.
 
 **Fetch order (#2449).** Clients and publishers read published metadata through
 one ordered list per document — `crate::published_urls` in Rust,
 `installer.catalog.INSTALL_CATALOG_URLS` and `models.publish.MODEL_MANIFEST_URLS`
-in Python: the canonical domain (`https://talosbot.ai/clud/...`) first, then a
-GitHub-owned fallback that survives losing the domain or its certificate. The
+in Python: GitHub Pages (`https://talos-hq.github.io/clud/...`) first, then a
+GitHub-owned release-asset fallback. The
 install catalog falls back to
 `github.com/talos-hq/clud/releases/latest/download/installer-candidate-manifest.json`
 (read in candidate mode, since `latest` only resolves to a published release);
@@ -54,7 +54,7 @@ using the canonical Pages URL and reject a candidate channel.
 
 `installer/site.py` renders the exact Pages artifact paths: `index.html`,
 `install/index.html`, `install/manifest.json`, and `install.sh`. The project
-root (`https://talosbot.ai/clud/`) serves the same download page as
+root (`https://talos-hq.github.io/clud/`) serves the same download page as
 `install/index.html`, which stays for `self_install::entry::INSTALL_PAGE`. The
 landing page lists only verified direct native assets from the catalog's
 `latest-stable` release. It prefers static musl over GNU Linux assets and shows
@@ -90,8 +90,8 @@ JavaScript off, the plain list of all native downloads still works.
 
 ### `install.sh`
 
-`installer/install.sh` is served at `https://talosbot.ai/clud/install.sh`
-(`curl -fsSL https://talosbot.ai/clud/install.sh | sh`; flags after
+`installer/install.sh` is served at `https://talos-hq.github.io/clud/install.sh`
+(`curl -fsSL https://talos-hq.github.io/clud/install.sh | sh`; flags after
 `sh -s --`). It maps `uname -s`/`uname -m` to one of the four macOS/Linux
 assets (Linux uses static musl; a Rosetta shell on Apple Silicon gets aarch64),
 resolves the latest release tag from the `releases/latest` redirect unless

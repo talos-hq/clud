@@ -16,7 +16,6 @@ from running_process import PseudoTerminalProcess
 from ci.installer_candidate import TARGETS
 from ci.installer_public_evidence import require_evidence, require_guest_evidence
 from installer.catalog import (
-    ACCEPTED_ONLINE_URLS,
     ONLINE_URL,
     verify_direct_executable,
     version_key,
@@ -205,17 +204,10 @@ def assert_public_latest_install(
 
 
 # The oldest public release whose installer can still fetch today's catalog.
-# 2.8.35 moved the catalog from zackees.github.io to talos-hq.github.io (#2217);
-# then the org's Pages custom domain made every talos-hq.github.io URL
-# 301-redirect to talosbot.ai, and the installer refuses redirects, so 2.8.35
-# through 2.8.47 answer `expected value at line 1 column 1` and exit (#2433).
-# 2.8.48 fetches the domain first with a GitHub release fallback (#2449). An
-# older binary cannot discover a newer release -- not because discovery broke,
-# but because its URL did.
+# 2.8.48 is the first release with a GitHub release fallback (#2449); older
+# binaries are unsupported.
 CATALOG_MOVE_VERSION = "2.8.48"
-LEGACY_ONLINE_HOST = next(
-    url for url in ACCEPTED_ONLINE_URLS if url != ONLINE_URL
-).split("/")[2]
+LEGACY_ONLINE_HOST = "zackees.github.io"
 
 
 def prior_discovery_version(catalog: dict, version: str) -> str | None:
