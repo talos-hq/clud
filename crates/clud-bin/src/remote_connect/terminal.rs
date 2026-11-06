@@ -103,7 +103,19 @@ fn output_pump(
                     }
                 }
             }
-            Ok(None) => {}
+            // ConPTY keeps its output open after the child exits, so a reader
+            // never reaches EOF there. Idle means the output is already forwarded.
+            Ok(None) => {
+                let exited =
+                    running_process::pty::poll_pty_process(&process.handles, &process.returncode);
+                if let Ok(Some(code)) = exited {
+                    let event = json!({"type":"pty_exit", "pty_id":id, "code":code, "signal":null});
+                    if tx.try_send(Message::Text(event.to_string().into())).is_ok() {
+                        return;
+                    }
+                    break;
+                }
+            }
             Err(_) if process.wait_for_reader_closed_impl(Some(0.0)) => {
                 // Closed-stream is EOF, not a failed session. Preserve shell status.
                 let code = process.wait_impl(Some(2.0)).ok();

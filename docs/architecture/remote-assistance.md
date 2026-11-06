@@ -40,6 +40,8 @@ while the session and the server's copy carry on unaffected.
 ConPTY holds a new shell until its first `ESC[6n` is answered. The Windows client
 answers that one query and removes it from the stream: the operator's terminal may
 not be attached or hold control, and a second reply would reach the shell as input.
+ConPTY also keeps its output open after the shell exits, so the pump polls for exit
+whenever output is idle rather than waiting for the reader's EOF.
 
 Terminal writes run on a separate bounded worker so a program that stops reading
 input cannot prevent session cancellation. Output frames are at most 16 KiB and
