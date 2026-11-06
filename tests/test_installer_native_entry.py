@@ -144,10 +144,11 @@ def installer_target_scope(tmp_path: Path):  # noqa: C901
                     time.sleep(0.25)
 
 
-#: Installs take 1.0-1.5 s (60 timed on a hosted Windows runner, PR #2664). In run
-#: 42235151834 the first two writes to %LOCALAPPDATA% stalled for ~71 s together
-#: while every other test ran at normal speed, then the same install took 1.6 s.
-#: The budget covers that stall and stays below pytest's 90 s per-test timeout.
+#: Installs take 1.0-1.5 s (60 timed on a hosted Windows runner, PR #2664), but an
+#: intermittent stall hits a random install: ~71 s across two tests in run
+#: 42235151834, ~62 s across two in run 42252967844, while other tests held normal
+#: speed. Its cause is unproven. The budget covers it and stays below pytest's
+#: 90 s per-test timeout, so a real hang still fails.
 INSTALL_STALL_BUDGET_SECONDS = 85
 
 
@@ -368,7 +369,7 @@ def test_explicit_current_installs_verified_copy_offline(installer_target) -> No
         [str(clud_binary()), "--installer", "--install-current", "--yes"],
         env=env,
         capture_output=True,
-        timeout=30,
+        timeout=INSTALL_STALL_BUDGET_SECONDS,
         check=False,
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
@@ -380,7 +381,7 @@ def test_explicit_current_installs_verified_copy_offline(installer_target) -> No
         [str(clud_binary()), "--installer", "--install-current", "--yes"],
         env=env,
         capture_output=True,
-        timeout=30,
+        timeout=INSTALL_STALL_BUDGET_SECONDS,
         check=False,
     )
     assert repeat.returncode == 0, repeat.stderr.decode(errors="replace")
@@ -398,13 +399,17 @@ def test_explicit_current_installs_verified_copy_offline(installer_target) -> No
 def test_interrupted_commit_restores_backup_before_reinstall(installer_target) -> None:
     env, destination = installer_target
     command = [str(clud_binary()), "--installer", "--install-current", "--yes"]
-    first = run_process(command, env=env, capture_output=True, timeout=30, check=False)
+    first = run_process(
+        command, env=env, capture_output=True, timeout=INSTALL_STALL_BUDGET_SECONDS, check=False
+    )
     assert first.returncode == 0, first.stderr.decode(errors="replace")
     backup = destination.with_suffix(".clud-backup")
     backup.write_bytes(destination.read_bytes())
     backup.chmod(destination.stat().st_mode)
     destination.write_bytes(b"interrupted commit")
-    recovered = run_process(command, env=env, capture_output=True, timeout=30, check=False)
+    recovered = run_process(
+        command, env=env, capture_output=True, timeout=INSTALL_STALL_BUDGET_SECONDS, check=False
+    )
     assert recovered.returncode == 0, recovered.stderr.decode(errors="replace")
     assert destination.read_bytes() == clud_binary().read_bytes()
     assert not backup.exists()
@@ -430,7 +435,7 @@ def test_bash_fresh_login_and_interactive_lookup(tmp_path: Path) -> None:
         [str(clud_binary()), "--installer", "--install-current", "--yes"],
         env=env,
         capture_output=True,
-        timeout=30,
+        timeout=INSTALL_STALL_BUDGET_SECONDS,
         check=False,
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
@@ -466,7 +471,7 @@ def test_existing_user_bin_and_first_bash_login_file(tmp_path: Path) -> None:
         [str(clud_binary()), "--installer", "--install-current", "--yes"],
         env=env,
         capture_output=True,
-        timeout=30,
+        timeout=INSTALL_STALL_BUDGET_SECONDS,
         check=False,
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
@@ -490,7 +495,7 @@ def test_fish_custom_xdg_uses_nonuniversal_snippet(tmp_path: Path) -> None:
         [str(clud_binary()), "--installer", "--install-current", "--yes"],
         env=env,
         capture_output=True,
-        timeout=30,
+        timeout=INSTALL_STALL_BUDGET_SECONDS,
         check=False,
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
@@ -515,7 +520,7 @@ def test_zsh_custom_zdotdir_activation(tmp_path: Path) -> None:
         [str(clud_binary()), "--installer", "--install-current", "--yes"],
         env=env,
         capture_output=True,
-        timeout=30,
+        timeout=INSTALL_STALL_BUDGET_SECONDS,
         check=False,
     )
     assert result.returncode == 0, result.stderr.decode(errors="replace")
@@ -554,7 +559,7 @@ def test_running_windows_target_remains_valid(installer_target) -> None:
         [str(clud_binary()), "--installer", "--install-current", "--yes"],
         env=env,
         capture_output=True,
-        timeout=30,
+        timeout=INSTALL_STALL_BUDGET_SECONDS,
         check=False,
     )
     assert destination.is_file(), first.stderr.decode(errors="replace")
@@ -563,7 +568,7 @@ def test_running_windows_target_remains_valid(installer_target) -> None:
         [str(destination), "--installer", "--install-current", "--yes"],
         env=env,
         capture_output=True,
-        timeout=30,
+        timeout=INSTALL_STALL_BUDGET_SECONDS,
         check=False,
     )
     assert running.returncode == 1, running.stderr.decode(errors="replace")
