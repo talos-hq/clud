@@ -144,7 +144,7 @@ fn fix_replaces_a_stale_helper_bin_alias() {
     write(&exe, 20);
     let own = fingerprint(&exe).unwrap();
     let home = tmp.path().join("home");
-    let helper_bin = home.join(".clud/state/helper-bin");
+    let helper_bin = crate::version_dir::locate(&home, &exe).unwrap().helper();
     std::fs::create_dir_all(&helper_bin).unwrap();
     for name in [
         crate::multicall::CMD_SCAN,

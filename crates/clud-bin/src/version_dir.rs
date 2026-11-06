@@ -1,4 +1,4 @@
-//! Per-build alias directories (DD-180), adapted from soldr's
+//! Per-build alias directories (DD-203), adapted from soldr's
 //! `versioned_shims_dir` and `self_relocate` runtime tree.
 //!
 //! Every build of `clud` owns `~/.clud/state/versions/v<version>-<hash>/`:
@@ -126,7 +126,8 @@ fn image_hash(root: &Path, source: &Path) -> io::Result<String> {
     }
     let hash = hash_file(source)?;
     // Best effort: without the memo the next launch hashes again.
-    if let Some(parent) = memo.parent() {
+    // Only under a root that exists: asking must not create one.
+    if let Some(parent) = memo.parent().filter(|_| root.is_dir()) {
         let _ = fs::create_dir_all(parent);
         let staged = memo.with_extension(format!("{}.tmp", std::process::id()));
         if fs::write(&staged, format!("{stamp} {hash}")).is_ok()
@@ -142,8 +143,8 @@ fn dir_name(version: &str, hash: &str) -> String {
     format!("v{version}-{}", &hash[..HASH_CHARS.min(hash.len())])
 }
 
-/// The directory `source` belongs in. Reads and creates nothing beyond the
-/// hash memo, so `clud doctor` can ask without installing.
+/// The directory `source` belongs in. Creates nothing beyond the hash memo,
+/// so `clud doctor` and a dry run can ask without installing.
 pub fn locate(home: &Path, source: &Path) -> io::Result<VersionDir> {
     let root = root_of(home);
     let hash = image_hash(&root, source)?;

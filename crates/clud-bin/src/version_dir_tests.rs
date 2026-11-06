@@ -164,9 +164,11 @@ fn the_sweep_runs_at_most_once_per_interval() {
     assert!(sweep_if_due(root, Path::new("/none"), NOW + 1)
         .unwrap()
         .is_none());
-    assert!(sweep_if_due(root, Path::new("/none"), NOW + GC_INTERVAL_SECONDS)
-        .unwrap()
-        .is_some());
+    assert!(
+        sweep_if_due(root, Path::new("/none"), NOW + GC_INTERVAL_SECONDS)
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[test]

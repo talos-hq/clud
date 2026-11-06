@@ -222,6 +222,15 @@ pub fn file_names_in(dir: ShimDir) -> Vec<String> {
         .collect()
 }
 
+fn every_build_alias_dir(home: &Path) -> Vec<PathBuf> {
+    use crate::version_dir::{alias_dirs_named, INTERPRETER_LEAF, SESSION_LEAF};
+    [INTERPRETER_LEAF, SESSION_LEAF]
+        .iter()
+        .flat_map(|leaf| alias_dirs_named(home, leaf))
+        .map(|dir| canonical(&dir))
+        .collect()
+}
+
 /// Directories whose entries are clud aliases, never real binaries: the
 /// shim's own directory, the session's alias directory, and both managed
 /// directories under `home`.
@@ -240,6 +249,7 @@ pub fn shim_dirs(self_exe: &Path, session_dir: Option<&Path>, home: Option<&Path
         for dir in [ShimDir::Interpreter, ShimDir::Session] {
             dirs.push(canonical(&home.join(dir.subdir())));
         }
+        dirs.extend(every_build_alias_dir(home));
     }
     dirs.dedup();
     dirs
@@ -301,6 +311,7 @@ pub fn real_program_with(
         for dir in [ShimDir::Interpreter, ShimDir::Session] {
             alias_dirs.push(canonical(&home.join(dir.subdir())));
         }
+        alias_dirs.extend(every_build_alias_dir(home));
     }
     let parent = target.parent().map(canonical);
     if parent.is_some_and(|parent| alias_dirs.contains(&parent)) {

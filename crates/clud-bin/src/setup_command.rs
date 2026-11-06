@@ -157,9 +157,8 @@ fn offer_hermes(
     }
 }
 
-/// Step 1: interpreter aliases under `~/.clud/state/shims`.
+/// Step 1: interpreter aliases in this build's directory (DD-203).
 fn install_aliases(home: &Path, source: Option<&Path>, dry_run: bool, out: &mut dyn Write) -> i32 {
-    let dir = home.join(shim_install::SHIMS_SUBDIR);
     let names = shim_install::alias_names();
     let Some(source) = source else {
         let _ = writeln!(
@@ -167,6 +166,13 @@ fn install_aliases(home: &Path, source: Option<&Path>, dry_run: bool, out: &mut 
             "aliases: skipped, this process is not the clud executable"
         );
         return 0;
+    };
+    let dir = match crate::version_dir::locate(home, source) {
+        Ok(build) => build.interpreter(),
+        Err(error) => {
+            eprintln!("clud setup: could not read {}: {error}", source.display());
+            return 1;
+        }
     };
     let missing: Vec<&str> = names
         .iter()

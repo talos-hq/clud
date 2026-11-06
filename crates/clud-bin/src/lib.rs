@@ -170,7 +170,6 @@ pub mod setup_command;
 pub mod shell;
 pub mod shell_ast;
 pub mod shim_install;
-pub mod version_dir;
 pub mod shim_main;
 pub mod shim_registry;
 pub mod shim_resolve;
@@ -186,6 +185,7 @@ pub mod stream_json;
 pub mod subprocess;
 #[cfg(test)]
 pub(crate) mod test_env;
+pub mod version_dir;
 pub mod video;
 
 pub mod kimi_auth;

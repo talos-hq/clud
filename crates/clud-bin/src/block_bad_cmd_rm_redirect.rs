@@ -398,9 +398,11 @@ fn is_tool_word(word: &str) -> bool {
         return true;
     }
     let normalized = crate::path_norm::slash_separators(bare);
-    TOOLS
-        .iter()
-        .any(|tool| normalized.ends_with(&format!("/.clud/state/rm-shim/{tool}")))
+    TOOLS.iter().any(|tool| {
+        normalized.ends_with(&format!("/.clud/state/rm-shim/{tool}"))
+            || (normalized.contains("/.clud/state/versions/")
+                && normalized.ends_with(&format!("/rm-shim/{tool}")))
+    })
 }
 
 /// Whether `word` names clud itself: bare `clud` or `$CLUD_EXE`.

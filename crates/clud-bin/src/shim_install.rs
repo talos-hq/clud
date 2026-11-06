@@ -45,18 +45,18 @@ pub fn shims_dir() -> Option<PathBuf> {
 /// relies on. A failed hardlink or symlink falls back to a copy; only a
 /// failed copy is an error.
 pub fn extract_shims_at(home_root: &Path, shim_source: &Path) -> std::io::Result<usize> {
-    let shims_dir = home_root.join(SHIMS_SUBDIR);
-    std::fs::create_dir_all(&shims_dir)?;
     if !shim_source.is_file() {
         return Ok(0);
     }
-    // The pre-#1551 byte-hash sentinel; freshness is now file identity.
-    let _ = std::fs::remove_file(shims_dir.join(".shim-hash"));
-    purge_retired_aliases(&shims_dir);
+    purge_retired_aliases(&home_root.join(SHIMS_SUBDIR));
+    let dir = crate::version_dir::place(home_root, shim_source)?;
+    let shims_dir = dir.interpreter();
+    std::fs::create_dir_all(&shims_dir)?;
+    let image = dir.image();
     let mut installed = 0;
     for alias in alias_names() {
         let target = shims_dir.join(&alias);
-        if let alias_link::Placed::Made(_) = alias_link::install_alias(shim_source, &target)? {
+        if let alias_link::Placed::Made(_) = alias_link::install_alias(&image, &target)? {
             installed += 1;
         }
     }
@@ -100,7 +100,7 @@ pub fn prepare_session_shims_at(
     };
 
     extract_shims_at(home_root, source)?;
-    let installed = home_root.join(SHIMS_SUBDIR);
+    let installed = crate::version_dir::locate(home_root, source)?.interpreter();
     crate::shim_session::prepend_to_path(env, &installed);
     crate::shim_session::set_env(
         env,
@@ -204,12 +204,24 @@ fn purge_stale_aliases(dir: &Path, expected: &[String]) -> std::io::Result<()> {
 /// Python relays off PATH. A separate directory also avoids activating
 /// previously extracted Python aliases.
 pub fn install_rm_at(home: &Path, source: &Path) -> std::io::Result<PathBuf> {
-    install_rm_with(home, source, &alias_link::DEFAULT_ORDER, &|_| true)
-        .map(|installed| installed.unwrap_or_else(|| home.join(shim_registry::SESSION_SUBDIR)))
+    if std::fs::metadata(source)?.len() == 0 {
+        return Err(std::io::Error::other("packaged shim is empty"));
+    }
+    purge_retired_aliases(&home.join(shim_registry::SESSION_SUBDIR));
+    let build = crate::version_dir::place(home, source)?;
+    let dir = build.session();
+    crate::version_dir::install_aliases(
+        &build,
+        &dir,
+        &rm_alias_names(),
+        &alias_link::DEFAULT_ORDER,
+    )?;
+    Ok(dir)
 }
 
-/// [`install_rm_at`] with the link methods to try and a precondition checked
-/// on the alias dir under the install lock; `Ok(None)` when it refused.
+/// Relink the legacy shared alias dir, for a session an older clud launched on
+/// it (DD-203). Takes the link methods to try and a precondition checked on the
+/// dir under the install lock; `Ok(None)` when it refused.
 fn install_rm_with(
     home: &Path,
     source: &Path,
@@ -397,6 +409,17 @@ mod tests {
 
     /// Replace an alias the way an attacker or a bad tool would: unlink and
     /// write a different file.
+    /// A shared dir as an older clud left it, for the #1743 relink tests.
+    fn legacy(home: &Path, source: &Path) -> std::io::Result<PathBuf> {
+        install_rm_with(home, source, &alias_link::DEFAULT_ORDER, &|_| true).map(Option::unwrap)
+    }
+
+    fn interpreter_dir(home: &Path, source: &Path) -> PathBuf {
+        crate::version_dir::locate(home, source)
+            .unwrap()
+            .interpreter()
+    }
+
     fn swap_alias(path: &Path, content: &[u8]) {
         fs::remove_file(path).unwrap();
         fs::write(path, content).unwrap();
@@ -407,7 +430,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let (_source_dir, source) = make_source(b"trusted");
         extract_shims_at(home.path(), &source).unwrap();
-        let target = home.path().join(SHIMS_SUBDIR).join(&alias_names()[0]);
+        let target = interpreter_dir(home.path(), &source).join(&alias_names()[0]);
         swap_alias(&target, b"replaced");
         assert_eq!(extract_shims_at(home.path(), &source).unwrap(), 1);
         assert_eq!(fs::read(target).unwrap(), b"trusted");
@@ -468,9 +491,9 @@ mod tests {
     fn an_upgraded_clud_refreshes_every_session_alias() {
         let home = TempDir::new().unwrap();
         let (_source_dir, source) = make_source(b"v1");
-        let dir = install_rm_at(home.path(), &source).unwrap();
+        let dir = legacy(home.path(), &source).unwrap();
         replace_file(&source, b"v2 is different");
-        install_rm_at(home.path(), &source).unwrap();
+        legacy(home.path(), &source).unwrap();
         for name in rm_alias_names() {
             assert_eq!(
                 fs::read(dir.join(&name)).unwrap(),
@@ -527,7 +550,7 @@ mod tests {
         let bin = TempDir::new().unwrap();
         let clud = bin.path().join(shim_registry::file_name("clud"));
         fs::write(&clud, b"v1").unwrap();
-        let dir = install_rm_at(home.path(), &clud).unwrap();
+        let dir = legacy(home.path(), &clud).unwrap();
         let old = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
         set_mtime(&clud, old);
         replace_file(&clud, b"v2 is different");
@@ -556,7 +579,7 @@ mod tests {
             &clud,
             std::time::SystemTime::now() - std::time::Duration::from_secs(3600),
         );
-        let dir = install_rm_at(home.path(), &newer).unwrap();
+        let dir = legacy(home.path(), &newer).unwrap();
         let alias = dir.join(&rm_alias_names()[0]);
         let vars = running_session(home.path(), &clud);
         assert!(
@@ -624,7 +647,7 @@ mod tests {
         let (_src_dir, src) = make_source(b"#!fake shim binary\n");
         let count = extract_shims_at(home.path(), &src).unwrap();
         assert_eq!(count, alias_names().len());
-        let shims = home.path().join(SHIMS_SUBDIR);
+        let shims = interpreter_dir(home.path(), &src);
         for alias in alias_names() {
             assert!(shims.join(&alias).is_file(), "missing alias {alias}");
         }
@@ -649,6 +672,7 @@ mod tests {
         let home = TempDir::new().unwrap();
         let (src_dir, src) = make_source(b"v1");
         extract_shims_at(home.path(), &src).unwrap();
+        let old_alias = interpreter_dir(home.path(), &src).join(&alias_names()[0]);
         // Upgrade: a new `clud` replaces the old one.
         replace_file(&src, b"v2-different");
         let count = extract_shims_at(home.path(), &src).unwrap();
@@ -658,9 +682,14 @@ mod tests {
             "all aliases should refresh on drift"
         );
         // Confirm new bytes landed.
-        let shims = home.path().join(SHIMS_SUBDIR);
+        let shims = interpreter_dir(home.path(), &src);
         let first_alias = shims.join(&alias_names()[0]);
         assert_eq!(fs::read(&first_alias).unwrap(), b"v2-different");
+        assert_eq!(
+            fs::read(&old_alias).unwrap(),
+            b"v1",
+            "the old build is pinned"
+        );
         let _ = src_dir; // keep tmpdir alive
     }
 
@@ -670,9 +699,8 @@ mod tests {
         let nonexistent = home.path().join("not-there");
         let count = extract_shims_at(home.path(), &nonexistent).unwrap();
         assert_eq!(count, 0);
-        // Dir should still be created — the launch path can populate
-        // it later when the bundled binary becomes available.
-        assert!(home.path().join(SHIMS_SUBDIR).is_dir());
+        // No build, so no build directory.
+        assert!(!home.path().join(crate::version_dir::ROOT_SUBDIR).exists());
     }
 
     #[test]
@@ -700,7 +728,7 @@ mod tests {
         let prepared = prepare_session_shims_at(home.path(), &current_exe, &mut env).unwrap();
 
         assert!(prepared);
-        let installed = home.path().join(SHIMS_SUBDIR);
+        let installed = interpreter_dir(home.path(), &current_exe);
         for alias in alias_names() {
             assert!(installed.join(&alias).is_file(), "missing {alias}");
         }

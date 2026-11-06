@@ -23,7 +23,7 @@ registers the PreToolUse hook ``answer_hook.py``, which answers each call via
 ``answers`` (``{"*": label}`` for a default); see :meth:`Harness.answer_args`.
 
 PATH never contains clud's own shim directories (``~/.clud/state/shims``,
-``~/.clud/state/rm-shim``): a developer's installed aliases would otherwise
+``~/.clud/state/rm-shim`` and each build's under ``versions/``): a developer's installed aliases would otherwise
 stand in for the build under test. Scripts and hooks here run under the
 test's own interpreter.
 
