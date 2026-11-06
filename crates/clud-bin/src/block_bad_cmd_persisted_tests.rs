@@ -33,6 +33,53 @@ fn a_projects_own_tool_results_directory_is_not() {
     )));
 }
 
+fn scratchpad_digest() -> PathBuf {
+    // Shape measured on 2026-10-31: 188 KB read whole in one `Read`.
+    PathBuf::from(
+        "/home/niteris/.clud/tmp/claude-1000/-home-niteris-dev-obs-rust-obs-studio4/\
+         c42c6f41-56f7-43b4-a8fd-bb4cc0c6b1a2/scratchpad/digest.txt",
+    )
+}
+
+fn task_output() -> PathBuf {
+    PathBuf::from(
+        "/home/niteris/.clud/tmp/claude-1000/-home-niteris-dev-twp/\
+         6a7650d0-84c1-4184-946c-51eae3f43740/tasks/bil6vga28.out",
+    )
+}
+
+#[test]
+fn a_clud_scratchpad_artifact_is_a_session_artifact() {
+    assert!(is_session_artifact(&scratchpad_digest()));
+    assert!(is_session_artifact(&task_output()));
+    assert!(is_agent_artifact(&scratchpad_digest()));
+    assert!(is_agent_artifact(&task_output()));
+}
+
+#[test]
+fn clud_worktrees_and_repo_directories_are_not_artifacts() {
+    // A clud worktree is a real checkout: `.clud` but not `.clud/tmp`.
+    assert!(!is_session_artifact(Path::new(
+        "/home/niteris/.clud/worktrees/clud-wt-1962/crates/clud-bin/src/block_bad_cmd.rs"
+    )));
+    // A worktree that happens to own a `tasks/` directory is still a checkout.
+    assert!(!is_session_artifact(Path::new(
+        "/home/niteris/.clud/worktrees/clud-wt-1962/tasks/notes.md"
+    )));
+    // A repository with its own `scratchpad/` is none of clud's business.
+    assert!(!is_session_artifact(Path::new(
+        "/home/niteris/dev/twp/scratchpad/digest.txt"
+    )));
+    // Under `.clud/tmp` but not inside a scratch or task directory.
+    assert!(!is_session_artifact(Path::new(
+        "/home/niteris/.clud/tmp/claude-1000/-home-niteris-dev-twp/abc/session.json"
+    )));
+    assert!(!is_session_artifact(Path::new("/home/niteris/.clud/tmp")));
+    // The `.claude` spill rule still applies on its own.
+    assert!(is_agent_artifact(&spill("/home/niteris")));
+    assert!(!is_session_artifact(&spill("/home/niteris")));
+}
+
 #[test]
 fn only_a_whole_file_read_is_guarded() {
     assert!(!is_ranged(Some(&json!({"file_path": "/a/b.txt"}))));
@@ -108,6 +155,7 @@ fn an_unwritable_state_dir_allows() {
 fn the_message_names_a_bounded_read() {
     let message = deny_message(&spill("/home/niteris"), 35_988);
     assert!(message.contains("persisted-read-guard"), "{message}");
+    assert!(message.contains("session artifact"), "{message}");
     assert!(message.contains("35 KB"), "{message}");
     assert!(message.contains("offset"), "{message}");
     assert!(message.contains("code/slice.py"), "{message}");
@@ -131,4 +179,13 @@ fn read_spellings_are_guarded() {
     for tool in ["Bash", "Write", "Edit", "Grep"] {
         assert!(!applies_to(tool), "{tool}");
     }
+}
+
+#[test]
+fn a_session_artifact_gets_the_same_bounded_read_message() {
+    let message = deny_message(&scratchpad_digest(), 192_550);
+    assert!(message.contains("digest.txt"), "{message}");
+    assert!(message.contains("188 KB"), "{message}");
+    assert!(message.contains("offset"), "{message}");
+    assert!(message.contains("code/slice.py"), "{message}");
 }
