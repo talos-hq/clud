@@ -36,6 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from running_process import PseudoTerminalProcess, RunningProcess
+from running_process.pty import KEYBOARD_INTERRUPT_EXIT_CODES
 
 from ci import harness_plan, process
 from ci.aliases import materialize as materialize_aliases
@@ -203,6 +204,13 @@ REQUIRE_PTY_ENV = "CLUD_REQUIRE_PTY"
 # `run_terminal_test`), so a hang costs this much and names the test instead
 # of swallowing the rest of the harness.
 TERMINAL_TEST_TIMEOUT_SECS = 60.0
+# How long one read waits for output before re-checking whether the child exited.
+TERMINAL_READ_TIMEOUT_SECS = 0.05
+# After exit, output still in transit is complete once the stream has been quiet
+# this long. ConPTY never sends EOF, so EOF alone cannot end the drain.
+TERMINAL_DRAIN_QUIET_SECS = 0.1
+# Bound on that drain, for a surviving descendant that keeps writing to the PTY.
+TERMINAL_DRAIN_LIMIT_SECS = 2.0
 
 
 def run_in_terminal(
@@ -224,7 +232,7 @@ def run_in_terminal(
     try:
         while time.monotonic() < deadline:
             try:
-                sys.stdout.write(terminal.read_text(timeout=0.5))
+                sys.stdout.write(terminal.read_text(timeout=TERMINAL_READ_TIMEOUT_SECS))
                 sys.stdout.flush()
             except TimeoutError:
                 # ConPTY keeps its output pipe open after the child exits, so
@@ -242,23 +250,40 @@ def run_in_terminal(
             )
             terminal.kill()
             return 1
-        return terminal.wait(timeout=30)
+        return _exit_code(terminal)
     finally:
         terminal.close()
 
 
+def _exit_code(terminal: PseudoTerminalProcess) -> int:
+    """The exit code, without `wait()`'s 2 s drain when exit is already known.
+
+    `wait()` spends that drain awaiting an EOF ConPTY does not send, and discards
+    what it collects. An EOF can still precede exit, so that case does wait.
+    """
+    code = terminal.poll()
+    if code is None:
+        return terminal.wait(timeout=30)
+    if code in KEYBOARD_INTERRUPT_EXIT_CODES:
+        raise KeyboardInterrupt  # What `wait()` does, so Ctrl+C still stops the run.
+    return code
+
+
 def _echo_remaining(terminal: PseudoTerminalProcess) -> None:
-    """Echo whatever output is already buffered, without waiting for more."""
-    while True:
+    """Echo output still in transit after exit, until it goes quiet or EOF."""
+    now = time.monotonic()
+    limit = now + TERMINAL_DRAIN_LIMIT_SECS
+    quiet_at = now + TERMINAL_DRAIN_QUIET_SECS
+    while (now := time.monotonic()) < min(limit, quiet_at):
         try:
-            chunk = terminal.read_non_blocking()
+            text = terminal.read_text(timeout=TERMINAL_READ_TIMEOUT_SECS)
+        except TimeoutError:
+            continue
         except EOFError:
             return
-        if not chunk:
-            return
-        text = chunk.decode(terminal.encoding, "replace") if isinstance(chunk, bytes) else chunk
         sys.stdout.write(text)
         sys.stdout.flush()
+        quiet_at = time.monotonic() + TERMINAL_DRAIN_QUIET_SECS
 
 
 def list_tests(harness: Path, env: dict[str, str]) -> list[str]:
