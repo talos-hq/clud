@@ -670,3 +670,46 @@ fn cleanup_keeps_a_socket_whose_inode_was_reused_by_the_successor() {
         .unwrap()
         .expect("connect to successor socket");
 }
+
+/// DD-204: each build registers its own v2 definition, pinned to its image.
+#[test]
+fn two_builds_register_separate_v2_definitions_on_their_images() {
+    use prost::Message as _;
+    use running_process::broker::protocol::BrokerIsolation;
+    use running_process::broker::protocol_v2::ServiceDefinition;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let defs = tmp.path().join("defs");
+    std::fs::create_dir_all(&defs).unwrap();
+    let mut paths = Vec::new();
+    for body in ["build one", "build two"] {
+        let exe = tmp.path().join(body.replace(' ', "-")).join("clud");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, body).unwrap();
+        let build = crate::version_dir::place(&home, &exe).unwrap();
+        let path = install_service_definition_v2_in(&defs, &build).unwrap();
+        let bytes = std::fs::read(&path).unwrap();
+        let definition = ServiceDefinition::decode(bytes.as_slice()).unwrap();
+        assert_eq!(definition.isolation, BrokerIsolation::SharedBroker as i32);
+        assert_eq!(
+            std::path::PathBuf::from(&definition.binary_path),
+            build.image()
+        );
+        assert!(std::path::Path::new(&definition.binary_path)
+            .starts_with(&definition.per_version_binary_dir));
+        assert_eq!(definition.version_allow_list, [env!("CARGO_PKG_VERSION")]);
+        paths.push((path, build));
+    }
+    assert_ne!(paths[0].0, paths[1].0);
+    assert!(paths[0].0.exists(), "a later build must not overwrite it");
+
+    // A collected build's definition goes; a live one and a stranger's stay.
+    let stranger = defs.join("zccache.servicedef.v2");
+    std::fs::write(&stranger, b"not ours").unwrap();
+    std::fs::remove_dir_all(&paths[0].1.root).unwrap();
+    prune_service_definitions_v2(&defs, &home);
+    assert!(!paths[0].0.exists());
+    assert!(paths[1].0.exists());
+    assert!(stranger.exists());
+}

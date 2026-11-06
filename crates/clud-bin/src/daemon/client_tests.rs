@@ -524,3 +524,36 @@ fn the_create_budget_covers_both_worker_phases() {
     let budget = super::super::server::create_session_budget();
     assert!(budget >= Duration::from_secs(30), "{budget:?}");
 }
+
+#[test]
+fn an_image_that_cannot_start_falls_back_to_the_install() {
+    use std::cell::RefCell;
+    use std::path::PathBuf;
+    let (image, install) = (Path::new("/pinned/clud"), Path::new("/install/clud"));
+    let tried = RefCell::new(Vec::<PathBuf>::new());
+    spawn_preferring_image(Some(image), install, &|program| {
+        tried.borrow_mut().push(program.to_path_buf());
+        if program == image {
+            return Err(io::Error::from(io::ErrorKind::NotFound));
+        }
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(*tried.borrow(), [image, install]);
+
+    // The image works: the install is not started as well.
+    tried.borrow_mut().clear();
+    spawn_preferring_image(Some(image), install, &|program| {
+        tried.borrow_mut().push(program.to_path_buf());
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(*tried.borrow(), [image]);
+
+    // Both fail: the install's error is the launch's.
+    let error = spawn_preferring_image(Some(image), install, &|_| {
+        Err(io::Error::from(io::ErrorKind::PermissionDenied))
+    })
+    .unwrap_err();
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+}

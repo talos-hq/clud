@@ -151,6 +151,9 @@ pub(in crate::daemon) fn spawn_frame_lane(
         if let Err(err) = install_service_definition() {
             eprintln!("[clud] note: running-process servicedef install skipped: {err}");
         }
+        if let Err(err) = register_this_build() {
+            eprintln!("[clud] note: running-process v2 servicedef install skipped: {err}");
+        }
         // Publish clud's CacheManifest (runtime/lock/config/log roots) so
         // peers can discover this daemon through the central registry
         // (#436, consumer-adoption-clud.md step 9). Best-effort and
@@ -198,6 +201,80 @@ pub(in crate::daemon) fn install_service_definition() -> io::Result<PathBuf> {
     .label("consumer", "clud")
     .install()
     .map_err(|err| io::Error::other(err.to_string()))
+}
+
+/// Register the running daemon's build with the v2 broker registry and hold
+/// its build directory's lease for the daemon's life, which also covers the
+/// workers it starts from the same image (DD-204).
+fn register_this_build() -> io::Result<()> {
+    let home = crate::home::user_home().ok_or_else(|| io::Error::other("no home directory"))?;
+    let exe = std::env::current_exe()?;
+    let build = crate::version_dir::place(&home, &exe)?;
+    install_service_definition_v2_in(
+        &running_process::broker::protocol_v2::service_definition_dir_v2(),
+        &build,
+    )?;
+    prune_service_definitions_v2(
+        &running_process::broker::protocol_v2::service_definition_dir_v2(),
+        &home,
+    );
+    Ok(())
+}
+
+/// Write `<service>.servicedef.v2` for `build`: its pinned image, the image
+/// directory as the allow-list root, and exactly this version allowed, as
+/// soldr's `soldr_daemon_service_definition` does.
+pub(in crate::daemon) fn install_service_definition_v2_in(
+    root: &Path,
+    build: &crate::version_dir::VersionDir,
+) -> io::Result<PathBuf> {
+    use running_process::broker::protocol_v2::ServiceDefinitionBuilder as BuilderV2;
+    let name = crate::version_dir::service_name(build)
+        .ok_or_else(|| io::Error::other("build directory is not a valid service name"))?;
+    let image = build.image();
+    let image_dir = image
+        .parent()
+        .ok_or_else(|| io::Error::other("image has no parent"))?;
+    BuilderV2::shared_broker(name, image.display().to_string())
+        .per_version_binary_dir(image_dir.display().to_string())
+        .min_version(env!("CARGO_PKG_VERSION"))
+        .version_allow_list([env!("CARGO_PKG_VERSION")])
+        .label("consumer", "clud")
+        .install_in(root)
+        .map_err(|err| io::Error::other(err.to_string()))
+}
+
+/// Remove clud's v2 definitions whose build directory the GC has collected.
+/// Other consumers' files and anything unreadable stay.
+pub(in crate::daemon) fn prune_service_definitions_v2(root: &Path, home: &Path) {
+    use prost::Message as _;
+    use running_process::broker::protocol_v2::{ServiceDefinition, SERVICE_DEF_V2_EXTENSION};
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
+    let builds = home.join(crate::version_dir::ROOT_SUBDIR);
+    for path in entries.flatten().map(|entry| entry.path()) {
+        let is_ours = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| {
+                name.starts_with(crate::version_dir::SERVICE_PREFIX)
+                    && name.ends_with(&format!(".{SERVICE_DEF_V2_EXTENSION}"))
+            });
+        if !is_ours {
+            continue;
+        }
+        let Some(definition) = std::fs::read(&path)
+            .ok()
+            .and_then(|bytes| ServiceDefinition::decode(bytes.as_slice()).ok())
+        else {
+            continue;
+        };
+        let dir = Path::new(&definition.per_version_binary_dir);
+        if dir.starts_with(&builds) && !dir.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
 }
 
 /// Seal and publish clud's [`CacheManifest`] into the central registry

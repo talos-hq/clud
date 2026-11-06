@@ -7624,3 +7624,33 @@ session until it restarts, which amends the in-session refresh of #1743 for
 sessions on this layout. A cross-volume home costs one copy per build rather
 than one per alias. Moving the daemon to the running-process v2 broker is a
 separate change.
+
+## DD-204: the daemon registers per build with the v2 broker registry
+
+**Context:** clud's daemon speaks the frozen broker v1 frame lane, connects by
+Hello-skip to its identity sidecar, and writes one `clud.servicedef` that each
+version overwrites. soldr's `.servicedef.v2` carries a per-version binary
+directory and a version allow-list, and soldr's own broker places and launches
+daemon images per route.
+
+**Decision:** adopt the v2 registration and placement half. The daemon starts
+from its build's pinned image (`version_dir::pinned_executable`), so its workers,
+which re-enter `current_exe`, run the same bytes. It writes
+`clud-v<version>-<hash>.servicedef.v2` with that image, the image directory as
+`per_version_binary_dir` and exactly its version allowed. The per-build name is
+soldr's image-keyed route name applied to clud: versions cannot overwrite each
+other. The daemon holds its build's lease, and definitions of collected builds
+are pruned. The v1 definition and frame lane stay so older clients keep working.
+
+**Not adopted, deliberately:** a broker process that owns daemon launch and
+routes clients over the v2 session transport (about 10k lines in soldr's
+`broker_*.rs`). It would not by itself make sessions survive an upgrade. That
+is decided by `ensure_daemon`, where a newer client terminates an older daemon's
+process tree, and by workers exiting when their daemon dies. soldr instead lets
+one daemon own a root at a time and refuses to displace a busy one (soldr#3377). Applying either to clud means choosing what a newer client does
+with sessions an older daemon owns, since one `state_dir` holds the session
+registry and durable API. That needs its own decision.
+
+**Consequences:** session, durable API and `session_*` MCP behaviour across an
+upgrade is unchanged by this decision, including the existing termination of an
+older daemon's tree. An in-use daemon no longer locks the install path on Windows.

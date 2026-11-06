@@ -263,3 +263,39 @@ fn a_session_mismatch_is_reported() {
     assert!(crate::doctor::session_mismatch(Some(&active), &active).is_none());
     assert!(crate::doctor::session_mismatch(None, &active).is_none());
 }
+
+#[test]
+fn a_daemon_runs_from_the_pinned_image_and_survives_the_upgrade() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let clud = build(tmp.path(), "a", b"old");
+    let image = pinned_executable(&home, &clud).unwrap();
+    assert_ne!(image, clud);
+    assert!(image.starts_with(home.join(ROOT_SUBDIR)));
+    fs::write(clud.with_extension("new"), b"new").unwrap();
+    fs::rename(clud.with_extension("new"), &clud).unwrap();
+    assert_eq!(fs::read(&image).unwrap(), b"old");
+    // Started from the image, a daemon resolves to the same image.
+    assert_eq!(pinned_executable(&home, &image).unwrap(), image);
+}
+
+#[test]
+fn a_test_harness_is_never_pinned() {
+    let tmp = tempdir().unwrap();
+    let home = tmp.path().join("home");
+    let exe = tmp.path().join("clud-3f9a1c");
+    fs::write(&exe, b"x").unwrap();
+    assert_eq!(pinned_executable(&home, &exe).unwrap(), exe);
+    assert!(!home.exists());
+}
+
+#[test]
+fn a_service_name_obeys_the_frozen_rule() {
+    let dir = VersionDir {
+        root: PathBuf::from("/h/v2.8.58-0123456789abcdef"),
+    };
+    assert_eq!(
+        service_name(&dir).as_deref(),
+        Some("clud-v2-8-58-0123456789abcdef")
+    );
+}
