@@ -228,6 +228,50 @@ pub fn argv_is_batch_wrapped(argv: &[String]) -> bool {
     imp::is_batch_wrapper(argv.first().map(String::as_str))
 }
 
+/// Capture independent raw streams using the shared command, environment and
+/// invisible-helper policy. Readers run concurrently inside running-process.
+/// A deadline failure kills and reaps the child and is never a successful exit.
+pub fn capture_separate(argv: Vec<String>, timeout: Duration) -> Result<CapturedOutput, String> {
+    let process = NativeProcess::new(ProcessConfig {
+        command: command_spec_for_subprocess(argv),
+        cwd: None,
+        env: None,
+        capture: true,
+        stderr_mode: StderrMode::Pipe,
+        creationflags: crate::win_creation_flags::invisible_helper_creationflags(),
+        create_process_group: false,
+        stdin_mode: StdinMode::Null,
+        nice: None,
+        address_space_limit_bytes: None,
+    });
+    let started = std::time::Instant::now();
+    process.start().map_err(|error| error.to_string())?;
+    let (exit, error) = match process.wait(Some(timeout)) {
+        Ok(exit) => (exit, None),
+        Err(error) => {
+            let _ = process.kill();
+            let _ = process.wait(Some(Duration::from_secs(30)));
+            (-1, Some(error.to_string()))
+        }
+    };
+    let elapsed = started.elapsed();
+    Ok(CapturedOutput {
+        exit,
+        elapsed,
+        stdout: process.drain_stream_raw(StreamKind::Stdout),
+        stderr: process.drain_stream_raw(StreamKind::Stderr),
+        error,
+    })
+}
+
+pub struct CapturedOutput {
+    pub exit: i32,
+    pub elapsed: Duration,
+    pub stdout: Vec<u8>,
+    pub stderr: Vec<u8>,
+    pub error: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::{argv_is_batch_wrapped, command_spec_for_subprocess, use_suspended_spawn};

@@ -726,6 +726,8 @@ impl InstallArgs {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
+    /// Compare backend latency with isolated, validated samples.
+    Ab(crate::ab::AbArgs),
     /// Connect to an operator for consent-gated remote assistance.
     Remote {
         #[command(subcommand)]
@@ -2018,6 +2020,7 @@ pub enum GcSubcommand {
 }
 
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
+    "ab",
     "remote",
     "serve",
     "do-prompt",
@@ -2476,6 +2479,10 @@ fn split_inline_key_assignments(raw: &[String]) -> Result<Vec<String>, String> {
 }
 
 const SPLITTER_VALUE_FLAGS: &[&str] = &[
+    "--backends",
+    "--prompt-file",
+    "--runs",
+    "--model-map",
     "--shell",
     "--install-version",
     "--prompt",
