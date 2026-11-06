@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -123,11 +124,52 @@ def _copied_clud_tempdir() -> tempfile.TemporaryDirectory:
     return tempfile.TemporaryDirectory(ignore_cleanup_errors=sys.platform == "win32")
 
 
-def _copy_clud_for_test(temp_dir: str) -> Path:
+@functools.lru_cache(maxsize=1)
+def _session_clud_copy() -> tuple[tempfile.TemporaryDirectory, Path]:
+    """One copy per session, on the temp volume so launches can hardlink to it.
+
+    The build output can be on another volume (Windows runners), where a link
+    from it fails. Caching the directory keeps it alive until interpreter exit.
+    """
+    holder = _copied_clud_tempdir()
     source = Path(CLUD)
-    launch = Path(temp_dir) / source.name
-    shutil.copy2(source, launch)
+    copy = Path(holder.name) / source.name
+    shutil.copy2(source, copy)
+    return holder, copy
+
+
+def _copy_clud_for_test(temp_dir: str) -> Path:
+    """Place clud in `temp_dir` under its own name: hardlink, else a real copy.
+
+    Copying per launch cost 99-291 s on a Windows lane. Nothing writes to the
+    launched file, and a rename only moves that one name, so the shared inode
+    is not observable; argv[0] and `current_exe` still name `temp_dir`.
+    """
+    _, copy = _session_clud_copy()
+    launch = Path(temp_dir) / copy.name
+    try:
+        os.link(copy, launch)
+    except OSError:
+        shutil.copy2(copy, launch)
     return launch
+
+
+def test_launch_copy_falls_back_when_it_cannot_link(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    linked = _copy_clud_for_test(str(tmp_path))
+    assert linked.name == Path(CLUD).name
+    assert linked.stat().st_size == Path(CLUD).stat().st_size
+
+    def refuse(*_args: object, **_kwargs: object) -> None:
+        raise OSError("cross-device link")
+
+    monkeypatch.setattr(os, "link", refuse)
+    copied_dir = tmp_path / "copied"
+    copied_dir.mkdir()
+    copied = _copy_clud_for_test(str(copied_dir))
+    assert copied.stat().st_size == Path(CLUD).stat().st_size
+    assert not copied.samefile(_session_clud_copy()[1])
 
 
 #: Must stay >= MIN_UNIFIED_CLAUDE_CODE_VERSION in
@@ -2258,8 +2300,7 @@ def test_fix_hooks_dry_run_plans_without_writing(tmp_path: Path) -> None:
 
     with _copied_clud_tempdir() as temp_dir:
         source = Path(CLUD)
-        launch = Path(temp_dir) / source.name
-        shutil.copy2(source, launch)
+        launch = _copy_clud_for_test(temp_dir)
         env = copied_clud_env(source)
         env["HOME"] = str(home)
         env["USERPROFILE"] = str(home)
