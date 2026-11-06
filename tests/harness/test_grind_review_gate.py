@@ -249,7 +249,7 @@ def test_integrator_reads_a_deterministic_failure_instead_of_looping(harness: Ha
         "Wait by condition.",
     ):
         assert rule in system, rule
-    assert "bash ./test" in result.prompt_text("integrator:g")
+    assert "MULTI-PLATFORM LINT GATE" in result.prompt_text("integrator:g")
 
     told = _told(result)
     assert "test_widget fails deterministically" in told

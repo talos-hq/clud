@@ -32,6 +32,7 @@ MARK = {
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 META = "100"
 RUN_ID = "1f3a"
@@ -156,8 +157,8 @@ def _goal_roles(
     )
     url = f"https://github.com/o/r/pull/{branch}"
     land = lander or [
-        _bash(f"gh pr merge {branch} --admin --squash"),
-        _after(OK, _structured({"status": "merged", "summary": "green"})),
+        _bash(f"gh pr merge {branch} --squash --match-head-commit HEAD"),
+        _after(OK, _structured({"verdict": "merged", "summary": "green"})),
     ]
     return [
         _role(f"planner:{goal}", "planner", at, [_structured(plan)]),
@@ -179,7 +180,7 @@ def _goal_roles(
             at,
             [_bash(push), _after(OK, _structured({"pushed": True, "pr_url": url, "summary": "p"}))],
         ),
-        _role(f"lander:{goal}", "lander", [at, "Fix rounds used: 0 of"], land),
+        _role(f"chaperone:{goal}", "chaperone", [at, "Follow your WATCH"], land),
     ]
 
 
@@ -294,7 +295,7 @@ def test_feature_integrator_uses_the_feature_branch_base(harness: Harness) -> No
 
 
 def test_stuck_bug_blocks_only_its_dependents(harness: Harness) -> None:
-    gave_up = [_structured({"status": "gave_up", "summary": "stuck", "failure_log": "red"})]
+    gave_up = [_structured({"verdict": "stuck", "summary": "stuck", "failure_log": "red"})]
     result = _run(harness, _all_roles(harness, **{"103": gave_up}), plan=_plan())
     merged = _merged(harness)
     assert _branch("103") not in merged

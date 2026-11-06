@@ -113,9 +113,9 @@ def test_workflow_maps_role_models_onto_each_agent() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
     assert "const MODELS = args.models || {}" in text
     assert (
-        "const m = MODELS[role === 'lander' ? 'integrator' : role === 'prework' ? 'planner' : role]"
-        in text
+        "MODELS[role === 'lander' ? 'integrator' : role === 'prework' ? 'planner' : role]" in text
     )
+    assert "role === 'chaperone' ? MODELS.chaperone || 'opus'" in text
     assert "if (m) o.model = m" in text
 
 

@@ -73,6 +73,7 @@ MARK = {
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 PLAN_MARKER = "<!-- grind:v1 plan run="
 FOLLOWUP = "grind:followup"
@@ -221,7 +222,7 @@ def _questions_then_none(result: RunResult, asked: int) -> None:
 def _all_goal_roles_ran(result: RunResult, goals: list[str]) -> None:
     first = _first(result)
     for g in goals:
-        for role in ("planner", "worker", "reviewer", "integrator", "lander"):
+        for role in ("planner", "worker", "reviewer", "integrator", "chaperone"):
             assert f"{role}:{g}" in first, (role, g, sorted(first))
         assert first["prework"] < first[f"planner:{g}"], (g, first)
         assert (
@@ -229,7 +230,7 @@ def _all_goal_roles_ran(result: RunResult, goals: list[str]) -> None:
             < first[f"worker:{g}"]
             < first[f"reviewer:{g}"]
             < first[f"integrator:{g}"]
-            < first[f"lander:{g}"]
+            < first[f"chaperone:{g}"]
         ), (g, first)
 
 
@@ -292,12 +293,12 @@ def _bug_roles(
             [_bash(push), _after(OK, _structured({"pushed": True, "pr_url": url, "summary": "p"}))],
         ),
         _role(
-            f"lander:{goal}",
-            "lander",
-            [at, "Fix rounds used: 0 of"],
+            f"chaperone:{goal}",
+            "chaperone",
+            [at, "Follow your WATCH"],
             [
-                _bash(f"gh pr merge {pr} --admin --squash"),
-                _after(OK, _structured({"status": "merged", "summary": "green"})),
+                _bash(f"gh pr merge {pr} --squash --match-head-commit HEAD"),
+                _after(OK, _structured({"verdict": "merged", "summary": "green"})),
             ],
         ),
     ]
@@ -391,7 +392,7 @@ def test_e2e_1_bugs_only_each_lands_on_main_and_the_meta_is_not_hand_closed(
     _all_goal_roles_ran(result, S1_BUGS)
     first = _first(result)
     for a, b in itertools.pairwise(S1_BUGS):
-        assert first[f"lander:{a}"] < first[f"planner:{b}"], (a, b, first)
+        assert first[f"integrator:{a}"] < first[f"planner:{b}"], (a, b, first)
 
     # Every bug PR goes straight into main with Closes, and its merge closed it.
     issues = _issues(h)
@@ -534,15 +535,15 @@ def _feature_roles(
             ),
         ),
         _role(
-            f"lander:{goal}",
-            "lander",
-            [at, "Fix rounds used: 0 of"],
+            f"chaperone:{goal}",
+            "chaperone",
+            [at, "Follow your WATCH"],
             # The lander, not the integrator, owns the feature PR body (#1393 §2).
             _chain(
                 [
                     _bash(f"gh pr merge {pr} --merge"),
                     _bash(f"gh pr edit {feature_pr} --body '{closes}'"),
-                    _structured({"status": "merged", "summary": "green"}),
+                    _structured({"verdict": "merged", "summary": "green"}),
                 ]
             ),
         ),
@@ -740,9 +741,9 @@ def test_e2e_2_prompt_feature_auto_merge_bugs_first_then_one_feature_merge_commi
     _questions_then_none(result, 1)
     _all_goal_roles_ran(result, [*S2_BUGS, *S2_FEATURES])
     first = _first(result)
-    last_bug = max(first[f"lander:{b}"] for b in S2_BUGS)
+    last_bug = max(first[f"chaperone:{b}"] for b in S2_BUGS)
     assert all(last_bug < first[f"planner:{f}"] for f in S2_FEATURES), first
-    assert first["lander:feature"] > max(first[f"lander:{f}"] for f in S2_FEATURES), first
+    assert first["lander:feature"] > max(first[f"chaperone:{f}"] for f in S2_FEATURES), first
     calls = h.read_gh_state()["calls"]
     drafted = next(i for i, c in enumerate(calls) if c[:2] == ["pr", "create"] and "--draft" in c)
     merged = next(i for i, c in enumerate(calls) if c[:2] == ["pr", "merge"])
@@ -1020,7 +1021,7 @@ def test_e2e_3_regrouped_epic_decide_later_one_feature_then_bugs_only(  # noqa: 
     _questions_then_none(result, 1)
     _all_goal_roles_ran(result, [*S3_BUGS, *S3_DOCS])
     first = _first(result)
-    last_bug = max(first[f"lander:{b}"] for b in S3_BUGS)
+    last_bug = max(first[f"chaperone:{b}"] for b in S3_BUGS)
     assert all(last_bug < first[f"planner:{d}"] for d in S3_DOCS), first
     after = h.read_gh_state()
     issues = after["issues"]

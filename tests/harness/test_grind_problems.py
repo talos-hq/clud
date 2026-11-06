@@ -41,6 +41,7 @@ MARK = {
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 META = "100"
 GOAL = "101"
@@ -144,21 +145,22 @@ def _goal_roles(
     if integrator_problems:
         integ["problems"] = integrator_problems
     merge = [
-        _bash(f"gh pr merge {branch} --admin --squash"),
-        _after(OK, _structured({"status": "merged", "summary": "green"})),
+        _bash(f"gh pr merge {branch} --squash --match-head-commit HEAD"),
+        _after(OK, _structured({"verdict": "merged", "summary": "green"})),
     ]
     roles: list[dict[str, Any]] = []
     if fix_round_problems is not None:
         # Most specific first: the fix-round integrator and both lander rounds.
         fixed = {"pushed": True, "pr_url": url, "summary": "fixed", "problems": fix_round_problems}
-        needs_fix = {"status": "needs_fix", "summary": "red", "failure_log": "ci red"}
+        needs_fix = {"verdict": "needs_fix", "summary": "red", "failure_log": "ci red"}
         roles += [
-            _role("integrator:fix", "integrator", [at, "FIX ROUND 1 of"], [_structured(fixed)]),
-            _role("lander:1", "lander", [at, "Fix rounds used: 1 of"], merge),
-            _role("lander:0", "lander", [at, "Fix rounds used: 0 of"], [_structured(needs_fix)]),
+            _role("cleanup", "chaperone", "CLEANUP", [_structured({"summary": "removed"})]),
+            _role("integrator:fix", "chaperone", [at, "FIX ROUND 1:"], [_structured(fixed)]),
+            _role("chaperone:1", "chaperone", [at, "Fix rounds used: 1 of"], merge),
+            _role("chaperone:0", "chaperone", [at, "Follow your WATCH"], [_structured(needs_fix)]),
         ]
     else:
-        roles.append(_role("lander:0", "lander", [at, "Fix rounds used: 0 of"], merge))
+        roles.append(_role("chaperone:0", "chaperone", [at, "Follow your WATCH"], merge))
     return [
         _role("planner", "planner", at, [_structured(plan)]),
         _role("worker", "worker", at, worker_steps),
@@ -359,7 +361,7 @@ def test_x4_duplicate_problems_across_roles_and_fix_rounds_are_filed_once(
     result = _run(harness, _script(harness, roles, router))
     _no_notes(result)
     ran = {r["role"] for r in result.requests}
-    assert {"integrator:fix", "lander:1"} <= ran, ran
+    assert {"integrator:fix", "chaperone:1"} <= ran, ran
     # The workflow hands the router each problem once, however often it was
     # reported. The router's own commands quote the summary too, but never
     # as a `summary` field (plain or JSON-escaped).
@@ -419,8 +421,7 @@ def test_x6_reconcile_closes_the_meta_despite_an_open_followup(harness: Harness)
     meta = _issue("meta: auth rework", "Tracked as sub-issues.")
     followup = _issue(
         "flaky-test: feature-stage follow-up",
-        f"x Refs #{META} <!-- grind:followup meta={META} stage=feature "
-        f"feature-pr={feature_pr} -->",
+        f"x Refs #{META} <!-- grind:followup meta={META} stage=feature feature-pr={feature_pr} -->",
     )
     state = _world({int(META): meta, 201: followup})
     state["issues"][META]["comments"].append({"id": 2000, "body": marker})

@@ -296,7 +296,7 @@ def test_grind_worker_and_integrator_have_their_own_roots(harness: Harness) -> N
     worker = {
         "name": "worker",
         "match": MARK["worker"],
-        "match_prompt": "RMTEST worker",
+        "match_prompt": "RMTEST editor",
         "steps": [
             _bash("safe-rm src/cache/old.txt"),
             _after(OK, _bash("safe-rm docs/notes.txt")),
@@ -314,7 +314,7 @@ def test_grind_worker_and_integrator_have_their_own_roots(harness: Harness) -> N
     }
     main = {
         "name": "main",
-        "steps": [agent("worker"), agent("integrator"), {"text": "DONE"}],
+        "steps": [agent("editor"), agent("integrator"), {"text": "DONE"}],
     }
     script = {"default_text": "OK", "roles": [worker, integrator, main]}
     result = h.run("clean up", script, timeout=300, extra_env={"CLUD_ALLOW_GRIND_AGENTS": "1"})

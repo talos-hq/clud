@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = "crates/clud-bin/assets/workflows/grind-run.js"
-ROLES = ("planner", "worker", "reviewer", "integrator", "lander")
+ROLES = ("planner", "editor", "reviewer", "integrator", "lander")
 
 
 def _read(rel: str) -> str:
@@ -40,7 +40,7 @@ def test_prework_role_is_registered_in_every_place() -> None:
     assert "        PREWORK => {" in caps
     listed = re.search(r"fn is_grind_role.*?matches!\((.*?)\)", caps, re.DOTALL)
     assert listed, "is_grind_role not found"
-    for role in ("PLANNER", "WORKER", "REVIEWER", "INTEGRATOR", "LANDER", "PREWORK"):
+    for role in ("PLANNER", "EDITOR", "REVIEWER", "INTEGRATOR", "LANDER", "PREWORK"):
         assert role in listed.group(1), role
 
 
@@ -60,8 +60,10 @@ def test_every_agent_after_prework_is_told_the_plan_url() -> None:
     # the plan-only classify pass and prework itself run before it exists.
     calls = list(_agent_calls(_read(WORKFLOW)))
     assert {role for role, _, _ in calls} >= {"prework", *ROLES}, calls
+    assert "${ctx(g)}" in _read(WORKFLOW).split("const handoffOf = ")[1].split("\n")[0]
     for role, label, prompt in calls:
-        if role == "prework" or label == "'classify'":
+        # A chaperone's prompt starts with its handoff, which holds ctx(g).
+        if role in ("prework", "chaperone") or label == "'classify'":
             continue
         assert "ctx(" in prompt or "PLAN_URL" in prompt, (role, label)
 

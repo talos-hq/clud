@@ -32,6 +32,7 @@ MARK = {
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 META = "100"
 RUN_ID = "1f3a"
@@ -190,8 +191,8 @@ def _goal_roles(h: Harness, goal: str) -> list[dict[str, Any]]:
     )
     url = f"https://github.com/o/r/pull/{branch}"
     land = [
-        _bash(f"gh pr merge {branch} --admin --squash"),
-        _after(OK, _structured({"status": "merged", "summary": "green"})),
+        _bash(f"gh pr merge {branch} --squash --match-head-commit HEAD"),
+        _after(OK, _structured({"verdict": "merged", "summary": "green"})),
     ]
     return [
         _role(f"planner:{goal}", "planner", at, [_structured(plan)]),
@@ -213,7 +214,7 @@ def _goal_roles(h: Harness, goal: str) -> list[dict[str, Any]]:
             at,
             [_bash(push), _after(OK, _structured({"pushed": True, "pr_url": url, "summary": "p"}))],
         ),
-        _role(f"lander:{goal}", "lander", [at, "Fix rounds used: 0 of"], land),
+        _role(f"chaperone:{goal}", "chaperone", [at, "Follow your WATCH"], land),
     ]
 
 

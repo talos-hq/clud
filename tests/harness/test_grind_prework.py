@@ -43,6 +43,7 @@ MARK = {
     "reviewer": "You are the /grind reviewer",
     "integrator": "You are the /grind integrator",
     "lander": "You are the /grind lander",
+    "chaperone": "You are the /grind chaperone",
 }
 META = "100"
 RUN_ID = "r-1408"
@@ -239,12 +240,12 @@ def _goal_roles(h: Harness, goal: str) -> list[dict[str, Any]]:
             [_bash(push), _after(ok, _structured({"pushed": True, "pr_url": url, "summary": "p"}))],
         ),
         _role(
-            f"lander:{goal}",
-            "lander",
-            [at, "Fix rounds used: 0 of"],
+            f"chaperone:{goal}",
+            "chaperone",
+            [at, "Follow your WATCH"],
             [
-                _bash(f"gh pr merge {branch} --admin --squash"),
-                _after(ok, _structured({"status": "merged", "summary": "green"})),
+                _bash(f"gh pr merge {branch} --squash --match-head-commit HEAD"),
+                _after(ok, _structured({"verdict": "merged", "summary": "green"})),
             ],
         ),
     ]
@@ -395,7 +396,7 @@ def test_every_later_role_is_told_the_plan_url(harness: Harness) -> None:
     result, _, _, _ = _full_run(harness)
     url = _comment_url(META)
     # P4: each later role's first request carries the plan comment URL.
-    for role in ("planner:101", "worker:101", "reviewer:101", "integrator:101", "lander:101"):
+    for role in ("planner:101", "worker:101", "reviewer:101", "integrator:101", "chaperone:101"):
         assert url in _text(result.first_request(role).get("messages")), role
     # Prework ran before any of them.
     first = {r["role"]: r["n"] for r in reversed(result.requests)}

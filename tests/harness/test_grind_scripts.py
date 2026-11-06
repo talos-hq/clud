@@ -151,10 +151,9 @@ def _pushed(goal: str) -> dict[str, Any]:
 
 
 def _verify_then_push(h: Harness, goal: str) -> list[dict[str, Any]]:
-    """Integrator: lint, then test, then push, each checked green."""
+    """Integrator: lint, then push, each checked green (DD-205: CI runs the suites)."""
     return [
         _bash(_in_repo(h, SCRIPTS["lint"])),
-        _after(OK, _bash(_in_repo(h, SCRIPTS["test"]))),
         _after(OK, _bash(_push_cmd(h, goal))),
         _after(OK, _pushed(goal)),
     ]
@@ -279,7 +278,7 @@ def test_l4_only_test_bat_on_linux_detects_nothing(harness: Harness) -> None:
 # ---- L5, L11, L12: what the integrator is told ---------------------------------
 
 
-def test_l5_integrator_prompt_orders_focused_test_lint_then_test(harness: Harness) -> None:
+def test_l5_integrator_prompt_runs_focused_test_then_lint_not_tests(harness: Harness) -> None:
     make_scripts(harness, delegate_to=True)
     _record_run_json(harness, SCRIPTS)
     roles = _goal_roles(harness, "g")
@@ -287,8 +286,9 @@ def test_l5_integrator_prompt_orders_focused_test_lint_then_test(harness: Harnes
     text = result.prompt_text("integrator:g")
     focused = text.index("1. planner's focused test:")
     lint = text.index("2. bash ./lint")
-    test = text.index("3. bash ./test --integration")
-    assert focused < lint < test, text[:3000]
+    gate = text.index("MULTI-PLATFORM LINT GATE")
+    assert focused < lint < gate, text[:3000]
+    assert "bash ./test" not in text
     # The planner was told not to invent lint/test commands.
     assert "do not add lint or test commands" in result.prompt_text("planner:g")
     assert _merged(harness) == ["grind/g"]
@@ -317,49 +317,40 @@ def test_l12_fix_round_reruns_the_scripts_before_its_push(harness: Harness) -> N
     roles = _goal_roles(harness, "g", land=["needs_fix", "merged"])
     first = [
         _bash(_in_repo(harness, scripts["lint"])),
-        _after(OK, _bash(_in_repo(harness, scripts["test"]))),
         _after(OK, _bash(_push_cmd(harness, "g"))),
         _after(OK, _pushed("g")),
     ]
     fix = [
         _bash(_in_repo(harness, scripts["lint"])),
-        _after(OK, _bash(_in_repo(harness, scripts["test"]))),
         _after(OK, _bash(f"git -C {harness.repo} push -q origin grind/g")),
         _after(OK, _pushed("g")),
     ]
     _set_steps(roles, "integrator:g", first)
-    _set_steps(roles, "integrator:g:fix1", fix)
+    _set_steps(roles, "chaperone-fix:g:1", fix)
     result = _grind(harness, roles, scripts=scripts)
-    fix_prompt = result.prompt_text("integrator:g:fix1")
-    assert "FIX ROUND 1 of" in fix_prompt
-    assert "(focused test, then bash ./lint, then bash ./test)" in fix_prompt
+    fix_prompt = result.prompt_text("chaperone-fix:g:1")
+    assert "FIX ROUND 1:" in fix_prompt
     assert "2. bash ./lint" in fix_prompt
-    assert [r["name"] for r in _ran(harness)] == ["lint", "test", "lint", "test"]
-    cmds = _integrator_bash(result)
-    first_push = _index(cmds, "push -q -u origin")
-    fix_lint = _index(cmds, "./lint", first_push + 1)
-    fix_test = _index(cmds, "./test", fix_lint + 1)
-    fix_push = _index(cmds, "push -q origin grind/g", fix_test + 1)
-    assert first_push < fix_lint < fix_test < fix_push
+    assert "MULTI-PLATFORM LINT GATE" in fix_prompt
+    assert [r["name"] for r in _ran(harness)] == ["lint", "lint"]
     assert _merged(harness) == ["grind/g"]
 
 
 # ---- L6-L10: what actually runs ------------------------------------------------
 
 
-def test_l6_integrator_runs_lint_then_test_before_the_push(harness: Harness) -> None:
+def test_l6_integrator_runs_lint_before_the_push(harness: Harness) -> None:
     make_scripts(harness, delegate_to=True, executable=False)
     _record_run_json(harness, SCRIPTS)
     roles = _goal_roles(harness, "g")
     _set_steps(roles, "integrator:g", _verify_then_push(harness, "g"))
     result = _grind(harness, roles, scripts=SCRIPTS)
     ran = _ran(harness)
-    assert [(r["name"], r["args"]) for r in ran] == [("lint", ""), ("test", "--integration")]
+    assert [(r["name"], r["args"]) for r in ran] == [("lint", "")]
     cmds = _integrator_bash(result)
     lint = _index(cmds, "bash ./lint")
-    test = _index(cmds, "bash ./test --integration", lint + 1)
-    push = _index(cmds, "git -C", test + 1)
-    assert lint < test < push
+    push = _index(cmds, "git -C", lint + 1)
+    assert lint < push
     assert _merged(harness) == ["grind/g"]
 
 
@@ -452,9 +443,9 @@ def test_l9_a_failing_test_loops_inside_the_integrator(harness: Harness) -> None
     second = _index(cmds, "./test", _index(cmds, "fixed.flag") + 1)
     assert second < _index(cmds, "push -q -u origin")
     ran = _by_role(result)
-    assert "integrator:g:fix1" not in ran
-    assert "lander:g:1" not in ran
-    assert result.prompt_text("lander:g:0").count("Fix rounds used: 0 of") == 1
+    assert "chaperone-fix:g:1" not in ran
+    assert "chaperone:g:1" not in ran
+    assert result.prompt_text("chaperone:g:0").count("Follow your WATCH") == 1
     assert _merged(harness) == ["grind/g"]
 
 

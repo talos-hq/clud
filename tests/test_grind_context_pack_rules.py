@@ -49,12 +49,11 @@ def test_nothing_per_agent_enters_the_pack() -> None:
         assert varying not in body, f"{varying} would make the pack differ per agent"
 
 
-def test_parallel_workers_start_together() -> None:
-    """A staggered start gave later workers a different git status snapshot
-    ahead of the pack, so their prefixes diverged from the first (#1344)."""
+def test_one_editor_takes_every_task_after_the_pack() -> None:
+    """DD-205: one editor per goal, so nothing varies ahead of the pack."""
     js = _workflow()
     assert "PACK_STAGGER" not in js
-    assert "Parallel workers start together on purpose (#1344)" in js
+    assert "`${packOf(p)}Follow your built-in /grind-edit procedure." in js
 
 
 def test_the_planner_returns_the_pack_and_workers_use_it() -> None:

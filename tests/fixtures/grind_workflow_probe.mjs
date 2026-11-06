@@ -57,8 +57,16 @@ const agent = async (prompt, options) => {
       pushed: true, pr_url: 'https://github.com/fork/project/pull/34', summary: 'controlled push',
     },
     'grind-lander': { status: 'merged', summary: 'controlled landing' },
+    'grind-chaperone': options.label.startsWith('chaperone-cleanup')
+      ? { summary: 'controlled cleanup' }
+      : options.label.startsWith('chaperone-fix')
+        ? { pushed: true, summary: 'controlled fix' }
+        : { verdict: 'merged', summary: 'controlled merge' },
   };
   if (!(options.agentType in replies)) throw new Error('unexpected agent in workflow probe');
+  // Async turn so a default-reply agent's start and finish can interleave.
+  await new Promise(resolve => setTimeout(resolve, 0));
+  prompts.push({ done: options.label });
   return replies[options.agentType];
 };
 try {

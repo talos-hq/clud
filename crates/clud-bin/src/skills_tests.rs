@@ -1115,8 +1115,8 @@ fn grind_skill_renders_scripts_through_clud_grind_scripts() {
     assert!(grind.contains("allowed-tools: Bash(clud grind-scripts:*)"));
     let integrate = skill("grind-integrate");
     assert!(
-        integrate.contains("run lint before test before every push"),
-        "grind-integrate must run lint before test before every push"
+        integrate.contains("it before every push, after the focused test"),
+        "grind-integrate must run the lint script before every push"
     );
 }
 

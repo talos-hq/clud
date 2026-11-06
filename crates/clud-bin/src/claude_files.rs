@@ -102,7 +102,7 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
     BundledClaudeFile {
         rel_path: "agents/grind-chaperone.md",
         body: include_str!("../assets/agents/grind-chaperone.md"),
-        procedure: None,
+        procedure: Some("grind-land"),
     },
     BundledClaudeFile {
         rel_path: "workflows/grind-run.js",

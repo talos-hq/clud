@@ -267,7 +267,7 @@ adds one question to the round, before any work: dispatch CI per goal head
 (`gh workflow run <wf> --ref <goal-branch>` for a `dispatchable` workflow,
 watched with `github/run_watch.py`), widen the workflow's `branches:` filter
 as a bug-stage goal, or validate locally only. Record the answer as
-`preflight.ci_fallback`; the lander applies it to `no_trigger_for_base`.
+`preflight.ci_fallback`; the chaperone applies it to `no_trigger_for_base`.
 
 ## 2. One question round
 
@@ -307,8 +307,8 @@ after it, by the main session or anyone else.
   the regroup: the `simple` path runs and no issue is touched. Every other
   group goes into the plan's `deferred_groups` as
   `{group, sub_meta, children}` with no branch assigned.
-- **Mode.** (i) *Parallel*: each goal gets a git worktree; workers only read
-  and write files; one integrator at a time rebases, lints, builds and tests.
+- **Mode.** (i) *Parallel*: each goal gets a git worktree; one editor at a time
+  reads and writes files; one integrator at a time rebases, lints and pushes; a chaperone per PR takes it from there.
   Uses GitHub's server-side concurrency. (ii) *Sequential*: one goal at a
   time from `origin/<main>` in the local checkout, no worktrees or sister
   clones; best for C++/Rust or other heavy repos where a cold worktree build
@@ -322,8 +322,8 @@ after it, by the main session or anyone else.
   test different branches concurrently. An operator may opt in to a shared
   `CARGO_TARGET_DIR` only when builds and tests are serialized, following
   `/clud-git`'s Rust target directory guidance (#1685).
-- **Models**, one question for the planner, worker, reviewer and integrator
-  (the lander shares the integrator's, prework the planner's): first "the
+- **Models**, one question for the planner, editor, reviewer and integrator
+  (the lander shares the integrator's, prework the planner's; chaperones default to `opus`): first "the
   session's model for every role", labelled "(Recommended)", then up to 3
   mixes of the other tiers the harness accepts (for example a stronger tier
   for planner and reviewer only). A typed answer may name a model per role.
@@ -358,6 +358,8 @@ after it, by the main session or anyone else.
   the delegation files the report lists; their help text and comments give
   each option's description. Always include a "Neither" option, and keep the
   total at 4 options (the most likely ones); the user can type any other.
+  State in the question that only lint runs before each push: a chosen test
+  script is recorded, but the suites run in required CI (DD-205).
 - **Feature merge policy** (asked once, only when the plan has feature
   children): `auto` merges the feature PR once it is green, respecting
   branch protection; `decide later` leaves the draft feature PR open for the
@@ -477,7 +479,7 @@ answers, keeping the real preflight details locally:
     "branch": "grind/meta-100-1f3a", "base": "grind/meta-100-1f3a",
     "children": [102, 104, 105], "depends_on_bugs": {"104": [103]}}],
  "deferred_groups": [], "feature_merge": "auto", "problem_reporting": "issue",
- "models": {"planner": "…", "worker": "…", "reviewer": "…", "integrator": "…"},
+ "models": {"planner": "…", "editor": "…", "reviewer": "…", "integrator": "…"},
  "ci": false, "scripts": {"lint": "./lint", "test": "./test"},
  "rules": {"stuck_bug": "block_dependents_only", "no_overlap": "bugs_only"}}
 ```
@@ -495,7 +497,7 @@ agent gets that comment's URL. Nobody edits the plan comment.
   stage, because the feature branch is cut only after the bug stage ends.
   1. **Bug stage** (always, even when it has no children): args
      `{repo, github_repo, main, mode, goals, orchestration, ci, scripts, plan, meta, base: <main>,
-     problem_reporting, models: {planner, worker, reviewer, integrator}}`,
+     problem_reporting, models: {planner, editor, reviewer, integrator}}`,
      where `plan` is the 3b object and `goals` are the bug-stage children
      only (`[]` for an all-feature plan: the call then only posts the plan).
      Its first agent, prework, posts the plan; the result's `plan_url` is
@@ -525,8 +527,9 @@ substitution even inside quotes, so write any body that has one to a file
 and pass it with `--body-file <f>` (for the PATCH, `--input <f>` holding
 `{"body": ...}`).
 
-Concurrency is fixed by the workflow: at most 4 planner/worker/reviewer
-agents at once, and exactly one integrator.
+Concurrency is fixed by the workflow: at most 4 planner/reviewer agents
+at once, exactly one editor, exactly one integrator, one chaperone per PR, and at
+most 2 chaperone fixups building at once (`fixupPool`).
 
 ## 4b. Feature stage (feature-branch mode)
 
@@ -552,14 +555,14 @@ branch contains every bug fix that merged:
    body starts with `Closes #<meta>` (plus `Closes #<original>` when intake
    converted an original issue), followed by a goals table (goal, goal PR,
    status). For a meta of metas, `<meta>` is the feature group's sub-meta;
-   the top meta is never in a `Closes` line. The lander adds each goal's
+   the top meta is never in a `Closes` line. The goal's chaperone adds each goal's
    `Closes #N` line, updates the table and posts the issue's `grind:v1`
    marker comment as the goal lands.
 5. Record `{"feature": {"branch": "…", "worktree": "…", "pr": "…"},
    "feature_merge": "…"}` in `<facts>`, and pass `feature` and
    `feature_merge` to the feature-stage `grind-run` call (section 4,
    step 2). Until this step `<facts>` has no `feature`: the bug stage runs
-   under the plain caps, where the lander merges each bug PR into `<main>`.
+   under the plain caps, where the chaperone enqueues each bug PR into `<main>`.
 
 The router creates no other worktree and never touches the user's checkout
 after preflight. When `origin/<main>` moves during the feature stage, the
@@ -676,11 +679,11 @@ two), whether or not every goal merged:
 | `/grind-prework` | `grind-prework` | read-only git/gh; `gh issue comment --repo <github-repo>` on the meta issue only; no edits, worktrees or builds |
 | `/grind-plan` | `grind-planner` | read-only git/gh; `git worktree add` in parallel mode |
 | `/grind-plan` (plan-only) | `grind-planner` | read-only git/gh; no Write/Edit, worktree or push |
-| `/grind-edit` | `grind-editor` | read/write assigned files; read-only `gh`; web search |
-| `/grind-review` | `grind-reviewer` | same as worker |
+| `/grind-edit` | `grind-editor` | one at a time; read/write assigned files; read-only `gh`; web search |
+| `/grind-review` | `grind-reviewer` | same as editor |
 | `/grind-integrate` | `grind-integrator` | full shell, one at a time; bounded `bosn ci` / `clud ci` only (own run), no `act` or containers, no new worktrees |
-| `/grind-land` | `grind-lander` | `gh pr`, `pr_merge_watch`, `pr_merge.py` (enqueue), `git push`; no edits |
-| (workflow) | `grind-chaperone` | haiku; bounded `pr_merge_watch --until merged`, `gh run rerun --failed`, `pr_merge.py` re-enqueue; no checkout |
+| `/grind-land` | `grind-lander` | the final feature PR only: `gh pr`, `pr_merge_watch`, `git push`; no edits |
+| `/grind-land` | `grind-chaperone` | opus, one per PR, no lock: checks, pinned enqueue, queue, fixup in a pooled `~/.clud/worktrees/<repo>-wt-grind-fixup-<n>`, feature-branch merge and records |
 | `/grind-cron` | router | main session |
 | Finish: file problems | router | main session; the only node that runs `gh issue create --repo <github-repo>` (`grind:followup` issues) |
 

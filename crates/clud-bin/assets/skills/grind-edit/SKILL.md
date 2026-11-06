@@ -1,8 +1,8 @@
 ---
 name: grind-edit
-description: "Carry out one /grind worker task: edit only the assigned files in the given checkout. May investigate with read-only gh and web search; never builds, lints or tests."
+description: "Carry out one /grind goal's edits as the run's one editor: edit only the assigned files in the given checkout. May investigate with read-only gh and web search; never builds, lints or tests."
 triggers:
-  - When the grind workflow assigns a worker task
+  - When the grind workflow assigns a goal's edit tasks
 disable-model-invocation: true
 ---
 <!-- managed-by: clud -->
@@ -15,7 +15,8 @@ Keep tool output bounded (narrow searches, capped lists, ranged reads, bulk on d
 
 You write code; you do not run it.
 
-- Edit only the files your task assigns, under the checkout path given. If
+- You are the run's only editor; finish every task in your prompt. Edit only
+  the files your tasks assign, under the checkout path given. If
   the task needs another file, stop and report it in `blocked`.
 - Your prompt starts with the goal's **context pack**: the issue text and
   the excerpts the planner already read. Use it; do not re-fetch the issue
