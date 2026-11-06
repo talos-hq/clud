@@ -104,6 +104,31 @@ fn bind_loopback(phases: &StartupPhases) -> Result<(TcpListener, u16), i32> {
     Ok((listener, port))
 }
 
+fn publish_daemon_info(
+    state_dir: &Path,
+    info: &DaemonInfo,
+    phases: &StartupPhases<'_>,
+) -> Result<(), i32> {
+    write_json_file(&daemon_info_path(state_dir), info).map_err(|err| {
+        phases.fail(
+            "daemon_info_write",
+            &format!("failed to persist daemon info: {err}"),
+        )
+    })?;
+    phases.mark("daemon_info_write");
+    daemon_events::log_event(
+        state_dir,
+        "daemon_started",
+        [
+            ("port", json!(info.port)),
+            ("dashboard_port", json!(info.dashboard_port)),
+            ("version", json!(env!("CARGO_PKG_VERSION"))),
+            ("event_log", json!(daemon_events_path(state_dir))),
+        ],
+    );
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
@@ -322,23 +347,9 @@ pub(super) fn run_daemon(state_dir: &Path, interrupted: &AtomicBool) -> i32 {
         api_token: dashboard_port.map(|_| api_token),
         version: Some(env!("CARGO_PKG_VERSION").to_string()),
     };
-    if let Err(err) = write_json_file(&daemon_info_path(state_dir), &info) {
-        return phases.fail(
-            "daemon_info_write",
-            &format!("failed to persist daemon info: {err}"),
-        );
+    if let Err(code) = publish_daemon_info(state_dir, &info, &phases) {
+        return code;
     }
-    phases.mark("daemon_info_write");
-    daemon_events::log_event(
-        state_dir,
-        "daemon_started",
-        [
-            ("port", json!(port)),
-            ("dashboard_port", json!(dashboard_port)),
-            ("version", json!(env!("CARGO_PKG_VERSION"))),
-            ("event_log", json!(daemon_events_path(state_dir))),
-        ],
-    );
     spawn_tool_installer();
 
     // Periodic orphan sweep. Catches CLUD-tagged descendants whose
@@ -365,6 +376,13 @@ pub(super) fn run_daemon(state_dir: &Path, interrupted: &AtomicBool) -> i32 {
         sample_daemon_cpu_pct,
     );
 
+    // Initialization (notably the login shell on macOS) is not safe idle time.
+    // Keep the hard lifetime anchored at daemon_started_at.
+    let ready_at = Instant::now();
+    activity.note_activity(ready_at);
+    if let Some(activity) = &test_activity {
+        activity.note_activity(ready_at);
+    }
     loop {
         match listener.accept() {
             Ok((stream, _addr)) => {

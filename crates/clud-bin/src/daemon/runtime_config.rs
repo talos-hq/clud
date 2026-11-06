@@ -215,6 +215,28 @@ mod tests {
     }
 
     #[test]
+    fn readiness_starts_a_full_idle_window_without_extending_hard_lifetime() {
+        let config = DaemonRuntimeConfig::from_raw(Some("1"), Some("20"), Some("2"), None);
+        let started = Instant::now();
+        let activity = TestRuntimeActivity::new(started);
+        let ready = started + Duration::from_secs(3);
+        activity.note_activity(ready);
+
+        for (uptime, expected) in [
+            (3, None),
+            (4, None),
+            (5, Some(TestExpiryReason::Idle)),
+            (20, Some(TestExpiryReason::MaxLifetime)),
+        ] {
+            let (idle_for, requests) = activity.snapshot(started + Duration::from_secs(uptime));
+            assert_eq!(
+                config.test_expiry_reason(Duration::from_secs(uptime), idle_for, 0, requests),
+                expected,
+            );
+        }
+    }
+
+    #[test]
     fn active_request_blocks_idle_but_not_hard_expiry() {
         let config = DaemonRuntimeConfig::from_raw(Some("1"), Some("10"), Some("2"), None);
         assert_eq!(

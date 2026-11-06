@@ -670,13 +670,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [unit, integration]
+        # MACOS_X64_INTEGRATION_SHARDS in ci/ci_matrix.py owns the shard names.
+        include:
+          - { suite: unit, shard: all }
+          - { suite: integration, shard: py1of2 }
+          - { suite: integration, shard: py2of2 }
     uses: ./.github/workflows/_run-tests.yml
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: x86_64-apple-darwin
       runs-on: macos-15-intel
       suite: ${{ matrix.suite }}
+      shard: ${{ matrix.shard }}
 
   # ---------------------------------------------------------------- gate ----
   # Single required status check. Branch protection points here, so adding or

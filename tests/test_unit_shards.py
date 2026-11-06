@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pytest
 
 from ci import pytest_shard, run_bundle
-from ci.ci_matrix import LINUX_X64_UNIT_SHARDS
+from ci.ci_matrix import LINUX_X64_UNIT_SHARDS, MACOS_X64_INTEGRATION_SHARDS
 from ci.env import is_clud_session_var
 from ci.pytest_shard import SHARD_OPTION, applied_marker, assign_files, load_weights, parse_spec
 from ci.run_bundle import Shard, parse_shard, run_unit_suite, shard_was_applied
@@ -135,7 +135,7 @@ def test_only_the_first_python_shard_installs_the_native_window_runtime() -> Non
 
 
 def test_checked_in_weights_split_the_suite_into_balanced_halves() -> None:
-    weights = load_weights()
+    weights = {k: v for k, v in load_weights().items() if not k.startswith("tests/integration/")}
     assert weights, "ci/unit_shard_weights.json is missing or unreadable"
     counts = dict.fromkeys(weights, 1)
     for n in (2, 3):
@@ -143,6 +143,54 @@ def test_checked_in_weights_split_the_suite_into_balanced_halves() -> None:
         for name, shard in assign_files(counts, weights, n).items():
             loads[shard] += weights[name]
         assert max(loads) / (sum(loads) / n) < 1.1, loads
+
+
+def test_macos_x64_integration_shards_fit_the_job_ceiling() -> None:
+    """~25 min at the slowest speed measured: the heaviest of two stays near half."""
+    weights = {k: v for k, v in load_weights().items() if k.startswith("tests/integration/")}
+    assert weights, "integration weights are missing"
+    count = len(MACOS_X64_INTEGRATION_SHARDS)
+    loads = [0.0] * count
+    for name, shard in assign_files(dict.fromkeys(weights, 1), weights, count).items():
+        loads[shard] += weights[name]
+    assert max(loads) / sum(loads) < 0.55, loads
+
+
+def test_macos_x64_matrix_matches_the_shard_table() -> None:
+    block = (
+        CI_YML.read_text(encoding="utf-8").split("\n  test-macos-x64:\n", 1)[1].split("\n\n", 1)[0]
+    )
+    assert "shard: ${{ matrix.shard }}" in block
+    assert re.findall(r"suite: integration, shard: (\w+)", block) == list(
+        MACOS_X64_INTEGRATION_SHARDS
+    )
+
+
+def test_integration_suite_accepts_python_shards_and_refuses_rust(monkeypatch) -> None:
+    assert parse_shard("py2of3").spec == "2/3"
+    assert run_bundle.shard_pytest_args(parse_shard("py2of3"), ["-x"]) == [
+        "-p",
+        "ci.pytest_shard",
+        SHARD_OPTION,
+        "2/3",
+        "-x",
+    ]
+    assert run_bundle.shard_pytest_args(parse_shard("all"), ["-x"]) == ["-x"]
+    with pytest.raises(SystemExit):
+        run_bundle.main(["--bundle", "x", "--suite", "integration", "--shard", "rust"])
+    with pytest.raises(SystemExit):
+        run_bundle.main(["--bundle", "x", "--suite", "harness", "--shard", "py1of3"])
+
+
+def test_integration_shard_that_did_not_filter_fails(monkeypatch, tmp_path: Path, capsys) -> None:
+    log = tmp_path / "pytest-integration.log"
+    log.write_text("no marker\n", encoding="utf-8")
+    monkeypatch.setattr(run_bundle, "pytest_log_path", lambda suite: log)
+    assert not run_bundle.shard_filter_held(parse_shard("py1of3"), "integration")
+    assert "did not filter" in capsys.readouterr().err
+    log.write_text(applied_marker("1/3") + " 1 of 3 tests\n", encoding="utf-8")
+    assert run_bundle.shard_filter_held(parse_shard("py1of3"), "integration")
+    assert run_bundle.shard_filter_held(parse_shard("all"), "integration")
 
 
 def test_weights_file_is_plain_seconds_per_test_file() -> None:

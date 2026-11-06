@@ -26,8 +26,9 @@ on:
         type: string
       shard:
         description: >-
-          unit only: all (default) | rust | py<k>of<n>. The Linux x64 unit suite
-          runs as parallel shards (ci/pytest_shard.py); every other lane is "all".
+          all (default) | rust | py<k>of<n>. The Linux x64 unit suite and the
+          macOS x64 integration suite run as parallel shards (ci/pytest_shard.py);
+          every other lane is "all".
         required: false
         type: string
         default: all
