@@ -376,6 +376,11 @@ pub(super) fn run_daemon(state_dir: &Path, interrupted: &AtomicBool) -> i32 {
         sample_daemon_cpu_pct,
     );
 
+    // Initialization (notably the login shell on macOS) is not safe idle time.
+    // Keep the hard lifetime anchored at daemon_started_at.
+    if let Some(activity) = &test_activity {
+        activity.note_activity(Instant::now());
+    }
     loop {
         match listener.accept() {
             Ok((stream, _addr)) => {

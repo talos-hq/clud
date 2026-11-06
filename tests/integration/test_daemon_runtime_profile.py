@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import json
+import shlex
+import shutil
+import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -36,7 +39,7 @@ def _start_daemon(
         timeout=30,
         env=env,
     )
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 0, result.stderr + "\n" + _daemon_diagnostics(state_dir)
     return json.loads((state_dir / "daemon.json").read_text(encoding="utf-8"))
 
 
@@ -292,22 +295,42 @@ def test_test_daemon_exits_at_hard_max_without_another_request(
     }
 
 
+@pytest.mark.parametrize("slow_login", [False, True])
 def test_test_daemon_exits_after_safe_idle_window(
     clud_binary: Path,
     mock_env: dict[str, str],
     tmp_path: Path,
+    slow_login: bool,
 ) -> None:
+    if slow_login and sys.platform == "win32":
+        pytest.skip("POSIX login-shell startup regression")
     state_dir = tmp_path / "daemon-state"
     env = managed_env(mock_env, state_dir)
+    if slow_login:
+        # Reproduce initialization exceeding the idle window on Linux too;
+        # the hosted macOS login-shell path still needs native CI coverage.
+        shell = tmp_path / "slow-login-shell"
+        delay_command = shutil.which("sleep")
+        assert delay_command is not None
+        shell.write_text(
+            f'#!/bin/sh\n{shlex.quote(delay_command)} 2.5\nexec /bin/sh "$@"\n',
+            encoding="utf-8",
+        )
+        shell.chmod(0o755)
+        env["SHELL"] = str(shell)
     env["CLUD_DAEMON_TEST_MAX_LIFETIME_SECS"] = "20"
     env["CLUD_DAEMON_TEST_IDLE_TIMEOUT_SECS"] = "2"
     info = _start_daemon(clud_binary, env, state_dir)
 
-    _wait_for_identity_exit(info)
+    _wait_for_identity_exit(info, state_dir=state_dir)
 
-    assert "daemon_test_idle_expired" in {
-        event["op"] for event in _events(state_dir)
-    }
+    events = _events(state_dir)
+    started = next(event for event in events if event["op"] == "daemon_started")
+    expired = next(event for event in events if event["op"] == "daemon_test_idle_expired")
+    if slow_login:
+        starting = next(event for event in events if event["op"] == "daemon_starting")
+        assert int(started["ts_ms"]) - int(starting["ts_ms"]) >= 2500, events
+    assert int(expired["ts_ms"]) - int(started["ts_ms"]) >= 2000, events
 
 
 def test_configured_production_idle_timeout_exits_and_next_client_restarts(
