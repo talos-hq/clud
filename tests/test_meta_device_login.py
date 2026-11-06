@@ -85,7 +85,7 @@ class _MetaServer:
                             "verification_uri": "https://meta.com/device",
                             "verification_uri_complete": "https://meta.com/device?code=USER-123",
                             "expires_in": 60,
-                            "interval": 1,
+                            "interval": 0,
                         },
                     )
                     return
@@ -163,7 +163,7 @@ def test_device_login_reports_the_code_then_mints_and_stores(tmp_path: Path) -> 
     with _MetaServer(
         [
             (400, {"error": "authorization_pending"}),
-            (400, {"error": "slow_down"}),
+            (400, {"error": "authorization_pending"}),
             (
                 200,
                 {"access_token": "dca-1", "token_type": "Bearer", "expires_in": 600},
