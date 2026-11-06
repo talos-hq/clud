@@ -91,7 +91,9 @@ mod tests {
     fn prompt_writes_to_the_named_store_file() {
         let built = options("clud".into(), Path::new("/h/.lokr/store"));
         assert_eq!(built.daemon_command[1], "secrets-daemon");
-        assert!(built.ask_command.contains(&OsString::from("/h/.lokr/store/{name}")));
+        assert!(built
+            .ask_command
+            .contains(&OsString::from("/h/.lokr/store/{name}")));
     }
 
     #[test]
