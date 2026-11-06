@@ -182,7 +182,16 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         let root = home.path().join("worktrees");
         for i in 0..5 {
-            write(&root.join(format!("only/f{i}")), 1 << 30);
+            // `walk_bytes` only reads the metadata length, so set the size
+            // rather than writing a real GiB of data per file.
+            let path = root.join(format!("only/f{i}"));
+            write(&path, 0);
+            fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_len(1 << 30)
+                .unwrap();
         }
         let top = largest_children(&root, 2);
         assert_eq!(top.len(), 1);
