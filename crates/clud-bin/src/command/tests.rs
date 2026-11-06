@@ -87,6 +87,46 @@ fn codex_config_values(p: &LaunchPlan) -> Vec<&str> {
         .collect()
 }
 
+/// The tools a Claude launch drops as policy, in emitted order (#2233). Derived
+/// from the builder's own tables so the argv literals below cannot drift.
+fn dropped_tools(p: &LaunchPlan) -> Vec<String> {
+    p.command
+        .iter()
+        .find(|arg| arg.starts_with("--disallowedTools="))
+        .map(|arg| {
+            arg.trim_start_matches("--disallowedTools=")
+                .split(',')
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// One `--disallowedTools` token holding `policy` followed by every
+/// unconditionally dropped tool, in the order the builder emits them.
+fn disallowed(policy: &[&str]) -> String {
+    let mut parts: Vec<&str> = policy.to_vec();
+    parts.extend_from_slice(super::builder::CLAUDE_ARTIFACT_TOOLS);
+    parts.extend_from_slice(super::builder::CLAUDE_PRODUCT_TOOLS);
+    format!("--disallowedTools={}", parts.join(","))
+}
+
+/// The same token for a headless one-shot turn, which also drops the tools only
+/// a harness-driven loop can use.
+/// True for the dropped-tools token a launch with no plan-mode/bridge policy
+/// emits: the artifact family leads it.
+fn is_dropped_tools_only_token(arg: &str) -> bool {
+    arg.starts_with("--disallowedTools=Artifact")
+}
+
+fn disallowed_headless(policy: &[&str]) -> String {
+    let mut parts: Vec<&str> = policy.to_vec();
+    parts.extend_from_slice(super::builder::CLAUDE_ARTIFACT_TOOLS);
+    parts.extend_from_slice(super::builder::CLAUDE_PRODUCT_TOOLS);
+    parts.extend_from_slice(super::builder::CLAUDE_HEADLESS_UNUSED_TOOLS);
+    format!("--disallowedTools={}", parts.join(","))
+}
+
 /// Preserve the historical argv assertions while checking that the deletion
 /// policy is present exactly once and precedes any positional prompt.
 fn command_without_deletion_policy(p: &LaunchPlan) -> Vec<String> {
@@ -99,11 +139,12 @@ fn command_without_deletion_policy(p: &LaunchPlan) -> Vec<String> {
         assert_eq!(index, 1);
         assert!(command[index + 1].contains(&crate::deletion_rules::generated().instructions));
         command.drain(index..index + 2);
-        // Every Claude launch also carries the Artifact strip (#2233); it is
-        // policy, not part of the prompt argv these tests pin. Drop the
-        // standalone token; a combined policy token stays visible to tests
-        // that assert the whole `--disallowedTools` value.
-        command.retain(|arg| arg != "--disallowedTools=Artifact");
+        // Every Claude launch also carries the dropped-tool policy (#2233); it
+        // is policy, not part of the prompt argv these tests pin. Drop the
+        // token that carries no plan-mode/bridge name; a combined policy token
+        // stays visible to tests that assert the whole `--disallowedTools`
+        // value.
+        command.retain(|arg| !is_dropped_tools_only_token(arg));
     } else if command[0] == "codex" {
         for prefix in [
             "hooks.PreToolUse=",
@@ -185,7 +226,7 @@ fn test_loop_automatically_disallows_interactive_tools() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion,Artifact"));
+        .any(|a| a == &disallowed(&["EnterPlanMode", "AskUserQuestion"])));
 }
 
 #[test]
@@ -194,7 +235,7 @@ fn test_repeat_loop_automatically_disallows_interactive_tools() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion,Artifact"));
+        .any(|a| a == &disallowed(&["EnterPlanMode", "AskUserQuestion"])));
     assert_eq!(
         p.repeat_schedule.as_ref().map(|s| s.interval_secs),
         Some(60)
@@ -216,7 +257,7 @@ fn test_loop_under_codex_provider_claude_harness_disallows_interactive_tools() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,Task,AskUserQuestion,Artifact"));
+        .any(|a| a == &disallowed(&["EnterPlanMode", "Task", "AskUserQuestion"])));
 }
 
 /// Issue #955 acceptance path: Sol stays selected when `loop` turns the
@@ -447,17 +488,14 @@ fn test_bridge_disallows_plan_mode_even_when_interactive() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,Task,Artifact"));
+        .any(|a| a == &disallowed(&["EnterPlanMode", "Task"])));
 }
 
 #[test]
 fn test_bridge_permanently_disallows_task_subagents() {
     let args = parse(&["clud", "--allow-plan-mode"]);
     let p = build_launch_plan_for_target(&args, bridge_target(), "claude");
-    assert!(p
-        .command
-        .iter()
-        .any(|a| a == "--disallowedTools=Task,Artifact"));
+    assert!(p.command.iter().any(|a| a == &disallowed(&["Task"])));
 }
 
 #[test]
@@ -474,10 +512,7 @@ fn test_allow_plan_mode_restores_plan_mode_on_the_bridge() {
     let args = parse(&["clud", "--allow-plan-mode"]);
     let p = build_launch_plan_for_target(&args, bridge_target(), "claude");
     assert!(p.allow_plan_mode);
-    assert!(p
-        .command
-        .iter()
-        .any(|a| a == "--disallowedTools=Task,Artifact"));
+    assert!(p.command.iter().any(|a| a == &disallowed(&["Task"])));
     // And the flag itself must not leak to the backend as passthrough.
     assert!(!p.command.iter().any(|a| a == "--allow-plan-mode"));
 }
@@ -492,7 +527,7 @@ fn test_allow_plan_mode_does_not_re_enable_it_for_unattended_runs() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,Task,AskUserQuestion,Artifact"));
+        .any(|a| a == &disallowed_headless(&["EnterPlanMode", "Task", "AskUserQuestion"])));
 }
 
 #[test]
@@ -505,15 +540,15 @@ fn test_plain_claude_keeps_plan_mode_interactively() {
         .command
         .iter()
         .any(|a| a.starts_with("--disallowedTools") && a.contains("EnterPlanMode")));
-    assert!(p.command.iter().any(|a| a == "--disallowedTools=Artifact"));
+    assert!(p.command.iter().any(|a| *a == disallowed(&[])));
 }
 
-/// #2233: Claude Code's `Artifact` tool carried 58.7 KiB of the 122.8 KiB
+/// #2233: Claude Code's `Artifact` family carried 58.7 KiB of the 122.8 KiB
 /// tool payload (21.6 KiB description + a schema that repeats it) on every
-/// request, and the model called it three times in 24 h. Pin the strip so a
-/// future plan change cannot quietly restore the schema.
+/// request, and the model called it six times in seven days. Pin the strip so
+/// a future plan change cannot quietly restore the schema.
 #[test]
-fn every_claude_launch_drops_the_artifact_tool() {
+fn every_claude_launch_drops_the_artifact_family() {
     for raw in [
         vec!["clud"],
         vec!["clud", "-p", "hi"],
@@ -522,36 +557,132 @@ fn every_claude_launch_drops_the_artifact_tool() {
         vec!["clud", "--allow-plan-mode"],
     ] {
         let p = plan(&raw);
-        let token = p
-            .command
-            .iter()
-            .find(|a| a.starts_with("--disallowedTools"))
-            .unwrap_or_else(|| panic!("{raw:?} emitted no --disallowedTools token"));
-        assert!(
-            token.ends_with("Artifact"),
-            "{raw:?} kept the Artifact tool: {token}"
-        );
+        let dropped = dropped_tools(&p);
+        for tool in super::builder::CLAUDE_ARTIFACT_TOOLS {
+            assert!(
+                dropped.iter().any(|d| d == tool),
+                "{raw:?} kept the {tool} tool: {dropped:?}"
+            );
+        }
     }
 }
 
-/// The escape hatch: a session that really publishes an artifact keeps the
-/// tool, and nothing else is reintroduced with it.
+/// The escape hatches stay narrow: each flag restores exactly its own family
+/// and leaves the other strip in place.
 #[test]
-fn the_artifact_tool_flag_restores_it() {
+fn the_artifact_tool_flag_restores_only_the_artifact_family() {
     // `--artifact-tool` is a global flag: it goes before any subcommand.
     let p = plan(&["clud", "--artifact-tool"]);
-    assert!(!p.command.iter().any(|a| a.contains("Artifact")));
+    let dropped = dropped_tools(&p);
+    for tool in super::builder::CLAUDE_ARTIFACT_TOOLS {
+        assert!(!dropped.iter().any(|d| d == tool), "{tool} still dropped");
+    }
+    for tool in super::builder::CLAUDE_PRODUCT_TOOLS {
+        assert!(dropped.iter().any(|d| d == tool), "{tool} was restored too");
+    }
     assert!(!p
         .command
         .iter()
         .any(|a| a.starts_with("--disallowedTools") && a.contains("EnterPlanMode")));
 
     let looped = plan(&["clud", "--artifact-tool", "loop", "fix the build"]);
+    // The loop still strips plan mode and the product surface; only the
+    // artifact family comes back.
+    let mut expected: Vec<&str> = vec!["EnterPlanMode", "AskUserQuestion"];
+    expected.extend_from_slice(super::builder::CLAUDE_PRODUCT_TOOLS);
     assert!(looped
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion"));
-    assert!(!looped.command.iter().any(|a| a.contains("Artifact")));
+        .any(|a| *a == format!("--disallowedTools={}", expected.join(","))));
+}
+
+/// #2233: the product-surface tools (`SendFeedback`, `ReportFindings`,
+/// `DesignSync`, `PushNotification`, `RemoteTrigger`) are full tool definitions
+/// on every request and measured zero calls across 603 local sessions / 7 days
+/// of transcripts. Pin the strip, and pin what must NOT be stripped: `Workflow`
+/// and `ScheduleWakeup` drive `clud grind` / `clud loop`, and `ListAgents` names
+/// the peers `SendMessage` addresses.
+#[test]
+fn every_claude_launch_drops_the_product_surface_tools() {
+    for raw in [
+        vec!["clud"],
+        vec!["clud", "-p", "hi"],
+        vec!["clud", "loop", "fix the build"],
+        vec!["clud", "--unattended", "-p", "hi"],
+        vec!["clud", "--allow-plan-mode"],
+    ] {
+        let p = plan(&raw);
+        let dropped = dropped_tools(&p);
+        for tool in super::builder::CLAUDE_PRODUCT_TOOLS {
+            assert!(
+                dropped.iter().any(|d| d == tool),
+                "{raw:?} kept the {tool} tool: {dropped:?}"
+            );
+        }
+        // `Workflow` / `ScheduleWakeup` are dropped only for a headless
+        // one-shot turn; see `headless_one_shot_drops_the_loop_only_tools`.
+        let headless = raw.contains(&"-p");
+        let mut kept = vec!["ListAgents", "SendMessage", "Bash", "Read", "Edit", "Write"];
+        if !headless {
+            kept.extend_from_slice(super::builder::CLAUDE_HEADLESS_UNUSED_TOOLS);
+        }
+        for kept in kept {
+            assert!(
+                !dropped.iter().any(|d| d == kept),
+                "{raw:?} dropped {kept}, which clud itself drives"
+            );
+        }
+    }
+}
+
+/// #2233: a headless one-shot turn has no `/loop` to pace and no user to opt
+/// into orchestration, so `Workflow` (18.5 KiB with schema) and `ScheduleWakeup`
+/// are unreachable there. Pin that they are dropped only in that shape: the
+/// interactive, `clud loop` and `clud grind` launches that drive `/loop` keep
+/// both.
+#[test]
+fn headless_one_shot_drops_the_loop_only_tools() {
+    let p = plan(&["clud", "-p", "hi"]);
+    let dropped = dropped_tools(&p);
+    for tool in super::builder::CLAUDE_HEADLESS_UNUSED_TOOLS {
+        assert!(
+            dropped.iter().any(|d| d == tool),
+            "{tool} kept: {dropped:?}"
+        );
+    }
+
+    // Interactive, and the two harness-driven loop shapes, keep them.
+    for raw in [
+        vec!["clud"],
+        vec!["clud", "loop", "fix the build"],
+        vec![
+            "clud",
+            "grind",
+            "https://github.com/talos-hq/clud/issues/2233",
+        ],
+    ] {
+        let p = plan(&raw);
+        let dropped = dropped_tools(&p);
+        for tool in super::builder::CLAUDE_HEADLESS_UNUSED_TOOLS {
+            assert!(
+                !dropped.iter().any(|d| d == tool),
+                "{raw:?} dropped {tool}, which clud itself drives: {dropped:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_product_tools_flag_restores_them() {
+    let p = plan(&["clud", "--product-tools"]);
+    let dropped = dropped_tools(&p);
+    for tool in super::builder::CLAUDE_PRODUCT_TOOLS {
+        assert!(!dropped.iter().any(|d| d == tool), "{tool} still dropped");
+    }
+    // Narrow: the artifact family stays stripped.
+    for tool in super::builder::CLAUDE_ARTIFACT_TOOLS {
+        assert!(dropped.iter().any(|d| d == tool), "{tool} was restored too");
+    }
 }
 
 #[test]
@@ -722,7 +853,7 @@ fn unified_initial_routes_use_discovery_ids_and_keep_plan_mode() {
         assert!(!plan
             .command
             .iter()
-            .any(|arg| arg == "--disallowedTools=EnterPlanMode,Artifact"));
+            .any(|arg| arg == &disallowed(&["EnterPlanMode"])));
         assert_eq!(plan.codex_model, None);
     }
 }
@@ -858,7 +989,7 @@ fn test_unattended_disallows_interactive_tools() {
         vec![
             "claude",
             "--dangerously-skip-permissions",
-            "--disallowedTools=EnterPlanMode,AskUserQuestion,Artifact",
+            disallowed_headless(&["EnterPlanMode", "AskUserQuestion"]).as_str(),
             "--output-format",
             "stream-json",
             "--verbose",
@@ -880,7 +1011,7 @@ fn test_unattended_emits_a_single_argv_token() {
     assert!(p
         .command
         .iter()
-        .any(|a| a == "--disallowedTools=EnterPlanMode,AskUserQuestion,Artifact"));
+        .any(|a| a == &disallowed_headless(&["EnterPlanMode", "AskUserQuestion"])));
     // The prompt must survive intact directly after its own flag.
     let idx = p.command.iter().position(|a| a == "-p").unwrap();
     assert_eq!(p.command[idx + 1], "hello");

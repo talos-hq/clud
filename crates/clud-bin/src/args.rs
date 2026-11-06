@@ -235,6 +235,17 @@ pub struct Args {
     #[arg(long = "artifact-tool")]
     pub artifact_tool: bool,
 
+    /// Keep Claude Code's product-surface tools available to the model. clud
+    /// strips `SendFeedback`, `ReportFindings`, `DesignSync`,
+    /// `PushNotification` and `RemoteTrigger` from every Claude launch: each
+    /// one ships as a full tool definition on every request, and over 603 local
+    /// sessions / 7 days of transcripts the fleet called none of them (the
+    /// feedback tool: 19 calls). 12.1 KiB of the 122.8 KiB tool payload goes
+    /// with them. Pass this flag when a session genuinely wants to report
+    /// feedback, publish a design, or push a notification.
+    #[arg(long = "product-tools")]
+    pub product_tools: bool,
+
     /// Tell the agent which credentials exist on this machine. Adds the lokr
     /// MCP server and its background scanner to the session; values are never
     /// returned to the agent.
@@ -2551,6 +2562,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--unattended",
         "--allow-plan-mode",
         "--artifact-tool",
+        "--product-tools",
         "--allow-secrets",
         "--coauthor",
         "--dry-run",
