@@ -428,6 +428,40 @@ fn land_instructions(args: &Args) -> &'static str {
     }
 }
 
+/// Claude Code's artifact family. `Artifact` alone is 58.7 KiB of the 122.8 KiB
+/// per-request tool payload (21.6 KiB description plus a 37.1 KiB schema that
+/// repeats it) and its two companions add another 30 KiB when Claude offers
+/// them; the fleet called `Artifact` six times in seven days and neither
+/// companion once. `--artifact-tool` restores the family (#2233).
+pub(super) const CLAUDE_ARTIFACT_TOOLS: &[&str] = &["Artifact", "ArtifactData", "ArtifactComments"];
+
+/// Claude Code tools that serve its own product surfaces rather than the task:
+/// feedback to Anthropic, code-review findings for its host UI, the design
+/// canvas, phone push, and remote control. Each one rides on EVERY request as a
+/// full tool definition, and each measured zero calls across 603 local sessions
+/// / 7 days of transcripts (feedback: 19 calls, the rest: none) — a pure
+/// per-request schema tax on a fleet that cannot use them. `--product-tools`
+/// restores them. Deliberately NOT here: `Workflow` and `ScheduleWakeup`, which
+/// `clud grind` and `clud loop` drive, and `ListAgents`, which names the peers
+/// `SendMessage` addresses.
+pub(super) const CLAUDE_PRODUCT_TOOLS: &[&str] = &[
+    "SendFeedback",
+    "ReportFindings",
+    "DesignSync",
+    "PushNotification",
+    "RemoteTrigger",
+];
+
+/// Claude Code tools that only mean something inside a harness-driven loop.
+/// `ScheduleWakeup` exists to pace `/loop` dynamic mode, and `Workflow` may only
+/// be called after the user explicitly opts into multi-agent orchestration
+/// ("ultracode"). A headless one-shot turn (`clud -p …`) has neither: no
+/// `/loop` exists to pace and no user is present to opt in, so both are 17.2 KiB
+/// of tool definition on every request with no reachable behaviour — the
+/// measured shape of 30 of 50 recent one-shot sessions. `clud loop` and
+/// `clud grind` keep them; they are the runs that drive `/loop` and `/grind`.
+pub(super) const CLAUDE_HEADLESS_UNUSED_TOOLS: &[&str] = &["Workflow", "ScheduleWakeup"];
+
 /// The patterns clud's command hooks refuse most often, stated before the
 /// agent tries them: a refused call still costs a full round trip (#2354).
 pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refused call is a wasted round trip): never wait with a while/until/sleep loop, `watch` or `tail -f`, in Bash or Monitor; use run_in_background and its completion notification, or a tool with its own deadline (pr_merge_watch, clud ci). Prefer `(cd DIR && CMD)` or absolute paths over a bare `cd`. Run one GitHub mutation (push, PR create, merge, issue or API write) per call.";
@@ -750,15 +784,16 @@ fn build_launch_plan_for_target_at(
         }
     }
 
-    // Three independent rules feed one `--disallowedTools` token:
+    // Four independent rules feed one `--disallowedTools` token:
     //
     // 1. `clud loop` is unattended by definition; `--unattended` extends the
     //    same policy to any other launch. Strip both tools that park a run on
     //    a human. `--dangerously-skip-permissions` does not cover these; the
     //    model reaches for them on its own, most often at the top of a `/loop`
     //    iteration.
-    // 2. Every Claude launch drops the client's `Artifact` tool, whose schema
-    //    is 48% of the tool payload on every request (see below).
+    // 2. Every Claude launch drops the client's product surface: the
+    //    artifact family (48% of the tool payload on every request) and the
+    //    feedback/design/push/remote tools, none of which the fleet calls.
     // 3. The Codex->Claude bridge allows exactly one Claude process. It strips
     //    the `Task` tool on every bridge launch, because Task creates Claude
     //    subagents whose requests all consume the same provider budget. Plan
@@ -791,9 +826,26 @@ fn build_launch_plan_for_target_at(
         // description. Measured over 24 h of local transcripts, Artifact was
         // present in 81 of 105 recorded sessions and the model called it three
         // times. It publishes a page to the Claude account, which no
-        // forge-ci fleet run wants. `--artifact-tool` restores it.
+        // forge-ci fleet run wants. `--artifact-tool` restores the family.
         if !args.artifact_tool {
-            disallowed.push("Artifact");
+            disallowed.extend_from_slice(CLAUDE_ARTIFACT_TOOLS);
+        }
+        // The rest of the product surface (see `CLAUDE_PRODUCT_TOOLS`).
+        // Between them these five are another 12.1 KiB of the payload on every
+        // request for tools the fleet never calls. `--product-tools` restores
+        // them.
+        if !args.product_tools {
+            disallowed.extend_from_slice(CLAUDE_PRODUCT_TOOLS);
+        }
+        // A headless one-shot turn has no `/loop` and no user to opt into
+        // orchestration, so the tools that serve those (see
+        // `CLAUDE_HEADLESS_UNUSED_TOOLS`) are unreachable there. Interactive,
+        // `clud loop` and `clud grind` launches keep both.
+        let headless_one_shot = agent_mode
+            && !matches!(args.command, Some(Command::Loop { .. }))
+            && !matches!(args.command, Some(Command::Grind { .. }));
+        if headless_one_shot {
+            disallowed.extend_from_slice(CLAUDE_HEADLESS_UNUSED_TOOLS);
         }
     }
     if !disallowed.is_empty() {

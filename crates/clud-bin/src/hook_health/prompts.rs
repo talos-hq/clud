@@ -201,6 +201,7 @@ fn backend_prompt_launch_plan(
         web_term: false,
         kitty_term: false,
         artifact_tool: false,
+        product_tools: false,
         shell: None,
         set_web_term: None,
         provider: None,
