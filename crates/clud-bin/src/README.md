@@ -217,6 +217,9 @@ Entry and orchestration:
   streaming state machine. Owns the downstream status policy — since #764,
   `502` means only a genuine gateway failure, and `TooLarge`/`Cancelled`/
   `Downstream` map to `413`/`499`/`499` instead of borrowing it.
+  Current developer instructions remain in each wire request but are excluded
+  from successful-turn persistence, keeping canonical compaction snapshots
+  free of per-turn system prompt copies (#2562).
 - `failover.rs` - #968: the ordered, cost-labeled failover ladder. A rung is
   either a catalog model (resolved to its provider wire ID) or an ordinary
   Claude model ID forwarded verbatim, because clud owns the synthetic
