@@ -720,6 +720,20 @@ Issue [#1336](https://github.com/zackees/clud/issues/1336).
   yet. When scripts are chosen, the planner supplies only the focused test.
   A chosen `test` script stays in the run facts but **no role runs it**
   (DD-205): required CI runs the suites, and a chaperone fixes what it finds.
+- **No integrator stashes (#2451 item 6).** The integrator never mutates the
+  shared stash stack; only `git stash list` is allowed. Sequential integration
+  records its starting HEAD, creates the goal branch there, commits the worker
+  edits, then fetches and uses `git rebase --onto origin/<base> <starting-head>
+  <branch>` to transplant only this goal's commits. The prior goal can still
+  be awaiting merge; its commits must not enter this PR. Lint formatting needed by the goal is
+  committed by named path. Unrelated formatting may be discarded with
+  `git restore -- <explicit paths>` only for paths clean before lint whose
+  diff is proven to come solely from that lint run. Pre-existing/carried
+  edits are preserved; uncertain attribution stops integration and reports
+  the paths. Resolve formatting before a push or the next goal. This removes
+  lint-noise stashes rather than adding per-goal stash tracking. Only the
+  router owns preflight/carry stash restoration at Finish; unrelated stashes
+  must never be popped or dropped.
 - **Long scripts.** Anything that may run past the Bash tool's 600-second
   limit runs in the background, and the integrator waits for its exit code.
   Never pipe a script through `tail`, which hides its exit status (#1331).
@@ -886,9 +900,9 @@ plan (up to maxAgents) → editor (1) → review (up to maxAgents) → integrato
 | `grind-prework` | Bash, Read, Grep, Glob | read-only git and `gh`; `gh issue comment` on the run facts' meta issue only, fed by `printf '%s' '<body>'`; no edits, worktrees or builds |
 | `grind-editor` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | read-only `gh`, `rg --no-config` (`--no-config` first) and `git grep` (no helper-executing options); `safe-rm` on literal paths inside its task's directories ([rm-tools.md](rm-tools.md#location-policy)) |
 | `grind-reviewer` | same as editor | same as editor |
-| `grind-integrator` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | anything except non-`ci` bosn verbs, `bosn ci run` / `clud ci` when CI is off, `pkill`/`pgrep` on bosn, direct `act`/`docker`/`podman`, `git worktree add`, and a shell loop around lint/test; `safe-rm` only inside its checkout |
+| `grind-integrator` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | anything except non-`ci` bosn verbs, `bosn ci run` / `clud ci` when CI is off, `pkill`/`pgrep` on bosn, direct `act`/`docker`/`podman`, `git worktree add`, stash commands other than `git stash list`, and a shell loop around lint/test; `safe-rm` only inside its checkout |
 | `grind-lander` (final feature PR) | Read, Grep, Glob, Bash, Skill | `gh pr view\|checks\|diff\|list\|merge`, `gh pr ready` on the feature PR under `feature_merge: auto` only, `gh run view\|list\|rerun`, read-only git, plain `git push`, `pr_merge_watch`, `pr_merge.py` (enqueue) |
-| `grind-chaperone` | Read, Edit, Write, Grep, Glob, Bash (opus) | the integrator's denylist, plus: `git worktree add --detach\|remove` only on `.clud/worktrees/<repo>-wt-grind-fixup-<n>`; no bare force push, branch delete, `reset --hard` or `clean -x`; `gh` limited to reads, `gh run rerun --failed`, `gh pr merge` pinned with `--match-head-commit` and no `--admin` (or a goal PR into a recorded feature branch) and that feature landing's records; `safe-rm` only inside its checkout. The hook cannot confirm cwd, so "build only in the slot" is prompt-enforced |
+| `grind-chaperone` | Read, Edit, Write, Grep, Glob, Bash (opus) | the integrator's build denylist (the stash restriction applies only to the integrator), plus: `git worktree add --detach\|remove` only on `.clud/worktrees/<repo>-wt-grind-fixup-<n>`; no bare force push, branch delete, `reset --hard` or `clean -x`; `gh` limited to reads, `gh run rerun --failed`, `gh pr merge` pinned with `--match-head-commit` and no `--admin` (or a goal PR into a recorded feature branch) and that feature landing's records; `safe-rm` only inside its checkout. The hook cannot confirm cwd, so "build only in the slot" is prompt-enforced |
 
 Claude Code enforces the tool lists. Shell commands are enforced by clud's
 native PreToolUse hook (`clud-block-bad-cmd`): the harness puts the calling
