@@ -3857,6 +3857,39 @@ fn finish_without_failover(
     );
 }
 
+fn ingress_cached_body(
+    body: &[u8],
+    route: ConversationRoute,
+    chat: Option<ChatTranslation<'_>>,
+) -> Option<Vec<u8>> {
+    if !matches!(
+        route,
+        ConversationRoute::Claude | ConversationRoute::OpenRouter
+    ) || !chat.is_some_and(|chat| {
+        matches!(
+            chat.dialect,
+            ClientDialect::OpenAi | ClientDialect::Responses
+        )
+    }) {
+        return None;
+    }
+    let mut request: serde_json::Value = serde_json::from_slice(body).ok()?;
+    crate::ingress_cache::add_defaults(&mut request);
+    serde_json::to_vec(&request).ok()
+}
+
+fn proxy_request_model(body: &[u8]) -> String {
+    serde_json::from_slice::<serde_json::Value>(body)
+        .ok()
+        .and_then(|request| {
+            request
+                .get("model")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn serve_unified_anthropic_proxy(
     config: &BridgeConfig,
@@ -3905,15 +3938,9 @@ fn serve_unified_anthropic_proxy(
         ConversationRoute::OpenRouter => AnthropicUsageProvider::OpenRouter,
         ConversationRoute::Codex => unreachable!("Codex does not use the Anthropic proxy"),
     };
-    let model = serde_json::from_slice::<serde_json::Value>(body)
-        .ok()
-        .and_then(|request| {
-            request
-                .get("model")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_string)
-        })
-        .unwrap_or_else(|| "unknown".to_string());
+    let cached_body = ingress_cached_body(body, route, chat);
+    let body = cached_body.as_deref().unwrap_or(body);
+    let model = proxy_request_model(body);
     // #1529: the advisor is an Anthropic server tool that no compat upstream
     // runs. Its two halves travel together or not at all.
     let stripped;
@@ -8431,6 +8458,226 @@ Connection: close
                 ],
             ),
         )
+    }
+
+    fn ingress_cache_payload(responses: bool) -> serde_json::Value {
+        let mut turns = serde_json::json!([
+            {"role":"system", "content":[{"type":"text", "text":"instructions"}]},
+            {"role":"user", "content":[{"type":"text", "text":"first"}]},
+            {"role":"assistant", "content":"answer"},
+            {"role":"user", "content":"second"}
+        ]);
+        if responses {
+            turns[1]["content"][0]["type"] = serde_json::json!("input_text");
+            serde_json::json!({"model":"claude-x", "input":turns,
+                "tools":[{"type":"function", "name":"lookup", "parameters":{"type":"object"}}]})
+        } else {
+            serde_json::json!({"model":"claude-x", "messages":turns,
+                "tools":[{"type":"function", "function":{"name":"lookup", "parameters":{"type":"object"}}}]})
+        }
+    }
+
+    fn cached_ingress(request: &serde_json::Value, responses: bool) -> serde_json::Value {
+        let bytes = serde_json::to_vec(request).unwrap();
+        let translated = if responses {
+            crate::responses_ingress::translate_responses_request(&bytes).unwrap()
+        } else {
+            crate::openai_ingress::translate_chat_request(&bytes).unwrap()
+        };
+        let cached = ingress_cached_body(
+            &serde_json::to_vec(&translated).unwrap(),
+            ConversationRoute::Claude,
+            Some(ChatTranslation {
+                model: "claude-x",
+                dialect: if responses {
+                    ClientDialect::Responses
+                } else {
+                    ClientDialect::OpenAi
+                },
+            }),
+        )
+        .unwrap();
+        serde_json::from_slice(&cached).unwrap()
+    }
+
+    fn strip_cache_fields(value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::Object(object) => {
+                object.remove("cache_control");
+                for child in object.values_mut() {
+                    strip_cache_fields(child);
+                }
+            }
+            serde_json::Value::Array(array) => {
+                for child in array {
+                    strip_cache_fields(child);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Serialize the ordered prompt content, excluding envelope delimiters and
+    // cache metadata. A newly appended turn must extend this exact byte prefix.
+    fn serialized_prompt_content(mut request: serde_json::Value) -> String {
+        strip_cache_fields(&mut request);
+        let mut serialized = String::new();
+        for key in ["tools", "system", "messages"] {
+            for item in request[key].as_array().unwrap() {
+                serialized.push_str(&serde_json::to_string(item).unwrap());
+            }
+        }
+        serialized
+    }
+
+    #[test]
+    fn openai_ingress_cache_control_preserves_content_prefix_across_turns() {
+        for responses in [false, true] {
+            let mut request = ingress_cache_payload(responses);
+            let first = cached_ingress(&request, responses);
+            let key = if responses { "input" } else { "messages" };
+            request[key].as_array_mut().unwrap().extend([
+                serde_json::json!({"role":"assistant", "content":"second answer"}),
+                serde_json::json!({"role":"user", "content":"third"}),
+            ]);
+            let next = cached_ingress(&request, responses);
+            for field in ["tools", "system"] {
+                assert_eq!(first[field], next[field], "fixed breakpoint moved");
+            }
+            assert_eq!(
+                first["messages"][0]["content"][0]["cache_control"]["type"],
+                "ephemeral"
+            );
+            assert_eq!(
+                next["messages"][2]["content"][0]["cache_control"]["type"],
+                "ephemeral"
+            );
+            assert!(next["messages"][0]["content"][0]
+                .get("cache_control")
+                .is_none());
+            for body in [&first, &next] {
+                assert_eq!(body.to_string().matches("cache_control").count(), 3);
+            }
+            assert!(serialized_prompt_content(next).starts_with(&serialized_prompt_content(first)));
+        }
+    }
+
+    #[test]
+    fn openai_ingress_cache_control_preserves_client_breakpoints_without_defaults() {
+        for responses in [false, true] {
+            for count in 1..=4 {
+                let mut request = ingress_cache_payload(responses);
+                let key = if responses { "input" } else { "messages" };
+                let control = serde_json::json!({"type":"ephemeral", "ttl":"1h"});
+                request[key][0]["content"][0]["cache_control"] = control.clone();
+                if count >= 2 {
+                    request[key][1]["content"][0]["cache_control"] = control.clone();
+                }
+                if count >= 3 {
+                    request["tools"][0]["cache_control"] = control.clone();
+                }
+                if count == 4 {
+                    request[key][3]["content"] = serde_json::json!([
+                        {"type":if responses {"input_text"} else {"text"}, "text":"second", "cache_control":control}
+                    ]);
+                }
+                let translated = cached_ingress(&request, responses);
+                assert_eq!(
+                    translated.to_string().matches("cache_control").count(),
+                    count
+                );
+                assert_eq!(translated["system"][0]["cache_control"], control);
+                assert_eq!(
+                    translated["messages"][0]["content"][0]
+                        .get("cache_control")
+                        .is_some(),
+                    count >= 2
+                );
+                assert_eq!(
+                    translated["tools"][0].get("cache_control").is_some(),
+                    count >= 3
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn openai_ingress_cache_control_excludes_automatic_cache_routes_and_native_clients() {
+        let body = br#"{"tools":[{"name":"lookup"}],"system":[{"type":"text","text":"stable"}],"messages":[{"role":"user","content":[{"type":"text","text":"first"}]}]}"#;
+        for route in [
+            ConversationRoute::DeepSeek,
+            ConversationRoute::Kimi,
+            ConversationRoute::Codex,
+        ] {
+            for dialect in [ClientDialect::OpenAi, ClientDialect::Responses] {
+                assert!(ingress_cached_body(
+                    body,
+                    route,
+                    Some(ChatTranslation {
+                        model: "m",
+                        dialect
+                    })
+                )
+                .is_none());
+            }
+        }
+        assert!(ingress_cached_body(body, ConversationRoute::Claude, None).is_none());
+        for route in [ConversationRoute::Claude, ConversationRoute::OpenRouter] {
+            let cached = ingress_cached_body(
+                body,
+                route,
+                Some(ChatTranslation {
+                    model: "m",
+                    dialect: ClientDialect::OpenAi,
+                }),
+            )
+            .unwrap();
+            let cached = String::from_utf8(cached).unwrap();
+            assert_eq!(cached.matches("cache_control").count(), 2);
+        }
+    }
+
+    #[test]
+    fn openai_ingress_cache_control_reaches_anthropic() {
+        for responses in [false, true] {
+            let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+            let codex = FakeResponses::start_with_response(None);
+            let deepseek = FakeResponses::start_with_response(None);
+            let mut bridge =
+                BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+            let mut body = serde_json::json!({
+                "model": "claude-x",
+                "tools": [{"type":"function", "function":{
+                    "name":"lookup", "parameters":{"type":"object"}}}],
+                "messages": [
+                    {"role":"system", "content":"stable instructions"},
+                    {"role":"user", "content":"first question"},
+                    {"role":"assistant", "content":"first answer"},
+                    {"role":"user", "content":"second question"}
+                ]
+            });
+            if responses {
+                body["input"] = body.as_object_mut().unwrap().remove("messages").unwrap();
+                body["tools"] = serde_json::json!([
+                    {"type":"function", "name":"lookup", "parameters":{"type":"object"}}
+                ]);
+            }
+            let response = if responses {
+                responses_request(&bridge, &body.to_string(), "cache-responses")
+            } else {
+                chat_request(&bridge, &body.to_string(), "cache-chat")
+            };
+            assert_eq!(status(&response), 200, "{response}");
+            let sent: serde_json::Value =
+                serde_json::from_str(captured_body(&anthropic.requests()[0])).unwrap();
+            assert_eq!(sent["tools"][0]["cache_control"]["type"], "ephemeral");
+            assert_eq!(sent["system"][0]["cache_control"]["type"], "ephemeral");
+            assert_eq!(
+                sent["messages"][0]["content"][0]["cache_control"]["type"],
+                "ephemeral"
+            );
+            bridge.shutdown().unwrap();
+        }
     }
 
     /// `POST /v1/chat/completions` is translated in, routed by the ladder the

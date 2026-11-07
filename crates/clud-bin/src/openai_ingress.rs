@@ -330,7 +330,9 @@ fn text_blocks(content: Option<&Value>) -> Result<Vec<Value>, IngressError> {
                 match part.get("type").and_then(Value::as_str) {
                     Some("text") => {
                         let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
-                        let block = text_block(text);
+                        let block = text_block(text)
+                            .into_iter()
+                            .map(|block| crate::ingress_cache::preserve(block, part));
                         blocks.extend(block);
                     }
                     Some("image_url") => {
@@ -374,9 +376,15 @@ fn content_blocks(content: Option<&Value>) -> Result<Vec<Value>, IngressError> {
                 match kind {
                     "text" => {
                         let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
-                        blocks.extend(text_block(text));
+                        blocks.extend(
+                            text_block(text)
+                                .into_iter()
+                                .map(|block| crate::ingress_cache::preserve(block, part)),
+                        );
                     }
-                    "image_url" => blocks.push(image_block(part)?),
+                    "image_url" => {
+                        blocks.push(crate::ingress_cache::preserve(image_block(part)?, part))
+                    }
                     other => return Err(IngressError::UnsupportedPart(other.into())),
                 }
             }
@@ -441,12 +449,15 @@ fn tool_use_blocks(tool_calls: Option<&Value>) -> Result<Vec<Value>, IngressErro
             .get("name")
             .and_then(Value::as_str)
             .ok_or(IngressError::NotJson)?;
-        blocks.push(json!({
-            "type": "tool_use",
-            "id": id,
-            "name": sanitize_tool_name(name),
-            "input": tool_arguments(function.get("arguments")),
-        }));
+        blocks.push(crate::ingress_cache::preserve(
+            json!({
+                "type": "tool_use",
+                "id": id,
+                "name": sanitize_tool_name(name),
+                "input": tool_arguments(function.get("arguments")),
+            }),
+            call,
+        ));
     }
     Ok(blocks)
 }
@@ -480,7 +491,11 @@ fn tool_result_block(message: &Map<String, Value>) -> Result<Value, IngressError
                 match part.get("type").and_then(Value::as_str) {
                     Some("text") => {
                         let text = part.get("text").and_then(Value::as_str).unwrap_or_default();
-                        blocks.extend(text_block(text));
+                        blocks.extend(
+                            text_block(text)
+                                .into_iter()
+                                .map(|block| crate::ingress_cache::preserve(block, part)),
+                        );
                     }
                     Some(other) => return Err(IngressError::UnsupportedPart(other.into())),
                     None => return Err(IngressError::NotJson),
@@ -491,11 +506,14 @@ fn tool_result_block(message: &Map<String, Value>) -> Result<Value, IngressError
         Some(Value::Null) | None => Value::String(String::new()),
         _ => return Err(IngressError::NotJson),
     };
-    Ok(json!({
-        "type": "tool_result",
-        "tool_use_id": id,
-        "content": content,
-    }))
+    Ok(crate::ingress_cache::preserve(
+        json!({
+            "type": "tool_result",
+            "tool_use_id": id,
+            "content": content,
+        }),
+        message,
+    ))
 }
 
 fn tool_definitions(tools: Option<&Value>) -> Result<Vec<Value>, IngressError> {
@@ -538,7 +556,10 @@ fn tool_definitions(tools: Option<&Value>) -> Result<Vec<Value>, IngressError> {
                 definition.insert("strict".into(), json!(strict));
             }
         }
-        definitions.push(Value::Object(definition));
+        definitions.push(crate::ingress_cache::preserve(
+            crate::ingress_cache::preserve(Value::Object(definition), function),
+            tool,
+        ));
     }
     Ok(definitions)
 }

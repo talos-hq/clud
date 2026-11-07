@@ -124,8 +124,9 @@ that never paired with a call is carried as plain user text (Claude rejects an
 orphan `tool_result`), and a `tool_use` with no result is closed with an
 `is_error` result so an interrupted turn can be replayed; `text.format` /
 `response_format` structured-output synthesis, tool-search discovery replay and
-the namespace/custom-tool name map are not ported yet; `cache_control` markers
-are not replayed.
+the namespace/custom-tool name map are not ported yet. Client `cache_control`
+markers are preserved; default placement is described in the
+[source README](../../crates/clud-bin/src/README.md#top-level-modules).
 
 ## OpenAI Responses answers
 
