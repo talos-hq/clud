@@ -43,11 +43,14 @@ pub const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 pub const CODEX_BACKEND_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 /// Identifies the client to the Codex backend.
 pub const CODEX_ORIGINATOR: &str = "codex_cli_rs";
-/// Codex release verified against GPT-6 Sol on the ChatGPT backend.
+/// Codex release verified against the ChatGPT backend in `models/README.md`.
 ///
-/// Keep this separate from clud's package version: the backend interprets it
-/// as a Codex compatibility version. See the request-header regression test.
-pub const CODEX_CLIENT_VERSION: &str = "0.157.1";
+/// The backend gates model availability on the `version` request header:
+/// 0.157.1 rejects GPT-6.1 Sol/Terra with `model_not_found`; 0.164.0 allows them
+/// (issue #2299). This is a compatibility version, not clud's package version.
+/// The guard test keeps it and the Bosn CLI pin aligned with the catalog's
+/// recorded probe version; update that record when verifying newer models.
+pub const CODEX_CLIENT_VERSION: &str = "0.164.0";
 const CODEX_BETA_HEADER_VALUE: &str = "responses=experimental";
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Idle timeout between reads, not a cap on the whole turn: a model may think
@@ -1555,6 +1558,22 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Mutex};
 
+    #[test]
+    fn codex_client_version_matches_verified_model_catalog_version() {
+        let catalog = include_str!("../../../models/README.md");
+        let verified = catalog
+            .split_once("`codex-cli ")
+            .expect("catalog records the verified Codex CLI version")
+            .1
+            .split_once('`')
+            .expect("verified version ends at the closing backtick")
+            .0;
+        assert_eq!(CODEX_CLIENT_VERSION, verified);
+        let image = include_str!("../../../bosn/Dockerfile");
+        let package = format!("@openai/codex@{verified}");
+        assert!(image.split_whitespace().any(|word| word == package));
+    }
+
     /// A scripted local HTTP server. Each connection consumes one script entry
     /// and records the request it received.
     struct FakeUpstream {
@@ -1912,7 +1931,7 @@ mod tests {
         let request = server.requests().remove(0);
         assert!(request.starts_with("POST /v1/responses/compact HTTP/1.1"));
         assert!(request.contains("Accept: application/json"));
-        assert!(request.contains("version: 0.157.1"));
+        assert!(request.contains("version: 0.164.0"));
     }
 
     #[test]
@@ -2212,8 +2231,8 @@ mod tests {
         assert!(request.contains("OpenAI-Beta: responses=experimental"));
         // openai/codex sends `codex_cli_rs/<Codex version>` and a
         // separate `version` header. Keep clud's own version out of both.
-        assert!(request.contains("User-Agent: codex_cli_rs/0.157.1 (clud)"));
-        assert!(request.contains("version: 0.157.1"));
+        assert!(request.contains("User-Agent: codex_cli_rs/0.164.0 (clud)"));
+        assert!(request.contains("version: 0.164.0"));
         assert!(request.contains(r#"{"model":"m"}"#));
         // The harness's own downstream bearer must never appear upstream.
         assert!(!request.contains("x-api-key"));
