@@ -26,10 +26,12 @@
 //!    (`--pty`) and used by `clud loop` on POSIX. With the stripper in
 //!    place the title doesn't flicker — the keeper rarely fires.
 //!
-//! POSIX terminals are out of scope for the title-setting half: the Win32
-//! calls and the keeper thread live in `platform/windows/console_title.rs`,
-//! and the Unix tree's stubs are no-ops, so the call sites in `main.rs`
-//! don't need a `cfg`. The OSC stripper is platform-agnostic because
+//! The Win32 calls and the keeper thread live in
+//! `platform/windows/console_title.rs`. On POSIX the stamp is a one-shot
+//! OSC 2 on stdout (`platform/unix/console_title.rs`); without it, shells
+//! with title integration (kitty) leave the window titled with the launch
+//! command line (`clud -c`), indistinguishable across repos. The call sites
+//! in `main.rs` don't need a `cfg`. The OSC stripper is platform-agnostic because
 //! the PTY pump runs on every platform.
 
 use std::sync::{Arc, Mutex, OnceLock};
@@ -207,6 +209,19 @@ pub fn code_page_means_console(code_page: u32) -> bool {
 /// unit-tested on every platform.
 pub fn title_for_cwd_name(cwd_name: &str) -> String {
     format!("clud {}", cwd_name)
+}
+
+/// Encode `title` as an OSC 2 (set window title) sequence, BEL-terminated.
+///
+/// Control characters are dropped so a hostile directory name cannot end
+/// the sequence early and inject further escapes into the terminal.
+pub fn osc2_title_bytes(title: &str) -> Vec<u8> {
+    let clean: String = title.chars().filter(|c| !c.is_control()).collect();
+    let mut out = Vec::with_capacity(clean.len() + 5);
+    out.extend_from_slice(b"\x1b]2;");
+    out.extend_from_slice(clean.as_bytes());
+    out.push(0x07);
+    out
 }
 
 pub fn title_for_cpu_alert(base_title: &str, cpu_pct: f32) -> String {
@@ -484,8 +499,32 @@ mod tests {
     }
 
     #[test]
+    fn osc2_title_bytes_wraps_title_in_osc_2() {
+        assert_eq!(
+            osc2_title_bytes("clud clud2"),
+            b"\x1b]2;clud clud2\x07".to_vec()
+        );
+    }
+
+    #[test]
+    fn osc2_title_bytes_strips_control_chars() {
+        assert_eq!(
+            osc2_title_bytes("clud a\x07\x1b]0;evil\nb"),
+            b"\x1b]2;clud a]0;evilb\x07".to_vec()
+        );
+    }
+
+    #[test]
+    fn osc2_title_bytes_round_trips_through_the_stripper() {
+        // Our own stamp must be recognised (and swallowed) by the PTY
+        // stripper like any child's title, so the two stay consistent.
+        let mut s = OscTitleStripper::new();
+        assert!(s.process(&osc2_title_bytes("clud x")).is_empty());
+    }
+
+    #[test]
     fn set_for_current_cwd_does_not_panic() {
-        // Smoke test on every platform — the POSIX stub is a no-op,
+        // Smoke test on every platform — on POSIX stdout is not a tty under the test harness,
         // and on Windows SetConsoleTitleW returns silently when there
         // is no console (e.g. inside `cargo test` under a CI runner).
         set_for_current_cwd();
