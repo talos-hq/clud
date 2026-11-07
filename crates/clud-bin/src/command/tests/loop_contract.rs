@@ -242,6 +242,44 @@ fn test_codex_one_shot_routes_bounded_reads() {
     assert_routes_bounded_reads(&codex_instructions(&p), "codex -p instructions");
 }
 
+/// A status sweep over several PRs is one call to the bundled tool, not a
+/// `for` loop of `gh pr view` + `gh pr checks` per PR.
+fn assert_routes_pr_status(text: &str, what: &str) {
+    assert!(
+        text.contains("github/pr_status.py"),
+        "{what} missing pr_status routing: {text}"
+    );
+    assert!(
+        text.contains("gh pr view --json statusCheckRollup")
+            && text.contains("gh pr checks $p | grep fail"),
+        "{what} lost the negative sweep guidance: {text}"
+    );
+}
+
+#[test]
+fn test_claude_loop_routes_pr_status() {
+    let p = plan(&["clud", "loop", "task"]);
+    assert_routes_pr_status(&claude_system_prompt(&p), "claude loop prompt");
+}
+
+#[test]
+fn test_claude_one_shot_routes_pr_status() {
+    let p = plan(&["clud", "-p", "task"]);
+    assert_routes_pr_status(&claude_system_prompt(&p), "claude -p prompt");
+}
+
+#[test]
+fn test_codex_loop_routes_pr_status() {
+    let p = plan(&["clud", "--codex", "loop", "task"]);
+    assert_routes_pr_status(&codex_instructions(&p), "codex loop instructions");
+}
+
+#[test]
+fn test_codex_one_shot_routes_pr_status() {
+    let p = plan(&["clud", "--codex", "-p", "task"]);
+    assert_routes_pr_status(&codex_instructions(&p), "codex -p instructions");
+}
+
 #[test]
 fn test_interactive_session_keeps_the_short_prompt() {
     // A human in a terminal decides for themselves; only agent launches are
@@ -252,6 +290,7 @@ fn test_interactive_session_keeps_the_short_prompt() {
     assert!(!appended.contains("diagnostics/test_report.py"));
     assert!(!appended.contains("code/outline.py"));
     assert!(!appended.contains("code/slice.py"));
+    assert!(!appended.contains("github/pr_status.py"));
     let codex = codex_instructions(&plan(&["clud", "--codex"]));
     assert!(!codex.contains("code/outline.py"));
     assert!(!codex.contains("diagnostics/test_report.py"));

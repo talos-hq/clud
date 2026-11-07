@@ -160,6 +160,16 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         quiet_ok: true,
     },
     BundledTool {
+        rel_path: "github/pr_status.py",
+        body: include_str!("../assets/tools/github/pr_status.py"),
+        // One read per PR answered from GitHub's current state; nothing of
+        // clud's is in flight, so killing the page loses no work (#2233).
+        kill_semantics: KillSemantics::Killable,
+        command_timeout: Duration::from_secs(10 * 60),
+        progress_timeout: None,
+        quiet_ok: true,
+    },
+    BundledTool {
         rel_path: "github/ci_failure_report.py",
         body: include_str!("../assets/tools/github/ci_failure_report.py"),
         kill_semantics: KillSemantics::Resumable,
@@ -781,6 +791,19 @@ mod tests {
             .find(|t| t.rel_path == "diagnostics/codex_audit.py")
             .expect("Codex audit must be bundled");
         assert!(tool.body.contains(MANAGED_BY_CLUD_MARKER));
+    }
+
+    /// A multi-PR status sweep used to be a `for` loop of `gh pr view` and
+    /// `gh pr checks` per PR; one bounded line per PR replaces it (#2233).
+    #[test]
+    fn bundled_includes_pr_status() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|tool| tool.rel_path == "github/pr_status.py")
+            .expect("BUNDLED_TOOLS must include github/pr_status.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
+        assert!(tool.body.contains("MAX_OUTPUT"));
     }
 
     #[test]
