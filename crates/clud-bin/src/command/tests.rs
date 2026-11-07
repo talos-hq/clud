@@ -1221,10 +1221,7 @@ fn test_coauthor_flag_carries_a_tag() {
 fn test_bare_coauthor_does_not_eat_the_next_argument() {
     let args = parse(&["clud", "--coauthor", "loop", "task"]);
     assert_eq!(args.coauthor.as_deref(), Some(""));
-    assert!(matches!(
-        args.command,
-        Some(crate::args::Command::Loop { .. })
-    ));
+    assert!(matches!(args.command, Some(crate::args::Command::Loop(_))));
 }
 
 #[test]

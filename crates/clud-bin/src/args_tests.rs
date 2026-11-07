@@ -453,16 +453,20 @@ fn inject_is_a_dispatched_subcommand_not_backend_passthrough() {
         "--json",
     ]);
     match args.command {
-        Some(Command::Inject {
-            session,
-            message,
-            interrupt: true,
-            detach: true,
-            ticket: Some(ticket),
-            timeout: 30,
-            json: true,
-            ..
-        }) => {
+        Some(Command::Inject(options)) => {
+            let crate::args::InjectArgs {
+                session,
+                message,
+                interrupt: true,
+                detach: true,
+                ticket: Some(ticket),
+                timeout: 30,
+                json: true,
+                ..
+            } = *options
+            else {
+                panic!("unexpected boxed payload")
+            };
             assert_eq!(session, "sess-abc");
             assert_eq!(message, "use the v2 API");
             assert_eq!(ticket, "T-9");
@@ -762,15 +766,16 @@ fn test_detachable_flag() {
 fn test_loop_subcommand() {
     let args = parse(&["clud", "loop", "do the task"]);
     match args.command {
-        Some(Command::Loop {
-            ref task,
-            loop_count,
-            refresh,
-            no_done,
-            ref done,
-            ref repeat,
-            ..
-        }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs {
+                ref task,
+                loop_count,
+                refresh,
+                no_done,
+                ref done,
+                ref repeat,
+                ..
+            } = *options;
             assert_eq!(task.as_deref(), Some("do the task"));
             assert_eq!(loop_count, 50);
             assert!(!refresh);
@@ -786,11 +791,12 @@ fn test_loop_subcommand() {
 fn test_loop_with_count() {
     let args = parse(&["clud", "loop", "--loop-count", "5", "task"]);
     match args.command {
-        Some(Command::Loop {
-            ref task,
-            loop_count,
-            ..
-        }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs {
+                ref task,
+                loop_count,
+                ..
+            } = *options;
             assert_eq!(task.as_deref(), Some("task"));
             assert_eq!(loop_count, 5);
         }
@@ -807,14 +813,15 @@ fn test_loop_refresh_flag() {
         "https://github.com/o/r/issues/42",
     ]);
     match args.command {
-        Some(Command::Loop {
-            ref task,
-            refresh,
-            no_done,
-            ref done,
-            ref repeat,
-            ..
-        }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs {
+                ref task,
+                refresh,
+                no_done,
+                ref done,
+                ref repeat,
+                ..
+            } = *options;
             assert_eq!(task.as_deref(), Some("https://github.com/o/r/issues/42"));
             assert!(refresh);
             assert!(!no_done);
@@ -829,7 +836,8 @@ fn test_loop_refresh_flag() {
 fn test_loop_no_done_flag() {
     let args = parse(&["clud", "loop", "--no-done", "task"]);
     match args.command {
-        Some(Command::Loop { no_done, .. }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs { no_done, .. } = *options;
             assert!(no_done);
         }
         _ => panic!("expected Loop subcommand"),
@@ -840,7 +848,8 @@ fn test_loop_no_done_flag() {
 fn test_loop_no_done_marker_compat_alias() {
     let args = parse(&["clud", "loop", "--no-done-marker", "task"]);
     match args.command {
-        Some(Command::Loop { no_done, .. }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs { no_done, .. } = *options;
             assert!(no_done);
         }
         _ => panic!("expected Loop subcommand"),
@@ -851,9 +860,10 @@ fn test_loop_no_done_marker_compat_alias() {
 fn test_loop_done_path() {
     let args = parse(&["clud", "loop", "--done", "DONE.md", "task"]);
     match args.command {
-        Some(Command::Loop {
-            ref done, no_done, ..
-        }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs {
+                ref done, no_done, ..
+            } = *options;
             assert_eq!(done.as_deref(), Some("DONE.md"));
             assert!(!no_done);
         }
@@ -865,7 +875,8 @@ fn test_loop_done_path() {
 fn test_loop_repeat() {
     let args = parse(&["clud", "loop", "--repeat", "1h", "task"]);
     match args.command {
-        Some(Command::Loop { ref repeat, .. }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs { ref repeat, .. } = *options;
             assert_eq!(repeat.as_deref(), Some("1h"));
         }
         _ => panic!("expected Loop subcommand"),
@@ -887,12 +898,13 @@ fn test_loop_repeat_with_done() {
         "task",
     ]);
     match args.command {
-        Some(Command::Loop {
-            ref repeat,
-            ref done,
-            no_done,
-            ..
-        }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs {
+                ref repeat,
+                ref done,
+                no_done,
+                ..
+            } = *options;
             assert_eq!(repeat.as_deref(), Some("30m"));
             assert_eq!(done.as_deref(), Some("STATUS.md"));
             assert!(!no_done);
@@ -908,12 +920,13 @@ fn test_loop_repeat_with_done() {
 fn test_loop_repeat_with_no_done() {
     let args = parse(&["clud", "loop", "--repeat", "5m", "--no-done", "task"]);
     match args.command {
-        Some(Command::Loop {
-            ref repeat,
-            no_done,
-            ref done,
-            ..
-        }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs {
+                ref repeat,
+                no_done,
+                ref done,
+                ..
+            } = *options;
             assert_eq!(repeat.as_deref(), Some("5m"));
             assert!(no_done);
             assert!(done.is_none());
@@ -1006,14 +1019,15 @@ fn test_fix_subcommand() {
 fn test_optimize_defaults_to_rust_global_soldr() {
     let args = parse(&["clud", "optimize"]);
     match args.command {
-        Some(Command::Optimize {
-            target,
-            global,
-            repo,
-            install_soldr,
-            use_soldr_shims,
-            ref soldr_version,
-        }) => {
+        Some(Command::Optimize(options)) => {
+            let crate::args::OptimizeArgs {
+                target,
+                global,
+                repo,
+                install_soldr,
+                use_soldr_shims,
+                ref soldr_version,
+            } = *options;
             assert_eq!(target, OptimizeTarget::Rust);
             assert!(!global);
             assert!(!repo);
@@ -1038,14 +1052,15 @@ fn test_optimize_rust_repo_flags() {
         "1.2.3",
     ]);
     match args.command {
-        Some(Command::Optimize {
-            target,
-            global,
-            repo,
-            install_soldr,
-            use_soldr_shims,
-            ref soldr_version,
-        }) => {
+        Some(Command::Optimize(options)) => {
+            let crate::args::OptimizeArgs {
+                target,
+                global,
+                repo,
+                install_soldr,
+                use_soldr_shims,
+                ref soldr_version,
+            } = *options;
             assert_eq!(target, OptimizeTarget::Rust);
             assert!(!global);
             assert!(repo);
@@ -1079,7 +1094,8 @@ fn test_settings_list_flag() {
 fn test_optimize_soldr_alias_selects_rust() {
     let args = parse(&["clud", "optimize", "soldr"]);
     match args.command {
-        Some(Command::Optimize { target, .. }) => {
+        Some(Command::Optimize(options)) => {
+            let crate::args::OptimizeArgs { target, .. } = *options;
             assert_eq!(target, OptimizeTarget::Rust);
         }
         other => panic!("expected Optimize subcommand, got {other:?}"),
@@ -1603,7 +1619,7 @@ fn tool_run_round_trips_a_trivial_command_after_the_separator() {
 fn separator_after_a_non_tool_subcommand_still_feeds_passthrough() {
     let args = parse(&["clud", "loop", "task", "--", "--verbose", "--debug"]);
     assert_eq!(args.passthrough, vec!["--verbose", "--debug"]);
-    assert!(matches!(args.command, Some(Command::Loop { .. })));
+    assert!(matches!(args.command, Some(Command::Loop(_))));
 }
 
 /// The behaviour the fix must *not* break: before any subcommand, `--` still
@@ -2019,11 +2035,12 @@ fn ci_is_a_dispatched_subcommand_with_its_flags() {
 fn test_loop_message_flag_with_and_without_task() {
     let args = parse(&["clud", "loop", "--message", "hi there"]);
     match args.command {
-        Some(Command::Loop {
-            ref task,
-            ref message,
-            ..
-        }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs {
+                ref task,
+                ref message,
+                ..
+            } = *options;
             assert!(task.is_none());
             assert_eq!(message.as_deref(), Some("hi there"));
         }
@@ -2031,11 +2048,12 @@ fn test_loop_message_flag_with_and_without_task() {
     }
     let args = parse(&["clud", "loop", "--message", "m", "do it"]);
     match args.command {
-        Some(Command::Loop {
-            ref task,
-            ref message,
-            ..
-        }) => {
+        Some(Command::Loop(options)) => {
+            let crate::args::LoopArgs {
+                ref task,
+                ref message,
+                ..
+            } = *options;
             assert_eq!(task.as_deref(), Some("do it"));
             assert_eq!(message.as_deref(), Some("m"));
         }

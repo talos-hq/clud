@@ -444,17 +444,18 @@ fn test_daemon_servicedef_alias_subcommand_parses() {
 fn test_top_subcommand_parses() {
     let args = parse(&["clud", "top"]);
     match args.command {
-        Some(Command::Top {
-            json,
-            once,
-            watch,
-            tree,
-            flat,
-            sort,
-            limit,
-            since,
-            originator,
-        }) => {
+        Some(Command::Top(options)) => {
+            let crate::args::TopArgs {
+                json,
+                once,
+                watch,
+                tree,
+                flat,
+                sort,
+                limit,
+                since,
+                originator,
+            } = *options;
             assert!(!json);
             assert!(!once);
             assert!(!watch);
@@ -474,7 +475,7 @@ fn test_top_subcommand_parses() {
 fn test_top_json_subcommand_parses() {
     let args = parse(&["clud", "top", "--json"]);
     match args.command {
-        Some(Command::Top { json, .. }) => assert!(json),
+        Some(Command::Top(options)) => assert!(options.json),
         other => panic!("expected Top --json, got {other:?}"),
     }
     assert!(args.passthrough.is_empty());
@@ -497,15 +498,16 @@ fn test_top_once_flat_sort_limit_since_originator_parses() {
         "CLUD:123",
     ]);
     match args.command {
-        Some(Command::Top {
-            once,
-            flat,
-            sort,
-            limit,
-            since,
-            originator,
-            ..
-        }) => {
+        Some(Command::Top(options)) => {
+            let crate::args::TopArgs {
+                once,
+                flat,
+                sort,
+                limit,
+                since,
+                originator,
+                ..
+            } = *options;
             assert!(once);
             assert!(flat);
             assert_eq!(sort, TopSort::Rss);

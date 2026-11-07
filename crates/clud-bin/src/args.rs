@@ -734,6 +734,230 @@ impl InstallArgs {
     }
 }
 
+// Keep these payloads out of the monolithic clap subcommand derive frames (#2629).
+#[derive(clap::Args, Debug, Clone)]
+pub struct LoopArgs {
+    /// Prompt text, path to a local file, or a GH issue/PR URL.
+    pub task: Option<String>,
+    #[arg(long = "loop-count", default_value = "50")]
+    pub loop_count: u32,
+    /// Force re-fetch of a cached GH issue/PR body.
+    #[arg(long = "refresh")]
+    pub refresh: bool,
+    /// Do not inject the DONE/BLOCKED marker contract into the prompt.
+    #[arg(long = "no-done", alias = "no-done-marker", conflicts_with = "done")]
+    pub no_done: bool,
+    /// Re-enable the DONE/BLOCKED contract using a custom DONE marker path.
+    #[arg(long = "done", conflicts_with = "no_done")]
+    pub done: Option<String>,
+    /// Re-run the loop after it completes, sleeping for the given duration
+    /// between runs (for example `30s`, `5m`, `1h`).
+    #[arg(long = "repeat")]
+    pub repeat: Option<String>,
+    /// Queue a message for the next loop iteration (delivered via
+    /// `.clud/loop/NEXT_MESSAGE.md`). Without a task, queue and exit.
+    #[arg(long = "message")]
+    pub message: Option<String>,
+    /// Read loop settings from this `loop.json` instead of the implicit
+    /// `<git-root>/loop.json`. CLI flags override file values.
+    #[arg(long = "config")]
+    pub config: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct InjectArgs {
+    /// Session id (`sess-...`) returned by `session_start` / `POST /v1/sessions`.
+    pub session: String,
+    /// The message the agent receives as its next user turn.
+    pub message: String,
+    /// Interrupt the running turn instead of waiting for it to end.
+    #[arg(long)]
+    pub interrupt: bool,
+    /// Idempotency key; defaults to a hash of session + message.
+    #[arg(long = "client-msg-id")]
+    pub client_msg_id: Option<String>,
+    /// Who is steering (recorded on the session); defaults to the board id.
+    #[arg(long = "from")]
+    pub from: Option<String>,
+    /// Ticket or issue reference recorded with the injection.
+    #[arg(long = "ticket")]
+    pub ticket: Option<String>,
+    /// Return once accepted instead of waiting for delivery.
+    #[arg(long)]
+    pub detach: bool,
+    /// Seconds to wait for delivery when not detached.
+    #[arg(long = "timeout", default_value_t = 600)]
+    pub timeout: u64,
+    /// Print the result as one JSON object.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct TopArgs {
+    /// Emit machine-readable JSON.
+    #[arg(long = "json")]
+    pub json: bool,
+    /// Print one snapshot and exit.
+    #[arg(long = "once")]
+    pub once: bool,
+    /// Keep refreshing. With `--json`, prints one compact JSON object per line.
+    #[arg(long = "watch", conflicts_with = "once")]
+    pub watch: bool,
+    /// Render rows as a process tree. This is the default text mode.
+    #[arg(long = "tree", conflicts_with = "flat")]
+    pub tree: bool,
+    /// Render rows as one flat sorted table.
+    #[arg(long = "flat", conflicts_with = "tree")]
+    pub flat: bool,
+    /// Sort key for tree siblings and flat rows.
+    #[arg(long = "sort", value_enum, default_value_t = TopSort::Cpu)]
+    pub sort: TopSort,
+    /// Cap displayed rows per subtree in tree mode, or total rows in flat mode.
+    #[arg(long = "limit", default_value_t = 20)]
+    pub limit: usize,
+    /// Include dead PIDs sampled within this duration, e.g. `30s`, `5m`.
+    #[arg(long = "since", value_name = "DURATION")]
+    pub since: Option<String>,
+    /// Restrict output to one cohort, e.g. `CLUD:71584` or `71584`.
+    #[arg(long = "originator", value_name = "CLUD:PID")]
+    pub originator: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct OptimizeArgs {
+    /// Toolchain family to optimize. Defaults to Rust.
+    #[arg(value_enum, default_value_t = OptimizeTarget::Rust)]
+    pub target: OptimizeTarget,
+    /// Persist the recommendation in ~/.clud/settings.json.
+    #[arg(long = "global", conflicts_with = "repo")]
+    pub global: bool,
+    /// Write a repo-local .clud/settings.json directive.
+    #[arg(long = "repo", conflicts_with = "global")]
+    pub repo: bool,
+    /// Install soldr if it is missing from PATH.
+    #[arg(
+        long = "install-soldr",
+        default_value_t = true,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        value_parser = clap::value_parser!(bool),
+    )]
+    pub install_soldr: bool,
+    /// Enable soldr shims for future clud-managed Rust setup.
+    #[arg(
+        long = "use-soldr-shims",
+        default_value_t = true,
+        action = ArgAction::Set,
+        num_args = 0..=1,
+        default_missing_value = "true",
+        value_parser = clap::value_parser!(bool),
+    )]
+    pub use_soldr_shims: bool,
+    /// Ignored with a warning: soldr cannot be pinned and always follows latest.
+    #[arg(long = "soldr-version", default_value = "latest")]
+    pub soldr_version: String,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct SetupArgs {
+    /// A product to install: hermes (hermes-slim) or talos. Equivalent to
+    /// `clud install <product>`; a bare `clud setup` sets up clud itself.
+    pub product: Option<String>,
+    /// Print every step and what is already in place; change nothing.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    /// Run without prompts (required without a terminal). Keeps the
+    /// saved provider, or Claude, unless --provider is given.
+    #[arg(long = "yes", short = 'y')]
+    pub yes: bool,
+    /// Provider to configure instead of asking.
+    #[arg(long, value_parser = parse_setup_provider)]
+    pub provider: Option<crate::backend::ModelProvider>,
+    /// Also activate clud in new shells: runs the installer for this
+    /// version, which owns every shell-profile and PATH edit.
+    #[arg(long = "write-profile")]
+    pub write_profile: bool,
+    /// Import the OpenRouter settings and key found in Hermes' config.
+    /// Required for an import under --yes; OpenRouter is metered, so
+    /// CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=openrouter are too.
+    #[arg(long = "import-hermes")]
+    pub import_hermes: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct PayloadRulesArgs {
+    /// Read the rules from this file instead of the stdin document. This is
+    /// the same loader `CLUD_PAYLOAD_RULES` uses at gateway time.
+    #[arg(long = "rules")]
+    pub rules: Option<PathBuf>,
+    /// Model the rules select on. Absent matches no `models` entry, so only
+    /// model-agnostic rules fire.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Protocol the rules select on (`claude` for `POST /v1/messages`).
+    #[arg(long, default_value = "claude")]
+    pub protocol: String,
+    /// Protocol the *client* spoke (`openai` for `POST /v1/chat/completions`),
+    /// which a rule's `from-protocol` selector matches. Empty means unknown.
+    #[arg(long = "from-protocol", default_value = "")]
+    pub from_protocol: String,
+    /// A request header the rules can select on, as `Name: value`.
+    /// Repeatable; mirrors the headers a real request carries.
+    #[arg(long = "header", value_name = "NAME: VALUE")]
+    pub headers: Vec<String>,
+    /// Read the rules from `requests.payload` in this settings file instead
+    /// of the stdin document — the owner the gateway uses when
+    /// `CLUD_PAYLOAD_RULES` is unset.
+    #[arg(long = "settings-file", conflicts_with = "rules")]
+    pub settings_file: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct MetaDeviceLoginArgs {
+    /// Device authorization endpoint, overriding the compiled-in one.
+    #[arg(long = "device-endpoint", requires = "token_endpoint")]
+    pub device_endpoint: Option<String>,
+    /// Token endpoint, overriding the compiled-in one.
+    #[arg(long = "token-endpoint", requires = "device_endpoint")]
+    pub token_endpoint: Option<String>,
+    /// API-key mint endpoint, overriding the compiled-in one.
+    #[arg(long = "mint-url")]
+    pub mint_url: Option<String>,
+    /// Minimum poll interval in milliseconds.
+    #[arg(long = "interval-ms")]
+    pub interval_ms: Option<u64>,
+    /// Bound on the whole polling wait, in milliseconds.
+    #[arg(long = "max-poll-ms")]
+    pub max_poll_ms: Option<u64>,
+    /// Print the stored credential summary instead of starting a login.
+    #[arg(long)]
+    pub status: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct KimiDeviceLoginArgs {
+    /// Kimi domain: `com` (default) or `ai`.
+    #[arg(long)]
+    pub domain: Option<String>,
+    /// Device authorization endpoint, overriding the compiled-in one.
+    #[arg(long = "device-endpoint", requires = "token_endpoint")]
+    pub device_endpoint: Option<String>,
+    /// Token endpoint, overriding the compiled-in one.
+    #[arg(long = "token-endpoint", requires = "device_endpoint")]
+    pub token_endpoint: Option<String>,
+    /// Minimum poll interval in milliseconds.
+    #[arg(long = "interval-ms")]
+    pub interval_ms: Option<u64>,
+    /// Bound on the whole polling wait, in milliseconds.
+    #[arg(long = "max-poll-ms")]
+    pub max_poll_ms: Option<u64>,
+    /// Refresh the login stored in the OS vault instead of starting a new one.
+    #[arg(long = "refresh-stored")]
+    pub refresh_stored: bool,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Compare backend latency with isolated, validated samples.
@@ -798,30 +1022,7 @@ pub enum Command {
     /// default. Safe to rerun. Never edits shell profiles or PATH without
     /// --write-profile. Exits 0 on success, 2 for a refused request (no
     /// terminal without --yes, missing OpenRouter key), 1 on a failed step.
-    Setup {
-        /// A product to install: hermes (hermes-slim) or talos. Equivalent to
-        /// `clud install <product>`; a bare `clud setup` sets up clud itself.
-        product: Option<String>,
-        /// Print every step and what is already in place; change nothing.
-        #[arg(long = "dry-run")]
-        dry_run: bool,
-        /// Run without prompts (required without a terminal). Keeps the
-        /// saved provider, or Claude, unless --provider is given.
-        #[arg(long = "yes", short = 'y')]
-        yes: bool,
-        /// Provider to configure instead of asking.
-        #[arg(long, value_parser = parse_setup_provider)]
-        provider: Option<crate::backend::ModelProvider>,
-        /// Also activate clud in new shells: runs the installer for this
-        /// version, which owns every shell-profile and PATH edit.
-        #[arg(long = "write-profile")]
-        write_profile: bool,
-        /// Import the OpenRouter settings and key found in Hermes' config.
-        /// Required for an import under --yes; OpenRouter is metered, so
-        /// CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=openrouter are too.
-        #[arg(long = "import-hermes")]
-        import_hermes: bool,
-    },
+    Setup(Box<SetupArgs>),
     /// Install another agent product (`hermes` = hermes-slim, `talos`) and offer
     /// to migrate clud's provider credentials into it (#2609). `clud setup
     /// <product>` is an exact alias. See docs/architecture/install-products.md.
@@ -842,33 +1043,7 @@ pub enum Command {
     /// Inject a user message into a running daemon session: queued for the
     /// next turn boundary, or `--interrupt` to replace the running turn
     /// (docs/architecture/session-inject.md). Never prompts.
-    Inject {
-        /// Session id (`sess-...`) returned by `session_start` / `POST /v1/sessions`.
-        session: String,
-        /// The message the agent receives as its next user turn.
-        message: String,
-        /// Interrupt the running turn instead of waiting for it to end.
-        #[arg(long)]
-        interrupt: bool,
-        /// Idempotency key; defaults to a hash of session + message.
-        #[arg(long = "client-msg-id")]
-        client_msg_id: Option<String>,
-        /// Who is steering (recorded on the session); defaults to the board id.
-        #[arg(long = "from")]
-        from: Option<String>,
-        /// Ticket or issue reference recorded with the injection.
-        #[arg(long = "ticket")]
-        ticket: Option<String>,
-        /// Return once accepted instead of waiting for delivery.
-        #[arg(long)]
-        detach: bool,
-        /// Seconds to wait for delivery when not detached.
-        #[arg(long = "timeout", default_value_t = 600)]
-        timeout: u64,
-        /// Print the result as one JSON object.
-        #[arg(long)]
-        json: bool,
-    },
+    Inject(Box<InjectArgs>),
     /// Run a CI job locally under bosn and show only the verdict and the
     /// failing steps' diagnostics (#1839).
     Ci {
@@ -902,33 +1077,7 @@ pub enum Command {
         #[command(subcommand)]
         subcommand: DeepseekAuthSubcommand,
     },
-    Loop {
-        /// Prompt text, path to a local file, or a GH issue/PR URL.
-        task: Option<String>,
-        #[arg(long = "loop-count", default_value = "50")]
-        loop_count: u32,
-        /// Force re-fetch of a cached GH issue/PR body.
-        #[arg(long = "refresh")]
-        refresh: bool,
-        /// Do not inject the DONE/BLOCKED marker contract into the prompt.
-        #[arg(long = "no-done", alias = "no-done-marker", conflicts_with = "done")]
-        no_done: bool,
-        /// Re-enable the DONE/BLOCKED contract using a custom DONE marker path.
-        #[arg(long = "done", conflicts_with = "no_done")]
-        done: Option<String>,
-        /// Re-run the loop after it completes, sleeping for the given duration
-        /// between runs (for example `30s`, `5m`, `1h`).
-        #[arg(long = "repeat")]
-        repeat: Option<String>,
-        /// Queue a message for the next loop iteration (delivered via
-        /// `.clud/loop/NEXT_MESSAGE.md`). Without a task, queue and exit.
-        #[arg(long = "message")]
-        message: Option<String>,
-        /// Read loop settings from this `loop.json` instead of the implicit
-        /// `<git-root>/loop.json`. CLI flags override file values.
-        #[arg(long = "config")]
-        config: Option<String>,
-    },
+    Loop(Box<LoopArgs>),
     Up {
         #[arg(short = 'm', long = "message")]
         message: Option<String>,
@@ -1054,35 +1203,7 @@ pub enum Command {
         action: ClaimSubcommand,
     },
     /// Inspect daemon-sampled CPU/RSS process trees.
-    Top {
-        /// Emit machine-readable JSON.
-        #[arg(long = "json")]
-        json: bool,
-        /// Print one snapshot and exit.
-        #[arg(long = "once")]
-        once: bool,
-        /// Keep refreshing. With `--json`, prints one compact JSON object per line.
-        #[arg(long = "watch", conflicts_with = "once")]
-        watch: bool,
-        /// Render rows as a process tree. This is the default text mode.
-        #[arg(long = "tree", conflicts_with = "flat")]
-        tree: bool,
-        /// Render rows as one flat sorted table.
-        #[arg(long = "flat", conflicts_with = "tree")]
-        flat: bool,
-        /// Sort key for tree siblings and flat rows.
-        #[arg(long = "sort", value_enum, default_value_t = TopSort::Cpu)]
-        sort: TopSort,
-        /// Cap displayed rows per subtree in tree mode, or total rows in flat mode.
-        #[arg(long = "limit", default_value_t = 20)]
-        limit: usize,
-        /// Include dead PIDs sampled within this duration, e.g. `30s`, `5m`.
-        #[arg(long = "since", value_name = "DURATION")]
-        since: Option<String>,
-        /// Restrict output to one cohort, e.g. `CLUD:71584` or `71584`.
-        #[arg(long = "originator", value_name = "CLUD:PID")]
-        originator: Option<String>,
-    },
+    Top(Box<TopArgs>),
     /// pm2-style log viewer: dump or tail a session's captured output.
     ///
     /// With no session id, lists all sessions that have log files and prints
@@ -1177,40 +1298,7 @@ pub enum Command {
         fail_on_no_server: bool,
     },
     /// Install and persist fast local tooling defaults.
-    Optimize {
-        /// Toolchain family to optimize. Defaults to Rust.
-        #[arg(value_enum, default_value_t = OptimizeTarget::Rust)]
-        target: OptimizeTarget,
-        /// Persist the recommendation in ~/.clud/settings.json.
-        #[arg(long = "global", conflicts_with = "repo")]
-        global: bool,
-        /// Write a repo-local .clud/settings.json directive.
-        #[arg(long = "repo", conflicts_with = "global")]
-        repo: bool,
-        /// Install soldr if it is missing from PATH.
-        #[arg(
-            long = "install-soldr",
-            default_value_t = true,
-            action = ArgAction::Set,
-            num_args = 0..=1,
-            default_missing_value = "true",
-            value_parser = clap::value_parser!(bool),
-        )]
-        install_soldr: bool,
-        /// Enable soldr shims for future clud-managed Rust setup.
-        #[arg(
-            long = "use-soldr-shims",
-            default_value_t = true,
-            action = ArgAction::Set,
-            num_args = 0..=1,
-            default_missing_value = "true",
-            value_parser = clap::value_parser!(bool),
-        )]
-        use_soldr_shims: bool,
-        /// Ignored with a warning: soldr cannot be pinned and always follows latest.
-        #[arg(long = "soldr-version", default_value = "latest")]
-        soldr_version: String,
-    },
+    Optimize(Box<OptimizeArgs>),
     /// Control the always-on clud daemon.
     Daemon {
         #[command(subcommand)]
@@ -1355,32 +1443,7 @@ pub enum Command {
     /// rewritten payload and what each rule kind did to stdout. Never used by a
     /// launched session.
     #[command(name = "__apply-payload-rules", hide = true)]
-    InternalApplyPayloadRules {
-        /// Read the rules from this file instead of the stdin document. This is
-        /// the same loader `CLUD_PAYLOAD_RULES` uses at gateway time.
-        #[arg(long = "rules")]
-        rules: Option<PathBuf>,
-        /// Model the rules select on. Absent matches no `models` entry, so only
-        /// model-agnostic rules fire.
-        #[arg(long)]
-        model: Option<String>,
-        /// Protocol the rules select on (`claude` for `POST /v1/messages`).
-        #[arg(long, default_value = "claude")]
-        protocol: String,
-        /// Protocol the *client* spoke (`openai` for `POST /v1/chat/completions`),
-        /// which a rule's `from-protocol` selector matches. Empty means unknown.
-        #[arg(long = "from-protocol", default_value = "")]
-        from_protocol: String,
-        /// A request header the rules can select on, as `Name: value`.
-        /// Repeatable; mirrors the headers a real request carries.
-        #[arg(long = "header", value_name = "NAME: VALUE")]
-        headers: Vec<String>,
-        /// Read the rules from `requests.payload` in this settings file instead
-        /// of the stdin document — the owner the gateway uses when
-        /// `CLUD_PAYLOAD_RULES` is unset.
-        #[arg(long = "settings-file", conflicts_with = "rules")]
-        settings_file: Option<PathBuf>,
-    },
+    InternalApplyPayloadRules(Box<PayloadRulesArgs>),
     /// Hidden test seam for the legacy completions ingress. Without
     /// `--response` it translates a `/v1/completions` request into a Messages
     /// request; with it, the reverse: an upstream Messages body into a
@@ -1445,52 +1508,14 @@ pub enum Command {
     /// `--refresh-stored` it renews the login already in the OS vault instead.
     /// Never used by a launched session.
     #[command(name = "__kimi-device-login", hide = true)]
-    InternalKimiDeviceLogin {
-        /// Kimi domain: `com` (default) or `ai`.
-        #[arg(long)]
-        domain: Option<String>,
-        /// Device authorization endpoint, overriding the compiled-in one.
-        #[arg(long = "device-endpoint", requires = "token_endpoint")]
-        device_endpoint: Option<String>,
-        /// Token endpoint, overriding the compiled-in one.
-        #[arg(long = "token-endpoint", requires = "device_endpoint")]
-        token_endpoint: Option<String>,
-        /// Minimum poll interval in milliseconds.
-        #[arg(long = "interval-ms")]
-        interval_ms: Option<u64>,
-        /// Bound on the whole polling wait, in milliseconds.
-        #[arg(long = "max-poll-ms")]
-        max_poll_ms: Option<u64>,
-        /// Refresh the login stored in the OS vault instead of starting a new one.
-        #[arg(long = "refresh-stored")]
-        refresh_stored: bool,
-    },
+    InternalKimiDeviceLogin(Box<KimiDeviceLoginArgs>),
     /// Hidden test seam for Meta Muse's RFC 8628 device login: request a device
     /// code, poll until the account authorizes it, mint the Meta Model API key,
     /// store the credential in the OS vault and print progress as JSON lines.
     /// `--status` prints the stored (non-secret) record without a network call.
     /// Never used by a launched session.
     #[command(name = "__meta-device-login", hide = true)]
-    InternalMetaDeviceLogin {
-        /// Device authorization endpoint, overriding the compiled-in one.
-        #[arg(long = "device-endpoint", requires = "token_endpoint")]
-        device_endpoint: Option<String>,
-        /// Token endpoint, overriding the compiled-in one.
-        #[arg(long = "token-endpoint", requires = "device_endpoint")]
-        token_endpoint: Option<String>,
-        /// API-key mint endpoint, overriding the compiled-in one.
-        #[arg(long = "mint-url")]
-        mint_url: Option<String>,
-        /// Minimum poll interval in milliseconds.
-        #[arg(long = "interval-ms")]
-        interval_ms: Option<u64>,
-        /// Bound on the whole polling wait, in milliseconds.
-        #[arg(long = "max-poll-ms")]
-        max_poll_ms: Option<u64>,
-        /// Print the stored credential summary instead of starting a login.
-        #[arg(long)]
-        status: bool,
-    },
+    InternalMetaDeviceLogin(Box<MetaDeviceLoginArgs>),
     #[command(name = "__daemon", hide = true)]
     InternalDaemon {
         #[arg(long = "state-dir")]
@@ -2828,6 +2853,61 @@ mod tests;
 #[cfg(test)]
 mod arg_parser_stack_tests {
     use super::*;
+
+    // Exercise clap directly: the inherent Args shim uses an existing large-stack
+    // worker and would hide regressions in the generated frames (#2629).
+    // 1.75 MiB leaves 256 KiB below libtest's default stack. On debug Linux x64,
+    // main needed 2,228,224 bytes; boxed payloads reduced that to 1,802,240 bytes.
+    #[test]
+    fn derived_parser_stack_guard() {
+        std::thread::Builder::new()
+            .name("clud-derived-parser-stack".to_string())
+            .stack_size(1792 * 1024)
+            .spawn(|| {
+                for argv in [
+                    vec!["clud"],
+                    vec![
+                        "clud",
+                        "grind-facts",
+                        "task",
+                        "--checkout",
+                        "/checkout",
+                        "--",
+                        "src/a.rs",
+                        "-leading.rs",
+                    ],
+                    vec!["clud", "loop", "task", "--loop-count", "2"],
+                    vec!["clud", "install", "talos", "--dry-run"],
+                    vec!["clud", "setup", "--dry-run", "--yes"],
+                    vec!["clud", "top", "--once", "--flat", "--sort", "rss"],
+                    vec!["clud", "inject", "sess-example", "message", "--detach"],
+                    vec!["clud", "optimize", "rust", "--repo"],
+                    vec!["clud", "__apply-payload-rules"],
+                    vec!["clud", "__meta-device-login", "--status"],
+                    vec!["clud", "__kimi-device-login", "--refresh-stored"],
+                    vec!["clud", "secret", "--to-file", "credential.txt"],
+                    vec!["clud", "auth", "status", "--json"],
+                    vec!["clud", "tool", "log", "--grep", "needle"],
+                    vec![
+                        "clud",
+                        "ab",
+                        "--backends",
+                        "claude,codex",
+                        "--prompt-file",
+                        "prompt.txt",
+                        "--runs",
+                        "1",
+                    ],
+                ] {
+                    eprintln!("parse {argv:?}");
+                    let result = <Args as Parser>::try_parse_from(argv.clone());
+                    result.expect("parse representative argv");
+                }
+            })
+            .expect("spawn derived-parser stack guard")
+            .join()
+            .expect("derived-parser stack guard panicked");
+    }
 
     /// The parser must not depend on the caller's stack. A debug build needs
     /// several MiB for clap's derived `from_arg_matches` frame while libtest

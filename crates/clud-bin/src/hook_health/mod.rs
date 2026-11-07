@@ -58,7 +58,7 @@ pub fn should_warn_uv_launch(args: &Args) -> bool {
     }
     matches!(
         args.command,
-        None | Some(CliCommand::Loop { .. })
+        None | Some(CliCommand::Loop(_))
             | Some(CliCommand::Up { .. })
             | Some(CliCommand::Rebase)
             | Some(CliCommand::Fix { .. })

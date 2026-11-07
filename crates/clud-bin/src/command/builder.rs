@@ -120,7 +120,7 @@ pub fn has_noninteractive_prompt(args: &Args, backend: Backend) -> bool {
         return true;
     }
     match &args.command {
-        Some(Command::Loop { .. }) => true,
+        Some(Command::Loop(_)) => true,
         Some(Command::Grind { .. }) => false,
         Some(Command::Do { target }) => {
             target
@@ -850,7 +850,7 @@ fn build_launch_plan_for_target_at(
     // a later `-p <prompt>`, which makes claude exit 0 with no output and no
     // diagnostic. A single token cannot swallow anything, so this stays correct
     // wherever it lands relative to the prompt and to unknown-flag passthrough.
-    let is_unattended = args.unattended || matches!(args.command, Some(Command::Loop { .. }));
+    let is_unattended = args.unattended || matches!(args.command, Some(Command::Loop(_)));
     let mut disallowed: Vec<&str> = Vec::new();
     if matches!(backend, Backend::Claude) {
         // Order matters only for stability of the emitted token, which the
@@ -886,7 +886,7 @@ fn build_launch_plan_for_target_at(
         // `CLAUDE_HEADLESS_UNUSED_TOOLS`) are unreachable there. Interactive,
         // `clud loop` and `clud grind` launches keep both.
         let headless_one_shot = agent_mode
-            && !matches!(args.command, Some(Command::Loop { .. }))
+            && !matches!(args.command, Some(Command::Loop(_)))
             && !matches!(args.command, Some(Command::Grind { .. }));
         if headless_one_shot {
             disallowed.extend_from_slice(CLAUDE_HEADLESS_UNUSED_TOOLS);
@@ -985,18 +985,11 @@ fn build_launch_plan_for_target_at(
 
     let mut loop_markers: Option<LoopMarkers> = None;
     match &args.command {
-        Some(Command::Loop {
-            task,
-            loop_count,
-            refresh,
-            no_done,
-            done,
-            repeat,
-            ..
-        }) => {
-            iterations = *loop_count;
+        Some(Command::Loop(options)) => {
+            iterations = options.loop_count;
             let git_root = git_root_from(cwd);
-            let repeat_interval_secs = repeat
+            let repeat_interval_secs = options
+                .repeat
                 .as_deref()
                 .map(parse_repeat_interval)
                 .transpose()
@@ -1006,14 +999,19 @@ fn build_launch_plan_for_target_at(
                 });
             repeat_schedule =
                 repeat_interval_secs.map(|interval_secs| RepeatSchedule { interval_secs });
-            let use_done_markers = done.is_some() || (!*no_done && repeat_schedule.is_none());
+            let use_done_markers =
+                options.done.is_some() || (!options.no_done && repeat_schedule.is_none());
             let marker_paths = if use_done_markers {
-                Some(resolve_marker_paths(cwd, &git_root, done.as_deref()))
+                Some(resolve_marker_paths(
+                    cwd,
+                    &git_root,
+                    options.done.as_deref(),
+                ))
             } else {
                 None
             };
-            if let Some(ref t) = task {
-                let prompt_text = resolve_loop_task(t, &git_root, *refresh);
+            if let Some(ref t) = options.task {
+                let prompt_text = resolve_loop_task(t, &git_root, options.refresh);
                 task_summary = Some(summarize_task_name(&prompt_text, 50));
                 let done_contract = marker_paths.as_ref().map_or_else(String::new, |markers| {
                     done_marker_contract(&markers.done, &markers.blocked)
@@ -1205,7 +1203,7 @@ fn build_launch_plan_for_target_at(
 
     cmd.extend(passthrough);
 
-    let is_loop_cmd = matches!(&args.command, Some(Command::Loop { .. }));
+    let is_loop_cmd = matches!(&args.command, Some(Command::Loop(_)));
     // Headless: Claude print, Codex exec, dsh headless, or OpenCode run.
     let headless = match backend {
         Backend::Claude => cmd.iter().any(|a| a == "-p" || a == "--print"),
