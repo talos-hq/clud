@@ -2512,6 +2512,8 @@ mod tests {
     fn isolated_daemon_test(test: &str) -> bool {
         const CHILD: &str = "CLUD_DAEMON_SERVER_TEST_CHILD";
         if std::env::var(CHILD).as_deref() == Ok(test) {
+            let home = crate::home::user_home().unwrap();
+            fs::write(home.join("entered-test"), test).unwrap();
             return false;
         }
         let home = tempfile::tempdir().unwrap();
@@ -2555,9 +2557,10 @@ mod tests {
             String::from_utf8_lossy(&stdout),
             String::from_utf8_lossy(&stderr)
         );
-        assert!(
-            String::from_utf8_lossy(&stdout).contains("test result: ok. 1 passed;"),
-            "isolated child must execute exactly the requested test"
+        assert_eq!(
+            fs::read_to_string(home.path().join("entered-test")).unwrap(),
+            test,
+            "isolated child must execute the requested test"
         );
         true
     }
