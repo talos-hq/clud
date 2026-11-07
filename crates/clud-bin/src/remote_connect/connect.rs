@@ -95,11 +95,14 @@ fn parse_choice(text: &str) -> Option<Mode> {
 }
 
 fn read_typed_choice(input: &mut impl BufRead, out: &mut impl Write) -> Result<Mode, String> {
-    let prompt = Prompt { current: 0 };
+    // Piped input only: no raw mode here, so this is one plain block of text.
+    let mut menu = String::new();
     for (index, (_, label)) in CHOICES.iter().enumerate() {
-        let _ = writeln!(out, "{} {label}", marker(index, prompt.current));
+        menu.push_str(&format!("{} {label}\n", marker(index, 0)));
     }
-    let _ = write!(out, "\n{PROMPT}");
+    menu.push('\n');
+    menu.push_str(PROMPT);
+    let _ = out.write_all(menu.as_bytes());
     let _ = out.flush();
     let mut line = String::new();
     match input.read_line(&mut line) {
