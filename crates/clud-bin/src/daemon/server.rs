@@ -116,6 +116,8 @@ fn publish_daemon_info(
         )
     })?;
     phases.mark("daemon_info_write");
+    #[cfg(test)]
+    tests::notify_daemon_ready(info);
     daemon_events::log_event(
         state_dir,
         "daemon_started",
@@ -2473,19 +2475,148 @@ mod tests {
         assert_eq!(after.pid, info.pid, "successor's daemon.json must survive");
     }
 
+    thread_local! {
+        static DAEMON_READY: std::cell::RefCell<Option<std::sync::mpsc::Sender<DaemonInfo>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    pub(super) fn notify_daemon_ready(info: &DaemonInfo) {
+        DAEMON_READY.with(|slot| {
+            if let Some(ready) = slot.borrow_mut().take() {
+                let _ = ready.send(info.clone());
+            }
+        });
+    }
+
+    fn spawn_ready_daemon(
+        dir: std::path::PathBuf,
+        flag: Arc<AtomicBool>,
+        gate: Option<std::sync::mpsc::Receiver<()>>,
+    ) -> (
+        thread::JoinHandle<i32>,
+        std::sync::mpsc::Receiver<DaemonInfo>,
+    ) {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let daemon = thread::spawn(move || {
+            DAEMON_READY.with(|slot| *slot.borrow_mut() = Some(ready_tx));
+            if let Some(gate) = gate {
+                gate.recv().unwrap();
+            }
+            run_daemon(&dir, &flag)
+        });
+        (daemon, ready_rx)
+    }
+
+    /// Isolate all startup threads for the entire test process lifetime (#2428).
+    /// No global environment mutation or daemon runtime-policy override.
+    fn isolated_daemon_test(test: &str) -> bool {
+        const CHILD: &str = "CLUD_DAEMON_SERVER_TEST_CHILD";
+        if std::env::var(CHILD).as_deref() == Ok(test) {
+            return false;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let mut env: HashMap<String, String> = std::env::vars().collect();
+        let root = home.path().to_string_lossy().into_owned();
+        env.insert("HOME".into(), root.clone());
+        env.insert("USERPROFILE".into(), root);
+        env.insert(
+            "CLUD_DATA_DB".into(),
+            home.path().join("data.redb").to_string_lossy().into_owned(),
+        );
+        env.insert(CHILD.into(), test.into());
+        let process = NativeProcess::new(ProcessConfig {
+            command: CommandSpec::Argv(vec![
+                std::env::current_exe()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned(),
+                "--exact".into(),
+                format!("daemon::server::tests::{test}"),
+                "--nocapture".into(),
+            ]),
+            cwd: None,
+            env: Some(env.into_iter().collect()),
+            capture: true,
+            stderr_mode: StderrMode::Pipe,
+            creationflags: invisible_helper_creationflags(),
+            create_process_group: false,
+            stdin_mode: StdinMode::Null,
+            nice: None,
+            address_space_limit_bytes: None,
+        });
+        process.start().unwrap();
+        let code = process.wait(None).unwrap();
+        let stdout = process.drain_stream_raw(running_process::StreamKind::Stdout);
+        let stderr = process.drain_stream_raw(running_process::StreamKind::Stderr);
+        assert_eq!(
+            code,
+            0,
+            "isolated {test} failed:\n{}\n{}",
+            String::from_utf8_lossy(&stdout),
+            String::from_utf8_lossy(&stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&stdout).contains("test result: ok. 1 passed;"),
+            "isolated child must execute exactly the requested test"
+        );
+        true
+    }
+
+    /// Hold startup beyond the old five-second polling budget without host load.
+    /// The six-second receive is fault injection, never a startup deadline.
+    #[test]
+    fn tier1_startup_readiness_survives_delayed_start() {
+        if isolated_daemon_test("tier1_startup_readiness_survives_delayed_start") {
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let state_dir = home.path().join("state");
+        let flag = Arc::new(AtomicBool::new(false));
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let dir = state_dir.clone();
+        let thread_flag = Arc::clone(&flag);
+        let (daemon, ready_rx) = spawn_ready_daemon(dir, thread_flag, Some(release_rx));
+        let waiter = thread::spawn(move || {
+            result_tx.send(ready_rx.recv().is_ok()).unwrap();
+        });
+        let early = result_rx.recv_timeout(Duration::from_secs(6));
+        let stayed_blocked = matches!(early, Err(std::sync::mpsc::RecvTimeoutError::Timeout));
+        release_tx.send(()).unwrap();
+        let ready = early.unwrap_or_else(|_| result_rx.recv().unwrap());
+        // Always stop and join our own daemon, including on the RED path.
+        flag.store(true, Ordering::SeqCst);
+        assert_eq!(daemon.join().unwrap(), 0);
+        waiter.join().unwrap();
+        assert!(
+            stayed_blocked,
+            "readiness must wait until startup is released"
+        );
+        assert!(
+            ready,
+            "startup readiness must survive a delay beyond the old budget"
+        );
+    }
+
     /// #2142: a shutdown request and the interrupted flag both finish well
     /// inside `clud daemon restart`'s 10s wait, even with an idle client
     /// connection held open against the daemon.
     #[test]
     fn tier1_shutdown_and_signal_flag_finish_within_the_restart_timeout() {
+        if isolated_daemon_test("tier1_shutdown_and_signal_flag_finish_within_the_restart_timeout")
+        {
+            return;
+        }
         let bound = Duration::from_secs(5);
         for use_flag in [false, true] {
             let tmp = tempfile::tempdir().unwrap();
             let state_dir = tmp.path().to_path_buf();
             let flag = Arc::new(AtomicBool::new(false));
             let (dir, thread_flag) = (state_dir.clone(), Arc::clone(&flag));
-            let daemon_thread = thread::spawn(move || run_daemon(&dir, &thread_flag));
-            let info = wait_for_daemon_ready(&state_dir);
+            let (daemon_thread, ready) = spawn_ready_daemon(dir, thread_flag, None);
+            let info = ready
+                .recv()
+                .expect("daemon exited before publishing readiness");
             let _idle = TcpStream::connect(("127.0.0.1", info.port)).unwrap();
 
             let started = Instant::now();

@@ -30,6 +30,12 @@ Always-on background service for every `clud` invocation (issue #135). One long-
 
 Foreground interactive launches still use the direct runner by default — the daemon hosts the centralized PTY path only when explicitly opted in (`--detach`, `--detachable`, `--experimental-daemon-centralized`, repeat jobs). See [docs/architecture/daemon-ipc.md](../../../../docs/architecture/daemon-ipc.md) for the wire protocol, attach flow, snapshot/log persistence, and failure modes. This README is the per-file inventory.
 
+The restart-bound shutdown regression uses a test-only channel notified after
+`daemon.json` publication. Startup has no wall-clock budget; the unchanged
+five-second shutdown assertion starts after readiness. A gated-start regression
+holds startup beyond the former polling budget. Both tests run in child processes with temporary homes
+and registries, so detached startup threads share that isolation until exit (#2428).
+
 Internal helper subcommands `__daemon` and `__worker` re-enter the same binary in their respective roles.
 
 Every `clud daemon` subcommand honors the global `--dry-run` flag in any
