@@ -21,3 +21,9 @@ live ChatGPT backend probe succeeds.
 The Sol 6.1 block was removed after `codex-cli 0.164.0` successfully completed
 an authenticated ChatGPT Codex request with `gpt-6.1-sol` at low effort on
 2026-10-27 UTC. The same probe succeeded for `gpt-6.1-terra`.
+
+The upstream client's advertised compatibility version and the existing Bosn
+Codex CLI pin must match this verified probe version. A `codex_upstream` guard
+test enforces that relationship: the ChatGPT backend uses the `version` header
+to gate model access (#2299). Update the record and both consumers together
+when verifying a newer Codex release.

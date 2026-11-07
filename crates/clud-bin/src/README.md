@@ -200,7 +200,10 @@ Entry and orchestration:
   `POST /v1/responses` client with connect/read/overall timeouts, bounded
   buffering, cancellation, and a retry policy that stops the moment any byte
   reaches the sink. Builds every outbound header itself, so no downstream
-  header can leak upstream. #764 added `UpstreamFailure`/`FailureClass`: the
+  header can leak upstream. The backend gates model access on the advertised
+  Codex version (#2299); a guard keeps it and the Bosn CLI pin aligned with the
+  verified probe record in [`models/README.md`](../../../models/README.md).
+  #764 added `UpstreamFailure`/`FailureClass`: the
   error response is read (bounded body prefix, `cf-ray`, `x-request-id`,
   `Retry-After`), classified permanent/transient/unknown, and dropped — the
   class picks the retry budget, backoff is exponential with jitter, and a

@@ -9,4 +9,4 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends clang lld python3 python3-pip python-is-python3 git pkg-config libssl-dev nodejs npm \
     && rm -rf /var/lib/apt/lists/* \
     && pip3 install --break-system-packages uv soldr \
-    && npm install -g @anthropic-ai/claude-code@2.1.282 @openai/codex@0.157.1
+    && npm install -g @anthropic-ai/claude-code@2.1.282 @openai/codex@0.164.0
