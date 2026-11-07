@@ -78,7 +78,11 @@ The report contains no commands, paths, transcript contents, or session IDs;
 byte counts are not provider token counts.
 
 `diagnostics/transcript_report.py` reports repeated tool-call bursts,
-compactions, context jumps and context errors from one Claude transcript.
+compactions, context jumps, context errors and the history premium — the
+tokens a session re-sent above `--context-floor` (default 100k), which is the
+first number to read before blaming a tool: on 2026-11-07 five long-lived
+manager sessions held half of the fleet's 1.33B cache-read tokens while each
+had under 1 MB of tool output — from one Claude transcript.
 It joins clud's launch-context record by hashed session id to report the
 effective max-context value and its source
 ([launch-plan.md](../../../../docs/architecture/launch-plan.md#launch-context-record-1675)).

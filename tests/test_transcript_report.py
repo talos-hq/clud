@@ -168,6 +168,58 @@ def test_incident_compactions_errors_and_results(tr):
     assert "unavailable" in report["max_context_tokens"]["source"]
 
 
+def _context_rows(contexts):
+    """One assistant row per context size; `inp` is the whole context."""
+    return [
+        _assistant(f"msg_ctx_{i}", f"2026-09-22T09:{i:02d}:00Z", [_text("ok")], out=10, inp=ctx)
+        for i, ctx in enumerate(contexts)
+    ]
+
+
+def test_sustained_context_charges_the_history_premium(tr):
+    report = tr.analyze(_context_rows([20_000, 120_000, 200_000, 300_000]))
+    s = report["sustained_context"]
+    assert s["responses"] == 4
+    assert s["responses_over_floor"] == 3
+    assert s["premium_tokens"] == 20_000 + 100_000 + 200_000
+    assert s["median_context_tokens"] == 120_000
+    assert s["peak_context_tokens"] == 300_000
+
+
+def test_sustained_context_floor_is_tunable(tr):
+    rows = _context_rows([50_000, 60_000])
+    assert tr.analyze(rows)["sustained_context"]["premium_tokens"] == 0
+    lowered = tr.analyze(rows, context_floor=40_000)["sustained_context"]
+    assert lowered["premium_tokens"] == 10_000 + 20_000
+    assert lowered["floor_tokens"] == 40_000
+
+
+def test_sustained_context_is_empty_for_a_short_cheap_session(tr):
+    s = tr.analyze(_context_rows([12_000, 15_000]))["sustained_context"]
+    assert s["premium_tokens"] == 0
+    assert s["responses_over_floor"] == 0
+    assert s["median_context_tokens"] == 12_000
+
+
+def test_text_report_names_the_premium_and_the_compaction_lever(tr, tmp_path, capsys):
+    path = tmp_path / "big.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in _context_rows([250_000] * 60)))
+    assert tr.main([str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "sustained context: 60/60 responses" in out
+    assert "premium 9.0M tokens" in out
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" in out
+
+
+def test_text_report_stays_quiet_below_the_premium_threshold(tr, tmp_path, capsys):
+    path = tmp_path / "small.jsonl"
+    path.write_text("\n".join(json.dumps(r) for r in _context_rows([11_000] * 3)))
+    assert tr.main([str(path)]) == 0
+    out = capsys.readouterr().out
+    assert "sustained context: 0/3 responses" in out
+    assert "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE" not in out
+
+
 def test_small_normal_session_has_no_bursts(tr):
     rows = [
         _assistant(
