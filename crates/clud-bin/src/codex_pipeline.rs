@@ -970,6 +970,15 @@ fn translated_request_shape(
     })
 }
 
+struct PreparedTurn {
+    request: ResponsesRequest,
+    tool_names: HashMap<String, String>,
+    request_shape: serde_json::Value,
+    upstream_input: Vec<serde_json::Value>,
+    turn_input: Vec<serde_json::Value>,
+    pending_outputs_recovered: usize,
+}
+
 pub struct Pipeline<C: CredentialSource> {
     client: UpstreamClient<C>,
     default_model: ModelSpec,
@@ -1243,21 +1252,17 @@ impl<C: CredentialSource> Pipeline<C> {
         message_id: &str,
         cancel: &AtomicBool,
         sink: &mut dyn FnMut(&str) -> Result<(), UpstreamError>,
-        history: Option<&mut ConversationHistory>,
+        mut history: Option<&mut ConversationHistory>,
     ) -> Result<StreamSummary, PipelineError> {
-        let (request, tool_names, request_shape, translated_input) = self.prepare(request_body)?;
+        let PreparedTurn {
+            request,
+            tool_names,
+            request_shape,
+            mut upstream_input,
+            turn_input,
+            pending_outputs_recovered,
+        } = self.prepare_turn(request_body, history.as_deref_mut())?;
         let model = request.model.clone();
-        let pending_input = crate::codex_translate::pending_input_items_as_values(request_body)
-            .map_err(PipelineError::Translate)?;
-        let (mut upstream_input, turn_input, pending_outputs_recovered) = match history.as_ref() {
-            Some(history) => {
-                let assembled =
-                    history_aware_input(&history.snapshot(), &translated_input, &pending_input);
-                validate_continuation_input(&assembled.0, &translated_input)?;
-                assembled
-            }
-            None => (translated_input.clone(), translated_input, 0),
-        };
 
         let first = self.stream_attempt(
             &request,
@@ -1453,6 +1458,44 @@ impl<C: CredentialSource> Pipeline<C> {
             usage: summary.usage,
             history_append_rejected: summary.history_append_rejected,
             pending_outputs_recovered: summary.pending_outputs_recovered,
+        })
+    }
+
+    fn prepare_turn(
+        &self,
+        body: &[u8],
+        history: Option<&mut ConversationHistory>,
+    ) -> Result<PreparedTurn, PipelineError> {
+        let replay = crate::codex_translate::history_replay(
+            body,
+            history
+                .as_deref()
+                .and_then(ConversationHistory::failed_turn),
+        )
+        .map_err(PipelineError::Translate)?;
+        let (request, tool_names, request_shape, translated_input) = self.prepare(&replay.body)?;
+        let (upstream_input, turn_input, recovered) = match history {
+            Some(history) => {
+                let assembled = history_aware_input(
+                    &history.snapshot(),
+                    &translated_input,
+                    &replay.pending_input,
+                );
+                validate_continuation_input(&assembled.0, &translated_input)?;
+                // Arm before upstream; only a successful canonical append clears
+                // this marker, including for in-band and transport failures.
+                history.begin_turn(replay.pending_start, replay.replay_end);
+                assembled
+            }
+            None => (translated_input.clone(), translated_input, 0),
+        };
+        Ok(PreparedTurn {
+            request,
+            tool_names,
+            request_shape,
+            upstream_input,
+            turn_input,
+            pending_outputs_recovered: recovered + replay.recovered_outputs,
         })
     }
 

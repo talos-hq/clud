@@ -72,6 +72,96 @@ pub fn pending_input_items_as_values(
     input_items_as_values(&items)
 }
 
+/// A replay with only bridge-recorded failed assistants removed. Positions
+/// remain in the original harness transcript, including across repeated failures.
+pub(crate) struct HistoryReplay {
+    pub body: Vec<u8>,
+    pub pending_input: Vec<serde_json::Value>,
+    pub pending_start: usize,
+    pub replay_end: usize,
+    pub recovered_outputs: usize,
+}
+
+pub(crate) fn history_replay(
+    body: &[u8],
+    failed: Option<&crate::codex_history::FailedTurn>,
+) -> Result<HistoryReplay, TranslateError> {
+    let request: MessagesRequest = serde_json::from_slice(body)
+        .map_err(|error| invalid(format!("could not decode request: {error}")))?;
+    let replay_end = request.messages.len();
+    let last = replay_end
+        .checked_sub(1)
+        .ok_or_else(|| invalid("messages must not be empty"))?;
+    let normal_start = request
+        .messages
+        .iter()
+        .rposition(|message| message.role == "assistant")
+        .map_or(last, |assistant| (assistant + 1).min(last));
+    let Some(failed) = failed else {
+        return Ok(HistoryReplay {
+            body: body.to_vec(),
+            pending_input: pending_input_items_as_values(body)?,
+            pending_start: normal_start,
+            replay_end,
+            recovered_outputs: 0,
+        });
+    };
+    if failed.pending_start >= replay_end {
+        return Err(invalid(
+            "failed-turn pending boundary is outside the replay",
+        ));
+    }
+    let shell_calls = shell_call_ids(&request);
+    let mut pending_input = Vec::new();
+    let mut recovered_outputs = 0;
+    for (index, message) in request
+        .messages
+        .iter()
+        .enumerate()
+        .skip(failed.pending_start)
+    {
+        if message.role == "assistant" && failed.assistant_positions.contains(&index) {
+            continue;
+        }
+        let mut items = Vec::new();
+        translate_message(message, &mut items, &shell_calls)?;
+        if index < normal_start {
+            recovered_outputs += items
+                .iter()
+                .filter(|item| matches!(item, InputItem::FunctionCallOutput { .. }))
+                .count();
+        }
+        pending_input.extend(items);
+    }
+    Ok(HistoryReplay {
+        body: strip_failed_assistants(body, failed)?,
+        pending_input: input_items_as_values(&pending_input)?,
+        pending_start: failed.pending_start,
+        replay_end,
+        recovered_outputs,
+    })
+}
+
+fn strip_failed_assistants(
+    body: &[u8],
+    failed: &crate::codex_history::FailedTurn,
+) -> Result<Vec<u8>, TranslateError> {
+    let mut value: serde_json::Value =
+        serde_json::from_slice(body).map_err(|error| invalid(error.to_string()))?;
+    let messages = value
+        .get_mut("messages")
+        .and_then(serde_json::Value::as_array_mut)
+        .ok_or_else(|| invalid("messages must be an array"))?;
+    let mut index = 0;
+    messages.retain(|message| {
+        let synthetic =
+            message["role"] == "assistant" && failed.assistant_positions.contains(&index);
+        index += 1;
+        !synthetic
+    });
+    serde_json::to_vec(&value).map_err(|error| invalid(error.to_string()))
+}
+
 /// Responses rejects identifiers longer than this.
 pub(crate) const MAX_IDENTIFIER_LEN: usize = 64;
 

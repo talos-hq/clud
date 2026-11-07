@@ -6784,6 +6784,7 @@ mod tests {
         assert_eq!(received, b"response");
     }
 
+    mod failed_turn_http;
     mod redaction_http;
 
     use super::*;
