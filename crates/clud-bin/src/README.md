@@ -30,6 +30,9 @@ Credential prompt ownership (`secret_prompt.rs`, `secret_prompt/gui.rs`, and
 `secret_prompt/sink.rs`) is documented in
 [secret-prompt.md](../../../docs/architecture/secret-prompt.md).
 
+`secrets_catalog.rs` wires lokr into `--allow-secrets` launches; see
+[secret-catalog.md](../../../docs/architecture/secret-catalog.md).
+
 `secret_redaction/` owns session-only reversible request tokenization, stream
 restoration and count-only status. See
 [secret-redaction.md](../../../docs/architecture/secret-redaction.md).

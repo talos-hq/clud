@@ -6,6 +6,12 @@ triggers:
 ---
 <!-- managed-by: clud -->
 
+If the `mcp__lokr__*` tools are present (`clud --allow-secrets`), call
+`mcp__lokr__secret_status` first: the credential may already exist. It reports
+names and locations, never values. Ask the user before reusing a key held by
+another program, and use `mcp__lokr__request_secret` when the key is absent.
+See <https://github.com/talos-hq/clud/blob/main/docs/architecture/secret-catalog.md>.
+
 Use `clud secret` to acquire credentials without seeing them. Identify the
 host and purpose in `--label`, and choose the sink appropriate to the
 already-authorized operation:

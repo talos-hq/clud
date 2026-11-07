@@ -128,6 +128,14 @@ end-to-end daemon/client performance change.
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — index of subsystem topic docs (each ~150–400 lines, self-contained).
 - [`docs/DESIGN_DECISIONS.md`](docs/DESIGN_DECISIONS.md) — 10 ADRs covering the non-obvious choices below and more.
 
+### Credentials: check before calling one missing
+
+In a session launched with `clud --allow-secrets`, call `mcp__lokr__secret_status`
+before concluding that a key is missing. It reports names and locations, never
+values. Ask the user before reusing a key held by another program. No route may
+ever return a value. [`docs/architecture/secret-catalog.md`](docs/architecture/secret-catalog.md)
+owns this contract.
+
 ### `grind` directive
 
 [`docs/architecture/grind.md`](docs/architecture/grind.md) is the single
