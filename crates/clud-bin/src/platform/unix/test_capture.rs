@@ -329,6 +329,7 @@ mod macos_tests {
 #[cfg(test)]
 mod reader_tests {
     use crate::test_runtime::capture::{capture_reader, Event};
+    use std::io::Write;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::time::Duration;
