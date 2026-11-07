@@ -9,7 +9,7 @@
 """transcribe.py — transcribe a 16 kHz mono WAV with talos-vox / voxtype.
 
 Usage:
-  clud tool run voice/transcribe.py -- <file.wav> [--language LANG]
+  "$CLUD_EXE" tool run voice/transcribe.py -- <file.wav> [--language LANG]
 
 Finds the binary the way F3 voice mode does: CLUD_VOICE_TRANSCRIBER, then
 talos-vox, then voxtype on PATH. --language falls back to CLUD_VOICE_LANGUAGE.
