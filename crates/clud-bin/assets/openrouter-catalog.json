@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-06T16:02:08Z",
+  "generated_at": "2026-11-07T11:17:01Z",
   "source": "https://openrouter.ai/api/v1/models",
   "pricing_estimate": {
     "label": "lowest-priced eligible models by weighted token-mix estimate; not a quality ranking",
@@ -1362,7 +1362,7 @@
       "input_price_per_token": 2.5e-06,
       "output_price_per_token": 1e-05,
       "cached_input_price_per_token": 2.5e-06,
-      "supports_tools": false,
+      "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": false,
@@ -1374,10 +1374,8 @@
         "mandatory": null
       },
       "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "cohere/command-a-plus",
@@ -1387,7 +1385,7 @@
       "input_price_per_token": 3e-07,
       "output_price_per_token": 1.5e-06,
       "cached_input_price_per_token": 1.5e-07,
-      "supports_tools": false,
+      "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": true,
@@ -1399,10 +1397,8 @@
         "mandatory": false
       },
       "supports_vision": true,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "cohere/command-r-08-2024",
@@ -1458,7 +1454,7 @@
       "input_price_per_token": 3.75e-08,
       "output_price_per_token": 1.5e-07,
       "cached_input_price_per_token": 3.75e-08,
-      "supports_tools": false,
+      "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": false,
@@ -1470,10 +1466,8 @@
         "mandatory": null
       },
       "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "cohere/north-mini-code:free",
@@ -1691,9 +1685,37 @@
       "name": "DeepSeek: DeepSeek V4 Flash 0731",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 5e-08,
+      "input_price_per_token": 4.87e-08,
       "output_price_per_token": 3e-07,
       "cached_input_price_per_token": 3.5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "high",
+          "low",
+          "none"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": false,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "deepseek/deepseek-v4-flash-0731:batch",
+      "name": "DeepSeek: DeepSeek V4 Flash 0731 (batch)",
+      "provider": "deepseek",
+      "context_length": 1048576,
+      "input_price_per_token": 4.8e-08,
+      "output_price_per_token": 1.44e-07,
+      "cached_input_price_per_token": 1.2e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1747,9 +1769,9 @@
       "name": "DeepSeek: DeepSeek V4 Pro 0423",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 8.51556e-07,
-      "output_price_per_token": 1.703112e-06,
-      "cached_input_price_per_token": 7.0963e-08,
+      "input_price_per_token": 7.5864e-07,
+      "output_price_per_token": 1.51728e-06,
+      "cached_input_price_per_token": 6.322e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -2948,9 +2970,9 @@
       "name": "Google: Gemma 4 26B A4B",
       "provider": "google",
       "context_length": 262144,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 3e-07,
-      "cached_input_price_per_token": 5e-08,
+      "input_price_per_token": 6.75e-08,
+      "output_price_per_token": 2.25e-07,
+      "cached_input_price_per_token": 3.75e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3296,9 +3318,9 @@
       "name": "inclusionAI: Ling 3.1 Flash",
       "provider": "inclusionai",
       "context_length": 1000000,
-      "input_price_per_token": 7.5e-08,
-      "output_price_per_token": 2.25e-07,
-      "cached_input_price_per_token": 1.5e-08,
+      "input_price_per_token": 4.5e-08,
+      "output_price_per_token": 1.35e-07,
+      "cached_input_price_per_token": 9e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3418,6 +3440,52 @@
       "input_price_per_token": 5e-08,
       "output_price_per_token": 7e-07,
       "cached_input_price_per_token": 2.5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": false,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "liquid/lfm-3-1.7b",
+      "name": "LiquidAI: LFM3-1.7B",
+      "provider": "liquid",
+      "context_length": 262144,
+      "input_price_per_token": 8e-08,
+      "output_price_per_token": 2e-07,
+      "cached_input_price_per_token": 2e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": false,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "liquid/lfm-3-1.7b:free",
+      "name": "LiquidAI: LFM3-1.7B (free)",
+      "provider": "liquid",
+      "context_length": 262144,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3703,6 +3771,34 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "meta/muse-glimmer-30b:batch",
+      "name": "Meta: Muse Glimmer 30B (batch)",
+      "provider": "meta",
+      "context_length": 131072,
+      "input_price_per_token": 2.4e-07,
+      "output_price_per_token": 9.6e-07,
+      "cached_input_price_per_token": 3.2e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "meta/muse-spark-1.1",
       "name": "Meta: Muse Spark 1.1",
       "provider": "meta",
@@ -3960,9 +4056,9 @@
       "name": "MiniMax: MiniMax M2.5",
       "provider": "minimax",
       "context_length": 204800,
-      "input_price_per_token": 2.7e-07,
-      "output_price_per_token": 9.5e-07,
-      "cached_input_price_per_token": 3e-08,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 1.2e-06,
+      "cached_input_price_per_token": 6e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4029,9 +4125,9 @@
       "name": "MiniMax: MiniMax M3.1 Flash",
       "provider": "minimax",
       "context_length": 1048576,
-      "input_price_per_token": 7.5e-08,
-      "output_price_per_token": 3e-07,
-      "cached_input_price_per_token": 7.5e-09,
+      "input_price_per_token": 1.5e-07,
+      "output_price_per_token": 6e-07,
+      "cached_input_price_per_token": 1.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4048,6 +4144,29 @@
         "default_effort": "max",
         "default_enabled": null,
         "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "minimax/minimax-m3:batch",
+      "name": "MiniMax: MiniMax M3 (batch)",
+      "provider": "minimax",
+      "context_length": 524288,
+      "input_price_per_token": 2.24e-07,
+      "output_price_per_token": 8.8e-07,
+      "cached_input_price_per_token": 4.48e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": false
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -7634,9 +7753,9 @@
       "name": "OpenAI: gpt-oss-120b",
       "provider": "openai",
       "context_length": 131072,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 6e-07,
-      "cached_input_price_per_token": 7.5e-08,
+      "input_price_per_token": 2e-08,
+      "output_price_per_token": 7.3e-08,
+      "cached_input_price_per_token": 1.8e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9198,6 +9317,34 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "qwen/qwen3.8-27b:batch",
+      "name": "Qwen: Qwen3.8 27B (batch)",
+      "provider": "qwen",
+      "context_length": 262144,
+      "input_price_per_token": 1.6e-07,
+      "output_price_per_token": 2e-06,
+      "cached_input_price_per_token": 4e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "xhigh",
+          "medium",
+          "low",
+          "none"
+        ],
+        "default_effort": "xhigh",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "qwen/qwen3.8-flash",
       "name": "Qwen: Qwen3.8 Flash",
       "provider": "qwen",
@@ -9453,7 +9600,7 @@
     },
     {
       "id": "ricursiveai/ripple-65b-preview",
-      "name": "ricursiveAI/Ripple-65B-Preview",
+      "name": "Ricursive: Ripple 65B Preview",
       "provider": "ricursiveai",
       "context_length": 1048576,
       "input_price_per_token": 2e-07,
@@ -10113,6 +10260,36 @@
       "input_price_per_token": 4.5e-07,
       "output_price_per_token": 1.2e-06,
       "cached_input_price_per_token": 1e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "high",
+          "medium",
+          "low",
+          "minimal",
+          "none"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "thinkingmachines/inkling-small:batch",
+      "name": "Thinking Machines: Inkling Small (batch)",
+      "provider": "thinkingmachines",
+      "context_length": 524288,
+      "input_price_per_token": 3.6e-07,
+      "output_price_per_token": 9.6e-07,
+      "cached_input_price_per_token": 8e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11375,7 +11552,7 @@
       "name": "DeepSeek: DeepSeek V4 Flash Latest",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 5e-08,
+      "input_price_per_token": 4.87e-08,
       "output_price_per_token": 3e-07,
       "cached_input_price_per_token": 3.5e-08,
       "supports_tools": true,
@@ -11457,8 +11634,8 @@
       "name": "MoonshotAI: Kimi Latest",
       "provider": "moonshotai",
       "context_length": 1048576,
-      "input_price_per_token": 1.529e-07,
-      "output_price_per_token": 1.01522e-05,
+      "input_price_per_token": 1.539e-07,
+      "output_price_per_token": 1.01489e-05,
       "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
@@ -11683,9 +11860,9 @@
       "name": "Z.ai: GLM Flash Latest",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 2.84e-08,
+      "input_price_per_token": 2.85e-08,
       "output_price_per_token": 9.23e-08,
-      "cached_input_price_per_token": 2.84e-08,
+      "cached_input_price_per_token": 2.85e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11755,6 +11932,10 @@
       "weighted_usd_per_million_tokens": 0.0
     },
     {
+      "id": "liquid/lfm-3-1.7b:free",
+      "weighted_usd_per_million_tokens": 0.0
+    },
+    {
       "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free",
       "weighted_usd_per_million_tokens": 0.0
     },
@@ -11795,8 +11976,12 @@
       "weighted_usd_per_million_tokens": 0.0292
     },
     {
+      "id": "openai/gpt-oss-120b",
+      "weighted_usd_per_million_tokens": 0.0304
+    },
+    {
       "id": "~z-ai/glm-flash-latest",
-      "weighted_usd_per_million_tokens": 0.04118
+      "weighted_usd_per_million_tokens": 0.04126
     },
     {
       "id": "openai/gpt-oss-20b:batch",
@@ -11805,14 +11990,6 @@
     {
       "id": "qwen/qwen3.7-flash",
       "weighted_usd_per_million_tokens": 0.0476
-    },
-    {
-      "id": "openai/gpt-oss-20b",
-      "weighted_usd_per_million_tokens": 0.05
-    },
-    {
-      "id": "openai/gpt-oss-120b:batch",
-      "weighted_usd_per_million_tokens": 0.05088
     }
   ]
 }
