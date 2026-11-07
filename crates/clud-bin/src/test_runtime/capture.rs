@@ -51,6 +51,17 @@ pub(crate) fn capture_with_limit(
     command: &[String],
     limit: u64,
 ) -> io::Result<CaptureResult> {
+    capture_with_factory(root, timeout, command, limit, create_artifact)
+}
+
+// The private factory is fixed by the production entry point.
+fn capture_with_factory(
+    root: &Path,
+    timeout: Duration,
+    command: &[String],
+    limit: u64,
+    create: impl FnOnce(&Path) -> io::Result<(File, PathBuf)>,
+) -> io::Result<CaptureResult> {
     if command.is_empty() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -60,7 +71,7 @@ pub(crate) fn capture_with_limit(
     let deadline = Instant::now()
         .checked_add(timeout)
         .ok_or_else(|| io::Error::from(io::ErrorKind::InvalidInput))?;
-    let (mut artifact, path) = create_artifact(root)?;
+    let (mut artifact, path) = create(root)?;
     let (mut child, (rx, stop, reader_handle)) = spawn_capture(command)?;
     let mut exit_code = None;
     let mut eof = false;
@@ -141,6 +152,22 @@ pub(crate) fn capture_with_limit(
         termination_requested,
         tree_cleanup: "unverified",
     })
+}
+
+// Native platform tests exercise the lifecycle before enabling a new factory.
+#[cfg(test)]
+#[allow(
+    dead_code,
+    reason = "used by native platform tests where private capture is under development"
+)]
+pub(crate) fn capture_with_test_factory(
+    root: &Path,
+    timeout: Duration,
+    command: &[String],
+    limit: u64,
+    create: impl FnOnce(&Path) -> io::Result<(File, PathBuf)>,
+) -> io::Result<CaptureResult> {
+    capture_with_factory(root, timeout, command, limit, create)
 }
 
 fn spawn_capture(command: &[String]) -> io::Result<(SpawnedChild, CaptureReader)> {
