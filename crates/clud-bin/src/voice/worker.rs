@@ -56,19 +56,11 @@ impl VoiceWorker {
     }
 }
 
-/// Transcription backend stub: whisper-rs was removed after repeated
-/// cross-platform build breakage (vendored C++ CMake builds colliding with
-/// stale host build state). Mic capture, cues, and the F3 hold-to-record
-/// state machine are unaffected; only the actual speech-to-text call is
-/// unavailable. The `CLUD_VOICE_TEST_TRANSCRIPT` bypass is preserved so
-/// state-machine tests don't depend on a real backend.
-fn transcribe_audio(config: &VoiceConfig, _audio: &[f32]) -> Result<String, String> {
+/// `CLUD_VOICE_TEST_TRANSCRIPT` comes first so state-machine tests need no
+/// real backend; everything else goes to the external CLI (`transcriber`).
+fn transcribe_audio(config: &VoiceConfig, audio: &[f32]) -> Result<String, String> {
     if let Some(test_transcript) = &config.test_transcript {
         return Ok(test_transcript.clone());
     }
-    Err(missing_model_message())
-}
-
-pub(super) fn missing_model_message() -> String {
-    "voice transcription is not available in this build".to_string()
+    super::transcriber::transcribe(config, audio)
 }

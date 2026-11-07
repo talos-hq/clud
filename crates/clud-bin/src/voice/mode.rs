@@ -9,7 +9,8 @@ use super::config::VoiceConfig;
 use super::cues::{play_cue, CueTone};
 use super::model;
 use super::recording::ActiveRecording;
-use super::worker::{missing_model_message, VoiceWorker, WorkerEvent};
+use super::transcriber;
+use super::worker::{VoiceWorker, WorkerEvent};
 
 pub struct VoiceMode {
     config: VoiceConfig,
@@ -40,8 +41,12 @@ impl VoiceMode {
         //      thread spawned.
         //   4. Model is missing → spawn the background download
         //      thread so the user can press F3 sooner.
+        // An external transcriber needs none of this (DD-206).
         let mut resolved_model: Option<PathBuf> = None;
-        if config.enabled && config.test_transcript.is_none() {
+        if config.enabled
+            && config.test_transcript.is_none()
+            && transcriber::locate(&config).is_err()
+        {
             resolved_model = model::resolve_if_available(config.model_path.as_deref());
             if resolved_model.is_none() {
                 model::ensure_downloaded_in_background(Arc::clone(&download_done));
@@ -100,9 +105,12 @@ impl VoiceMode {
         // Probe for download completion in case a model just landed.
         self.refresh_resolved_model();
 
-        if self.resolved_model.is_none() && self.config.test_transcript.is_none() {
+        // Refuse before recording: nobody should speak into a capture that
+        // cannot be transcribed. Re-checked per press, so installing the CLI
+        // mid-session works.
+        if let Some(message) = recording_blocker(&self.config) {
             if !self.missing_model_reported {
-                eprintln!("[clud] voice: {}", missing_model_message());
+                eprintln!("[clud] voice: {message}");
                 self.missing_model_reported = true;
             }
             return;
@@ -187,6 +195,13 @@ impl VoiceMode {
     }
 }
 
+fn recording_blocker(config: &VoiceConfig) -> Option<String> {
+    if config.test_transcript.is_some() {
+        return None;
+    }
+    transcriber::locate(config).err()
+}
+
 impl InteractiveHooks for VoiceMode {
     fn intercept_f3(&self) -> bool {
         self.config.enabled
@@ -269,6 +284,30 @@ mod tests {
         assert!(!has_speech_peak(&[0.0, 0.001, -0.002]));
         assert!(has_speech_peak(&[0.0, 0.5, 0.0]));
         assert!(!has_speech_peak(&[]));
+    }
+
+    #[test]
+    fn f3_is_gated_on_the_transcriber_not_on_the_whisper_model() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let exe = dir.path().join("fake-transcriber");
+        std::fs::write(&exe, "#!/bin/sh\n").expect("write");
+        crate::platform::shim_fs::set_mode(&exe, 0o755).expect("chmod");
+        let config = |transcriber: PathBuf, test_transcript: Option<String>| VoiceConfig {
+            enabled: true,
+            model_path: None,
+            language: None,
+            test_transcript,
+            transcriber: Some(transcriber),
+        };
+        if !crate::platform::host::WINDOWS {
+            assert_eq!(recording_blocker(&config(exe, None)), None);
+        }
+        let missing = dir.path().join("missing");
+        assert!(recording_blocker(&config(missing.clone(), None)).is_some());
+        assert_eq!(
+            recording_blocker(&config(missing, Some("text".to_string()))),
+            None
+        );
     }
 
     // ─── Model resolution ─────────────────────────────────────────

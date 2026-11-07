@@ -8,7 +8,7 @@
 //!      from `<name>.partial`, verify hash, retry once on hash
 //!      mismatch.
 //!
-//! On any failure the existing `missing_model_message()` is surfaced
+//! On any failure the transcriber-not-installed message is surfaced
 //! to the user with a hint about where they can drop the model
 //! manually.
 
