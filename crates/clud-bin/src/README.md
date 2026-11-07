@@ -279,8 +279,11 @@ Entry and orchestration:
   notice for a model whose endpoint drops pasted images upstream (#1200),
   registers launch-scoped authenticated `PreCompact` and
   `SessionStart(clear)` HTTP hooks, and tears the listener down on every
-  runner return path. Unified mode enables discovery while preserving Claude
-  credentials and ambient session effort; the direct Codex route enables the
+  runner return path. Launch-scoped Claude settings try the system temp root,
+  then reuse `gc::session_tmp::ensure_dir` for a clud-owned fallback with a
+  warning (#2502). If both fail, the error names the directories and recommends
+  setting `TMPDIR` to an existing writable directory. Unified mode enables
+  discovery while preserving Claude credentials and ambient session effort; the direct Codex route enables the
   same protocol with a Codex-only catalog and child-local 1.05M context
   metadata. Direct Anthropic-compat providers (DeepSeek, Kimi, OpenRouter)
   carry the catalog's `low` effort default on the harness's `--effort` session
