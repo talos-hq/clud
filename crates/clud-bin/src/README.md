@@ -97,6 +97,12 @@ only the leading system/developer prefix goes to top-level `system`; later
 instructions stay in order as marked user blocks. See
 [standalone gateway](../../../docs/architecture/standalone-gateway.md#openai-responses-client-bodies).
 
+`openai_ingress.rs` preserves signed thinking in OpenRouter-compatible
+`reasoning_details` (`reasoning.text` with `text`/`signature`, or
+`reasoning.encrypted` with redacted `data`). Streaming emits complete entries
+at block stop; clients replay the entries on assistant messages to restore
+thinking before text and tool calls. Unsigned reasoning keeps legacy behavior.
+
 Entry and orchestration:
 
 - `main.rs` - process entry: launch clock, trampoline unlock, console title

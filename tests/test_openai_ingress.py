@@ -14,6 +14,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 from tests import process
 
 
@@ -280,3 +282,42 @@ def test_client_cache_breakpoints_survive_translation() -> None:
     translated = json.loads(result.stdout)
     assert translated["system"][0]["cache_control"] == control
     assert "cache_control" not in translated["messages"][0]["content"][0]
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+def test_thinking_signatures_survive_a_tool_loop(streaming: bool) -> None:
+    blocks = [
+        {"type": "thinking", "thinking": "plan\nλ", "signature": "opaque+/=\nλ"},
+        {"type": "redacted_thinking", "data": "redacted+/="},
+        {"type": "tool_use", "id": "call", "name": "read", "input": {}},
+    ]
+    if streaming:
+        events = []
+        for index, block in enumerate(blocks):
+            events.extend([
+                {"type": "content_block_start", "index": index, "content_block": block},
+                {"type": "content_block_stop", "index": index},
+            ])
+        body = "".join(f"data: {json.dumps(event)}\n\n" for event in events)
+        completed = _translate_response(body, "--stream")
+        assert completed.returncode == 0, completed.stderr
+        deltas = [json.loads(line)["choices"][0]["delta"]
+                  for line in completed.stdout.splitlines() if line.strip()]
+        message = {
+            "role": "assistant",
+            "reasoning_details": [item for delta in deltas
+                                  for item in delta.get("reasoning_details", [])],
+            "tool_calls": [item for delta in deltas for item in delta.get("tool_calls", [])],
+        }
+    else:
+        completed = _translate_response({"content": blocks, "stop_reason": "tool_use"})
+        assert completed.returncode == 0, completed.stderr
+        message = json.loads(completed.stdout)["choices"][0]["message"]
+    replay = _translate({"model": "claude", "messages": [
+        {"role": "user", "content": "read it"}, message,
+        {"role": "tool", "tool_call_id": "call", "content": "result"},
+    ]})
+    assert replay.returncode == 0, replay.stderr
+    turns = json.loads(replay.stdout)["messages"]
+    assert turns[1]["content"] == blocks
+    assert turns[2]["content"][0]["tool_use_id"] == "call"
