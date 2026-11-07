@@ -104,6 +104,12 @@ queue, or performs a normal squash merge when no queue applies. It requires
 uses admin bypass. A successful enqueue is not a merged PR: follow it with
 `github/pr_merge_watch.py`. See [CI merge queue](../../../../docs/architecture/ci.md#merge-queue-2048-decided).
 
+`voice/transcribe.py` transcribes a 16 kHz mono WAV through the external
+`talos-vox` or `voxtype` CLI and prints only the transcript:
+`clud tool run voice/transcribe.py -- <file>`. It does not resample; other input
+fails with the ffmpeg command to convert it. See
+[DD-206](../../../../docs/DESIGN_DECISIONS.md#dd-206-voice-transcription-delegates-to-an-external-cli).
+
 To get woken when detached work finishes, use `notify/watch.py`. One process
 watches N clud sessions and M PRs (`add-session ID`, `add-pr OWNER/REPO#N`) and
 appends each transition to `~/.clud/state/watch/events.jsonl`. Transitions are

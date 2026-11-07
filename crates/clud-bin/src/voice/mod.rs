@@ -32,6 +32,8 @@ mod cues;
 mod mode;
 mod model;
 mod recording;
+mod transcriber;
+mod wav;
 mod worker;
 
 pub use mode::VoiceMode;

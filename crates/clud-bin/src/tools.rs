@@ -113,6 +113,15 @@ pub struct BundledTool {
 /// entry here plus a new file under `crates/clud-bin/assets/tools/`.
 pub const BUNDLED_TOOLS: &[BundledTool] = &[
     BundledTool {
+        rel_path: "voice/transcribe.py",
+        body: include_str!("../assets/tools/voice/transcribe.py"),
+        // Reads a file and prints text; a killed run loses nothing.
+        kill_semantics: KillSemantics::Killable,
+        command_timeout: Duration::from_secs(6 * 60),
+        progress_timeout: None,
+        quiet_ok: true,
+    },
+    BundledTool {
         rel_path: "github/pr_merge.py",
         body: include_str!("../assets/tools/github/pr_merge.py"),
         // Submission mutates GitHub; an interrupted result needs inspection
@@ -697,6 +706,16 @@ mod tests {
             tool.body.contains("CLUD_DAEMON_HTTP_SERVER"),
             "telemetry.py must reference the env-var discovery contract",
         );
+    }
+
+    #[test]
+    fn bundled_includes_voice_transcribe() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|tool| tool.rel_path == "voice/transcribe.py")
+            .expect("the voice transcription tool must be bundled");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
     }
 
     #[test]

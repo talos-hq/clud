@@ -7685,3 +7685,33 @@ and waiting is mostly background idle. Fixups also compile concurrently, up to
 and it could not keep the capped role); a chaperone that holds a slot for its
 whole life (idle watchers would starve fixups); `NEEDS-FIXUP` to the integrator
 (the bottleneck itself).
+
+## DD-206: voice transcription delegates to an external CLI
+
+**Context:** `whisper-rs` was removed because its vendored C++ build kept breaking
+host builds, which left `transcribe_audio` a stub and F3 useless.
+`talos-hq/talos-vox`, a voxtype fork, already has `voxtype transcribe <file>`.
+
+**Decision:** clud runs `CLUD_VOICE_TRANSCRIBER`, then `talos-vox`, then `voxtype`
+from PATH on a temporary 16 kHz mono WAV, with a deadline. F3 is gated on finding
+the binary, not on clud's model cache. A run yields text only on exit 0. A correct
+transcript followed by an abort is discarded with an error that says so.
+
+**Why:** a linked or vendored engine brings back the C++/ONNX build, GPU runtime
+and per-target packaging that one binary, cross-built on Linux, cannot carry. A
+crash in the engine stays in its process and cannot take down the user's PTY.
+
+**Why discard a crashed run's transcript:** voxtype 1.1.1 was measured printing
+the right text and then aborting in teardown (exit 134), so this loses real
+transcripts. But the text is typed into the user's prompt, and clud cannot tell
+teardown from a crash mid-output. An explicit error is recoverable; wrong text is
+not noticed.
+
+**Why this is a real trade:** F3 now needs a separately installed tool, and
+talos-vox has no releases. stdout is not a stable interface: logs share it with
+the transcript, so the parser depends on voxtype printing a blank line and then
+the text last. Output without that shape is treated as no transcript.
+
+**Not chosen:** vendoring talos-vox source; a clud-managed model download for the
+CLI to use (voxtype manages its own models); honoring `--engine`/`--model`
+settings, since voxtype's own config already selects them.

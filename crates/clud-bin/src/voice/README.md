@@ -1,19 +1,21 @@
 # voice/
 
-F3 push-to-talk voice mode (issue #13). Captures microphone audio while F3 is held, plays start/stop cues, and writes the transcript back into the backend PTY at the user's cursor. Microphone capture uses `cpal` on Windows and macOS and `arecord` (alsa-utils) on Linux. Transcription is stubbed on every platform: `whisper-rs` was removed after its vendored C++ CMake build (`whisper-rs-sys`) repeatedly broke Windows host builds (stale CMake generator cache colliding with plain `cargo build`); `worker.rs::transcribe_audio` always returns an "unavailable" error outside the `CLUD_VOICE_TEST_TRANSCRIPT` bypass.
+F3 push-to-talk voice mode (issue #13). Captures microphone audio while F3 is held, plays start/stop cues, and writes the transcript back into the backend PTY at the user's cursor. Microphone capture uses `cpal` on Windows and macOS and `arecord` (alsa-utils) on Linux. Transcription delegates to an external CLI, `talos-vox` or `voxtype`, which must be installed; F3 refuses to record without it ([DD-206](../../../docs/DESIGN_DECISIONS.md#dd-206-voice-transcription-delegates-to-an-external-cli)). A run that exits nonzero never yields text, even if it printed a transcript before crashing.
 
 ## Files
 
 - `mod.rs` — module root; documents the F3 flow and re-exports `VoiceMode`.
 - `mode.rs` — `VoiceMode` state machine and `InteractiveHooks` impl (press/release/tick).
-- `config.rs` — `VoiceConfig::from_env` reads `CLUD_VOICE`, `CLUD_WHISPER_MODEL`, `CLUD_VOICE_LANGUAGE`, `CLUD_VOICE_TEST_TRANSCRIPT`.
+- `config.rs` — `VoiceConfig::from_env` reads `CLUD_VOICE`, `CLUD_WHISPER_MODEL`, `CLUD_VOICE_LANGUAGE`, `CLUD_VOICE_TEST_TRANSCRIPT`, `CLUD_VOICE_TRANSCRIBER`. `CLUD_WHISPER_MODEL` is not passed to the CLI: voxtype takes model names from its own config, not a clud path.
 - `recording.rs` — `ActiveRecording`: starts/stops the capture backend, runs VAD auto-stop, returns resampled samples.
 - `audio.rs` — sample-rate constants, VAD thresholds, mono downmix + linear resample to 16 kHz, silence/speech detection.
 - `cues.rs` — `play_cue(CueTone::Start|Stop)`: short sine-wave beep via `rodio` (BEL fallback on Linux), played by `crate::platform::voice::play_cue`.
 - `../platform/windows/voice.rs` — the cpal capture (`MicCapture`) and rodio cue shared by Windows and macOS (macOS includes it from `../platform/unix/voice/mod.rs`).
 - `../platform/unix/voice/linux_capture.rs` (moved under the platform boundary, #1953) — Linux-only `arecord` subprocess wrapper that streams S16_LE PCM into a shared sample buffer.
-- `model.rs` — model resolution, SHA-256-pinned auto-download to per-OS cache dir, background download thread. Kept for a future transcription backend; unrelated to the whisper-rs removal (no C++/CMake dependency).
-- `worker.rs` — `VoiceWorker` thread: hands audio to `transcribe_audio`, which is a stub (see module header), sends `WorkerEvent::Transcript|Error`.
+- `model.rs` — model resolution, SHA-256-pinned auto-download to per-OS cache dir, background download thread. Skipped when an external transcriber is found; with none, the download still runs at startup although nothing consumes the file.
+- `worker.rs` — `VoiceWorker` thread: hands audio to `transcribe_audio`, sends `WorkerEvent::Transcript|Error`.
+- `transcriber.rs` — finds the CLI, runs it with a deadline on a temporary WAV, parses stdout and classifies failures (`transcriber_tests.rs` holds its tests).
+- `wav.rs` — 16-bit PCM WAV encoder for that temporary file.
 
 ## Key items
 
@@ -36,7 +38,8 @@ F3 push-to-talk voice mode (issue #13). Captures microphone audio while F3 is he
 - `default_cache_path`, `MODEL_FILENAME`, `MODEL_SHA256`: `model.rs:42`, `model.rs:26`, `model.rs:34`
 - `VoiceWorker::spawn` / `request_transcription` / `try_recv`: `worker.rs:23`, `worker.rs:48`, `worker.rs:54`
 - `WorkerEvent` enum: `worker.rs:11`
-- `transcribe_audio` (stub) and `missing_model_message`: `worker.rs:65`, `worker.rs:72`
+- `transcribe_audio`: `worker.rs:61`
+- `transcriber::locate` / `transcribe` / `parse_transcript` / `interpret`: `transcriber.rs`
 
 ## Used by
 

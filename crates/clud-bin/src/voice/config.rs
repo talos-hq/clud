@@ -7,11 +7,15 @@ pub(super) struct VoiceConfig {
     pub(super) model_path: Option<PathBuf>,
     pub(super) language: Option<String>,
     pub(super) test_transcript: Option<String>,
+    pub(super) transcriber: Option<PathBuf>,
 }
 
 impl VoiceConfig {
     pub(super) fn from_env() -> Self {
         let model_path = env::var_os("CLUD_WHISPER_MODEL").map(PathBuf::from);
+        let transcriber = env::var_os("CLUD_VOICE_TRANSCRIBER")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from);
         let test_transcript = env::var("CLUD_VOICE_TEST_TRANSCRIPT")
             .ok()
             .filter(|value| !value.trim().is_empty());
@@ -28,10 +32,14 @@ impl VoiceConfig {
         );
 
         Self {
-            enabled: enabled_flag || model_path.is_some() || test_transcript.is_some(),
+            enabled: enabled_flag
+                || model_path.is_some()
+                || test_transcript.is_some()
+                || transcriber.is_some(),
             model_path,
             language,
             test_transcript,
+            transcriber,
         }
     }
 }
