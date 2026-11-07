@@ -384,12 +384,12 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         progress_timeout: Some(std::time::Duration::from_secs(120)),
         quiet_ok: false,
     },
-    // Capture stays quiet while a local test is running; the helper owns its timeout.
+    // Capture owns explicit deadlines; reporting must not add a wrapper deadline.
     BundledTool {
         rel_path: "diagnostics/test_report.py",
         body: include_str!("../assets/tools/diagnostics/test_report.py"),
         kill_semantics: KillSemantics::Killable,
-        command_timeout: std::time::Duration::from_secs(86_490),
+        command_timeout: std::time::Duration::MAX,
         progress_timeout: None,
         quiet_ok: true,
     },

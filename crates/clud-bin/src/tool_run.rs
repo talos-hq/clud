@@ -103,7 +103,7 @@ pub fn run(rel_path: &str, args: &[String]) -> io::Result<i32> {
     let tool_bytes = fs::read(&tool_path)?;
     let cache_dir = resolved_uv_cache_dir_from(std::env::var_os("UV_CACHE_DIR"));
     let mut env: Vec<(String, String)> = build_child_env(&cache_dir);
-    let mut watchdog = Watchdog::for_rel_path(rel_path);
+    let mut watchdog = watchdog_for_tool(rel_path, &tool_path, &tools_root);
     let requested = std::env::var("CLUD_PR_MERGE_WATCH_TIMEOUT").ok();
     let requested = watcher_deadline(rel_path, args, requested.as_deref())?;
     // Debug-only integration fixtures deliberately shorten the wrapper cap.
@@ -119,10 +119,12 @@ pub fn run(rel_path: &str, args: &[String]) -> io::Result<i32> {
             watchdog.command_timeout = deadline;
         }
     }
-    env.push((
-        "CLUD_TOOL_COMMAND_TIMEOUT_SECS".to_string(),
-        watchdog.command_timeout.as_secs().to_string(),
-    ));
+    if watchdog.command_timeout != Duration::MAX {
+        env.push((
+            "CLUD_TOOL_COMMAND_TIMEOUT_SECS".to_string(),
+            watchdog.command_timeout.as_secs().to_string(),
+        ));
+    }
     let argv = build_tool_argv(&tool_path, &tool_bytes, args, &tools_root, &env)?;
     let run_state = ToolRunState {
         telemetry: ToolTelemetry::start(rel_path),
@@ -769,6 +771,17 @@ fn drain_into_tee(process: &NativeProcess, tee: &mut TeeWriter, emitted: usize) 
         let _ = tee.emit_captured_batch(&combined[emitted..]);
     }
     combined.len()
+}
+
+/// Apply the installed reporter's lifetime policy to absolute paths and symlinks too.
+pub(crate) fn watchdog_for_tool(rel_path: &str, tool_path: &Path, tools_root: &Path) -> Watchdog {
+    let reporter = tools_root.join("diagnostics/test_report.py");
+    let is_reporter = same_file::is_same_file(tool_path, &reporter).unwrap_or(false);
+    Watchdog::for_rel_path(if is_reporter {
+        "diagnostics/test_report.py"
+    } else {
+        rel_path
+    })
 }
 
 /// Resolve a bundled-tool path under the supplied tools-root. Trivially

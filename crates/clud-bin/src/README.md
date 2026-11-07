@@ -1063,3 +1063,7 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
 - `prompt_output.rs` / `prompt_patch.rs` — compact foreground Claude/Codex print activity and exact per-tool line accounting; see [prompt-output.md](../../../docs/architecture/prompt-output.md).
 
 - [`remote_connect/`](remote_connect/README.md): native `remote connect` operator assistance; see [remote assistance](../../../docs/architecture/remote-assistance.md).
+
+The diagnostic reporter's outer watchdog is disabled, including filesystem aliases
+of its installed script; native capture owns explicit deadlines. See
+[`test_runtime/README.md`](test_runtime/README.md#diagnostic-capture).

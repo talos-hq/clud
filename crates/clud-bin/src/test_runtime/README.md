@@ -16,6 +16,22 @@ the per-file inventory.
 - `cli.rs` — `clud test run` (wrapper) and `clud test stats` (read).
   `repo_root_from` walks up for `.git`; `format_summary` renders the table.
 
+## Diagnostic capture
+
+`capture.rs` owns `clud test capture`, used by the bundled
+`diagnostics/test_report.py` reporter. Neither layer adds a deadline by default.
+An explicit reporter `--timeout` (or native `--timeout-secs`) accepts 1..86400
+seconds and retains the timeout result and tree-stop behavior.
+
+The private artifact retains at most 1 GiB. At the cap or an artifact write
+failure, capture stops retaining bytes and continues draining the merged pipes
+until child exit and EOF, or an explicit timeout/cancellation. Reports mark
+incomplete evidence with the reason; an incomplete zero exit cannot pass, while
+an observed failure or signal is preserved. Continuation reads only the retained
+prefix, not a complete full log. Artifact creation/privacy failures still refuse
+to start the command. Descendant preservation on natural leader completion is
+not guaranteed; running-process #1346 and the remainder of clud #2298 track it.
+
 ## Storage
 
 `<repo>/.clud/test-runtime/runs.jsonl`, one JSON object per line, gitignored and
