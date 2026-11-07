@@ -313,7 +313,10 @@ clears the bridge after Claude starts the fresh session:
   provider request but arms the same post-compaction reset. If the transcript
   has an outstanding function call or the selected
   credential route cannot compact it, the bridge acknowledges the hook and
-  enters a harness-compaction fallback instead of blocking Claude.
+  enters a harness-compaction fallback instead of blocking Claude. Failed
+  canonical validation clears invalid history immediately. Other failures
+  retain valid canonical history for the summary inference's cached prefix,
+  deferring its clear until `compact-finished`.
 - `POST /_clud/context/compact-finished` handles `SessionStart(compact)`. It
   completes a pending fallback by discarding the pre-compaction transcript that
   Claude's summary inference temporarily replayed. The next ordinary turn then

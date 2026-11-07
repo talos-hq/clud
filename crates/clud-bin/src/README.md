@@ -236,7 +236,8 @@ Entry and orchestration:
 - `codex_history.rs` - bounded, in-memory canonical Responses transcript for
   the foreground bridge. It commits only newly pending input plus opaque
   upstream output, evicts at bridge shutdown, performs the two-phase harness
-  fallback after failed compaction, and makes validated provider compaction
+  fallback after failed compaction (retaining valid history until the finished
+  hook, clearing invalid history immediately), and makes validated provider compaction
   replacement and unified provider-route epoch changes atomic; see
   [codex-via-claude.md](../../../docs/architecture/codex-via-claude.md) and
   [unified-gateway.md](../../../docs/architecture/unified-gateway.md).

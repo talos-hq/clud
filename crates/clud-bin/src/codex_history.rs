@@ -279,11 +279,15 @@ impl ConversationHistory {
     /// Fall back from provider-side compaction to Claude's own compaction.
     ///
     /// Claude's compaction inference may replay the old Messages transcript
-    /// and temporarily repopulate this cache. The matching
-    /// `SessionStart(compact)` control must clear it once more so the next
+    /// and temporarily extend or repopulate this cache. The matching
+    /// `SessionStart(compact)` control must clear it so the next
     /// ordinary turn seeds from Claude's compacted transcript instead.
-    pub fn begin_harness_compaction_fallback(&mut self) {
-        self.clear_items();
+    /// Valid history stays intact for the summary inference's cached prefix;
+    /// callers discard it immediately only when canonical validation fails.
+    pub fn begin_harness_compaction_fallback(&mut self, invalid_history: bool) {
+        if invalid_history {
+            self.clear_items();
+        }
         self.reset_after_harness_compaction = true;
     }
 
@@ -629,7 +633,7 @@ mod tests {
         history
             .append_successful_turn(&[item("message", serde_json::json!({"id": "old"}))], &[])
             .unwrap();
-        history.begin_harness_compaction_fallback();
+        history.begin_harness_compaction_fallback(true);
         assert!(history.snapshot().is_empty());
         history
             .append_successful_turn(
@@ -647,9 +651,23 @@ mod tests {
     }
 
     #[test]
+    fn harness_compaction_fallback_defers_valid_history_clear_until_finished() {
+        let mut history = ConversationHistory::new(HistoryLimits::default());
+        let prior = item("message", serde_json::json!({"id": "canonical"}));
+        history
+            .append_successful_turn(std::slice::from_ref(&prior), &[])
+            .unwrap();
+        history.begin_harness_compaction_fallback(false);
+        assert_eq!(history.snapshot(), vec![prior]);
+        assert!(history.finish_harness_compaction_fallback());
+        assert!(history.snapshot().is_empty());
+        assert!(!history.finish_harness_compaction_fallback());
+    }
+
+    #[test]
     fn provider_compaction_cancels_a_stale_harness_fallback_reset() {
         let mut history = ConversationHistory::new(HistoryLimits::default());
-        history.begin_harness_compaction_fallback();
+        history.begin_harness_compaction_fallback(true);
         history
             .append_successful_turn(
                 &[item(

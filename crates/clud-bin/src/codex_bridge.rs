@@ -3063,16 +3063,18 @@ fn serve_context_compact(
     let operation = conversations.with_history(&conversation_key.id, |history| {
         let snapshot = history.snapshot();
         if snapshot.is_empty() {
-            history.begin_harness_compaction_fallback();
+            history.begin_harness_compaction_fallback(false);
             return Ok(Ok(()));
         }
         // Claude may start compaction while a tool batch is outstanding, and
         // some credential routes may not expose `/responses/compact`. Neither
         // condition may block Claude's own compaction lifecycle. Fall back to
-        // a two-phase clear: allow the compaction inference to replay the old
-        // transcript, then discard that temporary replay when
+        // a two-phase clear: retain valid history for the summary inference,
+        // discard invalid history immediately, then clear the fallback when
         // `SessionStart(compact)` confirms Claude installed its summary.
-        let result = crate::codex_pipeline::validate_canonical_history(&snapshot)
+        let validation = crate::codex_pipeline::validate_canonical_history(&snapshot);
+        let invalid_history = validation.is_err();
+        let result = validation
             .and_then(|()| {
                 build_pipeline(config, log, &conversation_key, codex_redactor(config))
                     .map_err(PipelineError::Upstream)
@@ -3089,7 +3091,7 @@ fn serve_context_compact(
             });
         if let Err(error) = result {
             log_context_compact_fallback(&error, &conversation_key, log);
-            history.begin_harness_compaction_fallback();
+            history.begin_harness_compaction_fallback(invalid_history);
         }
         Ok(Ok(()))
     });
@@ -11693,6 +11695,154 @@ Connection: close
         let final_request = requests.last().expect("post-compaction inference");
         assert!(
             final_request.contains("SUMMARY AFTER 404"),
+            "{final_request}"
+        );
+        assert!(!final_request.contains("bridged reply"), "{final_request}");
+    }
+
+    #[test]
+    fn automatic_compaction_fallback_clears_outstanding_tool_batch_immediately() {
+        let upstream = FakeResponses::start_with_responses(vec![
+            Some(parallel_function_call_response(3)),
+            None,
+        ]);
+        let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+        let headers = [("X-Claude-Code-Session-Id", "session-invalid-compact")];
+        let first = request(
+            bridge.socket_addr(),
+            &authorized_with_headers(
+                "POST",
+                "/v1/messages",
+                bridge.bearer_token(),
+                PROBE_STREAM_BODY,
+                &headers,
+            ),
+        );
+        assert_eq!(status(&first), 200, "{first}");
+        let compact = request(
+            bridge.socket_addr(),
+            &authorized(
+                "POST",
+                "/_clud/context/compact",
+                bridge.bearer_token(),
+                r#"{"hook_event_name":"PreCompact","trigger":"auto","session_id":"session-invalid-compact"}"#,
+            ),
+        );
+        assert_eq!(status(&compact), 204, "{compact}");
+        let summary = request(
+            bridge.socket_addr(),
+            &authorized_with_headers(
+                "POST",
+                "/v1/messages",
+                bridge.bearer_token(),
+                PROBE_BODY,
+                &headers,
+            ),
+        );
+        assert_eq!(status(&summary), 200, "{summary}");
+        let requests = upstream.requests();
+        assert_eq!(requests.len(), 2, "invalid history must not reach compact");
+        assert!(!requests[1].contains("call_0"), "{}", requests[1]);
+    }
+
+    fn canonical_compaction_reply() -> Vec<u8> {
+        let output = serde_json::json!([
+            {"type":"reasoning","id":"rs_canonical","encrypted_content":"opaque-reasoning","summary":[]},
+            {"type":"message","id":"msg_canonical","role":"assistant","content":[{"type":"output_text","text":"bridged reply","annotations":[]}]}
+        ]);
+        let events = output.as_array().unwrap().iter().enumerate().map(|(index, item)| {
+            let event = serde_json::json!({"type":"response.output_item.done","output_index":index,"item":item});
+            format!("event: response.output_item.done\ndata: {event}\n\n")
+        }).collect::<String>();
+        let events = format!("{events}event: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{}}}}\n\n");
+        response_with_events(&events)
+    }
+
+    #[test]
+    fn automatic_compaction_fallback_preserves_canonical_prefix_after_503() {
+        let upstream = FakeResponses::start_with_responses(vec![
+            Some(canonical_compaction_reply()),
+            Some(raw_response(503, "Service Unavailable", "{}")),
+            None,
+            None,
+        ]);
+        let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+        let addr = bridge.socket_addr();
+        let token = bridge.bearer_token().to_owned();
+        let headers = [("X-Claude-Code-Session-Id", "session-compact-503")];
+        let first = request(
+            addr,
+            &authorized_with_headers("POST", "/v1/messages", &token, PROBE_BODY, &headers),
+        );
+        assert_eq!(status(&first), 200, "{first}");
+
+        let compact = request(
+            addr,
+            &authorized(
+                "POST",
+                "/_clud/context/compact",
+                &token,
+                r#"{"hook_event_name":"PreCompact","trigger":"auto","session_id":"session-compact-503"}"#,
+            ),
+        );
+        assert_eq!(status(&compact), 204, "{compact}");
+
+        let compaction_inference = request(
+            addr,
+            &authorized_with_headers(
+                "POST",
+                "/v1/messages",
+                &token,
+                r#"{"model":"claude-x","messages":[{"role":"user","content":"hi"},{"role":"assistant","content":"bridged reply"},{"role":"user","content":"compact this context"}],"stream":false}"#,
+                &headers,
+            ),
+        );
+        assert_eq!(status(&compaction_inference), 200, "{compaction_inference}");
+        let finished = request(
+            addr,
+            &authorized(
+                "POST",
+                "/_clud/context/compact-finished",
+                &token,
+                r#"{"hook_event_name":"SessionStart","source":"compact","session_id":"session-compact-503"}"#,
+            ),
+        );
+        assert_eq!(status(&finished), 204, "{finished}");
+        let after = request(
+            addr,
+            &authorized_with_headers(
+                "POST",
+                "/v1/messages",
+                &token,
+                r#"{"model":"claude-x","messages":[{"role":"user","content":"SUMMARY AFTER 503"}],"stream":false}"#,
+                &headers,
+            ),
+        );
+        assert_eq!(status(&after), 200, "{after}");
+        let requests = upstream.requests();
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("POST /v1/responses/compact HTTP/1.1"))
+                .count(),
+            1
+        );
+        let compact_body: serde_json::Value =
+            serde_json::from_str(captured_body(&requests[1])).unwrap();
+        let summarize_body: serde_json::Value =
+            serde_json::from_str(captured_body(&requests[2])).unwrap();
+        let prefix = compact_body["input"].as_array().unwrap();
+        assert!(prefix.iter().any(|item| item["id"] == "rs_canonical"));
+        assert!(
+            summarize_body["input"]
+                .as_array()
+                .unwrap()
+                .starts_with(prefix),
+            "summarize must preserve the canonical prefix: {summarize_body}"
+        );
+        let final_request = requests.last().expect("post-compaction inference");
+        assert!(
+            final_request.contains("SUMMARY AFTER 503"),
             "{final_request}"
         );
         assert!(!final_request.contains("bridged reply"), "{final_request}");
