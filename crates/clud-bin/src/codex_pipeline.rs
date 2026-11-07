@@ -1471,6 +1471,9 @@ impl<C: CredentialSource> Pipeline<C> {
             history
                 .as_deref()
                 .and_then(ConversationHistory::failed_turn),
+            history
+                .as_deref()
+                .and_then(ConversationHistory::proxy_replay_start),
         )
         .map_err(PipelineError::Translate)?;
         let (request, tool_names, request_shape, translated_input) = self.prepare(&replay.body)?;

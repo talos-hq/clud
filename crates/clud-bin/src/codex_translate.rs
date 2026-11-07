@@ -85,6 +85,7 @@ pub(crate) struct HistoryReplay {
 pub(crate) fn history_replay(
     body: &[u8],
     failed: Option<&crate::codex_history::FailedTurn>,
+    proxy_start: Option<usize>,
 ) -> Result<HistoryReplay, TranslateError> {
     let request: MessagesRequest = serde_json::from_slice(body)
         .map_err(|error| invalid(format!("could not decode request: {error}")))?;
@@ -106,7 +107,13 @@ pub(crate) fn history_replay(
             .last()
             .is_some_and(|end| *end <= replay_end)
     });
-    let Some(failed) = failed else {
+    let proxy = proxy_start
+        .filter(|start| *start < replay_end)
+        .map(|pending_start| crate::codex_history::FailedTurn {
+            pending_start,
+            assistant_positions: Vec::new(),
+        });
+    let Some(failed) = failed.or(proxy.as_ref()) else {
         return Ok(HistoryReplay {
             body: body.to_vec(),
             pending_input: pending_input_items_as_values(body)?,
