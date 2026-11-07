@@ -21,6 +21,12 @@ clud secret --label 'GitLab token for gitlab.example.com' --to-command glab auth
 clud secret --label 'SSH private key' --multiline --to-command ssh-add -
 ```
 
+Optional `--pattern <regex>` requires a full-value match before any sink is
+called. A mismatch shows a one-line format notice and prompts again, up to
+three attempts total; exhaustion fails without storing anything. Invalid
+regexes produce a typed argument-validation error before prompting. Without
+the flag, acquisition behavior is unchanged. Put it before `--to-command`.
+
 The normal CLI and `clud-secret` alias print only `stored` (exit 0),
 `cancelled` (exit 3), or `failed` (exit 1). Invalid options exit 2. Cancellation
 leaves sinks untouched. A command sink's output is suppressed even on failure,
@@ -44,7 +50,7 @@ A missing desktop or unavailable graphics context fails clearly; this command
 does not fall back to echoing input in a terminal or asking through chat.
 
 On Linux, when the native window cannot load (#2197, e.g. KDE Wayland), a
-single-line prompt falls back to the first of `zenity --password`,
+single-line prompt falls back to the first of `zenity --entry --hide-text`,
 `kdialog --password`, `ksshaskpass`, `pinentry` (Assuan `GETPIN`) that is on
 PATH with a display present (`platform/unix/secret_helper.rs`). The value
 returns on the helper's stdout to the same sink and is never logged. Multiline

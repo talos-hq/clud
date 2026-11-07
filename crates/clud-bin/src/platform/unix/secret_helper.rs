@@ -53,7 +53,8 @@ pub fn select_helpers(display: bool, on_path: impl Fn(&str) -> bool) -> Vec<Help
 fn args(helper: Helper, title: &str, label: &str) -> Vec<String> {
     match helper {
         Helper::Zenity => vec![
-            "--password".into(),
+            "--entry".into(),
+            "--hide-text".into(),
             format!("--title={title}"),
             format!("--text={label}"),
         ],
@@ -352,7 +353,11 @@ mod tests {
             args(Helper::Ksshaskpass, "t", "Token for host"),
             vec!["--", "Token for host"]
         );
-        assert!(args(Helper::Zenity, "t", "l").contains(&l("--password")));
+        let zenity = args(Helper::Zenity, "t", "Purpose for host");
+        assert!(zenity.contains(&l("--entry")));
+        assert!(zenity.contains(&l("--hide-text")));
+        assert!(zenity.contains(&l("--text=Purpose for host")));
+        assert!(!zenity.contains(&l("--password")));
         assert!(args(Helper::Pinentry, "t", "l").is_empty());
     }
 
