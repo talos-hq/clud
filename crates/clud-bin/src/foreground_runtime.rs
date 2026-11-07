@@ -1808,15 +1808,7 @@ fn write_launch_scoped_settings(
     replaces_user_argument: bool,
 ) -> Result<ClaudeSettings, BridgeError> {
     crate::clud_hooks_compile::consolidate_scanner_hooks(&mut settings);
-    let mut file = tempfile::Builder::new()
-        .prefix("clud-claude-settings-")
-        .suffix(".json")
-        .tempfile()
-        .map_err(|error| {
-            BridgeError::Settings(format!(
-                "failed to create launch-scoped Claude settings: {error}"
-            ))
-        })?;
+    let mut file = launch_settings_file(&std::env::temp_dir(), crate::gc::session_tmp::ensure_dir)?;
     file.write_all(settings.to_string().as_bytes())
         .map_err(|error| {
             BridgeError::Settings(format!(
@@ -1829,6 +1821,48 @@ fn write_launch_scoped_settings(
         replaces_user_argument,
         _temp_file: file,
     })
+}
+
+fn launch_settings_file(
+    root: &std::path::Path,
+    fallback: impl FnOnce() -> Option<std::path::PathBuf>,
+) -> Result<tempfile::NamedTempFile, BridgeError> {
+    let create = |dir: &std::path::Path| {
+        tempfile::Builder::new()
+            .prefix("clud-claude-settings-")
+            .suffix(".json")
+            .tempfile_in(dir)
+    };
+    let error = match create(root) {
+        Ok(file) => return Ok(file),
+        Err(error) => error,
+    };
+    let diagnosis = if error.kind() == std::io::ErrorKind::NotFound && !root.exists() {
+        "the directory does not exist"
+    } else {
+        "the directory could not be used to create a file"
+    };
+    let context = format!(
+        "cannot create launch-scoped Claude settings in system temp directory {}: \
+         {diagnosis}: {error}; set TMPDIR to an existing writable directory",
+        root.display()
+    );
+    let fallback = fallback().ok_or_else(|| {
+        BridgeError::Settings(format!(
+            "{context}; clud-owned temp fallback is unavailable"
+        ))
+    })?;
+    let file = create(&fallback).map_err(|fallback_error| {
+        BridgeError::Settings(format!(
+            "{context}; clud-owned temp fallback {} also failed: {fallback_error}",
+            fallback.display()
+        ))
+    })?;
+    eprintln!(
+        "[clud] warning: {context}; using clud-owned temp fallback {}",
+        fallback.display()
+    );
+    Ok(file)
 }
 
 fn user_settings_argument(command: &[String]) -> Result<Option<&str>, BridgeError> {
@@ -1975,6 +2009,61 @@ pub(crate) mod tests {
     use crate::graphics::GraphicsConfig;
     use std::cell::RefCell;
     use std::net::TcpListener;
+
+    #[test]
+    fn missing_system_temp_root_uses_owned_fallback() {
+        let fixture = tempfile::tempdir().unwrap();
+        let missing = fixture.path().join("missing-system-temp");
+        let fallback = crate::gc::session_tmp::session_tmp_dir_for(fixture.path());
+        std::fs::create_dir_all(&fallback).unwrap();
+        let file = launch_settings_file(&missing, || Some(fallback.clone())).unwrap();
+        assert_eq!(file.path().parent(), Some(fallback.as_path()));
+        assert!(!missing.exists());
+        let path = file.path().to_owned();
+        drop(file);
+        assert!(
+            !path.exists(),
+            "fallback settings must retain scoped cleanup"
+        );
+    }
+
+    #[test]
+    fn missing_system_temp_root_error_names_root_and_remedy() {
+        let fixture = tempfile::tempdir().unwrap();
+        let missing = fixture.path().join("missing-system-temp");
+        let error = launch_settings_file(&missing, || None)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("system temp directory"), "{error}");
+        assert!(error.contains(&missing.display().to_string()), "{error}");
+        assert!(error.contains("does not exist"), "{error}");
+        assert!(error.contains("TMPDIR"), "{error}");
+        assert!(!missing.exists());
+    }
+
+    #[test]
+    fn launch_settings_file_keeps_working_system_temp_root() {
+        let fixture = tempfile::tempdir().unwrap();
+        let file = launch_settings_file(fixture.path(), || panic!("fallback not needed")).unwrap();
+        assert_eq!(file.path().parent(), Some(fixture.path()));
+    }
+
+    #[test]
+    fn missing_system_temp_root_reports_failed_fallback_too() {
+        let fixture = tempfile::tempdir().unwrap();
+        let missing = fixture.path().join("missing-system-temp");
+        let fallback = crate::gc::session_tmp::session_tmp_dir_for(fixture.path());
+        std::fs::create_dir_all(fallback.parent().unwrap()).unwrap();
+        std::fs::write(&fallback, "a file is not a temp directory").unwrap();
+        let error = launch_settings_file(&missing, || Some(fallback.clone()))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains(&missing.display().to_string()), "{error}");
+        assert!(error.contains(&fallback.display().to_string()), "{error}");
+        assert!(error.contains("also failed"), "{error}");
+        assert!(error.contains("TMPDIR"), "{error}");
+        assert!(!missing.exists());
+    }
 
     /// Injectable fake so routing tests never touch the host's real native
     /// credential vault.
