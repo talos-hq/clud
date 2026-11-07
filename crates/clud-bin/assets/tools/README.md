@@ -95,7 +95,9 @@ run facts' task list for the checkout (#1339). `code/ast_grep.py` runs a pinned
 ast-grep for structural search and rewrite (#1339).
 
 PR watcher callers select a declared session/background/foreground wait and
-required-check or all-check completion scope; see
+required-check or all-check completion scope. An empty head check rollup stays
+pending even if a workflow completed, bounded by the watch deadline; repositories
+without workflows retain the explicit `NO-CHECKS` exit. See
 [watch recovery](../../../../docs/architecture/hook-dispatch.md#watch-recovery-and-continuation-2004).
 
 `github/pr_merge.py` submits an exact GitHub PR head to an enforced merge

@@ -543,8 +543,9 @@ def test_empty_required_set_fails_fast_instead_of_waiting_for_the_matrix(
     assert polls == 1
 
 
+@pytest.mark.parametrize("completed_workflow", [False, True])
 def test_empty_rollup_on_a_fresh_push_is_not_green(
-    watcher, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    watcher, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, completed_workflow
 ) -> None:
     """A fresh push registers no checks for the first few seconds; an empty
     rollup must read as "no data yet" and keep polling, never as GREEN."""
@@ -566,7 +567,11 @@ def test_empty_rollup_on_a_fresh_push_is_not_green(
         nonlocal polls
         polls += 1
         if polls == 1:
-            return gate_snapshot(watcher, [])
+            gate = gate_snapshot(watcher, [], rest=completed_workflow)
+            if completed_workflow:
+                gate.head_checks.workflow_runs[0]["status"] = "completed"
+                gate.head_checks.workflow_runs[0]["conclusion"] = "success"
+            return gate
         return gate_snapshot(
             watcher, [watcher.CheckRow("linux", "pass", "SUCCESS")], mergeable="MERGEABLE"
         )
@@ -587,6 +592,19 @@ def test_empty_rollup_on_a_fresh_push_is_not_green(
 
     assert exc.value.code == watcher.EXIT_GREEN
     assert polls == 2
+
+
+@pytest.mark.parametrize("required", [None, set()])
+def test_2677_completed_workflow_without_registered_checks_is_pending(watcher, required):
+    run = {
+        "id": 900,
+        "head_sha": "abc123",
+        "event": "pull_request",
+        "status": "completed",
+        "conclusion": "success",
+    }
+    verdict = watcher.judge_check_runs([], [run], "abc123", required)
+    assert verdict.state == "pending"
 
 
 def test_default_poll_interval_is_quick(watcher) -> None:

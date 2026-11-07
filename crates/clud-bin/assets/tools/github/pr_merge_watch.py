@@ -1166,7 +1166,9 @@ def judge_check_runs(  # noqa: C901
         no_runs_ever = not head_runs and runs_grace_elapsed
         state = "never_reported" if all_runs_done or no_runs_ever else "pending"
     elif not judgments:
-        state = "pass" if all_runs_done else "pending"
+        # A completed workflow is not evidence that any checks registered on
+        # this head. Let the watcher keep waiting within its deadline (#2677).
+        state = "pending"
     elif not any(j.state == "pass" and j.conclusion != "skipped" for j in req):
         # Skips alone prove nothing ran on this head (#1639): the aggregate
         # may not exist yet because it `needs:` still-queued jobs.
