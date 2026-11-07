@@ -57,6 +57,43 @@ the inference URL from the user-selected origin, never from an arbitrary returne
 URL. Its remote HTTP and WebSocket connectors combine bundled public roots with
 system trust; unrelated HTTP clients keep their existing trust policy.
 
+## Choosing a mode: `clud connect`
+
+`clud connect clud.bot` asks first:
+
+```text
+1. (*) Allow Full Control
+2. ( ) Use Proxy
+
+Make your selection:
+```
+
+Enter takes the marked row, the arrows move it, and `1` or `2` choose directly.
+Without a terminal it reads one typed line; closed stdin selects nothing.
+**Allow Full Control** is the session described above, including the per-request
+`[y/N]`: the choice names what may be asked for, and does not answer the request.
+
+**Use Proxy** creates a session with `"mode":"proxy"`, for which the server starts
+inference off. The operator's admin page shows the request, naming the server's
+model routed through OpenRouter (DeepSeek by default), and approving it is what
+turns inference on. The operator gets no shell: the server answers `control`
+and `key-request` with 409 `proxy_only`, and this client advertises only `proxy`
+and has no handler for control or PTY events. A server that does not echo the
+mode cannot ask for that consent, so the client stops rather than connect.
+
+On approval the client starts `clud --claude --safe` in the user's terminal, with
+the environment in [Ephemeral inference](#ephemeral-inference). `--safe` is required:
+every reply comes through the operator's server, so a tool call must stop at the
+user's own permission prompt. Even so, the server's replies can propose commands,
+so this mode still means trusting the operator. Ctrl+C then belongs to
+the agent. Ending the proxy or losing the server does not kill the agent, since
+it is the user's own work; its requests are refused instead. The client exits
+with the agent's code.
+
+`--model` is reserved: it parses, and is refused with exit code 2 before any prompt
+or network call. The server forces every request in a proxy session to the model
+the operator approved.
+
 ## Ephemeral inference
 
 The consented shell receives `ANTHROPIC_BASE_URL=<origin>/api/proxy`,

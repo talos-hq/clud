@@ -743,6 +743,15 @@ pub enum Command {
         #[command(subcommand)]
         action: crate::remote_connect::Action,
     },
+    /// Choose full control or a model proxy, then connect to an operator.
+    Connect {
+        /// Operator server hostname or HTTPS origin.
+        #[arg(default_value = "clud.bot")]
+        host: String,
+        /// Reserved for future use; selecting a model is currently disabled.
+        #[arg(long)]
+        model: Option<String>,
+    },
     /// Serve Claude or Codex and optional Anthropic-compatible provider models
     /// to local API clients.
     Serve {
@@ -2032,6 +2041,7 @@ pub enum GcSubcommand {
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "ab",
     "remote",
+    "connect",
     "serve",
     "do-prompt",
     "grind-scripts",

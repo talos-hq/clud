@@ -1,4 +1,5 @@
 //! Native client for the clud.bot operator protocol.
+pub mod connect;
 mod console;
 pub mod proxy;
 mod terminal;
@@ -27,7 +28,7 @@ pub enum Action {
 
 pub fn run(action: &Action) -> i32 {
     let Action::Connect { host } = action;
-    match run_session(host) {
+    match run_session(host, None) {
         Ok(code) => code,
         Err(error) => {
             eprintln!("remote: {error}");
@@ -63,9 +64,9 @@ fn stdin_lines() -> mpsc::Receiver<String> {
     rx
 }
 
-fn run_session(host: &str) -> Result<i32, String> {
+fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let base = transport::base_url(host)?;
-    let session = transport::create(&base)?;
+    let session = transport::create(&base, mode.map(connect::Mode::wire))?;
     println!("Connecting to: {}connect#k={}", base, session.keyword);
     std::io::stdout()
         .flush()
