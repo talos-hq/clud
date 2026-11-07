@@ -724,7 +724,10 @@ exceed `ratio x max(edits, 1)`, the allowed call carries one PreToolUse
 permission decision and never denies. After a note it stays quiet for 30
 classified calls. `CLUD_VERIFY_EDIT_RATIO=<n>` wins, then
 `hooks.verify_edit_ratio` in `~/.clud/settings.json`, default `3`; `0` turns
-it off. It fails open like the repeat guard.
+it off. It fails open like the repeat guard. Notes reuse `condense_at`'s
+session marker with cd notices (#2571); after the first message, only the
+current signal and a short scoping reminder remain, without repeated env/config
+instructions. Denial escalation and the quiet window are unchanged.
 
 #2122 adds three signals over the same per-session ledger. They share the
 note's quiet window.
@@ -1039,9 +1042,10 @@ dispatcher roots every declared hook (cwd + `CLUD_PROJECT_DIR` = the
 declaring repo's root, D10). A sensitive raw hook keeps the repo strict even
 after migration, and an empty `hooks.json` is not an opt-in.
 
-**Repeated refusals are condensed** (#2314). The first `block_cd` denial in a
-session carries the full text: the registered roots, the settings key and the
-override. Later denials in the same session are one line that still names the
+**Repeated refusals are condensed** (#2314, #2571). The first cd/verification
+message in a session carries the full text. For a `block_cd` denial this includes
+the registered roots, the settings key and the override. Later denials are one
+line that still names the
 rule id, the `(cd DIR && CMD)` escape and
 `CLUD_BAD_CMD_OVERRIDE=block-cd:<reason>`. The "already shown" marker is a file
 under the clud state dir (`block-cd-seen/<hash of session id>.seen`), pruned
@@ -1054,7 +1058,10 @@ sees the full text once (`block_bad_cmd_cd.rs` `condense_at`).
 refusal-round-trip work). When `block_cd` would deny a POSIX command whose very
 first command is a top-level `cd`, the hook returns `updatedInput` with the whole
 command wrapped as `(cd DIR && CMD)` plus an `additionalContext` notice
-(`[clud] ran (...) instead of ...`), so the call is not lost. The decision
+(`[clud] ran (...) instead of ...`), so the call is not lost. This notice
+shares the existing `condense_at` session marker with cd denials and
+verify-ratio notes (#2571). Later substitutions carry one line with no echoed
+commands; the command is still rewritten on every call. The decision
 follows the payload's `permission_mode`: `allow` under `bypassPermissions`
 (a hook `ask` would raise the permission dialog even there and stall headless
 agents), `ask` in every other mode (the rewrite vets only the `cd`, so the rest

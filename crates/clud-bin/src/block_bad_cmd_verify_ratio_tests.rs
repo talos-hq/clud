@@ -547,3 +547,54 @@ fn posting_text_that_mentions_lint_is_not_a_lint_run_2470() {
         Some(Class::Verify)
     );
 }
+
+#[test]
+fn issue_2571_persisted_notes_are_condensed_without_changing_the_guard() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut notes = Vec::new();
+    for _ in 0..(WINDOW * 3) {
+        if let Some(Verdict::Note(note)) =
+            observe_call_at(dir.path(), "notes", &call(Kind::Test, 0), LIMITS)
+        {
+            notes.push(note);
+        }
+    }
+    assert!(notes.len() >= 2);
+    assert!(notes[0].contains(RATIO_ENV));
+    for note in &notes[1..] {
+        assert!(note.contains("lint/build/test/CI calls"));
+        assert!(!note.contains(RATIO_ENV));
+        assert!(!note.contains("hooks.verify_edit_ratio"));
+    }
+    let denied = observe_call_at(
+        dir.path(),
+        "notes",
+        &Call {
+            workspace_lint: true,
+            ..call(Kind::Lint, 0)
+        },
+        LIMITS,
+    );
+    assert!(matches!(denied, Some(Verdict::Deny(_))));
+    let fresh = (0..MIN_VERIFY)
+        .find_map(|_| observe_call_at(dir.path(), "fresh", &call(Kind::Test, 0), LIMITS));
+    assert!(matches!(fresh, Some(Verdict::Note(note)) if note.contains(RATIO_ENV)));
+}
+
+#[test]
+fn issue_2571_share_and_modifier_repeats_keep_only_the_current_signal() {
+    for (full, signal) in [
+        (share_text(80, 70), "80%"),
+        (modifier_text("clud"), "`clud`"),
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let first =
+            super::super::block_bad_cmd_cd::condense_at(Some(dir.path()), Some("s"), full.clone());
+        assert_eq!(first, full);
+        let repeated =
+            super::super::block_bad_cmd_cd::condense_at(Some(dir.path()), Some("s"), full);
+        assert!(repeated.contains(signal));
+        assert!(!repeated.contains("settings"));
+        assert!(!repeated.contains("advice, not a refusal"));
+    }
+}

@@ -612,7 +612,10 @@ which test tier a change belongs in — lives in
   `hook_health` reuses it for the broken-`git rev-parse`-prefix warning.
   `drift_warning` is the pure predicate the `CwdChanged` backstop (next
   entry) uses. Every settings/hook read sits behind a word-boundary
-  pre-filter so a command with no `cd` pays one lowercase scan.
+  pre-filter so a command with no `cd` pays one lowercase scan. Substitution
+  notices and verify-ratio notes reuse `condense_at`'s session marker: later
+  substitutions carry one line without echoed commands, while every call is
+  still rewritten. See [hook dispatch](../../../docs/architecture/hook-dispatch.md).
 - `block_bad_cmd_cwd_changed.rs` - the #967 Phase 5 `CwdChanged` backstop
   (DD-064): reactive detection of session-cwd drift the PreToolUse scanner
   cannot see (aliases, scripts that chdir). Dispatched by `block_bad_cmd.rs`

@@ -979,3 +979,72 @@ fn a_repeat_denial_is_still_shortened() {
     let second = condense_at(Some(dir.path()), Some("s2"), full());
     assert!(second.len() < first.len());
 }
+
+#[test]
+fn issue_2571_repeated_substitution_notice_is_short_but_every_command_is_rewritten() {
+    let dir = TempDir::new().unwrap();
+    for (index, command) in ["cd x && ls", "cd y && pwd"].iter().enumerate() {
+        let rewritten = sub(command).unwrap();
+        let notice = condense_at(
+            Some(dir.path()),
+            Some("notice-session"),
+            substitution_notice(command, &rewritten),
+        );
+        let raw = serde_json::json!({
+            "tool_name": "Bash", "cwd": "/repo",
+            "tool_input": {"command": command},
+        })
+        .to_string();
+        let payload = crate::block_bad_cmd::parse_payload(&raw, Path::new("/repo")).unwrap();
+        let out = crate::block_bad_cmd::cd_substitution_output(
+            &payload,
+            rewritten.clone(),
+            &notice,
+            "PreToolUse",
+            Some("bypassPermissions"),
+        )
+        .unwrap();
+        assert_eq!(
+            out["hookSpecificOutput"]["updatedInput"]["command"],
+            rewritten
+        );
+        let context = out["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        if index == 0 {
+            assert!(context.contains(command));
+        } else {
+            assert_eq!(
+                context,
+                "[clud] cd ran in a subshell to preserve the session cwd (bash.block_cd)."
+            );
+        }
+    }
+    let fresh = substitution_notice("cd z && ls", "(cd z && ls)");
+    assert_eq!(
+        condense_at(Some(dir.path()), Some("other-session"), fresh.clone()),
+        fresh
+    );
+}
+
+#[test]
+fn issue_2571_repeated_verify_ratio_notes_omit_configuration_instructions() {
+    use crate::block_bad_cmd::block_bad_cmd_verify_ratio::{note_text, Counts};
+    let dir = TempDir::new().unwrap();
+    let full = note_text(
+        Counts {
+            edits: 1,
+            verifies: 9,
+        },
+        3,
+    );
+    assert_eq!(
+        condense_at(Some(dir.path()), Some("verify"), full.clone()),
+        full
+    );
+    let repeated = condense_at(Some(dir.path()), Some("verify"), full);
+    assert!(repeated.contains("9 lint/build/test/CI calls"));
+    assert!(!repeated.contains("CLUD_VERIFY"));
+    assert!(!repeated.contains("hooks.verify"));
+    assert!(repeated.len() < 250);
+}
