@@ -132,7 +132,9 @@ fn decode_path(bytes: &[u8]) -> Result<String, String> {
         return Err("User Path has malformed UTF-16 bytes".into());
     }
     let words: Vec<u16> = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
         .collect();
     let words = words.strip_suffix(&[0]).unwrap_or(&words);
@@ -341,7 +343,9 @@ mod tests {
         let encoded = commands[1].1.split_whitespace().last().unwrap();
         let bytes = STANDARD.decode(encoded).unwrap();
         let words: Vec<u16> = bytes
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
         let script = String::from_utf16(&words).unwrap();
