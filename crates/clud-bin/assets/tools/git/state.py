@@ -10,7 +10,7 @@
 
 Usage:
   state.py [--commits N] [--files N] [--stashes N] [--worktrees N] [--all]
-           [--fetch] [--json]
+           [--json]
 
 /grind agents probe a checkout with `git status`, `git branch`, `git log`,
 `git stash list` and `git worktree list`, one call each, again and again.
@@ -24,9 +24,9 @@ worktrees, each section headed by its true total and followed by an explicit
 `+N more` count. `--all` lifts the caps; `--files/--commits/--stashes/
 --worktrees N` sets one. A list that fits is printed whole, unchanged.
 
-It never fetches, so the upstream counts are as of the last fetch; pass
-`--fetch` when the question is what landed upstream (one network round trip,
-and a fetch failure is reported on stderr without failing the call).
+It never fetches (`tools::bundled_includes_git_state` pins that), so the
+upstream counts are as of the last fetch: run `git fetch -q` yourself first
+when the question is what landed upstream, then call this once.
 
 Run through clud's `tool run` subcommand:
   "$CLUD_EXE" tool run git/state.py
@@ -161,11 +161,6 @@ def render(state: dict) -> str:
     return "\n".join(lines)
 
 
-def fetch() -> tuple[int, str]:
-    """Refresh the remote-tracking refs so ahead/behind is current (#2233)."""
-    return git("fetch", "--quiet")
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="state.py", description=(__doc__ or "").split("\n")[0]
@@ -179,24 +174,11 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="print every change, stash and worktree",
     )
-    parser.add_argument(
-        "--fetch",
-        action="store_true",
-        help="fetch first so the upstream ahead/behind counts are current",
-    )
     parser.add_argument("--json", action="store_true")
     try:
         args = parser.parse_args(argv)
     except SystemExit:
         return 1
-
-    if args.fetch:
-        rc, _ = fetch()
-        if rc != 0:
-            print(
-                f"state.py: git fetch failed (exit {rc}); counts are from the last fetch",
-                file=sys.stderr,
-            )
 
     rc, status = git("status", "--porcelain=v2", "--branch")
     if rc != 0:

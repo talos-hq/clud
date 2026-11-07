@@ -522,7 +522,7 @@ pub(super) const BOUNDED_READ_ROUTING: &str = "Before reading a source file you 
 /// learned it existed (#2233). `git` is the probe's largest category (16.4 % of
 /// 928 MB of exposure on 2026-11-07). The guidance is one-shot/grind only: an
 /// interactive session keeps the shorter prompt and decides for itself.
-pub(super) const GIT_STATE_ROUTING: &str = "To learn a checkout's git state make ONE call to `clud tool run git/state.py` — branch, upstream ahead/behind, changed paths, recent commits, stashes and worktrees, every list bounded — instead of chaining `git status`, `git branch`, `git log`, `git stash list` or `git worktree list`; add `--fetch` when the question is what landed upstream, and `--all` only when a full list matters. For a review, pin the range with `clud tool run git/review_range.py` before reading any file, then `git show --stat <sha>`, never `git log -p`.";
+pub(super) const GIT_STATE_ROUTING: &str = "To learn a checkout's git state make ONE call to `clud tool run git/state.py` — branch, upstream ahead/behind, changed paths, recent commits, stashes and worktrees, every list bounded — instead of chaining `git status`, `git branch`, `git log`, `git stash list` or `git worktree list`; run `git fetch -q` first when the question is what landed upstream, and add `--all` only when a full list matters. For a review, pin the range with `clud tool run git/review_range.py` before reading any file, then `git show --stat <sha>`, never `git log -p`.";
 
 fn append_instructions(target: &mut String, text: &str) {
     if !text.is_empty() {

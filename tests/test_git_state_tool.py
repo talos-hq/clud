@@ -140,33 +140,31 @@ def test_all_lifts_the_caps_but_never_unbounds_the_commit_range() -> None:
     assert log_call[1] == "-3", f"--all must not ask git for the whole history: {log_call}"
 
 
-def test_fetch_is_opt_in_and_its_failure_does_not_fail_the_call(capsys, monkeypatch) -> None:
+def test_the_page_never_touches_the_network(monkeypatch) -> None:
+    """`tools::bundled_includes_git_state` pins that state.py never fetches.
+
+    The check is a whole-call invariant, not a flag: any `fetch`/`pull`/`ls-remote`
+    would make a state probe depend on the network, which is why the routed
+    instruction sends the fetch to git itself.
+    """
     calls: list[tuple[str, ...]] = []
 
     def fake_git(*args: str) -> tuple[int, str]:
         calls.append(args)
-        if args[0] == "fetch":
-            return 128, ""
-        if args[0] == "status":
-            return 0, STATUS
-        if args[0] == "log":
-            return 0, "abc fix\n"
-        if args[0] == "stash":
-            return 0, ""
-        if args[0] == "worktree":
-            return 0, ""
-        return 0, ""
+        return {
+            "status": (0, STATUS),
+            "log": (0, "abc fix\n"),
+            "stash": (0, ""),
+            "worktree": (0, ""),
+        }.get(args[0], (0, ""))
 
     monkeypatch.setattr(state, "git", fake_git)
-    assert state.main([]) == 0
-    assert not any(c[0] == "fetch" for c in calls), "a plain call must stay offline"
-
-    calls.clear()
-    assert state.main(["--fetch"]) == 0
-    assert calls[0][0] == "fetch"
-    err = capsys.readouterr().err
-    assert "git fetch failed (exit 128)" in err
-    assert "counts are from the last fetch" in err
+    for argv in ([], ["--all"], ["--commits", "0"], ["--json"]):
+        calls.clear()
+        assert state.main(argv) == 0
+        assert not [c for c in calls if c[0] in {"fetch", "pull", "ls-remote", "remote"}], (
+            f"state.py talked to the network for {argv}: {calls}"
+        )
 
 
 def test_a_zero_commit_request_skips_git_log(monkeypatch) -> None:

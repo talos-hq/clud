@@ -801,7 +801,10 @@ fn agent_launches_route_git_probes_through_the_state_tool() {
             "{raw:?} does not route git state: {}",
             &text[..text.len().min(200)]
         );
-        assert!(text.contains("--fetch"), "{raw:?} never mentions --fetch");
+        assert!(
+            text.contains("git fetch -q"),
+            "{raw:?} must send the fetch to git, not ask state.py to do it"
+        );
     }
 
     let interactive = prompt(&plan(&["clud"]));
