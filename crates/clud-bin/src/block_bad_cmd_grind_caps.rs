@@ -374,6 +374,11 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
     if role == ORCHESTRATOR {
         return orchestrator_shell_reason(command);
     }
+    if matches!(role, EDITOR | REVIEWER) {
+        if let Some(reason) = search_shell_reason(role, command) {
+            return Some(reason);
+        }
+    }
     let statements = match statement_words(command) {
         Ok(statements) => statements,
         Err(construct) => return Some(format!("{role} may not use {construct}")),
@@ -736,6 +741,59 @@ fn native_watch_reason(role: &str, words: &[String]) -> Option<String> {
     ))
 }
 
+/// Inspect structured redirections and command-local environment before flattening.
+fn search_shell_reason(role: &str, command: &str) -> Option<String> {
+    use crate::shell_ast::{parse, BaseEnv, Dialect};
+    let script = parse(command, Dialect::Posix, &BaseEnv::default());
+    script
+        .invocations
+        .iter()
+        .any(|invocation| {
+            matches!(
+                invocation.words.first().map(|w| w.text()),
+                Some("rg" | "git")
+            ) && (!invocation.env.is_empty()
+                || invocation.redirects.iter().any(|r| r.writes_file()))
+        })
+        .then(|| {
+            format!("{role} code searches may not write files or override command environment")
+        })
+}
+
+/// Shell search fallback for runtimes without native Grep/Glob (#2451 item 2).
+/// Reject options that execute preprocessors, pagers or textconv helpers.
+fn editor_read(words: &[String]) -> bool {
+    if is_gh_read(words) {
+        return true;
+    }
+    match words[0].as_str() {
+        "rg" => {
+            words.get(1).is_some_and(|w| w == "--no-config")
+                && !words
+                    .iter()
+                    .any(|w| matches!(w.split('=').next(), Some("--pre" | "--hostname-bin")))
+        }
+        "git" => {
+            let Some(sub) = git_subcommand(words) else {
+                return false;
+            };
+            sub.first().is_some_and(|w| w == "grep")
+                && !sub.iter().skip(1).any(|w| {
+                    let flag = w.split('=').next().unwrap_or(w);
+                    (flag.starts_with('-') && !flag.starts_with("--") && flag.contains('O'))
+                        || (flag.len() > 2
+                            && flag.starts_with("--")
+                            && ["--open-files-in-pager", "--textconv", "--help"]
+                                .iter()
+                                .any(|blocked| {
+                                    blocked.starts_with(flag) || flag.starts_with(blocked)
+                                }))
+                })
+        }
+        _ => false,
+    }
+}
+
 /// #1339 item 9: a shell `grep -r` or `find` walks ignored trees (`target/`
 /// holds gigabytes); the Grep and Glob tools use ripgrep and respect
 /// `.gitignore`. A depth-bounded `find` lists a directory and stays open.
@@ -1066,9 +1124,8 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             }
             None
         }
-        // Workers and reviewers hold a shell only to investigate on GitHub:
-        // read-only `gh`.
-        EDITOR | REVIEWER if is_gh_read(words) => None,
+        // Workers and reviewers may investigate with read-only GitHub and code searches.
+        EDITOR | REVIEWER if editor_read(words) => None,
         // The patch tool refuses files outside the run facts' task list itself.
         EDITOR | REVIEWER if bundled_tool(words) == Some("code/patch.py") => None,
         EDITOR | REVIEWER if runs_repo_script(words) => Some(format!(
@@ -1076,7 +1133,7 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
              lint/test before every push"
         )),
         EDITOR | REVIEWER => Some(format!(
-            "{role} may only run read-only `gh` (issue/pr/run view|list, search) and `safe-rm` \
+            "{role} may only run read-only `gh`, `rg --no-config`, `git grep` and `safe-rm` \
              on literal paths in its task's directories; it cannot build, lint or test"
         )),
         _ => deny(&program),
@@ -2533,6 +2590,48 @@ mod tests {
                     !allowed(role, &format!("{tool} {args}"), &facts),
                     "{role}: {args}"
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn editors_and_reviewers_can_search_without_native_search_tools() {
+        let facts = run(true, false);
+        for role in [EDITOR, REVIEWER] {
+            for command in [
+                "rg --no-config -n leftover src",
+                "rg --no-config --files src",
+                "git grep -n leftover -- src",
+                "git -C /repo/task grep -n leftover",
+            ] {
+                assert!(allowed(role, command, &facts), "{role}: {command}");
+            }
+            for command in [
+                "./rg leftover",
+                "rg --no-config --pre=./helper leftover",
+                "rg --no-config --pre ./helper leftover",
+                "rg -n leftover src",
+                "rg -- --no-config leftover",
+                "rg -e --no-config leftover",
+                "rg --regexp=--no-config leftover",
+                "rg --no-config --hostname-bin ./helper leftover",
+                "git grep -O./helper leftover",
+                "git grep --open-files-in-pager=./helper leftover",
+                "git grep --textconv leftover",
+                "git grep --textc leftover",
+                "git grep --help",
+                "git grep -nO./helper leftover",
+                "git grep leftover > result",
+                "git grep leftover &> result",
+                "rg --no-config leftover 2> result",
+                "GIT_CONFIG_COUNT=1 git grep leftover",
+                "RIPGREP_CONFIG_PATH=helper rg --no-config leftover",
+                "git -c alias.grep=!helper grep leftover",
+                "git status",
+                "git stash push",
+                "bash ./test",
+            ] {
+                assert!(!allowed(role, command, &facts), "{role}: {command}");
             }
         }
     }

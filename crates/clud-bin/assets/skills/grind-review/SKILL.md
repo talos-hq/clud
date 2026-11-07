@@ -18,6 +18,9 @@ Keep tool output bounded (narrow searches, capped lists, ranged reads, bulk on d
 - Read every file the workers touched and every file they should have
   touched. Judge the change against the goal, not the task list; missing
   pieces are yours to add.
+- If native Grep/Glob tools are unavailable, search with `rg --no-config -n <pattern> <path>`,
+  `rg --no-config --files <path>`, or `git grep -n <pattern> -- <path>`.
+  Put `--no-config` immediately after `rg`. Search options that execute helpers are refused.
 - Check the RED -> GREEN regression exists for each code change and would
   fail without the fix.
 - Fix defects directly by editing. Leave no TODOs for the integrator.
