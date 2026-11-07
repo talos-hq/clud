@@ -126,6 +126,11 @@ fn is_in_pruned_dir(path: &Path) -> bool {
 pub(super) fn classify_entries(entries: impl Iterator<Item = (PathBuf, u32)>) -> IndexPassOutput {
     let mut out = IndexPassOutput::default();
     for (path, size) in entries {
+        // A nonzero cached size below the threshold cannot enter either
+        // output bucket, so avoid scanning its path components.
+        if size != 0 && u64::from(size) < SIZE_THRESHOLD {
+            continue;
+        }
         if !is_whitelisted_source(&path) || is_in_pruned_dir(&path) {
             continue;
         }
