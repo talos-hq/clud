@@ -512,6 +512,18 @@ pub(super) const BOUNDED_DIAGNOSTIC_ROUTING: &str = "For large GitHub issue disc
 /// never learn they exist (#2233).
 pub(super) const BOUNDED_READ_ROUTING: &str = "Before reading a source file you have not mapped, outline it with `clud tool run code/outline.py -- <file>` (every definition and heading with its line range; ~2.7 KB for a 2,100-line Python file) and then read only that range in one call with `clud tool run code/slice.py <file> --lines A-B [--lines C-D]` (line-numbered, merged overlaps, byte-capped, with a footer naming the line to continue from); never re-read a range you already have. Use `clud tool run code/ast_grep.py --` for a structural search. Do not `cat` a large file whole, and do not hunt one symbol through repeated `sed -n` slices or offset reads: each miss is a round trip that every later request re-sends. Read a file whole only when it is small or every line matters.";
 
+/// The fleet's most repeated probe is a git-state poll. Over seven days of
+/// local transcripts the fleet made 25,182 git-probe calls that returned
+/// 35.6 MB of results (`git log`/`show` 55 %, `git status` 21 %, a
+/// `fetch`+`status`/`log` chain 13 %, a bare `fetch`/`pull` 11 %), and only 56
+/// of them (0.1 %) went through the bundled `git/state.py` that already
+/// answers the whole question in one call — the tool was documented in the
+/// `/grind` agent docs only, so plain `clud -p` and `clud loop` agents never
+/// learned it existed (#2233). `git` is the probe's largest category (16.4 % of
+/// 928 MB of exposure on 2026-11-07). The guidance is one-shot/grind only: an
+/// interactive session keeps the shorter prompt and decides for itself.
+pub(super) const GIT_STATE_ROUTING: &str = "To learn a checkout's git state make ONE call to `clud tool run git/state.py` — branch, upstream ahead/behind, changed paths, recent commits, stashes and worktrees, every list bounded — instead of chaining `git status`, `git branch`, `git log`, `git stash list` or `git worktree list`; run `git fetch -q` first when the question is what landed upstream, and add `--all` only when a full list matters. For a review, pin the range with `clud tool run git/review_range.py` before reading any file, then `git show --stat <sha>`, never `git log -p`.";
+
 fn append_instructions(target: &mut String, text: &str) {
     if !text.is_empty() {
         if !target.is_empty() {
@@ -636,6 +648,7 @@ fn build_launch_plan_for_target_at(
         if agent_mode {
             append_instructions(&mut deletion_instructions, BOUNDED_DIAGNOSTIC_ROUTING);
             append_instructions(&mut deletion_instructions, BOUNDED_READ_ROUTING);
+            append_instructions(&mut deletion_instructions, GIT_STATE_ROUTING);
         }
     }
     let codex_passthrough_instructions = (backend == Backend::Codex)
@@ -794,6 +807,7 @@ fn build_launch_plan_for_target_at(
         if agent_mode {
             append_instructions(&mut instructions, BOUNDED_DIAGNOSTIC_ROUTING);
             append_instructions(&mut instructions, BOUNDED_READ_ROUTING);
+            append_instructions(&mut instructions, GIT_STATE_ROUTING);
         }
         if !instructions.is_empty() || has_user_instructions {
             cmd.extend([
