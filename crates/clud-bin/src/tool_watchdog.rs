@@ -341,7 +341,10 @@ mod reporter_deadline_tests {
     #[test]
     fn reporter_has_no_implicit_deadline() {
         let mut watchdog = Watchdog::for_rel_path("diagnostics/test_report.py");
-        watchdog.started_at = Instant::now() - Duration::from_secs(172_800);
+        let now = Instant::now();
+        // A freshly booted host may not have two days of monotonic history.
+        watchdog.started_at = now.checked_sub(Duration::from_secs(172_800)).unwrap_or(now);
+        assert_eq!(watchdog.command_timeout, Duration::MAX);
         assert_eq!(watchdog.check(), WatchdogDecision::Continue);
     }
 }
