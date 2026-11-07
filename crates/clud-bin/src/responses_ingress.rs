@@ -4,8 +4,9 @@
 //! Ports CLIProxyAPI
 //! `internal/translator/claude/openai/responses/claude_openai-responses_request.go`
 //! (`ConvertOpenAIResponsesRequestToClaude`): the Responses API is item-based, so
-//! `instructions` plus every role=system/developer input item become top-level
-//! system blocks in source order, `message` items become user/assistant turns,
+//! `instructions` plus leading role=system/developer input items become top-level
+//! system blocks; later instructions stay in place as marked user blocks.
+//! Other `message` items become user/assistant turns,
 //! `function_call`/`custom_tool_call` items become `tool_use`, their `*_output`
 //! partners become `tool_result`, and `reasoning` items become `thinking` blocks
 //! when they carry an encrypted signature.
@@ -29,7 +30,9 @@ use std::collections::HashSet;
 
 use serde_json::{json, Map, Value};
 
-use crate::openai_ingress::{sanitize_tool_name, IngressError, DEFAULT_MAX_TOKENS};
+use crate::openai_ingress::{
+    append_system_blocks, sanitize_tool_name, tool_results_first, IngressError, DEFAULT_MAX_TOKENS,
+};
 
 /// Translate one OpenAI Responses request body into an Anthropic Messages body.
 ///
@@ -92,6 +95,7 @@ pub fn translate_responses_request(body: &[u8]) -> Result<Value, IngressError> {
     }
 
     repair_dangling_tool_uses(&mut turns);
+    tool_results_first(&mut turns);
 
     if turns.is_empty() {
         if system.is_empty() {
@@ -180,15 +184,18 @@ fn translate_items(
     // Tool results may only follow a call that was actually emitted, so the ids
     // seen so far are tracked in order (upstream's `emittedRawToolUses`).
     let mut emitted_calls: HashSet<String> = HashSet::new();
+    let mut leading_system = true;
     for item in items {
         let item = item.as_object().ok_or(IngressError::NotJson)?;
         let role = item.get("role").and_then(Value::as_str).unwrap_or_default();
+        leading_system &= is_system_role(role);
         if is_system_role(role) {
-            // System-level items already became top-level system blocks. Each
-            // source block stays separate: Claude keeps operator authority there.
-            for block in system_content_blocks(item.get("content"))? {
-                system.push(block);
-            }
+            append_system_blocks(
+                leading_system,
+                system_content_blocks(item.get("content"))?,
+                system,
+                turns,
+            );
             continue;
         }
         let kind = item
@@ -696,6 +703,129 @@ mod tests {
     }
 
     #[test]
+    fn midconversation_system_keeps_tool_results_first_in_the_user_turn() {
+        let mut request = json!({"model": "m", "input": [
+            {"role": "system", "content": "A"},
+            {"role": "user", "content": "question"},
+            {"type": "function_call", "call_id": "call_one", "name": "first", "arguments": "{}"},
+            {"type": "function_call", "call_id": "call_two", "name": "second", "arguments": "{}"},
+            {"role": "system", "content": "B"},
+            {"type": "function_call_output", "call_id": "call_one", "output": "one"},
+            {"role": "developer", "content": "C"},
+            {"type": "function_call_output", "call_id": "call_two", "output": "two"},
+            {"role": "user", "content": "next"},
+        ]});
+        let out = translate(request.clone());
+        assert_eq!(out["system"], json!([{"type": "text", "text": "A"}]));
+        assert_eq!(out["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(out["messages"][2]["role"], "user");
+        let content = out["messages"][2]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 5);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_one");
+        assert_eq!(content[1]["type"], "tool_result");
+        assert_eq!(content[1]["tool_use_id"], "call_two");
+        assert_eq!(content[2]["text"], "<system-reminder>B</system-reminder>");
+        assert_eq!(content[3]["text"], "<system-reminder>C</system-reminder>");
+        assert_eq!(content[4]["text"], "next");
+        request["input"].as_array_mut().unwrap().extend([
+            json!({"role": "assistant", "content": "done"}),
+            json!({"role": "user", "content": "another question"}),
+        ]);
+        let later = translate(request);
+        assert_eq!(out["system"], later["system"]);
+        for (index, turn) in out["messages"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(
+                serde_json::to_vec(turn).unwrap(),
+                serde_json::to_vec(&later["messages"][index]).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn midconversation_system_stays_in_position_with_a_stable_marker() {
+        for role in ["system", "developer"] {
+            let history = json!([
+                {"role": "system", "content": "A"},
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+                {"role": role, "content": "B"},
+                {"role": "user", "content": "next"},
+            ]);
+            let mut request = json!({"model": "m", "input": history});
+            let out = translate(request.clone());
+            assert_eq!(out["system"], json!([{"type": "text", "text": "A"}]));
+            assert_eq!(
+                out["messages"],
+                json!([
+                    {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "<system-reminder>B</system-reminder>"},
+                        {"type": "text", "text": "next"},
+                    ]},
+                ])
+            );
+            request["input"].as_array_mut().unwrap().extend([
+                json!({"role": "assistant", "content": "another answer"}),
+                json!({"role": role, "content": "C"}),
+                json!({"role": "user", "content": "last"}),
+            ]);
+            let later = translate(request.clone());
+            assert_eq!(out["system"], later["system"]);
+            for (index, turn) in out["messages"].as_array().unwrap().iter().enumerate() {
+                assert_eq!(
+                    serde_json::to_vec(turn).unwrap(),
+                    serde_json::to_vec(&later["messages"][index]).unwrap()
+                );
+            }
+            request["input"][3]["content"] = json!("changed B");
+            let changed = translate(request);
+            assert_eq!(out["system"], changed["system"]);
+            assert_eq!(out["messages"][0], changed["messages"][0]);
+            assert_eq!(out["messages"][1], changed["messages"][1]);
+        }
+    }
+
+    #[test]
+    fn midconversation_system_coalesces_between_adjacent_user_blocks() {
+        let out = translate(json!({"model": "m", "input": [
+            {"role": "user", "content": "before"},
+            {"role": "system", "content": [{"type": "text", "text": "rule one"},
+                                              {"type": "text", "text": "rule two"}]},
+            {"role": "developer", "content": "rule three"},
+            {"role": "user", "content": "after"},
+        ]}));
+        assert!(out.get("system").is_none());
+        assert_eq!(
+            out["messages"],
+            json!([{"role": "user", "content": [
+                {"type": "text", "text": "before"},
+                {"type": "text", "text": "<system-reminder>rule one</system-reminder>"},
+                {"type": "text", "text": "<system-reminder>rule two</system-reminder>"},
+                {"type": "text", "text": "<system-reminder>rule three</system-reminder>"},
+                {"type": "text", "text": "after"},
+            ]}])
+        );
+    }
+
+    #[test]
+    fn midconversation_system_after_blank_user_is_not_a_leading_instruction() {
+        let out = translate(json!({"model": "m", "input": [
+            {"role": "user", "content": " "},
+            {"role": "system", "content": "B"},
+            {"role": "developer", "content": " "},
+        ]}));
+        assert!(out.get("system").is_none());
+        assert_eq!(
+            out["messages"],
+            json!([{"role": "user", "content": [
+                {"type": "text", "text": "<system-reminder>B</system-reminder>"},
+            ]}])
+        );
+    }
+
+    #[test]
     fn plain_input_string_becomes_one_user_turn() {
         let out = translate(json!({ "model": "claude-sonnet", "input": "hello" }));
         assert_eq!(out["model"], "claude-sonnet");
@@ -707,7 +837,7 @@ mod tests {
     }
 
     #[test]
-    fn instructions_and_system_items_become_system_blocks_in_order() {
+    fn instructions_and_system_items_keep_source_order() {
         let out = translate(json!({
             "model": "m",
             "instructions": "be terse",
@@ -718,12 +848,16 @@ mod tests {
             ],
         }));
         let system = out["system"].as_array().unwrap();
-        assert_eq!(system.len(), 3);
+        assert_eq!(system.len(), 2);
         assert_eq!(system[0]["text"], "be terse");
         assert_eq!(system[1]["text"], "operator rule");
-        assert_eq!(system[2]["text"], "later rule");
-        // System items never leak into the conversation turns.
-        assert_eq!(out["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            out["messages"],
+            json!([{"role": "user", "content": [
+                {"type": "text", "text": "hi"},
+                {"type": "text", "text": "<system-reminder>later rule</system-reminder>"},
+            ]}])
+        );
     }
 
     #[test]

@@ -100,8 +100,14 @@ It is reachable on the loopback gateway and on `clud serve` as
 contract as every other door, when the launch has a unified gateway; without one
 the turn is refused `501` in the Responses error envelope. The hidden seam
 `clud __openai-responses-translate` reads a request from stdin and writes the
-Messages body. `instructions` plus every role=system/developer input item
-become top-level `system` blocks in source order; `message` items become
+Messages body. `instructions` plus leading role=system/developer input items
+become top-level `system` blocks in source order. Both Chat Completions and
+Responses keep later system/developer messages in position as user text blocks
+wrapped byte-for-byte in `<system-reminder>…</system-reminder>`. Adjacent user
+blocks coalesce in source order, except that protocol `tool_result` blocks
+come first as required by Anthropic; instruction/text order and result order
+are each preserved. Appending completed turns leaves the earlier prefix
+unchanged. Other `message` items become
 user/assistant turns; `function_call`/`custom_tool_call` become `tool_use` and
 their `*_output` partners `tool_result`; a `reasoning` item with
 `encrypted_content` becomes a `thinking` block, and one without a signature keeps

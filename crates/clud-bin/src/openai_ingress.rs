@@ -152,38 +152,8 @@ pub fn translate_chat_request(body: &[u8]) -> Result<Value, IngressError> {
 
     let mut system: Vec<Value> = Vec::new();
     let mut turns: Vec<(String, Vec<Value>)> = Vec::new();
-    for message in messages {
-        let message = message.as_object().ok_or(IngressError::NotJson)?;
-        let role = message
-            .get("role")
-            .and_then(Value::as_str)
-            .ok_or(IngressError::NotJson)?;
-        match role {
-            "system" | "developer" => {
-                // Developer messages rank with system messages in OpenAI's
-                // instruction hierarchy; dropping them loses operator intent.
-                for block in text_blocks(message.get("content"))? {
-                    system.push(block);
-                }
-            }
-            "user" | "assistant" => {
-                let mut blocks = content_blocks(message.get("content"))?;
-                if role == "assistant" {
-                    blocks.extend(tool_use_blocks(message.get("tool_calls"))?);
-                }
-                if !blocks.is_empty() {
-                    push_turn(&mut turns, role, blocks);
-                }
-            }
-            "tool" => {
-                let block = tool_result_block(message)?;
-                // Anthropic requires alternating roles, so consecutive tool
-                // results coalesce into a single user turn.
-                push_turn(&mut turns, "user", vec![block]);
-            }
-            other => return Err(IngressError::UnsupportedPart(format!("role:{other}"))),
-        }
-    }
+    translate_chat_messages(messages, &mut system, &mut turns)?;
+    tool_results_first(&mut turns);
 
     // A system-only request still needs one conversational turn: an empty
     // `messages` array is not a Messages request.
@@ -226,11 +196,89 @@ pub fn translate_chat_request(body: &[u8]) -> Result<Value, IngressError> {
     Ok(Value::Object(out))
 }
 
+fn translate_chat_messages(
+    messages: &[Value],
+    system: &mut Vec<Value>,
+    turns: &mut Vec<(String, Vec<Value>)>,
+) -> Result<(), IngressError> {
+    let mut leading_system = true;
+    for message in messages {
+        let message = message.as_object().ok_or(IngressError::NotJson)?;
+        let role = message
+            .get("role")
+            .and_then(Value::as_str)
+            .ok_or(IngressError::NotJson)?;
+        leading_system &= matches!(role, "system" | "developer");
+        match role {
+            "system" | "developer" => {
+                append_system_blocks(
+                    leading_system,
+                    text_blocks(message.get("content"))?,
+                    system,
+                    turns,
+                );
+            }
+            "user" | "assistant" => {
+                let mut blocks = content_blocks(message.get("content"))?;
+                if role == "assistant" {
+                    blocks.extend(tool_use_blocks(message.get("tool_calls"))?);
+                }
+                if !blocks.is_empty() {
+                    push_turn(turns, role, blocks);
+                }
+            }
+            "tool" => {
+                let block = tool_result_block(message)?;
+                // Consecutive tool results coalesce into a single user turn,
+                // matching Anthropic's same-role turn combination.
+                push_turn(turns, "user", vec![block]);
+            }
+            other => return Err(IngressError::UnsupportedPart(format!("role:{other}"))),
+        }
+    }
+
+    Ok(())
+}
+
+/// Keep only the leading instruction prefix at top level. Later validated text
+/// blocks use the existing system-reminder convention, without turn-dependent
+/// metadata, so appending history cannot change the bytes of an earlier prefix.
+pub(crate) fn append_system_blocks(
+    leading: bool,
+    mut blocks: Vec<Value>,
+    system: &mut Vec<Value>,
+    turns: &mut Vec<(String, Vec<Value>)>,
+) {
+    if leading {
+        system.extend(blocks);
+    } else if !blocks.is_empty() {
+        for block in &mut blocks {
+            if let Some(text) = block.get("text").and_then(Value::as_str) {
+                block["text"] = json!(format!("<system-reminder>{text}</system-reminder>"));
+            }
+        }
+        push_turn(turns, "user", blocks);
+    }
+}
+
+/// Anthropic requires protocol results before text in a user turn. The stable
+/// sort preserves instruction/text order and result order independently, even
+/// when a mid-conversation instruction arrives between parallel tool results.
+pub(crate) fn tool_results_first(turns: &mut [(String, Vec<Value>)]) {
+    for (role, blocks) in turns {
+        if role == "user" {
+            blocks.sort_by_key(|block| {
+                block.get("type").and_then(Value::as_str) != Some("tool_result")
+            });
+        }
+    }
+}
+
 /// Merge a new turn into the accumulated alternation.
 ///
-/// Two consecutive messages with the same role are one Anthropic turn; keeping
-/// them separate is rejected by the Messages API, and a tool result always
-/// follows its assistant turn.
+/// The Messages API combines consecutive messages with the same role. Coalesce
+/// their blocks here in source order, including marked instructions and tool
+/// results, without introducing synthetic assistant content.
 fn push_turn(turns: &mut Vec<(String, Vec<Value>)>, role: &str, blocks: Vec<Value>) {
     match turns.last_mut() {
         Some((previous, content)) if previous == role => content.extend(blocks),
@@ -1179,6 +1227,131 @@ mod tests {
 
     fn translate(request: Value) -> Value {
         translate_chat_request(&serde_json::to_vec(&request).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn midconversation_system_keeps_tool_results_first_in_the_user_turn() {
+        let mut request = json!({"model": "m", "messages": [
+            {"role": "system", "content": "A"},
+            {"role": "user", "content": "question"},
+            {"role": "assistant", "tool_calls": [
+                {"id": "call_one", "type": "function", "function": {"name": "first", "arguments": "{}"}},
+                {"id": "call_two", "type": "function", "function": {"name": "second", "arguments": "{}"}},
+            ]},
+            {"role": "system", "content": "B"},
+            {"role": "tool", "tool_call_id": "call_one", "content": "one"},
+            {"role": "developer", "content": "C"},
+            {"role": "tool", "tool_call_id": "call_two", "content": "two"},
+            {"role": "user", "content": "next"},
+        ]});
+        let out = translate(request.clone());
+        assert_eq!(out["system"], json!([{"type": "text", "text": "A"}]));
+        assert_eq!(out["messages"].as_array().unwrap().len(), 3);
+        assert_eq!(out["messages"][2]["role"], "user");
+        let content = out["messages"][2]["content"].as_array().unwrap();
+        assert_eq!(content.len(), 5);
+        assert_eq!(content[0]["type"], "tool_result");
+        assert_eq!(content[0]["tool_use_id"], "call_one");
+        assert_eq!(content[1]["type"], "tool_result");
+        assert_eq!(content[1]["tool_use_id"], "call_two");
+        assert_eq!(content[2]["text"], "<system-reminder>B</system-reminder>");
+        assert_eq!(content[3]["text"], "<system-reminder>C</system-reminder>");
+        assert_eq!(content[4]["text"], "next");
+        request["messages"].as_array_mut().unwrap().extend([
+            json!({"role": "assistant", "content": "done"}),
+            json!({"role": "user", "content": "another question"}),
+        ]);
+        let later = translate(request);
+        assert_eq!(out["system"], later["system"]);
+        for (index, turn) in out["messages"].as_array().unwrap().iter().enumerate() {
+            assert_eq!(
+                serde_json::to_vec(turn).unwrap(),
+                serde_json::to_vec(&later["messages"][index]).unwrap()
+            );
+        }
+    }
+
+    #[test]
+    fn midconversation_system_stays_in_position_with_a_stable_marker() {
+        for role in ["system", "developer"] {
+            let history = json!([
+                {"role": "system", "content": "A"},
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+                {"role": role, "content": "B"},
+                {"role": "user", "content": "next"},
+            ]);
+            let mut request = json!({"model": "m", "messages": history});
+            let out = translate(request.clone());
+            assert_eq!(out["system"], json!([{"type": "text", "text": "A"}]));
+            assert_eq!(
+                out["messages"],
+                json!([
+                    {"role": "user", "content": [{"type": "text", "text": "question"}]},
+                    {"role": "assistant", "content": [{"type": "text", "text": "answer"}]},
+                    {"role": "user", "content": [
+                        {"type": "text", "text": "<system-reminder>B</system-reminder>"},
+                        {"type": "text", "text": "next"},
+                    ]},
+                ])
+            );
+            request["messages"].as_array_mut().unwrap().extend([
+                json!({"role": "assistant", "content": "another answer"}),
+                json!({"role": role, "content": "C"}),
+                json!({"role": "user", "content": "last"}),
+            ]);
+            let later = translate(request.clone());
+            assert_eq!(out["system"], later["system"]);
+            for (index, turn) in out["messages"].as_array().unwrap().iter().enumerate() {
+                assert_eq!(
+                    serde_json::to_vec(turn).unwrap(),
+                    serde_json::to_vec(&later["messages"][index]).unwrap()
+                );
+            }
+            request["messages"][3]["content"] = json!("changed B");
+            let changed = translate(request);
+            assert_eq!(out["system"], changed["system"]);
+            assert_eq!(out["messages"][0], changed["messages"][0]);
+            assert_eq!(out["messages"][1], changed["messages"][1]);
+        }
+    }
+
+    #[test]
+    fn midconversation_system_coalesces_between_adjacent_user_blocks() {
+        let out = translate(json!({"model": "m", "messages": [
+            {"role": "user", "content": "before"},
+            {"role": "system", "content": [{"type": "text", "text": "rule one"},
+                                              {"type": "text", "text": "rule two"}]},
+            {"role": "developer", "content": "rule three"},
+            {"role": "user", "content": "after"},
+        ]}));
+        assert!(out.get("system").is_none());
+        assert_eq!(
+            out["messages"],
+            json!([{"role": "user", "content": [
+                {"type": "text", "text": "before"},
+                {"type": "text", "text": "<system-reminder>rule one</system-reminder>"},
+                {"type": "text", "text": "<system-reminder>rule two</system-reminder>"},
+                {"type": "text", "text": "<system-reminder>rule three</system-reminder>"},
+                {"type": "text", "text": "after"},
+            ]}])
+        );
+    }
+
+    #[test]
+    fn midconversation_system_after_blank_user_is_not_a_leading_instruction() {
+        let out = translate(json!({"model": "m", "messages": [
+            {"role": "user", "content": " "},
+            {"role": "system", "content": "B"},
+            {"role": "developer", "content": " "},
+        ]}));
+        assert!(out.get("system").is_none());
+        assert_eq!(
+            out["messages"],
+            json!([{"role": "user", "content": [
+                {"type": "text", "text": "<system-reminder>B</system-reminder>"},
+            ]}])
+        );
     }
 
     #[test]
