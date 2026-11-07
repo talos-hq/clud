@@ -108,6 +108,7 @@ pub mod hook_health;
 pub mod hook_payload_guard;
 pub mod hook_trust;
 pub mod images_ingress;
+mod ingress_cache;
 pub mod install;
 pub mod job_orphan_reaper;
 pub mod large_file_guard;

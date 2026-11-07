@@ -260,3 +260,23 @@ def test_missing_model_is_refused() -> None:
 
     assert completed.returncode == 2
     assert "model" in completed.stderr
+
+
+def test_client_cache_breakpoints_survive_translation() -> None:
+    control = {"type": "ephemeral", "ttl": "1h"}
+    result = _translate(
+        {
+            "model": "claude-test",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [{"type": "text", "text": "stable", "cache_control": control}],
+                },
+                {"role": "user", "content": "hello"},
+            ],
+        }
+    )
+    assert result.returncode == 0, result.stderr
+    translated = json.loads(result.stdout)
+    assert translated["system"][0]["cache_control"] == control
+    assert "cache_control" not in translated["messages"][0]["content"][0]

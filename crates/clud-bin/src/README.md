@@ -85,6 +85,13 @@ restoration and count-only status. See
 daemon session flags and prevents automatic `EnterPlanMode` while it is
 active (#1844). See [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md#loop-scoped-plan-mode).
 
+`ingress_cache.rs` preserves client breakpoints and supplies up to three default
+breakpoints for OpenAI Chat/Responses clients on Claude/OpenRouter routes: last
+tool, last system block, and last block of the previous user turn. DeepSeek,
+Kimi and Codex routes receive no defaults. Existing client breakpoints suppress
+all defaults. Content-prefix stability excludes `cache_control` metadata; tool
+and system markers remain fixed while the conversation marker advances.
+
 `openai_ingress.rs` and `responses_ingress.rs` share instruction placement:
 only the leading system/developer prefix goes to top-level `system`; later
 instructions stay in order as marked user blocks. See

@@ -282,3 +282,23 @@ def test_a_response_body_that_is_not_json_is_refused() -> None:
     assert completed.returncode == 2
     assert completed.stdout == ""
     assert "JSON" in completed.stderr
+
+
+def test_client_cache_breakpoints_survive_translation() -> None:
+    control = {"type": "ephemeral", "ttl": "1h"}
+    result = _translate(
+        {
+            "model": "claude-test",
+            "input": [
+                {
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": "stable", "cache_control": control}],
+                },
+                {"role": "user", "content": "hello"},
+            ],
+        }
+    )
+    assert result.returncode == 0, result.stderr
+    translated = json.loads(result.stdout)
+    assert translated["system"][0]["cache_control"] == control
+    assert "cache_control" not in translated["messages"][0]["content"][0]

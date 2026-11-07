@@ -23,8 +23,8 @@
 //!   discovery replay and the namespace/custom-tool name map are not ported yet;
 //! * a reasoning item without `encrypted_content` keeps its text as an assistant
 //!   text block, because a Claude `thinking` block without a signature is invalid;
-//! * `cache_control` markers are not replayed (clud does not pass them through on
-//!   any ingress today).
+//! * client `cache_control` markers are preserved; the gateway supplies defaults
+//!   only on explicit-cache routes when no client breakpoints are present.
 
 use std::collections::HashSet;
 
@@ -262,7 +262,7 @@ fn translate_message(
                 let part = part.as_object().ok_or(IngressError::NotJson)?;
                 let (block, part_role) = message_part(part)?;
                 if let Some(block) = block {
-                    blocks.push(block);
+                    blocks.push(crate::ingress_cache::preserve(block, part));
                     role.get_or_insert(part_role);
                 }
             }
@@ -371,12 +371,15 @@ fn translate_call(item: &Map<String, Value>, custom: bool) -> Result<Value, Ingr
     } else {
         tool_arguments(item.get("arguments"))
     };
-    Ok(json!({
-        "type": "tool_use",
-        "id": call_id(raw_id),
-        "name": sanitize_tool_name(name),
-        "input": input,
-    }))
+    Ok(crate::ingress_cache::preserve(
+        json!({
+            "type": "tool_use",
+            "id": call_id(raw_id),
+            "name": sanitize_tool_name(name),
+            "input": input,
+        }),
+        item,
+    ))
 }
 
 /// Responses carries function arguments as a JSON *string*.
@@ -406,7 +409,7 @@ fn tool_result_block(item: &Map<String, Value>, raw_id: &str) -> Result<Value, I
         block.insert("is_error".into(), json!(true));
     }
     block.insert("content".into(), tool_output_content(item.get("output"))?);
-    Ok(Value::Object(block))
+    Ok(crate::ingress_cache::preserve(Value::Object(block), item))
 }
 
 fn tool_output_content(output: Option<&Value>) -> Result<Value, IngressError> {
@@ -419,12 +422,12 @@ fn tool_output_content(output: Option<&Value>) -> Result<Value, IngressError> {
                 match part.get("type").and_then(Value::as_str).unwrap_or_default() {
                     "input_text" | "output_text" | "text" => {
                         if let Some(text) = part.get("text").and_then(Value::as_str) {
-                            blocks.push(text_block(text));
+                            blocks.push(crate::ingress_cache::preserve(text_block(text), part));
                         }
                     }
                     "input_image" => {
                         if let Some(block) = image_block(part)? {
-                            blocks.push(block);
+                            blocks.push(crate::ingress_cache::preserve(block, part));
                         }
                     }
                     other => {
@@ -502,7 +505,7 @@ fn system_content_blocks(content: Option<&Value>) -> Result<Vec<Value>, IngressE
                 match part.get("type").and_then(Value::as_str).unwrap_or_default() {
                     "input_text" | "output_text" | "text" => {
                         if let Some(text) = part_text(part, "text") {
-                            blocks.push(text_block(text));
+                            blocks.push(crate::ingress_cache::preserve(text_block(text), part));
                         }
                     }
                     other => {
@@ -539,7 +542,7 @@ fn tool_definitions(tools: Option<&Value>) -> Result<Vec<Value>, IngressError> {
                 let name = tool.get("name").and_then(Value::as_str).ok_or(
                     IngressError::UnsupportedPart("custom-tool-without-name".into()),
                 )?;
-                definitions.push(json!({
+                definitions.push(crate::ingress_cache::preserve(json!({
                     "name": sanitize_tool_name(name),
                     "description": tool.get("description").and_then(Value::as_str).unwrap_or_default(),
                     "input_schema": {
@@ -547,7 +550,7 @@ fn tool_definitions(tools: Option<&Value>) -> Result<Vec<Value>, IngressError> {
                         "properties": { "input": { "type": "string" } },
                         "required": ["input"],
                     },
-                }));
+                }), tool));
                 continue;
             }
             other => {
@@ -562,11 +565,11 @@ fn tool_definitions(tools: Option<&Value>) -> Result<Vec<Value>, IngressError> {
             .filter(|schema| schema.is_object())
             .cloned()
             .unwrap_or_else(|| json!({ "type": "object", "properties": {} }));
-        definitions.push(json!({
+        definitions.push(crate::ingress_cache::preserve(crate::ingress_cache::preserve(json!({
             "name": sanitize_tool_name(name),
             "description": descriptor.get("description").and_then(Value::as_str).unwrap_or_default(),
             "input_schema": schema,
-        }));
+        }), descriptor), tool));
     }
     Ok(definitions)
 }
