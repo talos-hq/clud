@@ -342,6 +342,14 @@ impl ConversationHistory {
     }
 
     pub(crate) fn begin_turn(&mut self, pending_start: usize, replay_end: usize) {
+        if self.failed_turn.as_ref().is_some_and(|failed| {
+            failed
+                .assistant_positions
+                .last()
+                .is_some_and(|end| replay_end < *end)
+        }) {
+            self.failed_turn = None;
+        }
         let failed = self.failed_turn.get_or_insert_with(|| FailedTurn {
             pending_start,
             assistant_positions: Vec::new(),
@@ -504,6 +512,10 @@ mod tests {
         assert_eq!(failed.pending_start, 2);
         assert_eq!(failed.assistant_positions, [3, 5]);
         assert!(history.snapshot().is_empty());
+        history.begin_turn(0, 1);
+        let independent = history.failed_turn().unwrap();
+        assert_eq!(independent.pending_start, 0);
+        assert_eq!(independent.assistant_positions, [1]);
         history
             .append_successful_turn(&[item("message", serde_json::json!({"role": "user"}))], &[])
             .unwrap();

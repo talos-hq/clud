@@ -97,6 +97,15 @@ pub(crate) fn history_replay(
         .iter()
         .rposition(|message| message.role == "assistant")
         .map_or(last, |assistant| (assistant + 1).min(last));
+    // Compatibility clients may send only a new independent turn rather than
+    // the failed transcript. Positional recovery applies only to a replay that
+    // still reaches the recorded boundary.
+    let failed = failed.filter(|failed| {
+        failed
+            .assistant_positions
+            .last()
+            .is_some_and(|end| *end <= replay_end)
+    });
     let Some(failed) = failed else {
         return Ok(HistoryReplay {
             body: body.to_vec(),
@@ -106,11 +115,6 @@ pub(crate) fn history_replay(
             recovered_outputs: 0,
         });
     };
-    if failed.pending_start >= replay_end {
-        return Err(invalid(
-            "failed-turn pending boundary is outside the replay",
-        ));
-    }
     let shell_calls = shell_call_ids(&request);
     let mut pending_input = Vec::new();
     let mut recovered_outputs = 0;
