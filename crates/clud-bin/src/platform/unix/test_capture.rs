@@ -127,7 +127,7 @@ mod tests {
             "-c".into(),
             "printf 'a\\r\\n\\377'; printf 'err' >&2; exit 7".into(),
         ];
-        let result = capture(root.path(), Duration::from_secs(5), &command).unwrap();
+        let result = capture(root.path(), Some(Duration::from_secs(5)), &command).unwrap();
         assert_eq!(result.state, "complete");
         assert_eq!(result.exit_code, Some(7));
         assert_eq!(fs::read(result.artifact).unwrap(), b"a\r\n\xfferr");
@@ -138,7 +138,7 @@ mod tests {
         let root = private_root();
         fs::set_permissions(root.path(), fs::Permissions::from_mode(0o755)).unwrap();
         let command = vec!["sh".into(), "-c".into(), "exit 0".into()];
-        assert!(capture(root.path(), Duration::from_secs(1), &command).is_err());
+        assert!(capture(root.path(), Some(Duration::from_secs(1)), &command).is_err());
     }
 
     #[test]
@@ -147,7 +147,7 @@ mod tests {
         let command = vec!["sh".into(), "-c".into(), "printf 1234567890".into()];
         let result = crate::test_runtime::capture::capture_with_limit(
             root.path(),
-            Duration::from_secs(5),
+            Some(Duration::from_secs(5)),
             &command,
             5,
         )
@@ -156,6 +156,138 @@ mod tests {
         assert_eq!(result.bytes, Some(5));
         assert_eq!(fs::read(result.artifact).unwrap(), b"12345");
         assert_eq!(result.tree_cleanup, "unverified");
+    }
+
+    #[test]
+    fn output_limit_drains_until_natural_failure() {
+        for (ending, expected) in [("exit 0", 0), ("exit 7", 7), ("kill -TERM $$", -15)] {
+            let root = private_root();
+            let marker = root.path().join("finished");
+            let script = format!(
+                "head -c 1048576 /dev/zero; printf done > '{}'; {ending}",
+                marker.display()
+            );
+            let result = crate::test_runtime::capture::capture_with_limit(
+                root.path(),
+                Some(Duration::from_secs(5)),
+                &["sh".into(), "-c".into(), script],
+                5,
+            )
+            .unwrap();
+            assert!(
+                marker.exists(),
+                "capture stopped the validation at its output cap"
+            );
+            assert_eq!(result.exit_code, Some(expected));
+            assert!(result.pipe_eof);
+            assert_eq!(result.termination_requested, None);
+            assert_eq!(result.state, "output_limit");
+            assert_eq!(result.bytes, Some(5));
+        }
+    }
+
+    struct BrokenArtifact {
+        file: std::fs::File,
+        remaining: usize,
+    }
+
+    impl std::io::Write for BrokenArtifact {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            if self.remaining == 0 {
+                return Err(std::io::Error::other("injected artifact write failure"));
+            }
+            let count = self.file.write(&data[..data.len().min(self.remaining)])?;
+            self.remaining -= count;
+            Ok(count)
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn write_failure_drains_until_natural_completion() {
+        for (ending, expected) in [("exit 0", 0), ("exit 7", 7), ("kill -TERM $$", -15)] {
+            let root = private_root();
+            let marker = root.path().join("finished");
+            let script = format!(
+                "head -c 1048576 /dev/zero; printf done > '{}'; {ending}",
+                marker.display()
+            );
+            let result = crate::test_runtime::capture::capture_with_writer(
+                root.path(),
+                Some(Duration::from_secs(5)),
+                &["sh".into(), "-c".into(), script],
+                5,
+                |file| BrokenArtifact { file, remaining: 2 },
+            )
+            .unwrap();
+            assert!(marker.exists());
+            assert_eq!(result.state, "write_error");
+            assert_eq!(result.evidence_state, Some("write_error"));
+            assert_eq!(result.exit_code, Some(expected));
+            assert!(result.pipe_eof);
+            assert_eq!(result.termination_requested, None);
+            assert_eq!(result.bytes, Some(2));
+        }
+    }
+
+    #[test]
+    fn output_limit_keeps_explicit_timeout() {
+        let root = private_root();
+        let result = crate::test_runtime::capture::capture_with_limit(
+            root.path(),
+            Some(Duration::from_millis(100)),
+            &[
+                "sh".into(),
+                "-c".into(),
+                "printf 1234567890; sleep 10".into(),
+            ],
+            5,
+        )
+        .unwrap();
+        assert_eq!(result.state, "timeout");
+        assert_eq!(result.evidence_state, Some("output_limit"));
+        assert_eq!(result.termination_requested, Some(true));
+        assert_eq!(result.bytes, Some(5));
+    }
+
+    #[test]
+    fn no_deadline_captures_a_natural_pass() {
+        let root = private_root();
+        let result = capture(
+            root.path(),
+            None,
+            &["sh".into(), "-c".into(), "printf done".into()],
+        )
+        .unwrap();
+        assert_eq!(result.state, "complete");
+        assert_eq!(result.exit_code, Some(0));
+        assert!(result.pipe_eof);
+        assert_eq!(result.termination_requested, None);
+    }
+
+    #[test]
+    fn reporter_alias_has_no_outer_deadline() {
+        let root = tempfile::tempdir().unwrap();
+        let directory = root.path().join("diagnostics");
+        fs::create_dir(&directory).unwrap();
+        let reporter = directory.join("test_report.py");
+        fs::write(&reporter, "fixture").unwrap();
+        let alias = root.path().join("report.py");
+        std::os::unix::fs::symlink(&reporter, &alias).unwrap();
+        let hard_link = root.path().join("hard-report.py");
+        fs::hard_link(&reporter, &hard_link).unwrap();
+        for path in [&reporter, &alias, &hard_link] {
+            let mut watchdog =
+                crate::tool_run::watchdog_for_tool(path.to_str().unwrap(), path, root.path());
+            watchdog.started_at = std::time::Instant::now() - Duration::from_secs(172_800);
+            assert_eq!(
+                watchdog.check(),
+                crate::tool_watchdog::WatchdogDecision::Continue
+            );
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -167,7 +299,7 @@ mod tests {
             "-c".into(),
             "setsid sh -c 'sleep 30' & printf ready".into(),
         ];
-        let result = capture(root.path(), Duration::from_secs(2), &command).unwrap();
+        let result = capture(root.path(), Some(Duration::from_secs(2)), &command).unwrap();
         assert_eq!(result.state, "timeout");
         assert!(!result.pipe_eof);
         assert_eq!(result.tree_cleanup, "unverified");
@@ -178,7 +310,7 @@ mod tests {
     fn retained_pipe_writer_causes_bounded_incomplete_result() {
         let root = private_root();
         let command = vec!["sh".into(), "-c".into(), "(sleep 30) & printf ready".into()];
-        let result = capture(root.path(), Duration::from_secs(2), &command).unwrap();
+        let result = capture(root.path(), Some(Duration::from_secs(2)), &command).unwrap();
         assert_eq!(result.state, "timeout");
         assert_eq!(fs::read(result.artifact).unwrap(), b"ready");
     }
@@ -197,7 +329,6 @@ mod macos_tests {
 #[cfg(test)]
 mod reader_tests {
     use crate::test_runtime::capture::{capture_reader, Event};
-    use std::io::Write;
     use std::sync::atomic::Ordering;
     use std::sync::mpsc;
     use std::time::Duration;

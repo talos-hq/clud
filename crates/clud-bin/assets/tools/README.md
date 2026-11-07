@@ -125,3 +125,14 @@ prints the last events; its output changes only when a new event lands, so a
 Hermes `monitor_script` cron can hash it and start an agent turn only then.
 An unreachable daemon, a GitHub failure or missing Telegram credentials each
 record an `error` event, at most one per source and subject each hour.
+
+The test reporter adds no deadline, including through `clud tool run` and aliases
+of the installed script. Request one with reporter `--timeout SECONDS` (1..86400).
+Capture retains at most 1 GiB; reaching the cap or failing to write stops retention
+and keeps draining the validation. The report marks evidence incomplete and its
+reason, preserves observed failures/signals, and cannot call an incomplete zero
+exit a pass. Artifact continuation exposes only the retained prefix. See
+[`test_runtime/README.md`](../../src/test_runtime/README.md#diagnostic-capture)
+for timeout, cancellation and descendant limitations. If a tight report budget
+cannot fit a shell-quoted artifact path, `artifact_reference_omitted` marks its
+omission while the report preserves the result and incomplete-evidence reason.

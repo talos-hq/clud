@@ -1725,9 +1725,9 @@ pub enum TestSubcommand {
         /// Directory verified by the host-specific privacy implementation.
         #[arg(long)]
         output_dir: std::path::PathBuf,
-        /// Maximum time to wait for the child and its output writers.
-        #[arg(long, default_value_t = 3600)]
-        timeout_secs: u64,
+        /// Explicit time limit for the child and its output writers (default: none).
+        #[arg(long)]
+        timeout_secs: Option<u64>,
         /// Command to execute, after `--`.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         command: Vec<String>,

@@ -306,19 +306,13 @@ def open_artifact(path):
 
 def run_command(root, timeout, command):
     exe = os.environ.get("CLUD_TEST_BINARY") or os.environ.get("CLUD_EXE") or "clud"
-    argv = [
-        exe,
-        "test",
-        "capture",
-        "--output-dir",
-        str(root),
-        "--timeout-secs",
-        str(timeout),
-        "--",
-        *command,
-    ]
+    argv = [exe, "test", "capture", "--output-dir", str(root)]
+    if timeout is not None:
+        argv.extend(["--timeout-secs", str(timeout)])
+    argv.extend(["--", *command])
+    outer_timeout = None if timeout is None else timeout + 30
     try:
-        result = RunningProcess.run(argv, capture_output=True, text=False, timeout=timeout + 30)
+        result = RunningProcess.run(argv, capture_output=True, text=False, timeout=outer_timeout)
     except (OSError, TimeoutError, TimeoutExpired) as error:
         raise RuntimeError("test capture helper failed or timed out") from error
     if result.returncode != 0 or len(result.stdout or b"") > 4096:
@@ -371,6 +365,69 @@ def compact_capture(state, exit_code):
     }
 
 
+def capture_status(state, exit_code):
+    if state == "timeout":
+        return 124
+    if type(exit_code) is int and exit_code != 0:
+        return exit_code
+    return exit_code if state == "complete" else 1
+
+
+def valid_exit_code(exit_code):
+    return (
+        type(exit_code) is int
+        and exit_code <= 255
+        and (exit_code >= 0 or (os.name != "nt" and -exit_code in signal.valid_signals()))
+    )
+
+
+def capture_summary(path, result, state, exit_code, limit, suffix):
+    with open_artifact(path) as stream:
+        size = os.fstat(stream.fileno()).st_size
+        if state == "complete" and (
+            type(result.get("bytes")) is not int or result["bytes"] != size
+        ):
+            raise ValueError("capture artifact size does not match completion metadata")
+        budget = limit - len(suffix.encode()) - 1 - (256 if state != "complete" else 0)
+        try:
+            if budget < 384:
+                raise ValueError("insufficient detailed report budget")
+            summary = json.loads(
+                summarize(stream, exit_code if type(exit_code) is int else 1, limit=budget)
+            )
+        except ValueError:
+            summary = compact_capture(state, exit_code)
+    return summary
+
+
+def encode_capture(summary, suffix, limit):
+    def encode(value):
+        return json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+
+    encoded = encode(summary)
+    if len((encoded + suffix).encode()) + 1 > limit:
+        fields = (
+            "verdict",
+            "exit_code",
+            "capture_state",
+            "evidence_state",
+            "input_truncated",
+            "tree_cleanup",
+            "termination_requested",
+            "artifact_state",
+        )
+        summary = {key: summary[key] for key in fields if key in summary}
+        summary["truncated"] = True
+        encoded = encode(summary)
+    if len((encoded + suffix).encode()) + 1 > limit:
+        summary["artifact_reference_omitted"] = True
+        suffix = ""
+        encoded = encode(summary)
+    if len((encoded + suffix).encode()) + 1 > limit:
+        raise ValueError("report metadata exceeds output limit")
+    return encoded + suffix
+
+
 def render_capture(result, limit):
     path = Path(result.get("artifact", ""))
     state = result.get("state")
@@ -384,41 +441,33 @@ def render_capture(result, limit):
         "artifact_metadata_error",
     }:
         raise ValueError("capture returned an unknown state")
+    if result.get("evidence_state") not in {None, "output_limit", "write_error"}:
+        raise ValueError("capture returned an unknown evidence state")
     exit_code = result.get("exit_code")
+    if exit_code is not None and not valid_exit_code(exit_code):
+        raise ValueError("capture returned an invalid exit status")
     if state == "complete" and (
-        type(exit_code) is not int
+        exit_code is None
         or result.get("pipe_eof") is not True
         or result.get("child_exited") is not True
-        or exit_code > 255
-        or (exit_code < 0 and (os.name == "nt" or -exit_code not in signal.valid_signals()))
     ):
         raise ValueError("capture reported incomplete completion metadata")
-    with open_artifact(path) as stream:
-        size = os.fstat(stream.fileno()).st_size
-        if state == "complete" and (
-            type(result.get("bytes")) is not int or result["bytes"] != size
-        ):
-            raise ValueError("capture artifact size does not match completion metadata")
-        suffix = f"\nartifact: {quote_path(path)}"
-        budget = limit - len(suffix.encode()) - 1 - (256 if state != "complete" else 0)
-        try:
-            if budget < 384:
-                raise ValueError("insufficient detailed report budget")
-            summary = json.loads(
-                summarize(stream, exit_code if type(exit_code) is int else 1, limit=budget)
-            )
-        except ValueError:
-            summary = compact_capture(state, exit_code)
+    suffix = f"\nartifact: {quote_path(path)}"
+    try:
+        summary = capture_summary(path, result, state, exit_code, limit, suffix)
+    except OSError:
+        summary = {"artifact_state": "unreadable"}
+        suffix = f"\nartifact unavailable: {quote_path(path)}"
+        state = "artifact_read_error" if state == "complete" else state
     if state != "complete":
         summary["verdict"] = "incomplete"
+        summary["exit_code"] = exit_code
+        summary["input_truncated"] = True
+        summary["evidence_state"] = result.get("evidence_state") or state
         summary["capture_state"] = state
         summary["tree_cleanup"] = "unverified"
         summary["termination_requested"] = result.get("termination_requested") is True
-    encoded = json.dumps(summary, ensure_ascii=True, separators=(",", ":"))
-    if len((encoded + suffix).encode()) + 1 > limit:
-        raise ValueError("report metadata exceeds output limit")
-    status = (124 if state == "timeout" else 1) if state != "complete" else exit_code
-    return encoded + suffix, status
+    return encode_capture(summary, suffix, limit), capture_status(state, exit_code)
 
 
 def main(argv=None):
@@ -426,7 +475,7 @@ def main(argv=None):
     parser.add_argument("--artifact")
     parser.add_argument("--offset", type=int, default=0)
     parser.add_argument("--count", type=int, default=80)
-    parser.add_argument("--timeout", type=int, default=3600)
+    parser.add_argument("--timeout", type=int, help="explicit deadline in seconds (default: none)")
     parser.add_argument("--limit", type=int, default=MAX_OUTPUT)
     parser.add_argument("command", nargs=argparse.REMAINDER)
     try:
@@ -442,8 +491,8 @@ def main(argv=None):
             print(text)
             return 0
         command = args.command[1:] if args.command and args.command[0] == "--" else args.command
-        if not command or not 1 <= args.timeout <= 86_400:
-            raise ValueError("provide a command and a timeout of 1..86400 seconds")
+        if not command or (args.timeout is not None and not 1 <= args.timeout <= 86_400):
+            raise ValueError("provide a command; an explicit timeout must be 1..86400 seconds")
         root = artifact_root()
         # Reject paths that could make even the compact result impossible before
         # starting a command; shell quoting can expand an otherwise short path.

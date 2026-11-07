@@ -120,9 +120,7 @@ def test_unfamiliar_output_is_explicitly_unknown(report):
     assert data["diagnostic_state"] == "unknown"
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_command_failure_keeps_exact_log_and_exit(report, monkeypatch, tmp_path, capsys):
     import json
     import shlex
@@ -146,9 +144,7 @@ def test_command_failure_keeps_exact_log_and_exit(report, monkeypatch, tmp_path,
     assert page["hex"] == "ff"
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_real_timeout_reports_incomplete_and_unverified_cleanup(
     report, monkeypatch, tmp_path, capsys
 ):
@@ -175,9 +171,7 @@ def test_real_timeout_reports_incomplete_and_unverified_cleanup(
     assert data["tree_cleanup"] == "unverified"
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_artifact_failure_prevents_command_execution(report, monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(
@@ -259,9 +253,7 @@ def test_escape_sequences_and_unicode_controls_do_not_reach_terminal(report):
     assert "error: hidden" in summary
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_timeout_metadata_is_never_a_green_result(report, monkeypatch, tmp_path, capsys):
     import os
     import tempfile
@@ -291,9 +283,7 @@ def test_timeout_metadata_is_never_a_green_result(report, monkeypatch, tmp_path,
     assert result["tree_cleanup"] == "unverified"
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_missing_eof_cannot_claim_complete(report, monkeypatch, tmp_path, capsys):
     import os
     import tempfile
@@ -368,9 +358,7 @@ def test_sigkill_is_preserved_by_tool_entrypoint(monkeypatch, tmp_path):
     assert result.returncode == -signal.SIGKILL
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_real_unittest_subtests_group_failures(report, monkeypatch, tmp_path, capsys):
     import json
     import shlex
@@ -404,9 +392,7 @@ def test_truncated_success_output_is_not_reported_as_passed(report):
     assert result["diagnostic_state"] == "unknown"
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_small_budget_with_long_path_preserves_failure(report, monkeypatch, tmp_path, capsys):
     import json
     import sys
@@ -423,9 +409,7 @@ def test_small_budget_with_long_path_preserves_failure(report, monkeypatch, tmp_
     assert len(output.encode()) <= 512
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_small_budget_with_many_diagnostics_keeps_result(report, monkeypatch, tmp_path, capsys):
     import json
     import sys
@@ -452,9 +436,7 @@ def test_macos_fails_closed_before_command(report, monkeypatch, tmp_path, capsys
     assert not (tmp_path / "not-created").exists()
 
 
-@pytest.mark.skipif(
-    __import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending"
-)
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
 def test_redirected_stdin_reaches_test_command(monkeypatch, tmp_path):
     import json
     import sys
@@ -476,3 +458,218 @@ def test_redirected_stdin_reaches_test_command(monkeypatch, tmp_path):
     assert result.returncode == 7
     summary = json.loads(result.stdout.splitlines()[0])
     assert any("redirected-input" in line for line in summary["diagnostics"])
+
+
+@pytest.mark.parametrize("timeout", [None, 1, 86400])
+def test_reporter_deadline_is_only_explicit(report, monkeypatch, tmp_path, timeout):
+    from types import SimpleNamespace
+
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((argv, kwargs))
+        return SimpleNamespace(returncode=0, stdout=b'{"schema_version":1}')
+
+    monkeypatch.setattr(report.RunningProcess, "run", run)
+    report.run_command(tmp_path, timeout, ["validation"])
+    argv, kwargs = calls[0]
+    assert kwargs.get("timeout") == (None if timeout is None else timeout + 30)
+    assert ("--timeout-secs" in argv) == (timeout is not None)
+
+
+def test_reporter_main_requests_no_default_deadline(report, monkeypatch, tmp_path):
+    timeouts = []
+    monkeypatch.setattr(report, "artifact_root", lambda: tmp_path)
+    monkeypatch.setattr(report, "run_command", lambda _, timeout, command: timeouts.append(timeout))
+    monkeypatch.setattr(report, "render_capture", lambda *_: ("ok", 0))
+    assert report.main(["--", "validation"]) == 0
+    assert timeouts == [None]
+
+
+@pytest.mark.parametrize("state", ["output_limit", "write_error"])
+@pytest.mark.parametrize(("exit_code", "status"), [(0, 1), (7, 7), (-15, -15)])
+@pytest.mark.parametrize("limit", [512, 8192])
+def test_incomplete_evidence_preserves_observed_failure(
+    report, monkeypatch, tmp_path, state, exit_code, status, limit
+):
+    import json
+
+    artifact = tmp_path / "evidence.log"
+    artifact.write_bytes(b"1 passed in 0.1s\n")
+    monkeypatch.setattr(report, "open_artifact", lambda path: path.open("rb"))
+    result = {
+        "artifact": str(artifact),
+        "state": state,
+        "exit_code": exit_code,
+        "bytes": artifact.stat().st_size,
+        "pipe_eof": True,
+        "child_exited": True,
+        "termination_requested": None,
+    }
+    if report.os.name == "nt" and exit_code < 0:
+        with pytest.raises(ValueError, match="invalid exit status"):
+            report.render_capture(result, limit)
+        return
+    text, actual = report.render_capture(result, limit)
+    summary = json.loads(text.splitlines()[0])
+    assert actual == status
+    assert summary["verdict"] == "incomplete"
+    assert summary["capture_state"] == state
+    assert summary["exit_code"] == exit_code
+    assert summary["input_truncated"] is True
+    assert summary["termination_requested"] is False
+    assert len(text.encode()) + 1 <= limit
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "86401", "invalid"])
+def test_invalid_explicit_deadline_never_starts_command(report, monkeypatch, value):
+    calls = []
+    monkeypatch.setattr(report, "run_command", lambda *_: calls.append(True))
+    assert report.main(["--timeout", value, "--", "validation"]) == 1
+    assert not calls
+
+
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
+@pytest.mark.parametrize("exit_code", [0, 7])
+def test_default_tool_runner_reports_validation(monkeypatch, tmp_path, exit_code):
+    import json
+    import os
+    import sys
+
+    from running_process import RunningProcess
+
+    binary = os.environ.get("CLUD_TEST_BINARY") or str(TOOL.parents[5] / "target/debug/clud")
+    monkeypatch.setenv("CLUD_TOOL_OUTPUT_DIR", str(tmp_path))
+    result = RunningProcess.run(
+        [
+            binary,
+            "tool",
+            "run",
+            "diagnostics/test_report.py",
+            "--",
+            "--",
+            sys.executable,
+            "-c",
+            "import unittest; unittest.TextTestRunner().run("
+            "unittest.TestSuite([unittest.FunctionTestCase(lambda: None)])); "
+            f"raise SystemExit({exit_code})",
+        ],
+        capture_output=True,
+        timeout=30,
+    )
+    assert result.returncode == exit_code
+    records = [line for line in result.stdout.splitlines() if line.startswith("{")]
+    assert len(records) == 1
+    summary = json.loads(records[0])
+    assert summary["verdict"] == ("passed" if exit_code == 0 else "failed")
+    assert summary["exit_code"] == exit_code
+
+
+@pytest.mark.skipif(__import__("sys").platform in {"win32", "darwin"}, reason="ACL checks pending")
+def test_native_no_deadline_can_be_cancelled(tmp_path):
+    import os
+    import sys
+
+    import psutil
+    from running_process import RunningProcess, TimeoutExpired
+
+    binary = os.environ.get("CLUD_TEST_BINARY") or str(TOOL.parents[5] / "target/debug/clud")
+    private = tmp_path / "capture"
+    private.mkdir(mode=0o700)
+    marker = tmp_path / "child.pid"
+    program = (
+        "import os, pathlib, threading; "
+        f"pathlib.Path({str(marker)!r}).write_text(str(os.getpid())); "
+        "threading.Event().wait(10)"
+    )
+    with pytest.raises(TimeoutExpired):
+        RunningProcess.run(
+            [
+                binary,
+                "test",
+                "capture",
+                "--output-dir",
+                str(private),
+                "--",
+                sys.executable,
+                "-c",
+                program,
+            ],
+            capture_output=True,
+            timeout=1,
+        )
+    assert marker.exists(), "the cancellation must reach a running validation"
+    pid = int(marker.read_text())
+    try:
+        child = psutil.Process(pid)
+    except psutil.NoSuchProcess:
+        return
+    _, alive = psutil.wait_procs([child], timeout=2)
+    assert not alive, "explicit cancellation left the owned validation running"
+
+
+@pytest.mark.parametrize("state", ["write_error", "complete"])
+@pytest.mark.parametrize(("exit_code", "status"), [(0, 1), (7, 7), (-15, -15)])
+def test_unreadable_artifact_keeps_incomplete_reason_and_status(
+    report, monkeypatch, state, exit_code, status
+):
+    def unavailable(_):
+        raise OSError("injected storage failure")
+
+    monkeypatch.setattr(report, "open_artifact", unavailable)
+    result = {
+        "artifact": "/tmp/local-test-unreadable.log",
+        "state": state,
+        "exit_code": exit_code,
+        "pipe_eof": True,
+        "child_exited": True,
+    }
+    if report.os.name == "nt" and exit_code < 0:
+        with pytest.raises(ValueError, match="invalid exit status"):
+            report.render_capture(result, 512)
+        return
+    text, actual = report.render_capture(result, 512)
+    summary = report.json.loads(text.splitlines()[0])
+    assert actual == status
+    assert summary["verdict"] == "incomplete"
+    assert summary["capture_state"] == ("artifact_read_error" if state == "complete" else state)
+    assert summary["exit_code"] == exit_code
+    assert "artifact unavailable:" in text
+
+
+@pytest.mark.parametrize("state", ["output_limit", "write_error", "artifact_metadata_error"])
+@pytest.mark.parametrize("available", [True, False])
+def test_tight_report_budget_preserves_status_with_quoted_path(
+    report, monkeypatch, capsys, state, available
+):
+    import tempfile
+
+    exit_code = 7 if report.os.name == "nt" else -15
+    root = Path("/tmp/" + "'" * 30 + "a" * 136)
+    monkeypatch.setattr(report, "artifact_root", lambda: root)
+    with tempfile.TemporaryFile() as stream:
+
+        def open_evidence(_):
+            if not available:
+                raise OSError("injected unreadable artifact")
+            return stream
+
+        monkeypatch.setattr(report, "open_artifact", open_evidence)
+        monkeypatch.setattr(
+            report,
+            "run_command",
+            lambda *_: {
+                "artifact": str(root / "local-test-abcd1234.log"),
+                "state": state,
+                "exit_code": exit_code,
+                "bytes": 0,
+                "pipe_eof": True,
+                "child_exited": True,
+            },
+        )
+        assert report.main(["--limit", "512", "--", "validation"]) == exit_code
+    text = capsys.readouterr().out
+    summary = report.json.loads(text.splitlines()[0])
+    assert summary["verdict"] == "incomplete"
+    assert summary["capture_state"] == state
+    assert len(text.encode()) <= 512

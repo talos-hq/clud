@@ -59,6 +59,7 @@ impl AbortReason {
 #[derive(Debug, Clone)]
 pub struct Watchdog {
     pub kill_semantics: KillSemantics,
+    /// Duration::MAX disables the command deadline (capture owns explicit timeouts).
     pub command_timeout: Duration,
     pub progress_timeout: Option<Duration>,
     pub quiet_ok: bool,
@@ -123,7 +124,9 @@ impl Watchdog {
     /// when neither timer has fired.
     pub fn check(&self) -> WatchdogDecision {
         let now = Instant::now();
-        if now.duration_since(self.started_at) >= self.command_timeout {
+        if self.command_timeout != Duration::MAX
+            && now.duration_since(self.started_at) >= self.command_timeout
+        {
             return self.fired(AbortReason::CommandTimeout);
         }
         if let Some(p) = self.progress_timeout {
@@ -328,5 +331,17 @@ mod tests {
         let w = Watchdog::for_rel_path("github/pr_merge_watch.py");
         assert_eq!(w.kill_semantics, KillSemantics::Resumable);
         assert_eq!(w.command_timeout, Duration::from_secs(3660));
+    }
+}
+
+#[cfg(test)]
+mod reporter_deadline_tests {
+    use super::*;
+
+    #[test]
+    fn reporter_has_no_implicit_deadline() {
+        let mut watchdog = Watchdog::for_rel_path("diagnostics/test_report.py");
+        watchdog.started_at = Instant::now() - Duration::from_secs(172_800);
+        assert_eq!(watchdog.check(), WatchdogDecision::Continue);
     }
 }
