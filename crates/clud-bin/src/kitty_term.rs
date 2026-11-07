@@ -51,7 +51,7 @@ fn handle_shell(args: &Args) -> Option<i32> {
         eprintln!("[clud] --shell bash only changes Windows launches; continuing normally");
         return None;
     }
-    if !matches!(args.command, None | Some(crate::args::Command::Loop { .. })) {
+    if !matches!(args.command, None | Some(crate::args::Command::Loop(_))) {
         eprintln!("[clud] --shell only applies to a backend launch or `clud loop`");
         return Some(2);
     }
@@ -320,7 +320,7 @@ mod tests {
                 "{raw:?}"
             );
             assert!(
-                matches!(args.command, Some(crate::args::Command::Loop { .. })),
+                matches!(args.command, Some(crate::args::Command::Loop(_))),
                 "{raw:?}"
             );
             let argv = shell_argv(

@@ -59,11 +59,7 @@ const RUNNING_PROCESS_BROKER_ENV: &str = "CLUD_RUNNING_PROCESS_BROKER";
 /// (one external call site in `main.rs`); a rename can land in a follow-up.
 pub fn experimental_enabled(args: &Args) -> bool {
     let repeat_enabled = matches!(
-        args.command,
-        Some(Command::Loop {
-            repeat: Some(_),
-            ..
-        })
+        &args.command, Some(Command::Loop(options)) if options.repeat.is_some()
     );
 
     args.detach
@@ -120,7 +116,10 @@ fn grant_daemon_spawn() {
 
 /// `clud inject` (docs/architecture/session-inject.md).
 fn run_inject_command(args: &Args) -> i32 {
-    let Some(Command::Inject {
+    let Some(Command::Inject(options)) = &args.command else {
+        return 2;
+    };
+    let crate::args::InjectArgs {
         session,
         message,
         interrupt,
@@ -130,10 +129,7 @@ fn run_inject_command(args: &Args) -> i32 {
         detach,
         timeout,
         json,
-    }) = &args.command
-    else {
-        return 2;
-    };
+    } = options.as_ref();
     let state_dir = state_dir(args);
     grant_daemon_spawn();
     let options = super::inject_client::InjectOptions {
@@ -800,30 +796,20 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             let state_dir = state_dir(args);
             Some(super::commands::run_session_show(&state_dir, id, *json))
         }
-        Some(Command::Top {
-            json,
-            once,
-            watch,
-            tree,
-            flat,
-            sort,
-            limit,
-            since,
-            originator,
-        }) => {
+        Some(Command::Top(options)) => {
             let state_dir = state_dir(args);
             Some(run_top(
                 &state_dir,
                 TopRunOptions {
-                    json: *json,
-                    once: *once,
-                    watch: *watch,
-                    tree: *tree,
-                    flat: *flat,
-                    sort: *sort,
-                    limit: *limit,
-                    since: since.as_deref(),
-                    originator: originator.as_deref(),
+                    json: options.json,
+                    once: options.once,
+                    watch: options.watch,
+                    tree: options.tree,
+                    flat: options.flat,
+                    sort: options.sort,
+                    limit: options.limit,
+                    since: options.since.as_deref(),
+                    originator: options.originator.as_deref(),
                 },
             ))
         }
@@ -862,7 +848,7 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             ))
         }
         Some(Command::Daemon { subcommand }) => Some(run_daemon_command(args, subcommand)),
-        Some(Command::Inject { .. }) => Some(run_inject_command(args)),
+        Some(Command::Inject(_)) => Some(run_inject_command(args)),
         Some(Command::InternalDaemon { state_dir }) => {
             super::startup_phases::install_panic_hook(state_dir);
             super::startup_phases::redirect_stderr_to_log(state_dir);
@@ -1169,15 +1155,15 @@ fn build_repeat_once_command(args: &Args, plan: &LaunchPlan) -> io::Result<Vec<S
         command.push(context_window.to_string());
     }
     command.push("loop".to_string());
-    if let Some(Command::Loop {
-        task,
-        loop_count,
-        refresh,
-        no_done,
-        done,
-        ..
-    }) = &args.command
-    {
+    if let Some(Command::Loop(options)) = &args.command {
+        let crate::args::LoopArgs {
+            task,
+            loop_count,
+            refresh,
+            no_done,
+            done,
+            ..
+        } = options.as_ref();
         command.push("--loop-count".to_string());
         command.push(loop_count.to_string());
         if *refresh {

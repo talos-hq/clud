@@ -231,15 +231,15 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
     if let Some(code) = clud_settings::authorized::handle(args) {
         return Some(code);
     }
-    if let Some(args::Command::Setup {
-        product,
-        dry_run,
-        yes,
-        provider,
-        write_profile,
-        import_hermes,
-    }) = &args.command
-    {
+    if let Some(args::Command::Setup(options)) = &args.command {
+        let args::SetupArgs {
+            product,
+            dry_run,
+            yes,
+            provider,
+            write_profile,
+            import_hermes,
+        } = options.as_ref();
         if let Some(product) = product {
             return Some(clud::install::command::run(
                 &args::InstallArgs {
@@ -348,17 +348,17 @@ fn run_openai_chat_translate_seam(
 /// `dispatch_fast_path_command` is at the line cap, so the seam's argument
 /// plumbing lives here rather than inline.
 fn run_payload_rules_seam(cmd: &args::Command) -> i32 {
-    let args::Command::InternalApplyPayloadRules {
+    let args::Command::InternalApplyPayloadRules(options) = cmd else {
+        unreachable!("run_payload_rules_seam is only called for its own arm")
+    };
+    let args::PayloadRulesArgs {
         rules,
         settings_file,
         model,
         protocol,
         from_protocol,
         headers,
-    } = cmd
-    else {
-        unreachable!("run_payload_rules_seam is only called for its own arm")
-    };
+    } = options.as_ref();
     clud::payload_rules::run_apply_stdin(
         rules.as_deref(),
         settings_file.as_deref(),
@@ -420,7 +420,7 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
             for_model,
             http,
         } => clud::completions_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
-        args::Command::InternalApplyPayloadRules { .. } => run_payload_rules_seam(cmd?),
+        args::Command::InternalApplyPayloadRules(_) => run_payload_rules_seam(cmd?),
         args::Command::InternalOpenAiResponsesTranslate {
             response,
             stream,
@@ -449,24 +449,17 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
         }),
         // Hidden test seam for Kimi Code's device-authorization login: no
         // session, backend, or daemon, and it never prints a token.
-        args::Command::InternalKimiDeviceLogin {
-            domain,
-            device_endpoint,
-            token_endpoint,
-            interval_ms,
-            max_poll_ms,
-            refresh_stored,
-        } => run_kimi_device_login_seam(
-            domain.as_deref(),
-            device_endpoint.as_deref(),
-            token_endpoint.as_deref(),
-            *interval_ms,
-            *max_poll_ms,
-            *refresh_stored,
+        args::Command::InternalKimiDeviceLogin(options) => run_kimi_device_login_seam(
+            options.domain.as_deref(),
+            options.device_endpoint.as_deref(),
+            options.token_endpoint.as_deref(),
+            options.interval_ms,
+            options.max_poll_ms,
+            options.refresh_stored,
         ),
         // Hidden test seam for Meta Muse's device login: no session, backend or
         // daemon, and it never prints a token or an API key.
-        args::Command::InternalMetaDeviceLogin { .. } => run_meta_device_login_seam(cmd),
+        args::Command::InternalMetaDeviceLogin(_) => run_meta_device_login_seam(cmd),
         args::Command::DoPrompt { target } => command::do_prompt::run(target),
         args::Command::GrindScripts => command::grind_scripts::run(),
         args::Command::GrindFacts { args } => clud::grind_facts::run_cli(args),
@@ -546,17 +539,17 @@ fn run_kimi_device_login_seam(
 /// Runs the hidden Meta Muse device-login seam. Kept out of
 /// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
 fn run_meta_device_login_seam(cmd: Option<&args::Command>) -> i32 {
-    let Some(args::Command::InternalMetaDeviceLogin {
+    let Some(args::Command::InternalMetaDeviceLogin(options)) = cmd else {
+        return 1;
+    };
+    let args::MetaDeviceLoginArgs {
         device_endpoint,
         token_endpoint,
         mint_url,
         interval_ms,
         max_poll_ms,
         status,
-    }) = cmd
-    else {
-        return 1;
-    };
+    } = options.as_ref();
     clud::meta_auth::run_seam(&clud::meta_auth::SeamArgs {
         device_endpoint: device_endpoint.as_deref(),
         token_endpoint: token_endpoint.as_deref(),
@@ -839,21 +832,14 @@ fn dispatch_local_tool_command(args: &args::Args) -> Option<i32> {
         // never launches a backend.
         args::Command::Settings { list, .. } => settings_tui::run(*list),
         // `clud optimize` is machine/repo setup and never launches a backend.
-        args::Command::Optimize {
-            target,
-            global,
-            repo,
-            install_soldr,
-            use_soldr_shims,
-            soldr_version,
-        } => optimize::run(
+        args::Command::Optimize(options) => optimize::run(
             args,
-            *target,
-            *global,
-            *repo,
-            *install_soldr,
-            *use_soldr_shims,
-            soldr_version,
+            options.target,
+            options.global,
+            options.repo,
+            options.install_soldr,
+            options.use_soldr_shims,
+            &options.soldr_version,
         ),
         _ => return None,
     };
@@ -1565,38 +1551,40 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
         std::process::exit(run_wasm(args.dry_run, module, invoke));
     }
 
-    if let Some(args::Command::Loop {
-        task,
-        message: Some(message),
-        ..
-    }) = args.command.as_ref().filter(|_| !args.dry_run)
-    {
-        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let git_root = clud::loop_spec::git_root_from(&cwd);
-        match clud::loop_artifacts::queue_message(&git_root, message) {
-            Ok(path) => eprintln!(
-                "[clud] queued message for next iteration: {}",
-                path.display()
-            ),
-            Err(e) => {
-                eprintln!("[clud] failed to queue loop message: {e}");
-                std::process::exit(1);
+    if let Some(args::Command::Loop(options)) = args.command.as_ref().filter(|_| !args.dry_run) {
+        if let args::LoopArgs {
+            task,
+            message: Some(message),
+            ..
+        } = options.as_ref()
+        {
+            let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let git_root = clud::loop_spec::git_root_from(&cwd);
+            match clud::loop_artifacts::queue_message(&git_root, message) {
+                Ok(path) => eprintln!(
+                    "[clud] queued message for next iteration: {}",
+                    path.display()
+                ),
+                Err(e) => {
+                    eprintln!("[clud] failed to queue loop message: {e}");
+                    std::process::exit(1);
+                }
             }
-        }
-        if task.is_none() {
-            std::process::exit(0);
+            if task.is_none() {
+                std::process::exit(0);
+            }
         }
     }
 
     apply_loop_config(args);
 
-    if let Some(args::Command::Loop {
-        repeat,
-        done,
-        no_done,
-        ..
-    }) = &args.command
-    {
+    if let Some(args::Command::Loop(options)) = &args.command {
+        let args::LoopArgs {
+            repeat,
+            done,
+            no_done,
+            ..
+        } = options.as_ref();
         if let Some(msg) =
             command::repeat_implies_no_done_warning(repeat.as_deref(), *no_done, done.as_deref())
         {
@@ -1615,7 +1603,10 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
 /// exit 2 with the typed error.
 fn apply_loop_config(args: &mut args::Args) {
     use clud::loop_config::LoopConfig;
-    let Some(args::Command::Loop {
+    let Some(args::Command::Loop(options)) = &mut args.command else {
+        return;
+    };
+    let args::LoopArgs {
         task,
         loop_count,
         refresh,
@@ -1624,10 +1615,7 @@ fn apply_loop_config(args: &mut args::Args) {
         repeat,
         message,
         config,
-    }) = &mut args.command
-    else {
-        return;
-    };
+    } = options.as_mut();
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     let git_root = clud::loop_spec::git_root_from(&cwd);
     let explicit = config.as_deref().map(|p| cwd.join(p));
@@ -2610,7 +2598,7 @@ fn start_loop_session(
     args: &args::Args,
     plan: &command::LaunchPlan,
 ) -> Option<loop_artifacts::LoopSession> {
-    let Some(args::Command::Loop { task, .. }) = &args.command else {
+    let Some(args::Command::Loop(options)) = &args.command else {
         return None;
     };
     if args.verbose {
@@ -2620,7 +2608,7 @@ fn start_loop_session(
     let git_root = loop_spec::git_root_from(&cwd);
     let _ = loop_spec::ensure_loop_dir(&git_root);
     loop_artifacts::ensure_loop_in_gitignore(&git_root);
-    if let Some(t) = task {
+    if let Some(t) = &options.task {
         let spec = loop_spec::classify(t);
         let _ = loop_artifacts::materialize_working_copy(&git_root, &spec);
     }

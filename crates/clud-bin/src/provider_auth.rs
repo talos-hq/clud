@@ -490,11 +490,7 @@ pub fn launch_is_interactive(
     stderr_is_terminal: bool,
 ) -> bool {
     let repeat = matches!(
-        &args.command,
-        Some(Command::Loop {
-            repeat: Some(_),
-            ..
-        })
+        &args.command, Some(Command::Loop(options)) if options.repeat.is_some()
     );
     stdin_is_terminal
         && stderr_is_terminal
