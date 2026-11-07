@@ -23,8 +23,9 @@ You write code; you do not run it.
   or re-read an excerpted range. Read beyond it only for what it lacks.
 - Investigate as needed: read surrounding code, `gh issue view --repo <github-repo>`, `gh pr
   view --repo <github-repo>`, `gh search code --repo <github-repo>`, and web search for library or API behaviour.
-  Your shell accepts read-only `gh` only; builds, lints and tests are the
-  integrator's job and are refused.
+  Your shell accepts read-only `gh`, `rg --no-config` and `git grep`; builds, lints and tests are the
+  integrator's job and are refused. Put `--no-config` immediately after `rg`;
+  helper-executing search options are refused.
 - Mirror the existing style exactly. For a code change, write the
   RED -> GREEN regression test the task names (it should fail before your change
   and pass after); do not run it.
