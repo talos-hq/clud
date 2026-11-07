@@ -238,7 +238,9 @@ Entry and orchestration:
   upstream output, evicts at bridge shutdown, performs the two-phase harness
   fallback after failed compaction (retaining valid history until the finished
   hook, clearing invalid history immediately), and makes validated provider compaction
-  replacement and unified provider-route epoch changes atomic; see
+  replacement and unified provider-route epoch changes atomic. After provider
+  success, the finished hook removes the temporary summarize turn while retaining
+  the opaque provider output; missing finish hooks keep subsequent turns. See
   [codex-via-claude.md](../../../docs/architecture/codex-via-claude.md) and
   [unified-gateway.md](../../../docs/architecture/unified-gateway.md).
 - `route_plan.rs` - the one place a launch's routing is decided: `ResolvedRoute`

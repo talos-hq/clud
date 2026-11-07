@@ -3119,7 +3119,7 @@ fn serve_context_compact_finished(
     conversation_key: ConversationKey,
 ) {
     let operation = conversations.with_history(&conversation_key.id, |history| {
-        Ok(history.finish_harness_compaction_fallback())
+        Ok(history.finish_compaction())
     });
     match operation {
         Ok(reset) => {
@@ -11434,6 +11434,121 @@ Connection: close
             3,
             "the transport error must be one bounded recovery cycle: {requests:#?}"
         );
+    }
+
+    #[test]
+    fn provider_compaction_finished_removes_summarize_turn() {
+        let upstream = FakeResponses::start_with_responses(vec![
+            Some(canonical_compaction_reply()),
+            Some(compact_success_response()),
+            Some(canonical_compaction_reply()),
+            None,
+        ]);
+        let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+        let addr = bridge.socket_addr();
+        let token = bridge.bearer_token().to_owned();
+        let headers = [("X-Claude-Code-Session-Id", "session-provider-compact")];
+        let reply = request(
+            addr,
+            &authorized_with_headers("POST", "/v1/messages", &token, PROBE_BODY, &headers),
+        );
+        assert_eq!(status(&reply), 200, "{reply}");
+        let compact = request(
+            addr,
+            &authorized(
+                "POST",
+                "/_clud/context/compact",
+                &token,
+                r#"{"hook_event_name":"PreCompact","trigger":"manual","session_id":"session-provider-compact"}"#,
+            ),
+        );
+        assert_eq!(status(&compact), 204, "{compact}");
+        let summarize = request(
+            addr,
+            &authorized_with_headers(
+                "POST",
+                "/v1/messages",
+                &token,
+                r#"{"model":"claude-x","messages":[{"role":"user","content":"CRITICAL: Respond with TEXT ONLY summarize this context"}],"tools":[{"name":"Read","description":"Read a file","input_schema":{"type":"object"}}],"stream":false}"#,
+                &headers,
+            ),
+        );
+        assert_eq!(status(&summarize), 200, "{summarize}");
+        let finished = request(
+            addr,
+            &authorized(
+                "POST",
+                "/_clud/context/compact-finished",
+                &token,
+                r#"{"hook_event_name":"SessionStart","source":"compact","session_id":"session-provider-compact"}"#,
+            ),
+        );
+        assert_eq!(status(&finished), 204, "{finished}");
+        let after = request(
+            addr,
+            &authorized_with_headers(
+                "POST",
+                "/v1/messages",
+                &token,
+                r#"{"model":"claude-x","messages":[{"role":"user","content":"normal turn"}],"stream":false}"#,
+                &headers,
+            ),
+        );
+        assert_eq!(status(&after), 200, "{after}");
+        let requests = upstream.requests();
+        let final_body: serde_json::Value =
+            serde_json::from_str(captured_body(requests.last().unwrap())).unwrap();
+        let input = final_body["input"].to_string();
+        assert!(input.contains("opaque-summary"), "{input}");
+        assert!(input.contains("normal turn"), "{input}");
+        assert!(!input.contains("CRITICAL:"), "{input}");
+        assert!(!input.contains("rs_canonical"), "{input}");
+    }
+
+    #[test]
+    fn unfinished_provider_compaction_preserves_real_turns_even_after_failure() {
+        for compact_reply in [
+            compact_success_response(),
+            raw_response(503, "Service Unavailable", "{}"),
+        ] {
+            let upstream = FakeResponses::start_with_responses(vec![
+                Some(canonical_compaction_reply()),
+                Some(compact_reply),
+                None,
+                None,
+            ]);
+            let bridge = BridgeHandle::start(bridged_config(&upstream)).unwrap();
+            let addr = bridge.socket_addr();
+            let token = bridge.bearer_token().to_owned();
+            let headers = [("X-Claude-Code-Session-Id", "session-unfinished-compact")];
+            let first = request(
+                addr,
+                &authorized_with_headers("POST", "/v1/messages", &token, PROBE_BODY, &headers),
+            );
+            assert_eq!(status(&first), 200, "{first}");
+            let compact = request(
+                addr,
+                &authorized(
+                    "POST",
+                    "/_clud/context/compact",
+                    &token,
+                    r#"{"hook_event_name":"PreCompact","trigger":"manual","session_id":"session-unfinished-compact"}"#,
+                ),
+            );
+            assert_eq!(status(&compact), 204, "{compact}");
+            for text in ["real user turn", "later user turn"] {
+                let body = serde_json::json!({"model":"claude-x","messages":[{"role":"user","content":text}],"stream":false}).to_string();
+                let reply = request(
+                    addr,
+                    &authorized_with_headers("POST", "/v1/messages", &token, &body, &headers),
+                );
+                assert_eq!(status(&reply), 200, "{reply}");
+            }
+            let requests = upstream.requests();
+            let last = requests.last().unwrap();
+            assert!(last.contains("real user turn"), "{last}");
+            assert!(last.contains("later user turn"), "{last}");
+        }
     }
 
     #[test]
