@@ -381,6 +381,7 @@ def _issue_json(state: dict, number: str) -> dict | None:
         "state": issue.get("state", "open").upper(),
         "url": _issue_url(state, number),
         "labels": [{"name": n} for n in issue.get("labels", [])],
+        "assignees": [{"login": n} for n in issue.get("assignees", [])],
         "comments": [
             {"id": c["id"], "body": c.get("body", "")} for c in issue.get("comments", [])
         ],
@@ -421,6 +422,7 @@ def _rest_comment(state: dict, number: str, comment: dict) -> dict:
         "body": comment.get("body", ""),
         "html_url": f"{_issue_url(state, number)}#issuecomment-{comment['id']}",
         "issue_url": f"https://api.github.com/repos/{_repo(state)}/issues/{number}",
+        "user": {"login": comment.get("author", state.get("login", "fake-gh"))},
     }
 
 
@@ -750,7 +752,10 @@ def _api(path: Path, state: dict, argv: list[str]) -> int:  # noqa: C901
             _save(path, state)
             return _emit(argv, _rest_comment(state, parts[4], comment))
         return _emit(
-            argv, [_rest_comment(state, parts[4], c) for c in issue.get("comments", [])]
+            argv,
+            [[_rest_comment(state, parts[4], c) for c in issue.get("comments", [])]]
+            if "--slurp" in argv
+            else [_rest_comment(state, parts[4], c) for c in issue.get("comments", [])],
         )
 
     # repos/o/r/issues/N/parent
@@ -1226,6 +1231,14 @@ def _release_api(state: dict, argv: list[str], parts: list[str], method: str) ->
     return _emit(argv, values if len(parts) == 4 else values[0])
 
 
+def _preflight_read(state: dict, argv: list[str]) -> int | None:
+    if argv[:2] == ["api", "user"]:
+        return _emit(argv, {"login": state.get("login", "fake-gh")})
+    if argv[:2] == ["label", "list"]:
+        return _emit(argv, [{"name": name} for name in state.get("labels", [])])
+    return None
+
+
 def _dispatch(path: Path, state: dict, argv: list[str]) -> int:
     state.setdefault("calls", []).append(argv)
     _save(path, state)
@@ -1240,6 +1253,9 @@ def _dispatch(path: Path, state: dict, argv: list[str]) -> int:
         return int(fault.get("code", 1))
     _save(path, state)
 
+    preflight = _preflight_read(state, argv)
+    if preflight is not None:
+        return preflight
     if argv[:1] == ["api"] and len(argv) > 1:
         return _api(path, state, argv)
     if argv[:1] == ["issue"]:

@@ -733,3 +733,35 @@ def test_release_lookup_accepts_repository_flag_positions(world, capsys, args):
     assert code == 0
     assert json.loads(out)["tagName"] == "v-next"
     assert json.loads(out)["url"] == "https://github.com/o/sister/releases/tag/v-next"
+
+
+def test_do_preflight_reads_are_complete_and_read_only(world, capsys):
+    comments = [{"id": n, "body": "Claiming: fix", "author": "other"} for n in range(1, 102)]
+    world(
+        {
+            "repo": "o/r",
+            "login": "me",
+            "labels": ["ready"],
+            "issues": {
+                "7": {"state": "closed", "assignees": ["other"], "comments": comments},
+            },
+            "prs": [],
+        }
+    )
+    code, out, _ = _run(
+        capsys, "issue", "view", "7", "--repo", "o/r", "--json", "state,assignees,labels"
+    )
+    assert code == 0
+    assert json.loads(out)["state"] == "CLOSED"
+    assert json.loads(out)["assignees"] == [{"login": "other"}]
+    code, out, _ = _run(
+        capsys, "api", "--paginate", "--slurp", "repos/o/r/issues/7/comments?per_page=100"
+    )
+    assert code == 0
+    assert len(json.loads(out)[0]) == 101
+    assert json.loads(out)[0][-1]["user"] == {"login": "other"}
+    assert _run(capsys, "api", "user")[:2] == (0, '{"login": "me"}\n')
+    code, out, _ = _run(capsys, "label", "list", "--repo", "o/r", "--json", "name")
+    assert code == 0
+    assert json.loads(out) == [{"name": "ready"}]
+    assert _state(world)["issues"]["7"]["comments"] == comments

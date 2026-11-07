@@ -150,6 +150,17 @@ Read the issue and implement it. Every code change keeps a RED -> GREEN \
 focused regression: first show the failure or reproduction, then make that \
 signal pass before the broader repository gates.
 
+Before the first code change, inspect WORKFLOW.md and any claim-bot workflow,
+including shared organization guidance, and follow the repository's claim
+protocol when one exists. Resolve an unknown issue verdict manually; do not
+start while blocked or needs-ready.
+
+Re-check the live issue immediately before `gh pr create` and before enabling auto-merge or queueing.
+Verify it is still open, ready when required,
+and unclaimed by anyone else (including agents sharing your login). If closed,
+including as not planned or a duplicate, or claimed by someone else, stop and
+report why. If a GitHub read fails, stop and check manually; never assume ok.
+
 If the issue turns out to have several independent children after all, follow \
 the grind handoff above. Each child needs its own branch and one or more \
 PRs; never combine children in one PR. Only a child's final PR closes it, \
@@ -225,6 +236,15 @@ pub fn render(
     kind: &Result<DoKind, String>,
     facts: &Result<BranchFacts, String>,
 ) -> String {
+    render_with_issue(target, kind, facts, &Err("issue not inspected".into()))
+}
+
+pub(super) fn render_with_issue(
+    target: &str,
+    kind: &Result<DoKind, String>,
+    facts: &Result<BranchFacts, String>,
+    issue_status: &Result<String, String>,
+) -> String {
     let target = target.trim();
     let mut out = format!(
         "# /do: rendered for this checkout by `clud do-prompt`\n\n**Target:** {}\n\n",
@@ -256,6 +276,15 @@ pub fn render(
         Err(error) => out.push_str(&format!(
             "Verdict: `blocked`.\n\nStop: this checkout could not be inspected ({error}). Tell the user and do not start work."
         )),
+    }
+    if issue.is_some() {
+        out.push_str("\n\n");
+        match issue_status {
+            Ok(status) => out.push_str(status),
+            Err(error) => out.push_str(&format!(
+                "Issue verdict: `unknown`. Stop and check manually before work: {error}."
+            )),
+        }
     }
     if kind.is_ok() {
         out.push_str("\n\n");
@@ -319,7 +348,11 @@ pub fn render_current(target: &str, kind: &Result<DoKind, String>) -> String {
         ),
         None => "Stop: the skill directory could not be resolved. Tell the user and do not start work.\n\n".to_string(),
     };
-    format!("{context}{}", render(target, kind, &facts))
+    let issue_status = super::do_issue::gather(target);
+    format!(
+        "{context}{}",
+        render_with_issue(target, kind, &facts, &issue_status)
+    )
 }
 
 fn git(cwd: &Path, args: &[&str]) -> Result<String, String> {
@@ -638,5 +671,19 @@ mod tests {
         assert!(out.contains("Verdict: `dirty`"));
         assert!(out.contains(" M README.md"));
         assert!(out.contains("Stop and ask the user"));
+    }
+}
+
+#[cfg(test)]
+mod issue_preflight_regression {
+    #[test]
+    fn issue_read_failure_never_renders_ok() {
+        let out = super::render(
+            "https://github.com/o/r/issues/7",
+            &Ok(super::DoKind::Single),
+            &Ok(super::BranchFacts::default()),
+        );
+        assert!(out.contains("Issue verdict: `unknown`"), "{out}");
+        assert!(out.contains("check manually"), "{out}");
     }
 }
