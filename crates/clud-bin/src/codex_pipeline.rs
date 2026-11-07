@@ -580,7 +580,12 @@ fn record_successful_turn(
     pending_input: &[serde_json::Value],
     output_items: &[serde_json::Value],
 ) -> Result<bool, PipelineError> {
-    match history.append_successful_turn(pending_input, output_items) {
+    let pending_input = pending_input
+        .iter()
+        .filter(|item| !is_developer_item(item))
+        .cloned()
+        .collect::<Vec<_>>();
+    match history.append_successful_turn(&pending_input, output_items) {
         Ok(()) => Ok(false),
         Err(HistoryError::HistoryLimit | HistoryError::ItemTooLarge) => Ok(true),
         Err(error) => Err(history_error(error)),
@@ -2157,6 +2162,33 @@ data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"outpu
             )
             .unwrap_err();
         assert_eq!(error, PipelineError::Upstream(UpstreamError::Cancelled));
+    }
+
+    #[test]
+    fn three_turns_store_no_developer_items() {
+        let store = crate::codex_history::ConversationStore::default();
+        store
+            .with_history("three-turns", |history| {
+                for turn in 1..=3 {
+                    let developer = json!({"type": "message", "role": "developer", "content": format!("system {turn}")});
+                    let user = json!({"type": "message", "role": "user", "content": format!("user {turn}")});
+                    let output = json!({"type": "message", "role": "assistant", "content": format!("answer {turn}")});
+                    let translated = vec![developer.clone(), user.clone()];
+                    let (wire, pending, _) =
+                        history_aware_input(&history.snapshot(), &translated, &[user]);
+                    assert_eq!(wire.first(), Some(&developer));
+                    assert_eq!(wire.iter().filter(|item| is_developer_item(item)).count(), 1);
+                    assert!(!record_successful_turn(history, &pending, &[output]).unwrap());
+                }
+                let snapshot = history.snapshot();
+                assert_eq!(
+                    snapshot.iter().filter(|item| is_developer_item(item)).count(),
+                    0
+                );
+                assert_eq!(snapshot.len(), 6);
+                Ok(())
+            })
+            .unwrap();
     }
 
     /// #2551: with an unchanged instruction, each request's input must start
