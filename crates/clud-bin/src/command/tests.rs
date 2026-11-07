@@ -770,6 +770,51 @@ fn headless_one_shot_drops_the_loop_only_tools() {
     }
 }
 
+/// #2233: the git-state probe is the fleet's most repeated tool call and the
+/// bundled `git/state.py` answered it in one bounded page, but only the
+/// `/grind` docs named it, so one-shot and `loop` agents chained raw git
+/// instead. Pin that the routing reaches exactly those agent launches and
+/// never an interactive one, which keeps the shorter prompt.
+#[test]
+fn agent_launches_route_git_probes_through_the_state_tool() {
+    let prompt = |p: &LaunchPlan| -> String {
+        let index = p
+            .command
+            .iter()
+            .position(|arg| arg == "--append-system-prompt")
+            .expect("claude launch carries an appended prompt");
+        p.command[index + 1].clone()
+    };
+
+    for raw in [
+        vec!["clud", "-p", "hi"],
+        vec!["clud", "loop", "fix the build"],
+        vec![
+            "clud",
+            "grind",
+            "https://github.com/talos-hq/clud/issues/2233",
+        ],
+    ] {
+        let text = prompt(&plan(&raw));
+        assert!(
+            text.contains("tool run git/state.py"),
+            "{raw:?} does not route git state: {}",
+            &text[..text.len().min(200)]
+        );
+        assert!(text.contains("--fetch"), "{raw:?} never mentions --fetch");
+    }
+
+    let interactive = prompt(&plan(&["clud"]));
+    assert!(
+        !interactive.contains("tool run git/state.py"),
+        "an interactive launch must keep the shorter prompt"
+    );
+    assert!(
+        !interactive.contains("tool run code/outline.py"),
+        "the rest of the agent routing stays out of the interactive prompt"
+    );
+}
+
 #[test]
 fn the_product_tools_flag_restores_them() {
     let p = plan(&["clud", "--product-tools"]);
