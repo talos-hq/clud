@@ -206,7 +206,7 @@ fn append_pcm16le_samples(
 
     let chunk = &data[start..];
     let even_len = chunk.len() & !1usize;
-    for bytes in chunk[..even_len].chunks_exact(2) {
+    for bytes in chunk[..even_len].as_chunks::<2>().0 {
         let sample = i16::from_le_bytes([bytes[0], bytes[1]]);
         converted.push(sample as f32 / i16::MAX as f32);
     }

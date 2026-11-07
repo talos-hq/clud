@@ -662,3 +662,64 @@ fn repeat_command_preserves_mixed_case_and_marker_shaped_custom_models() {
         assert!(command.windows(2).any(|part| part == ["--model", model]));
     }
 }
+
+/// Inject only isolated daemon state: malformed metadata cannot identify any
+/// process, and a directory at the bringup lock prevents even an unfixed
+/// api-info path from spawning a daemon. Never contact the user's daemon.
+#[test]
+fn daemon_dry_run_dispatch_preserves_isolated_state() {
+    for command in [
+        "restart",
+        "stop",
+        "api-info",
+        "running-process",
+        "orphan-status",
+    ] {
+        for position in 1..=3 {
+            let dir = tempfile::tempdir().unwrap();
+            let metadata = dir.path().join("daemon.json");
+            std::fs::write(&metadata, "isolated daemon sentinel").unwrap();
+            std::fs::create_dir(dir.path().join("daemon.lock")).unwrap();
+            let mut argv = vec!["clud", "daemon", command];
+            argv.insert(position, "--dry-run");
+            let mut args = parse_args(&argv);
+            assert!(args.dry_run, "dry-run lost for {argv:?}");
+            assert!(args.passthrough.is_empty());
+            assert!(matches!(args.command, Some(Command::Daemon { .. })));
+            args.daemon_state_dir = Some(dir.path().to_path_buf());
+
+            let result = handle_special_command(&args, &AtomicBool::new(false));
+
+            assert_eq!(result, Some(0), "dry-run failed for {argv:?}");
+            assert_eq!(
+                std::fs::read_to_string(&metadata).unwrap(),
+                "isolated daemon sentinel"
+            );
+            assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+        }
+    }
+}
+
+#[test]
+fn daemon_dry_run_does_not_create_state_directory() {
+    for command in [
+        "restart",
+        "stop",
+        "api-info",
+        "running-process",
+        "orphan-status",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        // A file parent makes even a regressed dispatcher unable to spawn.
+        let blocked_parent = dir.path().join("blocked-parent");
+        std::fs::write(&blocked_parent, "no daemon may start here").unwrap();
+        let missing = blocked_parent.join("absent");
+        let mut args = parse_args(&["clud", "daemon", command, "--dry-run"]);
+        args.daemon_state_dir = Some(missing.clone());
+        assert_eq!(
+            handle_special_command(&args, &AtomicBool::new(false)),
+            Some(0)
+        );
+        assert!(!missing.exists(), "dry-run created state for {command}");
+    }
+}

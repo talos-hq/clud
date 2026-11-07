@@ -22,7 +22,9 @@ pub fn bytes_path(bytes: &[u8]) -> Result<PathBuf, &'static str> {
         return Err("odd number of UTF-16 path bytes");
     }
     let words = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
         .collect::<Vec<_>>();
     Ok(OsString::from_wide(&words).into())

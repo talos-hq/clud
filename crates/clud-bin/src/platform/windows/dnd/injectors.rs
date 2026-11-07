@@ -75,7 +75,9 @@ pub fn decode_input_records(
     let u16_at = |r: &[u8], at: usize| u16::from_le_bytes([r[at], r[at + 1]]);
     let u32_at = |r: &[u8], at: usize| u32::from_le_bytes([r[at], r[at + 1], r[at + 2], r[at + 3]]);
     Ok(records_bytes
-        .chunks_exact(INPUT_RECORD_SIZE)
+        .as_chunks::<INPUT_RECORD_SIZE>()
+        .0
+        .iter()
         .map(|r| INPUT_RECORD {
             EventType: u16_at(r, 0),
             Event: INPUT_RECORD_0 {

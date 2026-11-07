@@ -32,6 +32,13 @@ Foreground interactive launches still use the direct runner by default — the d
 
 Internal helper subcommands `__daemon` and `__worker` re-enter the same binary in their respective roles.
 
+Every `clud daemon` subcommand honors the global `--dry-run` flag in any
+position. It prints a command-specific preview and succeeds before launch
+setup, daemon state resolution, spawn permission, or IPC. This includes
+`restart`, `stop`, and `api-info` (which otherwise may start a daemon), as
+well as the diagnostic subcommands; a preview never starts or stops a daemon
+or changes its state (#2678).
+
 ## Listeners
 
 Three, not one. A reader who assumes "the loopback TCP listener" is the whole
