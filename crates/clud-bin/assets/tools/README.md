@@ -97,7 +97,10 @@ ast-grep for structural search and rewrite (#1339).
 PR watcher callers select a declared session/background/foreground wait and
 required-check or all-check completion scope. An empty head check rollup stays
 pending even if a workflow completed, bounded by the watch deadline; repositories
-without workflows retain the explicit `NO-CHECKS` exit. See
+without workflows retain the explicit `NO-CHECKS` exit. Before cancelling for
+failure, the watcher re-fetches the failing run and its latest attempt's jobs;
+it keeps waiting under the existing deadline if the run is no longer completed,
+the attempt changed, jobs remain active, or those reads fail (#2512). See
 [watch recovery](../../../../docs/architecture/hook-dispatch.md#watch-recovery-and-continuation-2004).
 
 `github/pr_merge.py` submits an exact GitHub PR head to an enforced merge
