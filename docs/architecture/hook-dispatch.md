@@ -87,15 +87,32 @@ The native hook contracts and scheduler lifecycle are documented in the
 A `/goal` condition the sandbox cannot satisfy keeps the harness's Stop
 evaluator re-prompting (#1597). That loop belongs to Claude Code: `/goal` is a
 prompt-based Stop hook, and the docs give no precedence between it and another
-Stop hook's output, so clud does not try to end the turn. The harness has its
-own breakers: an "impossible" verdict, a no-progress stop, and a cap of 8
-consecutive blocks.
+Stop hook's output. The harness documents its own breakers — an "impossible"
+verdict, a no-progress stop, and a cap of 8 consecutive blocks — but they do
+not always fire: over 24 h of local transcripts, 658 Stop-hook refusals landed
+in six sessions and 440 of them in one session whose judge kept repeating the
+same unmet pre-condition (it needed the owner's browser sign-in). Each refusal
+is one full request at the session's live context (200 kB of cache-read per
+request there, ~88 M tokens across the 440 rounds) and appends another verdict
+to a history every later request re-sends.
 
-clud only detects the loop. When `stop_hook_active` is true and
-`last_assistant_message` is identical on 2 consecutive Stop events,
-`stop_repeat.rs` prints one `systemMessage` that tells the user how to break
-it. A different answer or a user-driven stop resets the count. `SessionEnd`
-drops the per-session state file under `~/.clud/state/stop-repeat/`.
+`stop_repeat.rs` therefore does two bounded things, and both are fail-open:
+
+* **Advisory.** When `stop_hook_active` is true and `last_assistant_message` is
+  identical on 2 consecutive Stop events, it prints one `systemMessage`
+  telling the user how to break the loop.
+* **Budget.** Past 12 hook-driven continuations in one session — well beyond
+  the harness's documented cap of 8 — it prints one
+  `{"continue": false, "stopReason": …}` whose text names every way to
+  continue, so the harness ends the turn instead of re-sending the session to
+  a judge that cannot be satisfied. Exactly one halt is ever emitted per
+  session: if a harness ignores `continue: false`, the guard degrades to that
+  single line rather than starting a loop of its own.
+
+`CLUD_STOP_LOOP_BUDGET=<n>` sets the budget and `0` disables the halt. A
+different answer, a user-driven stop (the human typed something), or
+`SessionEnd` resets the state; the per-session file lives under
+`~/.clud/state/stop-repeat/`.
 
 ## Declaring hooks
 
