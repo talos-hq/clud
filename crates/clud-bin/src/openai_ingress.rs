@@ -219,7 +219,12 @@ fn translate_chat_messages(
                 );
             }
             "user" | "assistant" => {
-                let mut blocks = content_blocks(message.get("content"))?;
+                let mut blocks = if role == "assistant" {
+                    replay_reasoning(message.get("reasoning_details"))
+                } else {
+                    Vec::new()
+                };
+                blocks.extend(content_blocks(message.get("content"))?);
                 if role == "assistant" {
                     blocks.extend(tool_use_blocks(message.get("tool_calls"))?);
                 }
@@ -423,6 +428,59 @@ fn image_block(part: &Map<String, Value>) -> Result<Value, IngressError> {
         return Err(IngressError::UnsupportedPart("image_url".into()));
     };
     Ok(block)
+}
+
+fn replay_reasoning(details: Option<&Value>) -> Vec<Value> {
+    details
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|detail| match detail.get("type").and_then(Value::as_str)? {
+            "reasoning.text" => {
+                let signature = detail
+                    .get("signature")?
+                    .as_str()
+                    .filter(|s| !s.is_empty())?;
+                Some(
+                    json!({"type":"thinking", "thinking":detail.get("text")?.as_str()?,
+                    "signature":signature}),
+                )
+            }
+            "reasoning.encrypted" => Some(json!({"type":"redacted_thinking",
+                "data":detail.get("data")?.as_str()?})),
+            _ => None,
+        })
+        .collect()
+}
+
+fn append_reasoning_details(message: &mut Value, content: Option<&Vec<Value>>) {
+    let details: Vec<Value> = content
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, block)| reasoning_detail(block, index as u64))
+        .collect();
+    if !details.is_empty() {
+        message["reasoning_details"] = json!(details);
+    }
+}
+
+/// OpenRouter's Chat reasoning detail shape; opaque values are never normalized.
+fn reasoning_detail(block: &Value, index: u64) -> Option<Value> {
+    let mut detail = match block.get("type")?.as_str()? {
+        "thinking" => {
+            let signature = block.get("signature")?.as_str().filter(|s| !s.is_empty())?;
+            json!({"type":"reasoning.text", "text":block.get("thinking")?.as_str()?,
+                "signature":signature})
+        }
+        "redacted_thinking" => {
+            json!({"type":"reasoning.encrypted", "data":block.get("data")?.as_str()?})
+        }
+        _ => return None,
+    };
+    detail["format"] = json!("anthropic-claude-v1");
+    detail["index"] = json!(index);
+    Some(detail)
 }
 
 fn tool_use_blocks(tool_calls: Option<&Value>) -> Result<Vec<Value>, IngressError> {
@@ -746,12 +804,8 @@ pub fn translate_chat_response(
     let mut text = String::new();
     let mut reasoning = String::new();
     let mut tool_calls: Vec<Value> = Vec::new();
-    for block in response
-        .get("content")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
+    let content = response.get("content").and_then(Value::as_array);
+    for block in content.into_iter().flatten() {
         let Some(block) = block.as_object() else {
             continue;
         };
@@ -790,6 +844,7 @@ pub fn translate_chat_response(
     if !reasoning.is_empty() {
         message["reasoning_content"] = Value::String(reasoning);
     }
+    append_reasoning_details(&mut message, content);
     let mapped = finish_reason(stop_reason);
     let finish = if !tool_calls.is_empty() && mapped != "length" {
         "tool_calls"
@@ -836,6 +891,7 @@ pub struct ChatStreamTranslator {
     stop_reason: String,
     usage: MessagesUsage,
     pending: std::collections::BTreeMap<u64, PendingToolCall>,
+    reasoning_blocks: std::collections::BTreeMap<u64, Value>,
     next_tool_call_index: u64,
     trailing_usage_sent: bool,
 }
@@ -850,6 +906,7 @@ impl ChatStreamTranslator {
             stop_reason: String::new(),
             usage: MessagesUsage::default(),
             pending: std::collections::BTreeMap::new(),
+            reasoning_blocks: std::collections::BTreeMap::new(),
             next_tool_call_index: 0,
             trailing_usage_sent: false,
         }
@@ -926,6 +983,9 @@ impl ChatStreamTranslator {
 
     fn on_content_block_start(&mut self, event: &Value) -> Vec<Value> {
         let block = event.get("content_block");
+        if self.start_reasoning(event) {
+            return Vec::new();
+        }
         if block
             .and_then(|block| block.get("type"))
             .and_then(Value::as_str)
@@ -954,7 +1014,41 @@ impl ChatStreamTranslator {
         Vec::new()
     }
 
+    fn start_reasoning(&mut self, event: &Value) -> bool {
+        let Some(block) = event.get("content_block") else {
+            return false;
+        };
+        if !matches!(
+            block.get("type").and_then(Value::as_str),
+            Some("thinking" | "redacted_thinking")
+        ) {
+            return false;
+        }
+        let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
+        self.reasoning_blocks.insert(index, block.clone());
+        true
+    }
+
+    fn accumulate_reasoning(&mut self, event: &Value) {
+        let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
+        let Some(block) = self.reasoning_blocks.get_mut(&index) else {
+            return;
+        };
+        let delta = &event["delta"];
+        let key = match delta["type"].as_str() {
+            Some("thinking_delta") => "thinking",
+            Some("signature_delta") => "signature",
+            _ => return,
+        };
+        if let Some(part) = delta[key].as_str() {
+            let mut value = block[key].as_str().unwrap_or_default().to_string();
+            value.push_str(part);
+            block[key] = json!(value);
+        }
+    }
+
     fn on_content_block_delta(&mut self, event: &Value) -> Vec<Value> {
+        self.accumulate_reasoning(event);
         let Some(delta) = event.get("delta") else {
             return Vec::new();
         };
@@ -989,6 +1083,11 @@ impl ChatStreamTranslator {
 
     fn on_content_block_stop(&mut self, event: &Value) -> Vec<Value> {
         let index = event.get("index").and_then(Value::as_u64).unwrap_or(0);
+        if let Some(block) = self.reasoning_blocks.remove(&index) {
+            return reasoning_detail(&block, index)
+                .map(|detail| vec![self.chunk(json!({"reasoning_details":[detail]}), None)])
+                .unwrap_or_default();
+        }
         let Some(pending) = self.pending.remove(&index) else {
             return Vec::new();
         };
@@ -1687,6 +1786,66 @@ mod tests {
         assert_eq!(
             out["usage"]["completion_tokens_details"]["reasoning_tokens"],
             1
+        );
+    }
+
+    #[test]
+    fn thinking_signatures_buffered_round_trip() {
+        let blocks = json!([
+            {"type":"thinking", "thinking":"think\nλ", "signature":"sig+/=\nλ"},
+            {"type":"redacted_thinking", "data":"opaque+/="},
+            {"type":"thinking", "thinking":"again", "signature":"second"},
+            {"type":"tool_use", "id":"call", "name":"read", "input":{}}
+        ]);
+        let response = translate_response(json!({"content":blocks, "stop_reason":"tool_use"}));
+        let message = response["choices"][0]["message"].clone();
+        assert_eq!(message["reasoning_details"][0]["signature"], "sig+/=\nλ");
+        let replay = translate(json!({"model":"claude", "messages":[message]}));
+        assert_eq!(replay["messages"][0]["content"], blocks);
+    }
+
+    #[test]
+    fn thinking_signatures_stream_round_trip() {
+        let blocks = json!([
+            {"type":"thinking", "thinking":"initial rest", "signature":"start+/=\nλ"},
+            {"type":"redacted_thinking", "data":"secret"}
+        ]);
+        let chunks = stream(&[
+            json!({"type":"content_block_start", "index":0,
+                "content_block":{"type":"thinking", "thinking":"initial", "signature":"start"}}),
+            json!({"type":"content_block_delta", "index":0,
+                "delta":{"type":"thinking_delta", "thinking":" rest"}}),
+            json!({"type":"content_block_delta", "index":0,
+                "delta":{"type":"signature_delta", "signature":"+/="}}),
+            json!({"type":"content_block_delta", "index":0,
+                "delta":{"type":"signature_delta", "signature":"\nλ"}}),
+            json!({"type":"content_block_stop", "index":0}),
+            json!({"type":"content_block_start", "index":1,
+                "content_block":blocks[1]}),
+            json!({"type":"content_block_stop", "index":1}),
+        ]);
+        let details: Vec<Value> = chunks
+            .iter()
+            .filter_map(|chunk| chunk["choices"][0]["delta"]["reasoning_details"].as_array())
+            .flatten()
+            .cloned()
+            .collect();
+        assert_eq!(details.len(), 2);
+        let replay = translate(json!({"model":"claude", "messages":[{"role":"assistant",
+            "reasoning_details":details}]}));
+        assert_eq!(replay["messages"][0]["content"], blocks);
+    }
+
+    #[test]
+    fn thinking_signatures_absent_keep_legacy_behavior() {
+        let replay = translate(
+            json!({"model":"claude", "messages":[{"role":"assistant", "content":"answer",
+            "reasoning_content":"unsigned", "reasoning_details":[
+                {"type":"reasoning.text", "text":"unsigned"}]}]}),
+        );
+        assert_eq!(
+            replay["messages"][0]["content"],
+            json!([{"type":"text","text":"answer"}])
         );
     }
 
