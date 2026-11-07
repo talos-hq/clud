@@ -233,6 +233,7 @@ pub struct ConversationHistory {
     bytes: usize,
     route: Option<ConversationRoute>,
     reset_after_harness_compaction: bool,
+    provider_compaction_len: Option<usize>,
 }
 
 #[derive(Debug)]
@@ -249,6 +250,7 @@ impl ConversationHistory {
             bytes: 0,
             route: None,
             reset_after_harness_compaction: false,
+            provider_compaction_len: None,
         }
     }
 
@@ -274,6 +276,7 @@ impl ConversationHistory {
     pub fn clear(&mut self) {
         self.clear_items();
         self.reset_after_harness_compaction = false;
+        self.provider_compaction_len = None;
     }
 
     /// Fall back from provider-side compaction to Claude's own compaction.
@@ -289,6 +292,7 @@ impl ConversationHistory {
             self.clear_items();
         }
         self.reset_after_harness_compaction = true;
+        self.provider_compaction_len = None;
     }
 
     /// Complete a pending harness-compaction fallback.
@@ -302,6 +306,17 @@ impl ConversationHistory {
         self.clear_items();
         self.reset_after_harness_compaction = false;
         true
+    }
+
+    /// Finish either lifecycle path, removing only the temporary summary turn
+    /// after provider success while preserving its opaque compact output.
+    pub fn finish_compaction(&mut self) -> bool {
+        if let Some(len) = self.provider_compaction_len.take() {
+            self.items.truncate(len);
+            self.bytes = self.items.iter().map(|item| item.bytes).sum();
+            return true;
+        }
+        self.finish_harness_compaction_fallback()
     }
 
     fn clear_items(&mut self) {
@@ -336,17 +351,20 @@ impl ConversationHistory {
         let replacement = self.encode_replacement(compact_output.iter().cloned())?;
         self.bytes = replacement.iter().map(|item| item.bytes).sum();
         self.items = replacement;
+        self.provider_compaction_len = None;
         Ok(())
     }
 
     /// Install a provider-side lifecycle compaction and cancel any stale
     /// harness-fallback reset left by a missed `SessionStart(compact)` hook.
+    /// Remember the boundary until finish removes Claude's summary inference.
     pub fn install_provider_compaction(
         &mut self,
         compact_output: &[Value],
     ) -> Result<(), HistoryError> {
         self.replace_history(compact_output)?;
         self.reset_after_harness_compaction = false;
+        self.provider_compaction_len = Some(self.items.len());
         Ok(())
     }
 

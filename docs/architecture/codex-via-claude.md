@@ -321,7 +321,9 @@ clears the bridge after Claude starts the fresh session:
   completes a pending fallback by discarding the pre-compaction transcript that
   Claude's summary inference temporarily replayed. The next ordinary turn then
   seeds canonical history from Claude's compacted transcript. When provider-side
-  compaction succeeded, this control is a no-op and preserves its opaque output.
+  compaction succeeded, this control truncates history to the installed provider
+  output, discarding the temporary summarize prompt and reply. Until finish
+  arrives, successful turns remain recorded, including when finish never arrives.
 - `POST /_clud/context/clear` clears the addressed Claude session and all of its
   agent descendants, then performs no upstream inference or compaction request.
 
