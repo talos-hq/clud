@@ -3074,6 +3074,12 @@ fn serve_context_compact(
         // `SessionStart(compact)` confirms Claude installed its summary.
         let validation = crate::codex_pipeline::validate_canonical_history(&snapshot);
         let invalid_history = validation.is_err();
+        // The canonical log omits visible proxy turns until Codex resumes.
+        // Let the harness summarize its complete transcript instead.
+        if history.proxy_replay_start().is_some() {
+            history.begin_harness_compaction_fallback(invalid_history);
+            return Ok(Ok(()));
+        }
         let result = validation
             .and_then(|()| {
                 build_pipeline(config, log, &conversation_key, codex_redactor(config))
@@ -3311,6 +3317,12 @@ fn serve_unified_messages(
     let GatewayMode::Unified(unified) = &config.gateway_mode else {
         unreachable!("unified request dispatch is guarded by the caller");
     };
+    // Isolate auxiliary transcripts before any provider can enter a route epoch.
+    let side_store = ConversationStore::new(config.history_limits);
+    let side_key = side_call_key(body, conversation_key);
+    let (conversations, conversation_key) = side_key
+        .as_ref()
+        .map_or((conversations, conversation_key), |key| (&side_store, key));
     let mut request: serde_json::Value = match serde_json::from_slice(body) {
         Ok(request) => request,
         Err(_) => {
@@ -3337,7 +3349,7 @@ fn serve_unified_messages(
         return;
     }
     let original_model = model.to_string();
-    let mut attempt = UnifiedAttempt::for_launch(unified, &resolved, model);
+    let attempt = UnifiedAttempt::for_launch(unified, &resolved, model);
     let _redaction_report = redaction_launch_report(config, unified);
     let mut turn = UnifiedTurn {
         config,
@@ -3346,6 +3358,7 @@ fn serve_unified_messages(
         conversations,
         streaming,
         conversation_key,
+        selected_route: attempt.route,
         headers,
         log,
         cache_health,
@@ -3353,22 +3366,42 @@ fn serve_unified_messages(
         chat,
     };
 
+    dispatch_unified_messages(
+        stream,
+        &mut turn,
+        &mut request,
+        &original_model,
+        attempt,
+        body,
+    );
+}
+
+fn dispatch_unified_messages(
+    stream: &mut TcpStream,
+    turn: &mut UnifiedTurn<'_>,
+    request: &mut serde_json::Value,
+    original_model: &str,
+    mut attempt: UnifiedAttempt,
+    body: &[u8],
+) {
     // Descend the ladder. Probing is enabled only while a further rung exists,
     // so a launch that configured no failover takes exactly today's path and
     // never buffers a byte it would not have buffered before.
     loop {
         turn.retain_redaction(&attempt);
         let payload = match &attempt.model {
-            Some(model) if model != &original_model => {
+            Some(model) if model != original_model => {
                 request["model"] = serde_json::Value::String(model.clone());
-                serde_json::to_vec(&request).unwrap_or_default()
+                serde_json::to_vec(request).unwrap_or_default()
             }
             _ => body.to_vec(),
         };
-        let fallback = unified.next_rung(attempt.spec.as_deref(), attempt.route);
+        let fallback = turn
+            .unified
+            .next_rung(attempt.spec.as_deref(), attempt.route);
         let probe = fallback.is_some();
 
-        let outcome = dispatch_unified_attempt(stream, &turn, &attempt, &payload, probe);
+        let outcome = dispatch_unified_attempt(stream, turn, &attempt, &payload, probe);
 
         match outcome {
             ProxyOutcome::Committed { status } => {
@@ -3377,15 +3410,18 @@ fn serve_unified_messages(
                 // outage -- says nothing about the route, so it must not clear
                 // a cooldown the ledger is still serving.
                 if status < 400 {
-                    unified.record_route_success(attempt.route);
+                    turn.unified.record_route_success(attempt.route);
                 }
                 return;
             }
             ProxyOutcome::Declined(verdict) => {
-                let state = unified.record_route(attempt.route, verdict);
+                let state = turn.unified.record_route(attempt.route, verdict);
                 // Recomputed after recording, so the route that just declined
                 // is skipped on its own merits rather than by position.
-                let Some(rung) = unified.next_rung(attempt.spec.as_deref(), attempt.route) else {
+                let Some(rung) = turn
+                    .unified
+                    .next_rung(attempt.spec.as_deref(), attempt.route)
+                else {
                     // Nothing left to try. Re-issue against the same route with
                     // probing off so the client receives the real upstream
                     // status instead of a silent hang.
@@ -3396,17 +3432,18 @@ fn serve_unified_messages(
                     }
                     return finish_without_failover(
                         stream,
-                        config,
-                        unified,
-                        conversations,
-                        conversation_key,
-                        headers,
+                        turn.config,
+                        turn.unified,
+                        turn.conversations,
+                        turn.conversation_key,
+                        turn.headers,
                         &payload,
                         attempt.route,
-                        shutdown,
-                        cache_health,
+                        turn.selected_route,
+                        turn.shutdown,
+                        turn.cache_health,
                         turn.redaction,
-                        chat,
+                        turn.chat,
                     );
                 };
                 warn_route_exhausted(attempt.route, verdict, state, Some(&rung));
@@ -3599,6 +3636,8 @@ struct UnifiedTurn<'a> {
     conversations: &'a ConversationStore,
     streaming: bool,
     conversation_key: &'a ConversationKey,
+    /// Only the caller's provider selection changes the canonical epoch.
+    selected_route: ConversationRoute,
     headers: &'a [(String, String)],
     log: Option<&'a SharedBridgeLog>,
     cache_health: &'a SharedCacheHealth,
@@ -3633,6 +3672,7 @@ fn dispatch_unified_attempt(
             turn.conversations,
             turn.conversation_key,
             ConversationRoute::Claude,
+            turn.selected_route,
             &unified.anthropic_base_url,
             "/v1/messages",
             payload,
@@ -3661,6 +3701,7 @@ fn dispatch_unified_attempt(
                 turn.conversations,
                 turn.conversation_key,
                 attempt.route,
+                turn.selected_route,
                 &route.base_url,
                 "/v1/messages",
                 routed.as_deref().unwrap_or(payload),
@@ -3699,7 +3740,7 @@ fn dispatch_unified_attempt(
                 payload,
                 turn.streaming,
                 turn.conversation_key,
-                Some(ConversationRoute::Codex),
+                Some(turn.selected_route),
                 turn.log,
                 turn.cache_health,
                 turn.redaction,
@@ -3771,6 +3812,7 @@ fn finish_without_failover(
     headers: &[(String, String)],
     payload: &[u8],
     route: ConversationRoute,
+    selected_route: ConversationRoute,
     shutdown: &AtomicBool,
     cache_health: &SharedCacheHealth,
     redaction: Option<&SharedSession>,
@@ -3799,6 +3841,7 @@ fn finish_without_failover(
         conversations,
         conversation_key,
         route,
+        selected_route,
         base_url,
         "/v1/messages",
         routed.as_deref().unwrap_or(payload),
@@ -3821,6 +3864,7 @@ fn serve_unified_anthropic_proxy(
     conversations: &ConversationStore,
     conversation_key: &ConversationKey,
     route: ConversationRoute,
+    selected_route: ConversationRoute,
     base_url: &str,
     path: &str,
     body: &[u8],
@@ -3888,9 +3932,8 @@ fn serve_unified_anthropic_proxy(
         beats.begin(&conversation_key.id, Instant::now());
     }
     let routed = conversations.with_history(&conversation_key.id, |history| {
-        // Crossing a provider boundary starts a new route epoch, which is
-        // exactly what a failover is: a provider switch nobody typed.
-        if history.enter_route(route) {
+        // Automatic descent and recovery retain the caller's route epoch.
+        if history.enter_route(selected_route) {
             lock_cache_health(cache_health).mark_boundary(&conversation_key.id);
         }
         let mut usage = StreamingUsage::new(provider);
@@ -3917,6 +3960,7 @@ fn serve_unified_anthropic_proxy(
         if path == "/v1/messages" {
             if let ProxyOutcome::Committed { status } = outcome {
                 if status < 400 {
+                    retain_proxy_replay(history, body);
                     if let Some(usage) = usage.finish() {
                         publish_status_usage(status_usage, provider, &model, usage, "unavailable");
                     }
@@ -3940,6 +3984,20 @@ fn serve_unified_anthropic_proxy(
         return ProxyOutcome::local(500);
     }
     outcome
+}
+
+/// Remember visible proxy turns that are absent from the canonical Codex log.
+fn retain_proxy_replay(history: &mut crate::codex_history::ConversationHistory, body: &[u8]) {
+    if history.is_empty() {
+        return;
+    }
+    if let Ok(replay) = crate::codex_translate::history_replay(
+        body,
+        history.failed_turn(),
+        history.proxy_replay_start(),
+    ) {
+        history.record_proxy_turn(replay.pending_start, replay.replay_end);
+    }
 }
 
 /// #2046: what the cache heartbeat replays: the request exactly as this hop
@@ -4096,6 +4154,7 @@ fn serve_unified_count_tokens(
         stream,
         conversations,
         conversation_key,
+        ConversationRoute::Claude,
         ConversationRoute::Claude,
         &unified.anthropic_base_url,
         "/v1/messages/count_tokens",
@@ -6786,6 +6845,7 @@ mod tests {
 
     mod failed_turn_http;
     mod redaction_http;
+    mod route_history_http;
 
     use super::*;
     use std::io::{Read, Write};

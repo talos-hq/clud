@@ -51,13 +51,20 @@ The Anthropic-compatible routes are one list, not per-provider fields:
 dispatch. A new Anthropic-compatible provider therefore needs a descriptor
 row and a catalog row, not new gateway fields (#937 Phase 4).
 
-Each Claude session/subagent identity also owns an active route epoch. Crossing
-a provider boundary clears Codex's provider-private canonical Responses items.
-If that conversation later returns to Codex, the translator reseeds from the
-complete Anthropic-visible transcript in the request. Opaque reasoning,
-signatures, cache identifiers, and tool identifiers are never reused across
-providers. Switching among Codex models can retain the current Codex epoch.
-`/clear`, eviction, and gateway shutdown remove both transcript and route state.
+Each Claude session/subagent identity also owns an active route epoch. A user's
+provider selection change clears Codex's provider-private canonical Responses
+items. If that conversation later returns to Codex, the translator reseeds from
+the complete Anthropic-visible transcript in the request. Switching among Codex
+models can retain the current Codex epoch. Automatic failover and recovery keep
+the original selection's epoch: Codex items stay private to Codex and survive a
+bounce through a proxy. The next Codex continuation also appends intervening
+proxy turns from the client's visible transcript. While that replay is pending,
+explicit compaction uses the two-phase harness fallback because the canonical
+snapshot alone omits those turns; the finish hook clears it for the installed
+client summary. Tool-less auxiliary calls use
+the existing side-call classifier and a temporary store before route selection;
+main turns carrying thinking or context-management controls retain their normal
+history. `/clear`, eviction, and gateway shutdown remove transcript and route state.
 
 `POST /v1/messages/count_tokens` is proxied for ordinary native Claude model
 IDs. Synthetic Codex, DeepSeek, Kimi, and OpenRouter routes return an explicit

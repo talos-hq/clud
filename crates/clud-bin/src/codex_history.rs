@@ -235,6 +235,7 @@ pub struct ConversationHistory {
     reset_after_harness_compaction: bool,
     provider_compaction_len: Option<usize>,
     failed_turn: Option<FailedTurn>,
+    proxy_replay_start: Option<usize>,
 }
 
 /// Positions in the harness replay, independent of assistant message text.
@@ -260,14 +261,15 @@ impl ConversationHistory {
             reset_after_harness_compaction: false,
             provider_compaction_len: None,
             failed_turn: None,
+            proxy_replay_start: None,
         }
     }
 
     /// Enter one provider route while the conversation lock is held.
     ///
-    /// A provider change invalidates every provider-private item from the
-    /// previous epoch. The next Codex request then reseeds from the complete
-    /// Anthropic-visible transcript supplied by Claude Code.
+    /// A caller-selected provider change invalidates private items from the
+    /// previous epoch. Automatic failover uses the original selection, so a
+    /// bounce back to Codex retains its canonical items.
     pub fn enter_route(&mut self, route: ConversationRoute) -> bool {
         let changed = self.route.is_some_and(|previous| previous != route);
         if changed {
@@ -322,6 +324,7 @@ impl ConversationHistory {
     pub fn finish_compaction(&mut self) -> bool {
         if let Some(len) = self.provider_compaction_len.take() {
             self.failed_turn = None;
+            self.proxy_replay_start = None;
             self.items.truncate(len);
             self.bytes = self.items.iter().map(|item| item.bytes).sum();
             return true;
@@ -331,6 +334,7 @@ impl ConversationHistory {
 
     fn clear_items(&mut self) {
         self.failed_turn = None;
+        self.proxy_replay_start = None;
         self.items.clear();
         self.bytes = 0;
     }
@@ -339,6 +343,31 @@ impl ConversationHistory {
     /// replay boundaries until a successful append or a lifecycle reset.
     pub(crate) fn failed_turn(&self) -> Option<&FailedTurn> {
         self.failed_turn.as_ref()
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    pub(crate) fn proxy_replay_start(&self) -> Option<usize> {
+        self.proxy_replay_start
+    }
+
+    /// The proxy answered this turn; its visible reply is real, not a synthetic
+    /// failed-Codex assistant. Replay it on the next Codex continuation.
+    pub(crate) fn record_proxy_turn(&mut self, pending_start: usize, replay_end: usize) {
+        self.proxy_replay_start = Some(
+            self.proxy_replay_start
+                .map_or(pending_start, |previous| previous.min(pending_start)),
+        );
+        if let Some(failed) = &mut self.failed_turn {
+            failed
+                .assistant_positions
+                .retain(|position| *position != replay_end);
+            if failed.assistant_positions.is_empty() {
+                self.failed_turn = None;
+            }
+        }
     }
 
     pub(crate) fn begin_turn(&mut self, pending_start: usize, replay_end: usize) {
@@ -380,6 +409,7 @@ impl ConversationHistory {
         turn.extend(output.iter().cloned());
         self.append_items(turn)?;
         self.failed_turn = None;
+        self.proxy_replay_start = None;
         Ok(())
     }
 

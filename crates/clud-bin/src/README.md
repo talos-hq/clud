@@ -129,7 +129,8 @@ Entry and orchestration:
 - `codex_bridge.rs` - issue #626's authenticated, loopback-only HTTP shell and
   #898/#899's unified Claude/Codex/DeepSeek multiplexer: ephemeral listener +
   per-launch bearer, deterministic `/v1/models`, provider catalog routing,
-  strict credential isolation, request-time effort mapping, route epochs,
+  strict credential isolation, request-time effort mapping, caller-selected route epochs
+  that survive automatic failover, early side-call isolation,
   preservation of the launch wire-model pin when Claude sends its discovery ID,
   native Claude token counting, bounded parser/workers/timeouts, authenticated
   context compact/finalize/clear lifecycle controls, and joined shutdown.

@@ -167,12 +167,12 @@ sanitized in-band error already emitted today, mark the route dead, and route
 the *next* request to the next rung. Worst case costs one turn; it never costs
 the conversation.
 
-Crossing providers mid-conversation is not new work. It is the existing route
-epoch machinery: provider-private canonical Responses items are cleared on the
-boundary, Codex reseeds from the request transcript if the conversation
-returns, and opaque reasoning, signatures, cache identifiers, and tool
-identifiers are never reused across providers. Failover is a provider switch
-that nobody typed.
+Automatic descent and recovery retain the caller-selected route epoch. Codex's
+canonical Responses items remain private to Codex while a proxy serves the
+conversation; a later Codex continuation keeps those opaque items and appends
+intervening visible proxy turns from the client transcript. Explicit user
+provider switches still clear the epoch and reseed on return, as described in
+[the unified gateway contract](unified-gateway.md).
 
 ## 5. Recover, and say so out loud
 
