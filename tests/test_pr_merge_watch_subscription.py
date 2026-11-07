@@ -179,6 +179,7 @@ def gate(watcher, rows: list, *, mergeable: str = "MERGEABLE"):
     run = {
         "id": 900,
         "run_number": 1,
+        "run_attempt": 1,
         "path": ".github/workflows/ci.yml",
         "head_sha": "abc123",
         "event": "pull_request",
@@ -217,7 +218,11 @@ def drive(watcher, tmp_path, monkeypatch, polls: list, sub, *, max_queued=None, 
         "_build_failure_report",
         lambda check, _repo: watcher.FailureReport(check, None, "", None),
     )
-    monkeypatch.setattr(watcher, "gh_json", lambda *args: None)
+    # Fresh run/job reads now positively confirm a terminal failure (#2512).
+    monkeypatch.setattr(
+        watcher, "gh_json", lambda *args: {"status": "completed", "run_attempt": 1}
+    )
+    monkeypatch.setattr(watcher, "paginate", lambda *args: [{"status": "completed"}])
     monkeypatch.setattr(watcher, "cancel_pr_runs", lambda *args, **kwargs: 0)
     monkeypatch.setattr(watcher.BrokerSubscription, "from_env", classmethod(lambda cls: sub))
     sleeps: list = []

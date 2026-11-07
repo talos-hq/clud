@@ -1278,7 +1278,9 @@ def head_gate(watcher, poll: dict, statuses: list | None = None):
     )
 
 
-def run_watch(watcher, tmp_path, monkeypatch, polls: list[dict], required, *, reread=None):
+def run_watch(
+    watcher, tmp_path, monkeypatch, polls: list[dict], required, *, reread=None, jobs=None
+):
     """Drive `watch()` over recorded polls; return (exit code, polls, cancel calls)."""
     log = watcher.WatchLog.create(527, "zackees/clud", root=tmp_path)
     first = polls[0]["head_sha"]
@@ -1317,6 +1319,9 @@ def run_watch(watcher, tmp_path, monkeypatch, polls: list[dict], required, *, re
         return next((r for r in latest if r.get("id") == run_id), None)
 
     monkeypatch.setattr(watcher, "gh_json", run_refetch)
+    monkeypatch.setattr(
+        watcher, "paginate", lambda *a: jobs if jobs is not None else [{"status": "completed"}]
+    )
     cancels: list[dict] = []
     monkeypatch.setattr(
         watcher,
@@ -1432,7 +1437,14 @@ def test_c3_replacement_fails_and_cancels_only_it(watcher, tmp_path, monkeypatch
 
 def test_c3_watch_exits_one_with_the_scoped_cancel(watcher, tmp_path, monkeypatch) -> None:
     case = load_case("concurrency", "C3")
-    code, _polls, cancels = run_watch(watcher, tmp_path, monkeypatch, [case], case["required"])
+    settled = json.loads(json.dumps(case))
+    for run in settled["workflow_runs"]:
+        if run["id"] == 101:
+            run.update(status="completed", conclusion="failure")
+    code, polls, cancels = run_watch(
+        watcher, tmp_path, monkeypatch, [case, settled], case["required"]
+    )
+    assert polls == 2
     assert code == watcher.EXIT_REQUIRED_FAIL
     assert [c["kwargs"]["scope"] for c in cancels] == [{CI_YML: 101}]
 
@@ -1932,6 +1944,123 @@ def test_1449_no_cancel_when_the_run_was_rerun_after_the_verdict(
     )
     assert acted is False
     assert cancels == []
+
+
+@pytest.mark.parametrize(
+    ("status", "attempt", "job_status", "keep"),
+    [
+        ("completed", 1, "queued", True),
+        ("completed", 1, "in_progress", True),
+        ("completed", 2, "completed", True),
+        ("queued", 1, "completed", True),
+        ("completed", 1, "completed", False),
+    ],
+)
+def test_2512_fresh_run_and_latest_jobs_before_cancel(
+    watcher, monkeypatch, status, attempt, job_status, keep
+):
+    failed = _rerun_poll(
+        attempt=1,
+        status="completed",
+        check=_ci_ok(108391482097, "failure", "2026-09-26T10:40:00Z"),
+    )
+    verdict = watcher.judge_check_runs(
+        failed["check_runs"], failed["workflow_runs"], "48e7b20", {"CI OK"}
+    )
+    assert verdict.state == "fail"
+    run_id = failed["workflow_runs"][0]["id"]
+    reads = []
+
+    def jobs(path, key):
+        reads.append((path, key))
+        return [{"status": job_status}]
+
+    monkeypatch.setattr(watcher, "paginate", jobs)
+    monkeypatch.setattr(watcher, "gh_json", lambda *a: {"status": status, "run_attempt": attempt})
+    assert watcher._rerun_since_verdict(verdict, "talos-hq/clud") == (run_id if keep else None)
+    if status == "completed" and attempt == 1:
+        assert reads == [(f"repos/talos-hq/clud/actions/runs/{run_id}/attempts/1/jobs", "jobs")]
+
+
+@pytest.mark.parametrize("job_status", ["queued", "in_progress"])
+def test_2512_active_jobs_wait_for_next_poll(watcher, tmp_path, monkeypatch, job_status):
+    failed = _rerun_poll(
+        attempt=1,
+        status="completed",
+        check=_ci_ok(108391482097, "failure", "2026-09-26T10:40:00Z"),
+    )
+    green = _rerun_poll(
+        attempt=2,
+        status="completed",
+        check=_ci_ok(108391700000, "success", "2026-09-26T11:20:00Z"),
+    )
+    code, polls, cancels = run_watch(
+        watcher,
+        tmp_path,
+        monkeypatch,
+        [failed, green],
+        {"CI OK"},
+        jobs=[{"status": job_status}],
+    )
+    assert code == watcher.EXIT_GREEN
+    assert polls == 2
+    assert cancels == []
+
+
+def test_2512_rerun_during_diagnosis_is_rechecked(watcher, tmp_path, monkeypatch):
+    failed = _rerun_poll(
+        attempt=1,
+        status="completed",
+        check=_ci_ok(108391482097, "failure", "2026-09-26T10:40:00Z"),
+    )
+    verdict = watcher.judge_check_runs(
+        failed["check_runs"], failed["workflow_runs"], "48e7b20", {"CI OK"}
+    )
+    run = {"run_attempt": 1, "status": "completed"}
+    monkeypatch.setattr(watcher, "gh_json", lambda *a: dict(run))
+    monkeypatch.setattr(watcher, "paginate", lambda *a: [{"status": "completed"}])
+    diagnosed = []
+
+    def diagnose(check, repo):
+        diagnosed.append(check)
+        run.update(run_attempt=2, status="queued")
+        return watcher.FailureReport(check, None, "", None)
+
+    monkeypatch.setattr(watcher, "_build_failure_report", diagnose)
+    cancels = []
+    monkeypatch.setattr(watcher, "cancel_pr_runs", lambda *a, **k: cancels.append(a))
+    snapshot = watcher.PRSnapshot(2512, "OPEN", "MERGEABLE", "48e7b20", "main")
+    opts = watcher.CancelOptions({"fail"}, "runs", 30, False, False, True, False)
+    assert (
+        watcher._act_on_verdict(verdict, 2512, "talos-hq/clud", "talos-hq/clud", snapshot, opts)
+        is False
+    )
+    assert diagnosed
+    assert cancels == []
+
+
+@pytest.mark.parametrize("stale_source", ["run", "jobs"])
+def test_2512_broker_stale_reads_cannot_authorize_cancel(watcher, monkeypatch, stale_source):
+    failed = _rerun_poll(
+        attempt=1,
+        status="completed",
+        check=_ci_ok(108391482097, "failure", "2026-09-26T10:40:00Z"),
+    )
+    verdict = watcher.judge_check_runs(
+        failed["check_runs"], failed["workflow_runs"], "48e7b20", {"CI OK"}
+    )
+
+    def run(*args):
+        watcher.STALE_READS += int(stale_source == "run")
+        return {"status": "completed", "run_attempt": 1}
+
+    def jobs(*args):
+        watcher.STALE_READS += int(stale_source == "jobs")
+        return [{"status": "completed"}]
+
+    monkeypatch.setattr(watcher, "gh_json", run)
+    monkeypatch.setattr(watcher, "paginate", jobs)
+    assert watcher._rerun_since_verdict(verdict, "talos-hq/clud") == 36235999882
 
 
 def test_usage_error_exits_64_not_the_review_verdict_code(watcher, capsys) -> None:

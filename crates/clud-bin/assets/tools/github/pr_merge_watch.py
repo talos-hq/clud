@@ -3802,6 +3802,9 @@ def _act_on_verdict(  # noqa: C901
         FailureReport(j.as_check_row(), str(j.run_id) if j.run_id else None, "", None)
         for j in verdict.failing[1:]
     ]
+    # Diagnosis can take time: revalidate immediately before cancellation too.
+    if _rerun_since_verdict(verdict, repo_for_reports) is not None:
+        return False
     _cancel_for_exit(
         "fail", pr, repo, snapshot.head_sha, opts, log, scope=dict(verdict.failing_run_ids)
     )
@@ -3834,24 +3837,33 @@ def _act_on_verdict(  # noqa: C901
     return False
 
 
-def _rerun_since_verdict(verdict: Verdict, repo: str | None) -> int | None:
-    """A failing run whose attempt or status changed since the verdict (#1449).
+def _failure_run_is_fresh(j: CheckJudgment, repo: str) -> bool:
+    """Only positive, fresh evidence permits acting on a failed attempt (#2512)."""
+    stale_before = STALE_READS
+    run = gh_json(  # ci-lint: allow GHAPI-001 conditional: REST GET revalidated by ETag
+        "api", f"repos/{repo}/actions/runs/{j.run_id}"
+    )
+    if not isinstance(run, dict) or _lower(run.get("status")) != "completed":
+        return False
+    attempt = _as_int(run.get("run_attempt"))
+    if attempt is None or attempt != j.run_attempt:
+        return False
+    jobs = paginate(f"repos/{repo}/actions/runs/{j.run_id}/attempts/{attempt}/jobs", "jobs")
+    return (
+        STALE_READS == stale_before
+        and jobs is not None
+        and all(_lower(job.get("status")) == "completed" for job in jobs)
+    )
 
-    Its run id now names a newer attempt than the failing check, so cancelling
-    it would kill the re-run. Returns that run id, or None.
-    """
+
+def _rerun_since_verdict(verdict: Verdict, repo: str | None) -> int | None:
+    """Return a run whose failure cannot safely be acted on; keep waiting."""
     if not repo:
         return None
     for j in verdict.failing:
-        if j.run_id is None or j.run_attempt is None:
+        if j.run_id is None:
             continue
-        run = gh_json("api", f"repos/{repo}/actions/runs/{j.run_id}")  # ci-lint: allow GHAPI-001 conditional: gh_json sends REST GETs through api_get (session broker ETag, else If-None-Match)
-        if not isinstance(run, dict):
-            continue
-        attempt = _as_int(run.get("run_attempt"))
-        if (attempt is not None and attempt != j.run_attempt) or (
-            _lower(run.get("status")) != j.run_status
-        ):
+        if j.run_attempt is None or not _failure_run_is_fresh(j, repo):
             return j.run_id
     return None
 
