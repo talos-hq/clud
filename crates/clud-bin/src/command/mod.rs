@@ -1,5 +1,6 @@
 mod builder;
 mod do_input;
+mod do_issue;
 pub mod do_kind;
 pub mod do_prompt;
 pub mod goal_compact;

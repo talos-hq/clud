@@ -315,3 +315,62 @@ def test_h15_explicit_cli_meta_handoff_reads_the_router(harness: Harness) -> Non
     after_read = json.dumps([r.get("messages") for r in result.requests if r.get("turn") == 1])
     assert "/grind requires the Claude harness" in after_read
     assert "cannot be used with Skill tool" not in after_read
+
+
+@pytest.mark.parametrize(
+    ("issue", "labels", "verdict"),
+    [
+        ({"state": "closed"}, [], "blocked"),
+        ({"assignees": ["other"]}, [], "blocked"),
+        ({"comments": [{"id": 1, "author": "other", "body": "Claiming: fix"}]}, [], "blocked"),
+        ({"comments": [{"id": 1, "author": "fake-gh", "body": "Claiming: fix"}]}, [], "unknown"),
+        ({}, ["ready"], "needs-ready"),
+        ({"labels": ["ready"]}, ["ready"], "ok"),
+        ({}, [], "ok"),
+    ],
+)
+def test_do_issue_preflight(harness: Harness, issue: dict, labels: list[str], verdict: str) -> None:
+    _gh(harness, issues={"7": issue}, labels=labels)
+    result = process.run(
+        [str(harness.clud), "do-prompt", ISSUE],
+        cwd=str(harness.repo),
+        env=harness.env(),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    starting = result.stdout.split("## Starting point", 1)[1].split("## What to do", 1)[0]
+    assert f"Issue verdict: `{verdict}`" in starting
+    assert "before the first code change" in result.stdout.lower()
+    assert "before `gh pr create`" in result.stdout
+    assert "before enabling auto-merge or queueing" in result.stdout
+    calls = harness.read_gh_state()["calls"]
+    assert not any(
+        call[:2] in [["issue", "comment"], ["issue", "edit"], ["issue", "close"]] for call in calls
+    )
+
+
+@pytest.mark.parametrize(
+    "fault",
+    [
+        "issue view",
+        "api GET user",
+        "api GET repos/o/r/issues/7/comments?per_page=100",
+        "label list",
+    ],
+)
+def test_do_issue_read_failure_requires_manual_check(harness: Harness, fault: str) -> None:
+    _gh(harness, fail_on=[fault])
+    result = process.run(
+        [str(harness.clud), "do-prompt", ISSUE],
+        cwd=str(harness.repo),
+        env=harness.env(),
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "Issue verdict: `unknown`" in result.stdout
+    assert "check manually" in result.stdout
+    assert "Issue verdict: `ok`" not in result.stdout
