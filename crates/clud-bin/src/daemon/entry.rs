@@ -150,6 +150,31 @@ fn run_inject_command(args: &Args) -> i32 {
     super::inject_client::run(&state_dir, &options)
 }
 
+fn run_daemon_command(args: &Args, subcommand: &DaemonSubcommand) -> i32 {
+    // The global flag is already parsed; return before resolving daemon state,
+    // granting spawn authority, or issuing any daemon IPC (#2678).
+    if args.dry_run {
+        let action = match subcommand {
+            DaemonSubcommand::Restart => "stop the running daemon, if any, and start a replacement",
+            DaemonSubcommand::Stop => {
+                "stop the running daemon, if any, without starting a replacement"
+            }
+            DaemonSubcommand::ApiInfo { .. } => {
+                "ensure the daemon is running and report API discovery"
+            }
+            DaemonSubcommand::RunningProcess { .. } => {
+                "report running-process adoption diagnostics"
+            }
+            DaemonSubcommand::OrphanStatus { .. } => "report the latest orphan-sweep status",
+        };
+        println!("[dry-run] Would {action}. No changes made.");
+        return 0;
+    }
+    let state_dir = state_dir(args);
+    grant_spawn_for_daemon_subcommand(subcommand);
+    run_daemon_subcommand(&state_dir, subcommand)
+}
+
 fn run_daemon_subcommand(state_dir: &Path, subcommand: &DaemonSubcommand) -> i32 {
     match subcommand {
         DaemonSubcommand::ApiInfo { json } => {
@@ -836,11 +861,7 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
                 interrupted,
             ))
         }
-        Some(Command::Daemon { subcommand }) => {
-            let state_dir = state_dir(args);
-            grant_spawn_for_daemon_subcommand(subcommand);
-            Some(run_daemon_subcommand(&state_dir, subcommand))
-        }
+        Some(Command::Daemon { subcommand }) => Some(run_daemon_command(args, subcommand)),
         Some(Command::Inject { .. }) => Some(run_inject_command(args)),
         Some(Command::InternalDaemon { state_dir }) => {
             super::startup_phases::install_panic_hook(state_dir);

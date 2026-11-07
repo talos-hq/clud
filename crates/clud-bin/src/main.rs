@@ -221,6 +221,10 @@ fn start_checkout_presence(
 /// Modes that must run before the crash reporter, the runtime-cache hop and
 /// every other piece of launch machinery. `Some` is the process exit code.
 fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
+    // Daemon previews need neither launch setup nor a backend resolution.
+    if args.dry_run && matches!(args.command, Some(args::Command::Daemon { .. })) {
+        return daemon::handle_special_command(args, &std::sync::atomic::AtomicBool::new(false));
+    }
     if let Some(code) = clud::openrouter_routing::handle_setting(args) {
         return Some(code);
     }
