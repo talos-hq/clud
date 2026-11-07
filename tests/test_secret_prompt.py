@@ -8,7 +8,7 @@ from tests.test_hello import _run
 def test_secret_prompt_exposes_explicit_sinks() -> None:
     result = _run("secret", "--help")
     assert result.returncode == 0, result.stderr
-    for option in ["--to-file", "--to-command", "--vault", "--multiline"]:
+    for option in ["--to-file", "--to-command", "--vault", "--multiline", "--pattern"]:
         assert option in result.stdout
 
 
@@ -390,3 +390,61 @@ def test_native_secret_window_authenticates_real_glab(tmp_path: Path) -> None:
         assert TOKEN not in status.stdout + status.stderr
         assert status.returncode == 0, status.stderr
         assert len(accepted) > login_requests, "glab status did not verify the saved token"
+
+
+def test_secret_pattern_rejects_without_writing_or_exposing_input(tmp_path: Path) -> None:
+    source = tmp_path / "fixture"
+    source.write_text("synthetic-mismatch")
+    destination = tmp_path / "credential"
+    result = _run(
+        "secret",
+        "--pattern",
+        "[0-9]+",
+        "--to-file",
+        str(destination),
+        env_overrides={
+            "CLUD_INTEGRATION_TESTS": "1",
+            "CLUD_TEST_SECRET_PROMPT_FILE": str(source),
+        },
+    )
+    status_ok = result.returncode == 1
+    assert status_ok, "unexpected prompt status"
+    output_ok = result.stdout.strip() == "failed"
+    assert output_ok, "unexpected prompt output"
+    assert not destination.exists()
+    private_output = source.read_text() not in result.stdout + result.stderr
+    assert private_output, "credential exposed"
+
+
+def test_secret_pattern_invalid_regex_is_an_argument_error(tmp_path: Path) -> None:
+    destination = tmp_path / "credential"
+    result = _run("secret", "--pattern", "[", "--to-file", str(destination))
+    status_ok = result.returncode == 2
+    assert status_ok, "unexpected argument status"
+    assert not destination.exists()
+
+
+def test_secret_pattern_accepts_full_multiline_value(tmp_path: Path) -> None:
+    source = tmp_path / "fixture"
+    source.write_text("synthetic\nfixture\n")
+    destination = tmp_path / "credential"
+    result = _run(
+        "secret",
+        "--multiline",
+        "--pattern",
+        "(?s)synthetic.*",
+        "--to-file",
+        str(destination),
+        env_overrides={
+            "CLUD_INTEGRATION_TESTS": "1",
+            "CLUD_TEST_SECRET_PROMPT_FILE": str(source),
+        },
+    )
+    status_ok = result.returncode == 0
+    assert status_ok, "unexpected prompt status"
+    output_ok = result.stdout.strip() == "stored"
+    assert output_ok, "unexpected prompt output"
+    contents_ok = destination.read_bytes() == source.read_bytes()
+    assert contents_ok, "stored content differs"
+    private_output = source.read_text() not in result.stdout + result.stderr
+    assert private_output, "credential exposed"

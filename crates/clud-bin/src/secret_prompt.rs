@@ -24,6 +24,9 @@ pub struct Options {
     /// Accept a masked multiline value, such as a private key.
     #[arg(long)]
     pub multiline: bool,
+    /// Require the entire value to match this regex; retry up to three times.
+    #[arg(long, value_name = "REGEX", value_parser = parse_pattern)]
+    pub pattern: Option<regex::Regex>,
     /// Write to an owner-only file (0600 on Unix, protected DACL on Windows).
     #[arg(long, value_name = "PATH")]
     pub to_file: Option<PathBuf>,
@@ -48,13 +51,22 @@ pub(super) enum Failure {
     Unavailable,
     Invalid,
     Sink,
+    Pattern,
 }
 
 type Secret = Zeroizing<String>;
 
+fn parse_pattern(pattern: &str) -> Result<regex::Regex, regex::Error> {
+    regex::Regex::new(pattern)?;
+    regex::Regex::new(&format!("\\A(?:{pattern})\\z")).or_else(|_| {
+        // A trailing free-spacing comment can consume the closing group.
+        regex::Regex::new(&format!("\\A(?:{pattern}\n)\\z"))
+    })
+}
+
 /// Self-contained dispatch: no harness, daemon, transcript or model call.
 pub fn run(options: &Options) -> i32 {
-    let result = acquire(options).and_then(|secret| sink::deliver(options, &secret));
+    let result = acquire_with(options, acquire).and_then(|secret| sink::deliver(options, &secret));
     report(result)
 }
 
@@ -75,6 +87,7 @@ fn report(result: Result<(), Failure>) -> i32 {
                 match error {
                     Failure::Unavailable =>
                         "No graphical secret prompt is available; use a desktop with its native graphics libraries installed.",
+                    Failure::Pattern => "The credential does not match the expected format after three attempts.",
                     Failure::Invalid =>
                         "The credential is empty, too large or invalid for this input mode.",
                     _ => "Could not deliver the credential to the requested sink.",
@@ -83,6 +96,29 @@ fn report(result: Result<(), Failure>) -> i32 {
             1
         }
     }
+}
+
+fn acquire_with(
+    options: &Options,
+    mut prompt: impl FnMut(&Options) -> Result<Secret, Failure>,
+) -> Result<Secret, Failure> {
+    let mut retry = options.clone();
+    for _ in 0..3 {
+        let secret = validate_secret(prompt(&retry)?, options.multiline);
+        let Some(pattern) = &options.pattern else {
+            return secret;
+        };
+        if let Ok(secret) = secret {
+            if pattern.is_match(&secret) {
+                return Ok(secret);
+            }
+        }
+        retry.label = format!(
+            "Value does not match the expected format.\n{}",
+            options.label
+        );
+    }
+    Err(Failure::Pattern)
 }
 
 fn acquire(options: &Options) -> Result<Secret, Failure> {
@@ -94,10 +130,10 @@ fn acquire(options: &Options) -> Result<Secret, Failure> {
             .filter(|_| std::env::var_os("CLUD_TEST_SECRET_PROMPT_GUI").is_none());
         if let Some(path) = fixture {
             let text = std::fs::read_to_string(path).map_err(|_| Failure::Unavailable)?;
-            return validate_secret(Zeroizing::new(text), options.multiline);
+            return Ok(Zeroizing::new(text));
         }
     }
-    gui::prompt(options).and_then(|secret| validate_secret(secret, options.multiline))
+    gui::prompt(options)
 }
 
 fn validate_secret(secret: Secret, multiline: bool) -> Result<Secret, Failure> {
@@ -140,11 +176,12 @@ pub fn run_askpass(argv: &[std::ffi::OsString]) -> i32 {
             |value| value.to_string_lossy().into_owned(),
         ),
         multiline: false,
+        pattern: None,
         to_file: None,
         vault: None,
         to_command: Vec::new(),
     };
-    match acquire(&options) {
+    match acquire_with(&options, acquire) {
         Ok(secret) => {
             use std::io::Write;
             // Only the authenticated calling tool receives this protocol output.
@@ -180,6 +217,108 @@ pub fn run_askpass(argv: &[std::ffi::OsString]) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn secret_pattern_rejects_before_storing() {
+        let options =
+            Options::try_parse_from(["secret", "--pattern", "[0-9]+", "--to-file", "unused"])
+                .unwrap();
+        let mut stored = false;
+        let result = acquire_with(&options, |_| {
+            Ok(Zeroizing::new("synthetic-mismatch".into()))
+        })
+        .map(|_| stored = true);
+        assert!(!stored, "mismatching value reached the sink");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn secret_pattern_retries_then_delivers_once() {
+        let options = Options::try_parse_from([
+            "secret",
+            "--label",
+            "Token for test host",
+            "--pattern",
+            "[0-9]+",
+            "--to-file",
+            "unused",
+        ])
+        .unwrap();
+        let mut attempts = 0;
+        let mut stored = 0;
+        let result = acquire_with(&options, |prompt| {
+            attempts += 1;
+            assert!(prompt.label.contains(&options.label));
+            if attempts > 1 {
+                assert!(prompt
+                    .label
+                    .starts_with("Value does not match the expected format.\n"));
+            }
+            Ok(Zeroizing::new(
+                if attempts < 3 {
+                    "synthetic-mismatch"
+                } else {
+                    "123"
+                }
+                .into(),
+            ))
+        })
+        .map(|_| stored += 1);
+        assert!(result.is_ok());
+        assert_eq!(attempts, 3);
+        assert_eq!(stored, 1);
+    }
+
+    #[test]
+    fn secret_pattern_exhaustion_and_cancellation_never_deliver() {
+        let options =
+            Options::try_parse_from(["secret", "--pattern", "[0-9]+", "--to-file", "unused"])
+                .unwrap();
+        let mut attempts = 0;
+        let result = acquire_with(&options, |_| {
+            attempts += 1;
+            Ok(Zeroizing::new("synthetic-mismatch".into()))
+        });
+        assert!(matches!(result, Err(Failure::Pattern)));
+        assert_eq!(attempts, 3);
+        attempts = 0;
+        let result = acquire_with(&options, |_| {
+            attempts += 1;
+            Err(Failure::Cancelled)
+        });
+        assert!(matches!(result, Err(Failure::Cancelled)));
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn secret_pattern_is_full_value_and_invalid_regex_is_typed() {
+        let pattern = parse_pattern("[0-9]+|abc").unwrap();
+        assert!(!pattern.is_match("x123"));
+        assert!(!pattern.is_match("123x"));
+        assert!(!pattern.is_match("123\n"));
+        assert!(pattern.is_match("abc"));
+        let commented = parse_pattern("(?x)[0-9]+ # digits").unwrap();
+        assert!(commented.is_match("123"));
+        assert!(!commented.is_match("123x"));
+        assert!(parse_pattern("(?s).*")
+            .unwrap()
+            .is_match("synthetic\nfixture\n"));
+        let error = Options::try_parse_from(["secret", "--pattern", "[", "--to-file", "unused"])
+            .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ValueValidation);
+    }
+
+    #[test]
+    fn secret_pattern_absent_preserves_single_attempt_behavior() {
+        let options = Options::try_parse_from(["secret", "--to-file", "unused"]).unwrap();
+        let mut attempts = 0;
+        let result = acquire_with(&options, |_| {
+            attempts += 1;
+            Ok(Zeroizing::new("synthetic-mismatch".into()))
+        });
+        assert!(result.is_ok());
+        assert_eq!(attempts, 1);
+    }
 
     #[test]
     fn secret_validation_preserves_multiline_and_refuses_invalid_values() {

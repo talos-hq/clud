@@ -20,8 +20,14 @@ already-authorized operation:
 clud secret --label 'GitLab token for gitlab.example.com' --to-command glab auth login --hostname gitlab.example.com --stdin
 clud secret --label 'SSH private key' --multiline --to-command ssh-add -
 clud secret --label 'OpenRouter API key' --vault openrouter
+clud secret --label 'Telegram BotFather token' --pattern '[0-9]+:[A-Za-z0-9_-]{35}' --to-file /chosen/private/telegram-token
 clud secret --label 'SSH private key for this host' --multiline --to-file /chosen/private/key
 ```
+
+Use `--pattern <regex>` when the expected shape is known. It must match the
+entire value; a mismatch prompts again, up to three attempts, then fails
+without storing anything. Invalid regexes are rejected before prompting.
+Place prompt options before `--to-command`, which consumes the remaining args.
 
 The command reports `stored`, `failed`, or `cancelled` (exit 3). It suppresses
 sink stdout and stderr because commands may echo their input. Verify success
