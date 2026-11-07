@@ -398,7 +398,36 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
     statements
         .iter()
         .map(|words| strip_gh_repo_flag(words))
-        .find_map(|words| statement_reason(role, &words, run))
+        .find_map(|words| {
+            integrator_stash_reason(role, &words).or_else(|| statement_reason(role, &words, run))
+        })
+}
+
+/// Integrators resolve formatter output locally, never in the shared stash stack (#2451).
+fn integrator_stash_reason(role: &str, words: &[String]) -> Option<String> {
+    if role != INTEGRATOR {
+        return None;
+    }
+    // Like the build denylist, look through transparent wrappers. Nested
+    // shells have already been decomposed by statement_words.
+    let git = words.iter().position(|w| program_name(w) == "git")?;
+    let tail = &words[git..];
+    let sub = git_subcommand(tail);
+    let stash = sub
+        .as_ref()
+        .is_some_and(|s| s.first().is_some_and(|w| w == "stash"));
+    let hidden_stash = sub.is_none() && tail.iter().any(|w| w == "stash");
+    if !stash && !hidden_stash {
+        return None;
+    }
+    let read_only = sub.as_ref().is_some_and(|s| {
+        s.first().is_some_and(|w| w == "stash") && s.get(1).is_some_and(|w| w == "list")
+    });
+    (!read_only).then(|| {
+        "grind-integrator may only run `git stash list`: commit goal formatting or restore \
+         verified formatter-only paths; never mutate preflight, carry or unrelated stashes"
+            .to_string()
+    })
 }
 
 /// The roles that build, so they share the integrator's shell denylist and
@@ -2051,6 +2080,39 @@ mod tests {
         ] {
             assert!(allowed(INTEGRATOR, command, &facts), "{command}");
         }
+    }
+
+    #[test]
+    fn integrator_never_mutates_the_shared_stash_stack() {
+        let facts = run(false, false);
+        for command in [
+            "git stash push -m lint-reformat-noise",
+            "git stash",
+            "git stash save noise",
+            "git stash pop stash@{0}",
+            "git stash drop stash@{0}",
+            "git stash clear",
+            "git stash apply abc123",
+            "git stash store abc123",
+            "git stash create",
+            "git -C /repo stash push",
+            "env git stash push",
+            "bash -c 'git stash push'",
+        ] {
+            assert!(!allowed(INTEGRATOR, command, &facts), "{command}");
+        }
+        assert!(allowed(INTEGRATOR, "git stash list", &facts));
+        assert!(allowed(INTEGRATOR, "git -C /repo stash list", &facts));
+        assert!(allowed(
+            INTEGRATOR,
+            "git restore -- src/formatted.rs",
+            &facts
+        ));
+        assert!(allowed(
+            INTEGRATOR,
+            "git commit -m formatting -- src/goal.rs",
+            &facts
+        ));
     }
 
     fn allowed(role: &str, command: &str, facts: &RunFacts) -> bool {
