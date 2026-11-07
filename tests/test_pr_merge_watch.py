@@ -2039,6 +2039,30 @@ def test_2512_rerun_during_diagnosis_is_rechecked(watcher, tmp_path, monkeypatch
     assert cancels == []
 
 
+@pytest.mark.parametrize("stale_source", ["run", "jobs"])
+def test_2512_broker_stale_reads_cannot_authorize_cancel(watcher, monkeypatch, stale_source):
+    failed = _rerun_poll(
+        attempt=1,
+        status="completed",
+        check=_ci_ok(108391482097, "failure", "2026-09-26T10:40:00Z"),
+    )
+    verdict = watcher.judge_check_runs(
+        failed["check_runs"], failed["workflow_runs"], "48e7b20", {"CI OK"}
+    )
+
+    def run(*args):
+        watcher.STALE_READS += int(stale_source == "run")
+        return {"status": "completed", "run_attempt": 1}
+
+    def jobs(*args):
+        watcher.STALE_READS += int(stale_source == "jobs")
+        return [{"status": "completed"}]
+
+    monkeypatch.setattr(watcher, "gh_json", run)
+    monkeypatch.setattr(watcher, "paginate", jobs)
+    assert watcher._rerun_since_verdict(verdict, "talos-hq/clud") == 36235999882
+
+
 def test_usage_error_exits_64_not_the_review_verdict_code(watcher, capsys) -> None:
     """#1331: argparse's exit 2 is also "new review activity"; a bad flag must not read as one."""
     assert watcher.EXIT_USAGE == 64

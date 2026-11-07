@@ -3839,6 +3839,7 @@ def _act_on_verdict(  # noqa: C901
 
 def _failure_run_is_fresh(j: CheckJudgment, repo: str) -> bool:
     """Only positive, fresh evidence permits acting on a failed attempt (#2512)."""
+    stale_before = STALE_READS
     run = gh_json(  # ci-lint: allow GHAPI-001 conditional: REST GET revalidated by ETag
         "api", f"repos/{repo}/actions/runs/{j.run_id}"
     )
@@ -3848,7 +3849,11 @@ def _failure_run_is_fresh(j: CheckJudgment, repo: str) -> bool:
     if attempt is None or attempt != j.run_attempt:
         return False
     jobs = paginate(f"repos/{repo}/actions/runs/{j.run_id}/attempts/{attempt}/jobs", "jobs")
-    return jobs is not None and all(_lower(job.get("status")) == "completed" for job in jobs)
+    return (
+        STALE_READS == stale_before
+        and jobs is not None
+        and all(_lower(job.get("status")) == "completed" for job in jobs)
+    )
 
 
 def _rerun_since_verdict(verdict: Verdict, repo: str | None) -> int | None:
