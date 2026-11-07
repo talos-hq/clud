@@ -182,6 +182,7 @@ clud wasm guest.wasm              # Run a local wasm module with clud's embedded
 | `--last` | Resume this directory's newest Claude-harness session without the picker |
 | `--resume-mode <auto\|native\|portable>` | How `-c`/`--last` resumes: `native` is Claude's own resume, `portable` starts a new session from a compact summary plus the newest turns that fit, `auto` (default) picks native when safe |
 | `--coauthor[=TAG]` | Opt in to commit/PR attribution. clud hides Claude Code's `Co-Authored-By` trailer and "Generated with Claude Code" PR line by default; bare `--coauthor` keeps Claude's own, `=TAG` uses TAG for both (also `CLUD_COAUTHOR=1|TAG`; Claude harness only) |
+| `--allow-secrets` | Let the agent see which credentials exist on this machine, never their values. Claude backend only. See [Let an agent find your keys](#let-an-agent-find-your-keys---allow-secrets) |
 | `--dry-run` | Print what would be executed, then exit |
 | `-v`, `--verbose` | Show debug output |
 | `-h`, `--help` | Show help |
@@ -703,6 +704,26 @@ grabbing the wrong tool.
 For the complete field reference, see **DD-016** and **DD-017** in
 [`docs/DESIGN_DECISIONS.md`](docs/DESIGN_DECISIONS.md); **DD-047** covers
 `bash.block_cd`.
+
+## Let an agent find your keys (`--allow-secrets`)
+
+An agent that can't see a credential tends to report it as missing, even when it's on your machine. `--allow-secrets` lets the agent check which keys exist and where they are, without seeing their values:
+
+```bash
+clud --claude --allow-secrets
+```
+
+The session gets a `lokr` MCP server and a system prompt explaining it, while a background daemon keeps a catalog of names and locations in `~/.lokr/catalog.json`.
+
+| Route | What the agent gets |
+|-------|---------------------|
+| `secret_status` | Whether a named key exists, and where |
+| `list_secrets` | All known credentials, by name and location |
+| `request_secret` | Opens a masked window for you to enter a missing key, then returns only `stored`, `failed` or `cancelled` |
+
+No route returns a value. If another program holds the key, the agent is told to ask you before reusing it.
+
+This prevents accidental exposure; it is not a sandbox. An agent with shell access under your account can still read those locations. Details and limits: [docs/architecture/secret-catalog.md](docs/architecture/secret-catalog.md).
 
 ## Detached Sessions
 
