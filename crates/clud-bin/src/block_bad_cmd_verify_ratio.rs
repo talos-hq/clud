@@ -638,7 +638,14 @@ pub(super) fn observe_call_at(
     let (existing, previous) = load(&path);
     let (ledger, verdict) = observe(&previous, call, limits);
     store(&path, &ledger, existing.is_none())?;
-    verdict
+    verdict.map(|verdict| match verdict {
+        Verdict::Note(note) => Verdict::Note(super::block_bad_cmd_cd::condense_at(
+            Some(state_dir),
+            Some(session_id),
+            note,
+        )),
+        deny => deny,
+    })
 }
 
 /// Run [`finish`] against the session's file in `state_dir`.

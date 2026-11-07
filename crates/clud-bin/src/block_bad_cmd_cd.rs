@@ -500,10 +500,18 @@ fn seen_file(state_dir: &Path, session_id: &str) -> PathBuf {
     state_dir.join(SEEN_DIR_NAME).join(format!("{hash}.seen"))
 }
 
-/// The one-line refusal (#2314): the blocked `cd`, the rule id, the escape
-/// and the override. Falls back to `full` if its `Blocked `cd X`` prefix is
-/// missing.
+/// One-line cd/verification reminders (#2314, #2571). Denials keep the
+/// blocked target, rule id, escape and override; substitutions never echo
+/// commands. Unrecognized messages retain the full text.
 fn short_message(full: &str) -> String {
+    if full.starts_with("[clud] ran ") {
+        return "[clud] cd ran in a subshell to preserve the session cwd (bash.block_cd)."
+            .to_string();
+    }
+    if full.starts_with("[clud verify-ratio] ") {
+        let summary = full.split_once(". ").map_or(full, |(head, _)| head);
+        return format!("{summary}. Scope checks to what changed.");
+    }
     let Some(end) = full.find("`:") else {
         return full.to_string();
     };
@@ -520,7 +528,7 @@ fn short_message(full: &str) -> String {
     )
 }
 
-/// `full` the first time a session is refused, the short form afterwards.
+/// `full` for the first cd/verification message in a session, the short form afterwards.
 /// Fails open to the full text: no state dir, no session id, or unreadable
 /// or unwritable state.
 pub(super) fn condense_at(

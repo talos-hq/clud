@@ -1919,7 +1919,10 @@ fn block_cd_denial(
     if may_substitute {
         if let Some(command) = block_bad_cmd_cd::subshell_substitute(&payload.command, dialect) {
             append_log(&format!("block_cd_substituted policy={policy:?}"));
-            let notice = block_bad_cmd_cd::substitution_notice(&payload.command, &command);
+            let notice = block_bad_cmd_cd::condense_denial(
+                block_bad_cmd_cd::substitution_notice(&payload.command, &command),
+                payload.session_id.as_deref(),
+            );
             return Some(CdVerdict::Substitute { command, notice });
         }
     }

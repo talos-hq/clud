@@ -282,3 +282,49 @@ def test_relaxed_movement_judges_against_the_whole_registered_root_set(
     )
     assert escaping.returncode == 2, escaping.stdout + escaping.stderr
     assert "deny" in escaping.stdout
+
+
+def test_issue_2571_rewrites_every_call_but_condenses_the_notice(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path, hooks=SENSITIVE_HOOK)
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ.copy()
+    env.update(
+        HOME=str(home),
+        USERPROFILE=str(home),
+        CLUD_DAEMON_STATE_DIR=str(tmp_path / "state"),
+        CLAUDE_PROJECT_DIR=str(repo),
+    )
+    env.pop("CLUD_BAD_CMD_OVERRIDE", None)
+    env.pop("CLUD_ALLOW_ALL_CMDS", None)
+    commands = ["cd src && echo first", "cd src && echo second", "cd src && echo fresh"]
+    for index, command in enumerate(commands):
+        payload = json.dumps(
+            {
+                "hook_event_name": "PreToolUse",
+                "tool_name": "Bash",
+                "cwd": str(repo),
+                "session_id": "fresh" if index == 2 else "repeat",
+                "permission_mode": "bypassPermissions",
+                "tool_input": {"command": command},
+            }
+        )
+        result = process.run(
+            [str(_cmd_scan_binary())],
+            input=payload,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
+        )
+        assert result.returncode == 0, result.stderr
+        output = json.loads(result.stdout)["hookSpecificOutput"]
+        assert output["permissionDecision"] == "allow"
+        assert output["updatedInput"]["command"] == f"({command})"
+        notice = output["additionalContext"]
+        if index == 1:
+            assert notice == (
+                "[clud] cd ran in a subshell to preserve the session cwd (bash.block_cd)."
+            )
+        else:
+            assert command in notice
