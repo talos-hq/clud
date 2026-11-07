@@ -234,6 +234,14 @@ pub struct ConversationHistory {
     route: Option<ConversationRoute>,
     reset_after_harness_compaction: bool,
     provider_compaction_len: Option<usize>,
+    failed_turn: Option<FailedTurn>,
+}
+
+/// Positions in the harness replay, independent of assistant message text.
+#[derive(Debug, Clone)]
+pub(crate) struct FailedTurn {
+    pub pending_start: usize,
+    pub assistant_positions: Vec<usize>,
 }
 
 #[derive(Debug)]
@@ -251,6 +259,7 @@ impl ConversationHistory {
             route: None,
             reset_after_harness_compaction: false,
             provider_compaction_len: None,
+            failed_turn: None,
         }
     }
 
@@ -312,6 +321,7 @@ impl ConversationHistory {
     /// after provider success while preserving its opaque compact output.
     pub fn finish_compaction(&mut self) -> bool {
         if let Some(len) = self.provider_compaction_len.take() {
+            self.failed_turn = None;
             self.items.truncate(len);
             self.bytes = self.items.iter().map(|item| item.bytes).sum();
             return true;
@@ -320,8 +330,33 @@ impl ConversationHistory {
     }
 
     fn clear_items(&mut self) {
+        self.failed_turn = None;
         self.items.clear();
         self.bytes = 0;
+    }
+
+    /// Failed upstream attempts leave canonical items untouched. Retain their
+    /// replay boundaries until a successful append or a lifecycle reset.
+    pub(crate) fn failed_turn(&self) -> Option<&FailedTurn> {
+        self.failed_turn.as_ref()
+    }
+
+    pub(crate) fn begin_turn(&mut self, pending_start: usize, replay_end: usize) {
+        if self.failed_turn.as_ref().is_some_and(|failed| {
+            failed
+                .assistant_positions
+                .last()
+                .is_some_and(|end| replay_end < *end)
+        }) {
+            self.failed_turn = None;
+        }
+        let failed = self.failed_turn.get_or_insert_with(|| FailedTurn {
+            pending_start,
+            assistant_positions: Vec::new(),
+        });
+        if failed.assistant_positions.last() != Some(&replay_end) {
+            failed.assistant_positions.push(replay_end);
+        }
     }
 
     /// Copy the complete canonical transcript. Values are opaque Responses
@@ -343,7 +378,9 @@ impl ConversationHistory {
         let mut turn = Vec::with_capacity(input.len() + output.len());
         turn.extend(input.iter().cloned());
         turn.extend(output.iter().cloned());
-        self.append_items(turn)
+        self.append_items(turn)?;
+        self.failed_turn = None;
+        Ok(())
     }
 
     /// Atomically replace all old history with upstream's compact output.
@@ -463,6 +500,42 @@ mod tests {
         object.insert("type".into(), Value::String(kind.into()));
         object.extend(fields.as_object().unwrap().clone());
         Value::Object(object)
+    }
+
+    /// #2565: recovery state belongs to the bridge and ends at commit.
+    #[test]
+    fn failed_turn_prompt_marker_clears_only_on_success_or_reset() {
+        let mut history = ConversationHistory::new(HistoryLimits::default());
+        history.begin_turn(2, 3);
+        history.begin_turn(4, 5);
+        let failed = history.failed_turn().unwrap();
+        assert_eq!(failed.pending_start, 2);
+        assert_eq!(failed.assistant_positions, [3, 5]);
+        assert!(history.snapshot().is_empty());
+        history.begin_turn(0, 1);
+        let independent = history.failed_turn().unwrap();
+        assert_eq!(independent.pending_start, 0);
+        assert_eq!(independent.assistant_positions, [1]);
+        history
+            .append_successful_turn(&[item("message", serde_json::json!({"role": "user"}))], &[])
+            .unwrap();
+        assert!(history.failed_turn().is_none());
+        history.begin_turn(6, 7);
+        history.clear();
+        assert!(history.failed_turn().is_none());
+    }
+
+    /// #2565: positions in the old display transcript cannot outlive compaction.
+    #[test]
+    fn failed_turn_prompt_marker_clears_when_provider_compaction_finishes() {
+        let mut history = ConversationHistory::new(HistoryLimits::default());
+        history.begin_turn(2, 3);
+        history
+            .install_provider_compaction(&[item("compaction", serde_json::json!({}))])
+            .unwrap();
+        assert!(history.failed_turn().is_some());
+        assert!(history.finish_compaction());
+        assert!(history.failed_turn().is_none());
     }
 
     #[test]
