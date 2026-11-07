@@ -1109,6 +1109,7 @@ fn build_launch_plan_for_target_at(
         }
         Some(Command::Ab(_))
         | Some(Command::Remote { .. })
+        | Some(Command::Connect { .. })
         | Some(Command::Serve { .. })
         | Some(Command::Secret(_))
         | Some(Command::SecretsMcp)

@@ -16,6 +16,9 @@ pub(super) struct Session {
     pub client_token: String,
     #[serde(default = "default_proxy_model")]
     pub proxy_model: String,
+    /// Echoed by a server that understands session modes.
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 fn default_proxy_model() -> String {
@@ -60,13 +63,16 @@ fn tls_config() -> Result<Arc<ureq::rustls::ClientConfig>, String> {
     Ok(Arc::new(config))
 }
 
-pub(super) fn create(base: &Url) -> Result<Session, String> {
-    let body = serde_json::json!({"client": {
+pub(super) fn create(base: &Url, mode: Option<&str>) -> Result<Session, String> {
+    let mut body = serde_json::json!({"client": {
         "host": std::env::var("HOSTNAME").or_else(|_| std::env::var("COMPUTERNAME")).unwrap_or_default(),
         "os": std::env::consts::OS,
         "clud_version": env!("CARGO_PKG_VERSION"),
         "cwd": std::env::current_dir().ok().map(|p| p.display().to_string()),
     }});
+    if let Some(mode) = mode {
+        body["mode"] = mode.into();
+    }
     let response = ureq::AgentBuilder::new()
         .tls_config(tls_config()?)
         .redirects(0)
