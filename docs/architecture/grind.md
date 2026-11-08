@@ -112,9 +112,9 @@ their existing mutation limits.
 The lander follows the shared [watch-recovery contract](hook-dispatch.md#watch-recovery-and-continuation-2004).
 Choose a bounded deadline from verified execution limits and the slowest
 selected CI lane, including setup and queue time. Keep one live waiter and
-use the declared session/background completion mechanism. Required-check
-green and all-reported-check green have distinct scopes; grind's normal
-all-check wait uses `--require '.*'`.
+use the declared session/background completion mechanism. Grind uses the
+watcher's default branch-required check selection, matching the merge queue;
+advisory checks do not block landing. Keep the default cancellation policy.
 
 Exit `4`, or resumable wrapper `124`, leaves CI incomplete. Reconcile the
 same repository, PR, head, run IDs and scope, then continue after the old
