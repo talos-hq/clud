@@ -333,6 +333,37 @@ def test_an_unrecorded_turn_is_not_reported_done_while_the_session_lives(bridge,
     assert payload["done"] is False
 
 
+def test_session_wait_default_budget_uses_the_whole_client_deadline(bridge):
+    """A 300 s default made 68% of measured waits time out and re-arm."""
+    import inspect
+
+    default = inspect.signature(bridge.session_wait).parameters["wait_seconds"].default
+    assert default == bridge._DEFAULT_WAIT_SECONDS == 540
+    # The budget must leave headroom under the client's tool-call deadline, and
+    # be big enough that one wait usually covers a child turn.
+    assert 300 < default < bridge._CLIENT_TOOL_DEADLINE_S
+    assert bridge._CLIENT_TOOL_DEADLINE_S - default >= 30
+
+
+def test_a_timed_out_wait_says_re_arm_instead_of_poll(bridge, wired):
+    wired.seal_after_polls = 10_000  # never seals inside the budget
+    payload = _result(_run(bridge.session_wait("sess-x", _FakeCtx(), wait_seconds=1)))
+    assert payload["done"] is False
+    assert payload["next_wait_seconds"] == bridge._DEFAULT_WAIT_SECONDS
+    assert "Re-arm with" in payload["note"]
+    assert "session_status/session_result" in payload["note"]
+    assert "do not relaunch" in payload["note"]
+
+
+def test_an_unwaited_result_probe_does_not_hand_out_a_wait_budget(bridge, wired):
+    """Only a wait that ran out re-arms; an instant probe must not look like one."""
+    wired.seal_after_polls = 10_000
+    payload = _result(_run(bridge.session_result("sess-x", _FakeCtx())))
+    assert payload["done"] is False
+    assert "next_wait_seconds" not in payload
+    assert "STILL RUNNING" in payload["note"]
+
+
 def test_a_dead_session_seals_an_unrecorded_turn(bridge, wired):
     wired.turns = []
     wired.terminal_state = "terminated"
