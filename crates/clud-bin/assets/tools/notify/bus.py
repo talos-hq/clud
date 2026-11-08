@@ -39,10 +39,9 @@ file makes the relaunch resume exactly after what it printed.
 
 Security. The broker binds 127.0.0.1 (never 0.0.0.0 or ::) on an
 ephemeral port and atomically writes {"host","port","token"} to
-$CLUD_WATCH_DIR/bus.addr (mode 0600 on POSIX). Windows uses the directory's
-inherited ACL, so CLUD_WATCH_DIR must be a private directory there; this
-stdlib writer does not establish an owner-only Windows DACL.
-Native owner-only Windows verification is tracked in clud#2586.
+$CLUD_WATCH_DIR/bus.addr (mode 0600 on POSIX). Windows creates the file with
+a protected DACL granting access only to the current user, including when
+CLUD_WATCH_DIR overrides the default directory.
 A loopback port is reachable by every
 local user, so every request's one handshake line must carry that random
 256-bit per-broker token, compared with secrets.compare_digest. A missing
@@ -55,6 +54,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import ctypes
 import json
 import os
 import secrets
@@ -78,13 +78,133 @@ def addr_path() -> Path:
     return state_dir() / "bus.addr"
 
 
+def _win_function(dll, name, result, *args):
+    function = getattr(dll, name)
+    function.restype = result
+    function.argtypes = args
+    return function
+
+
+def _win_check(result):
+    if not result:
+        raise ctypes.WinError(ctypes.get_last_error())
+    return result
+
+
+def _windows_user_sid(kernel, security):
+    """Return TokenUser storage (which owns the SID pointed to by its first field)."""
+    from ctypes import wintypes as w
+
+    token = w.HANDLE()
+    open_token = _win_function(
+        security, "OpenProcessToken", w.BOOL, w.HANDLE, w.DWORD, ctypes.POINTER(w.HANDLE)
+    )
+    process = _win_function(kernel, "GetCurrentProcess", w.HANDLE)
+    close = _win_function(kernel, "CloseHandle", w.BOOL, w.HANDLE)
+    info = _win_function(
+        security,
+        "GetTokenInformation",
+        w.BOOL,
+        w.HANDLE,
+        ctypes.c_int,
+        w.LPVOID,
+        w.DWORD,
+        ctypes.POINTER(w.DWORD),
+    )
+    _win_check(open_token(process(), 0x0008, ctypes.byref(token)))  # TOKEN_QUERY
+    try:
+        size = w.DWORD()
+        if info(token, 1, None, 0, ctypes.byref(size)) or ctypes.get_last_error() != 122:
+            raise ctypes.WinError(ctypes.get_last_error())
+        storage = ctypes.create_string_buffer(size.value)
+        _win_check(info(token, 1, storage, size, ctypes.byref(size)))  # TokenUser
+        return storage
+    finally:
+        _win_check(close(token))
+
+
+def _windows_private_descriptor(kernel, security):
+    """Build SE_DACL_PROTECTED with exactly one GENERIC_ALL allow ACE."""
+    from ctypes import wintypes as w
+
+    user = _windows_user_sid(kernel, security)
+    sid = ctypes.cast(user, ctypes.POINTER(w.LPVOID))[0]
+    sid_text = w.LPWSTR()
+    convert_sid = _win_function(
+        security, "ConvertSidToStringSidW", w.BOOL, w.LPVOID, ctypes.POINTER(w.LPWSTR)
+    )
+    convert_sd = _win_function(
+        security,
+        "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+        w.BOOL,
+        w.LPCWSTR,
+        w.DWORD,
+        ctypes.POINTER(w.LPVOID),
+        ctypes.POINTER(w.DWORD),
+    )
+    free = _win_function(kernel, "LocalFree", w.LPVOID, w.LPVOID)
+    _win_check(convert_sid(sid, ctypes.byref(sid_text)))
+    try:
+        descriptor = w.LPVOID()
+        # P sets SE_DACL_PROTECTED; no inherited/group/world ACEs are present.
+        _win_check(convert_sd(f"D:P(A;;GA;;;{sid_text.value})", 1, ctypes.byref(descriptor), None))
+        return descriptor
+    finally:
+        if free(ctypes.cast(sid_text, w.LPVOID)):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+
+def _open_private_windows(path: Path) -> int:
+    """Exclusively create a private file; never retry with default security."""
+    import msvcrt
+    from ctypes import wintypes as w
+
+    class SecurityAttributes(ctypes.Structure):
+        _fields_ = [("length", w.DWORD), ("descriptor", w.LPVOID), ("inherit", w.BOOL)]
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    descriptor = _windows_private_descriptor(kernel, security)
+    create = _win_function(
+        kernel,
+        "CreateFileW",
+        w.HANDLE,
+        w.LPCWSTR,
+        w.DWORD,
+        w.DWORD,
+        ctypes.POINTER(SecurityAttributes),
+        w.DWORD,
+        w.DWORD,
+        w.HANDLE,
+    )
+    free = _win_function(kernel, "LocalFree", w.LPVOID, w.LPVOID)
+    close = _win_function(kernel, "CloseHandle", w.BOOL, w.HANDLE)
+    attributes = SecurityAttributes(ctypes.sizeof(SecurityAttributes), descriptor, False)
+    try:
+        handle = create(str(path), 0x40000000, 0, ctypes.byref(attributes), 1, 0x80, None)
+        if handle == w.HANDLE(-1).value:  # CREATE_NEW, never open an existing temp
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return msvcrt.open_osfhandle(handle, os.O_WRONLY)
+        except BaseException:
+            _win_check(close(handle))
+            raise
+    finally:
+        if free(descriptor):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+
 def _write_private(path: Path, text: str) -> None:
-    """Atomic replacement; POSIX owner mode, Windows inherited directory ACL."""
+    """Atomic replacement with owner-only access before any content is written."""
     tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    if os.name == "nt":
+        fd = _open_private_windows(tmp)
+    else:
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         fh.write(text)
-    os.chmod(tmp, 0o600)
+    if os.name != "nt":
+        os.chmod(tmp, 0o600)
     os.replace(tmp, path)
 
 
