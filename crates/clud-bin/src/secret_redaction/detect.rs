@@ -21,10 +21,7 @@ const PATTERNS: &[(&str, &str)] = &[
     ("slack", r"xox[abpors]-[A-Za-z0-9-]{10,}"),
     ("google", r"AIza[0-9A-Za-z_-]{35}"),
     ("stripe", r"(?:sk|rk)_(?:live|test)_[0-9a-zA-Z]{24,}"),
-    (
-        "jwt",
-        r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}",
-    ),
+    ("jwt", r"eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*"),
 ];
 
 fn patterns() -> &'static Vec<(&'static str, regex::Regex)> {

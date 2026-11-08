@@ -212,14 +212,15 @@ fn append_log_at(path: &Path, message: &str) {
             return;
         }
     }
-    rotate_log_if_needed(&path);
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) else {
+    rotate_log_if_needed(path);
+    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) else {
         return;
     };
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs().to_string())
         .unwrap_or_else(|_| "0".to_string());
+    let message = crate::secret_redaction::redact_for_log(message);
     let _ = writeln!(file, "[{timestamp}] pid={} {message}", std::process::id());
 }
 
@@ -237,4 +238,56 @@ pub(super) fn rotate_log_if_needed(path: &Path) {
     let backup = path.with_extension("log.1");
     let _ = std::fs::remove_file(&backup);
     let _ = std::fs::rename(path, &backup);
+}
+
+#[cfg(test)]
+mod redaction_tests {
+    use super::*;
+
+    #[test]
+    fn hook_log_redaction_before_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("block-bad-cmd.log");
+        let command = "printf '%s' 'fake-rotation-secret' | gh secret set FAKE";
+        append_log_at(&path, command);
+        OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_len(MAX_LOG_BYTES)
+            .unwrap();
+        append_log_at(&path, command);
+        for log in [&path, &path.with_extension("log.1")] {
+            let text = std::fs::read_to_string(log).unwrap();
+            assert!(!text.contains("fake-rotation-secret"));
+            assert!(text.contains("[REDACTED:gh-secret]"));
+        }
+    }
+
+    #[test]
+    fn hook_log_redaction_reported_literal() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("block-bad-cmd.log");
+        let command = "printf '%s' 'fake-hook-password' | gh secret set FAKE_TEST";
+        let payload = parse_payload(
+            &format!(
+                r#"{{"tool_name":"Bash","tool_input":{{"command":{}}}}}"#,
+                serde_json::to_string(command).unwrap()
+            ),
+            dir.path(),
+        )
+        .unwrap();
+        let original = payload.clone();
+        let before = decision_from_payload(&payload, &[]);
+        append_log_at(&path, command);
+        let logged = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !logged.contains("fake-hook-password"),
+            "temporary hook log: {logged}"
+        );
+        assert!(logged.contains("[REDACTED:gh-secret]"));
+        let after = decision_from_payload(&payload, &[]);
+        assert_eq!(before, after);
+        assert_eq!(payload, original);
+    }
 }

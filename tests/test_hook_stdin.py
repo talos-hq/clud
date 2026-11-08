@@ -404,3 +404,38 @@ def test_bad_command_denial_includes_rule_provenance(tmp_path: Path) -> None:
     log_text = log.read_text(encoding="utf-8")
     assert "bad_cmd_denied" in log_text
     assert "manual-check" in log_text
+
+
+@pytest.mark.parametrize("denied", [False, True])
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_hook_log_redaction_keeps_the_hook_decision(
+    tmp_path: Path, denied: bool, quote: str
+) -> None:
+    fake = "fake-hook-password"
+    command = f"printf '%s' {quote}{fake}{quote} | gh secret set FAKE_TEST"
+    if denied:
+        command += "; echo bad" + " cmd"
+    payload = json.dumps(
+        {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)}
+    )
+    result = _run_hook_with_open_stdin(tmp_path, payload)
+    assert result.returncode == (2 if denied else 0)
+    log_path = tmp_path / "home" / ".clud" / "tools" / "hooks" / "block-bad-cmd.log"
+    log = log_path.read_text(encoding="utf-8")
+    assert fake not in log
+    assert "[REDACTED:gh-secret]" in log
+
+
+def test_hook_log_redaction_preserves_ordinary_commands(tmp_path: Path) -> None:
+    command = (
+        "echo /tmp/ordinary-path 0123456789abcdef0123456789abcdef01234567 "
+        "01234567-89ab-cdef-0123-456789abcdef abcd-efgh-ijkl-mnop; "
+        "login --password-file /tmp/password-file"
+    )
+    payload = json.dumps(
+        {"tool_name": "Bash", "tool_input": {"command": command}, "cwd": str(tmp_path)}
+    )
+    result = _run_hook_with_open_stdin(tmp_path, payload)
+    assert result.returncode == 0
+    log_path = tmp_path / "home" / ".clud" / "tools" / "hooks" / "block-bad-cmd.log"
+    assert command in log_path.read_text(encoding="utf-8")
