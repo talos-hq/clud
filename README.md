@@ -100,6 +100,7 @@ set `CLUD_BIN` to its absolute path if needed. Restart Hermes or use
 | `serve_stop` | Stop the gateway owned by this MCP connection. |
 | `session_start` | Submit an agent task and receive a durable session handle immediately. |
 | `session_status`, `session_result`, `session_wait`, `session_kill` | Inspect, collect, wait for, or stop an agent session. |
+| `session_wait_any` | Wait once on a whole fan-out of sessions and return as soon as **any** child seals. |
 
 For Codex, authenticate with
 `clud auth login codex --acknowledge-experimental`, or provide `OPENAI_API_KEY`

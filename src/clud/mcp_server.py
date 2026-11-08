@@ -77,7 +77,10 @@ server = MCPServer(
         "to pick a specific Codex model. Check board_read periodically for messages "
         "from clud, Hermes or other agents, and answer with board_post. To steer a "
         "running session_start session without restarting it, call session_inject "
-        '(kind="directive" replaces the earlier directive; kind="note" only informs).'
+        '(kind="directive" replaces the earlier directive; kind="note" only informs). '
+        "When you own more than one child session, prefer session_wait_any with the "
+        "whole set of session_ids over one session_wait per child: it returns as soon "
+        "as any child seals and reports the rest by id in the same bounded payload."
     ),
     description=(
         "Run the clud agent harness (Claude Code / Codex in YOLO mode) on a "
@@ -563,6 +566,152 @@ async def _wait_for_turn(
         await asyncio.sleep(_WAIT_TICK_SECONDS)
 
 
+_MAX_WAIT_ANY_SESSIONS = 16
+
+
+async def _gather_records(base: str, token: str, session_ids: list[str]) -> list[tuple[str, dict]]:
+    """Read a batch of session records concurrently, degrading per session.
+
+    A child whose record cannot be read (killed, or the daemon restarted) is
+    reported with ``state: "unreadable"`` instead of failing the whole wait:
+    the supervisor still wants to hear about the *other* children.
+    """
+    results = await asyncio.gather(
+        *(_session_record(base, token, session_id) for session_id in session_ids),
+        return_exceptions=True,
+    )
+    records: list[tuple[str, dict]] = []
+    for session_id, result in zip(session_ids, results, strict=True):
+        if isinstance(result, BaseException):
+            records.append((session_id, {"state": "unreadable", "error": str(result)}))
+        else:
+            records.append((session_id, result))
+    return records
+
+
+async def _wait_for_any(
+    base: str, token: str, session_ids: list[str], wait_seconds: float
+) -> tuple[list[tuple[str, dict]], float]:
+    """Poll a set of sessions until ONE turn seals, or the budget runs out.
+
+    The fan-out counterpart of :func:`_wait_for_turn`: the caller owns several
+    children, and the useful event is "any one of them finished". Never raises
+    for "not finished"; a set that is entirely unreadable returns immediately
+    (there is nothing left to learn by blocking on it).
+    """
+    started = time.monotonic()
+    deadline = started + max(0.0, float(wait_seconds or 0.0))
+    while True:
+        records = await _gather_records(base, token, session_ids)
+        if any(_turn_done(record) for _, record in records):
+            return records, time.monotonic() - started
+        if all(record.get("state") == "unreadable" for _, record in records):
+            return records, time.monotonic() - started
+        if time.monotonic() >= deadline:
+            return records, time.monotonic() - started
+        await asyncio.sleep(_WAIT_TICK_SECONDS)
+
+
+def _wait_any_rows(
+    records: list[tuple[str, dict]],
+) -> tuple[list[str], list[dict], list[dict]]:
+    """Split a polled fan-out into (sealed ids, still-running rows, unreadable)."""
+    sealed: list[str] = []
+    still: list[dict] = []
+    unreadable: list[dict] = []
+    for session_id, record in records:
+        if record.get("state") == "unreadable":
+            unreadable.append({"session_id": session_id, "error": record.get("error")})
+        elif _turn_done(record):
+            sealed.append(session_id)
+        else:
+            still.append(
+                {
+                    "session_id": session_id,
+                    "state": record.get("state"),
+                    "current_turn_id": record.get("current_turn_id"),
+                    "elapsed_s": round(_elapsed_s(record), 1),
+                }
+            )
+    return sealed, still, unreadable
+
+
+async def _wait_any_payload(
+    base: str,
+    token: str,
+    records: list[tuple[str, dict]],
+    waited_s: float,
+    include_events: bool,
+) -> dict:
+    """Assemble the bounded fan-out wake payload.
+
+    Exactly one sealed session carries its collected ``text`` — the one that
+    woke the caller. Any *additional* session that sealed in the same tick is
+    named but not expanded, so the payload stays flat however wide the fan-out
+    is; the caller collects it with `session_result`.
+    """
+    sealed, still, unreadable = _wait_any_rows(records)
+    payload: dict = {
+        "session_id": sealed[0] if sealed else "",
+        "done": bool(sealed),
+        "waited_s": round(waited_s, 1),
+        "sealed": [],
+        "still_running": still,
+        "unreadable": unreadable,
+    }
+    if sealed:
+        try:
+            first = await _result_payload(base, token, sealed[0], include_events=include_events)
+        except SessionError as exc:
+            unreadable.append({"session_id": sealed[0], "error": str(exc)})
+            payload["session_id"] = ""
+            payload["done"] = False
+        else:
+            payload["sealed"].append(
+                {
+                    key: first.get(key)
+                    for key in (
+                        "session_id",
+                        "turn_id",
+                        "state",
+                        "elapsed_s",
+                        "text",
+                        "next_cursor",
+                        "retention_gap",
+                        "last_error",
+                    )
+                }
+                | {"expanded": True}
+            )
+    for session_id in sealed[1:]:
+        payload["sealed"].append(
+            {
+                "session_id": session_id,
+                "expanded": False,
+                "note": "collect with session_result(session_id=...)",
+            }
+        )
+    if not payload["done"]:
+        if still:
+            payload["note"] = (
+                "NO CHILD FINISHED inside the budget. Call session_wait_any again "
+                "with the same ids; do not fall back to session_status polling and "
+                "do not relaunch the work."
+            )
+        else:
+            payload["note"] = (
+                "NO CHILD COULD BE READ - these session ids are gone (killed, or the "
+                "daemon restarted). Drop them from the fan-out; do not relaunch the "
+                "work from here."
+            )
+    elif still:
+        payload["note"] = (
+            f"{len(still)} child(ren) still running. Call session_wait_any again with "
+            "the ids you have not collected yet (drop this one)."
+        )
+    return payload
+
+
 async def _snapshot(base: str, token: str, session_id: str, turn_id: str = "") -> dict:
     """State probe payload shared by status/result/wait."""
     record = await _session_record(base, token, session_id)
@@ -856,6 +1005,73 @@ async def session_wait(
             include_events=include_events,
             waited_s=waited_s,
         )
+    except SessionError as exc:
+        return _dump(exc.payload())
+    except Exception as exc:
+        return _dump(v.daemon_unavailable(exc).payload())
+    return _dump(payload)
+
+
+@server.tool()
+async def session_wait_any(
+    session_ids: list[str],
+    ctx: Context,
+    wait_seconds: int = 300,
+    include_events: bool = False,
+) -> str:
+    """Block until ANY ONE of several sessions finishes, then report all of them.
+
+    The fan-out counterpart of `session_wait`, and the right call when you own
+    more than one child. Calling `session_wait` once per child spends most of
+    those calls timing out on whichever child happens to be slow, and each of
+    them costs a whole turn at the caller's live context size. Hand the whole
+    set over here instead: the call returns THE MOMENT any child's turn seals,
+    so one turn buys one real completion event.
+
+    The session that woke you comes back with its collected `text`; any other
+    session that sealed in the same tick, and every child still running, is
+    reported by id so a wide fan-out stays one bounded payload. Collect the
+    others with `session_result`.
+
+    Args:
+        session_ids: Session ids returned by `session_start` (1 to 16).
+        wait_seconds: Maximum seconds to block (default 300). Keep it below the
+            client's tool-call deadline so the answer arrives as a result rather
+            than a client-side abandonment.
+        include_events: Include the normalised event records for the session
+            that woke you.
+
+    """
+    ids = [sid for sid in (session_ids or []) if sid]
+    if not ids:
+        return _dump(
+            v.ToolError(
+                "missing_argument",
+                "session_ids is required",
+                "Pass the ids session_start returned, e.g. "
+                'session_wait_any(session_ids=["sess-...", "sess-..."]).',
+            ).payload()
+        )
+    if len(ids) > _MAX_WAIT_ANY_SESSIONS:
+        return _dump(
+            v.ToolError(
+                "invalid_argument",
+                f"session_ids accepts at most {_MAX_WAIT_ANY_SESSIONS} ids (got {len(ids)})",
+                "Wait on the live children only and re-arm with the rest once a batch returns.",
+            ).payload()
+        )
+    for session_id in ids:
+        rejected = v.check_session_id(session_id, "session_wait_any")
+        if rejected is not None:
+            return _dump(rejected.payload())
+    rejected = v.check_seconds("wait_seconds", wait_seconds, minimum=0, tool="session_wait_any")
+    if rejected is not None:
+        return _dump(rejected.payload())
+    unique = list(dict.fromkeys(ids))
+    try:
+        base, token = await _discover_api()
+        records, waited_s = await _wait_for_any(base, token, unique, wait_seconds)
+        payload = await _wait_any_payload(base, token, records, waited_s, include_events)
     except SessionError as exc:
         return _dump(exc.payload())
     except Exception as exc:

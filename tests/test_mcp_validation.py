@@ -102,6 +102,14 @@ CASES = [
     ("session_status", {"session_id": ""}, "missing_argument", "session_status(session_id=", None),
     ("session_result", {"session_id": "../etc"}, "invalid_session_id", "sess-", None),
     ("session_wait", {"session_id": "a b"}, "invalid_session_id", "sess-", None),
+    (
+        "session_wait_any",
+        {"session_ids": ["sess-ok", "a b"]},
+        "invalid_session_id",
+        "sess-",
+        None,
+    ),
+    ("session_wait_any", {"session_ids": []}, "missing_argument", "session_wait_any", None),
     ("session_kill", {"session_id": ""}, "missing_argument", "session_kill(session_id=", None),
 ]
 
