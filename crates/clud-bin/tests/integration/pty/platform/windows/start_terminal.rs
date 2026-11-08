@@ -95,6 +95,10 @@ fn check_started_terminal(request: &str) {
     )
     .unwrap();
     process.set_echo(false);
+    let log_start = reap_log_path()
+        .ok()
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map_or(0, |metadata| metadata.len());
     let mut fixture = Fixture {
         process,
         tracker: Some(ForegroundJobTracker::install().expect("foreground tracker")),
@@ -108,6 +112,7 @@ fn check_started_terminal(request: &str) {
         .register_backend(fixture.process.pid().unwrap().unwrap(), "bash.exe");
     let terminal = wait_for_terminal(&fixture.process);
     fixture.terminal = Some(terminal);
+    let selected_metadata = terminal_metadata(terminal.pid);
     assert!(
         clud::process_scan::scan_env("CLUD")
             .declared_daemons
@@ -119,29 +124,7 @@ fn check_started_terminal(request: &str) {
         terminal.is_live(),
         "opened Command Prompt died with PTY close"
     );
-    drop(fixture.tracker.take());
-    // Collect before asserting so a failure explains itself (#2384).
-    let live_after_cleanup = terminal.is_live();
-    let diagnostics = if live_after_cleanup {
-        String::new()
-    } else {
-        let facts = clud::reaper_facts::collect_host_facts(
-            &[terminal.pid],
-            &Default::default(),
-            Vec::new(),
-        );
-        let declared = clud::process_scan::scan_env("CLUD")
-            .declared_daemons
-            .contains(&terminal.pid);
-        format!(
-            " (terminal pid {}, declared_daemons contains it: {declared}, host facts: {facts:?})",
-            terminal.pid
-        )
-    };
-    assert!(
-        live_after_cleanup,
-        "explicitly opened Command Prompt died with clud cleanup{diagnostics}"
-    );
+    assert_survives_cleanup(&mut fixture, terminal, selected_metadata, log_start);
     let facts =
         clud::reaper_facts::collect_host_facts(&[terminal.pid], &Default::default(), Vec::new());
     // The explicit launch must also declare persistence for later orphan sweeps.
@@ -155,6 +138,84 @@ fn check_started_terminal(request: &str) {
         clud::reaper_facts::spare_signal(&facts, terminal.pid, "cmd.exe"),
         Some(clud::reaper_facts::SpareReason::DeclaredDaemon)
     );
+}
+
+// Observe the existing facts and decision log; never duplicate the spare table.
+fn assert_survives_cleanup(
+    fixture: &mut Fixture,
+    terminal: ProcessIdentity,
+    selected_metadata: String,
+    log_start: u64,
+) {
+    let scan = clud::process_scan::scan_env("CLUD");
+    let facts = clud::reaper_facts::collect_host_facts(
+        &[terminal.pid],
+        &scan.declared_daemons,
+        clud::reaper_facts::configured_spare_images_from_env(),
+    );
+    let metadata = terminal_metadata(terminal.pid);
+    // Sample last, immediately before drop, to distinguish an already-exited
+    // start handoff from a process that disappears during foreground cleanup.
+    let live_before_drop = terminal.is_live();
+    drop(fixture.tracker.take());
+    let live_after_cleanup = terminal.is_live();
+    assert!(
+        live_after_cleanup,
+        "explicitly opened Command Prompt died with clud cleanup: \
+         terminal={terminal:?}, selected_metadata={selected_metadata}, \
+         metadata_before_drop={metadata}, \
+         live_before_drop={live_before_drop}, host_facts_before_drop={facts:?}, \
+         reaper_events={}",
+        terminal_reap_events(terminal.pid, log_start)
+    );
+}
+
+fn terminal_metadata(pid: u32) -> String {
+    let system = sysinfo::System::new_with_specifics(
+        sysinfo::RefreshKind::nothing().with_processes(sysinfo::ProcessRefreshKind::nothing()),
+    );
+    let metadata = system
+        .process(sysinfo::Pid::from_u32(pid))
+        .map(|p| (p.parent().map(|pid| pid.as_u32()), p.name().to_os_string()));
+    format!("(parent_pid, image)={metadata:?}")
+}
+
+fn reap_log_path() -> std::io::Result<PathBuf> {
+    Ok(clud::reap_log::session_reap_log_path(
+        &clud::daemon::default_state_dir()?,
+        std::process::id(),
+        clud::process_identity::self_start_time(),
+    ))
+}
+
+fn terminal_reap_events(pid: u32, log_start: u64) -> String {
+    let path = match reap_log_path() {
+        Ok(path) => path,
+        Err(error) => return format!("state directory unavailable: {error}"),
+    };
+    // Tracker drop joins the listener and drops ReapLog, flushing its events.
+    // Include live and exit phases: a live decision can also explain a death.
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) => return format!("{}: {error}", path.display()),
+    };
+    let mut matching = Vec::new();
+    let mut errors = Vec::new();
+    let offset = usize::try_from(log_start).unwrap_or(usize::MAX);
+    let Some(content) = content.get(offset..) else {
+        return format!("{}: log truncated since tracker install", path.display());
+    };
+    for line in content.lines() {
+        match serde_json::from_str::<serde_json::Value>(line) {
+            Ok(event) if event["pid"].as_u64() == Some(u64::from(pid)) => matching.push(event),
+            Ok(_) => {}
+            Err(error) => errors.push(error.to_string()),
+        }
+    }
+    format!(
+        "{}: {matching:?} (empty means no recorded decision); parse_errors={errors:?}",
+        path.display()
+    )
 }
 
 #[test]
