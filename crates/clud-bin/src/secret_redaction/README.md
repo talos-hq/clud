@@ -1,4 +1,4 @@
-# Reversible secret redaction
+# Secret redaction
 
 `detect.rs` owns precise credential ranges and overlap precedence.
 `policy.rs` resolves flags, free-model defaults and known training policy.
@@ -12,3 +12,10 @@ status state. HTTP boundary tests live in
 `../codex_bridge/tests/redaction_http.rs`; final Codex send/retry/compaction
 coverage lives in `../codex_upstream.rs`.
 See [the architecture contract](../../../../docs/architecture/secret-redaction.md).
+
+`logging.rs::redact_for_log` is the pure, one-way persistence API. It reuses
+`detect.rs` and adds log-only argument, header, quoted Apple password and
+`gh secret set` literal contexts. It emits `[REDACTED:<kind>]` without a
+session map. The hook log is its first sink; known-value matching, other
+sinks, historical scrubbing, command guards and entropy detection remain
+outside this slice of #2210. Operational inputs never pass through it.

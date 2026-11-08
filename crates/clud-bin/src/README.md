@@ -34,7 +34,8 @@ Credential prompt ownership (`secret_prompt.rs`, `secret_prompt/gui.rs`, and
 [secret-catalog.md](../../../docs/architecture/secret-catalog.md).
 
 `secret_redaction/` owns session-only reversible request tokenization, stream
-restoration and count-only status. See
+restoration, count-only status and the pure one-way hook-log redactor
+([module API](secret_redaction/README.md)). See
 [secret-redaction.md](../../../docs/architecture/secret-redaction.md).
 
 ## Subdirectories

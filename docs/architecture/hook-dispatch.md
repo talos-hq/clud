@@ -1097,3 +1097,15 @@ installed client fires the event — a per-launch bounded `claude --version`
 against the 2.1.83 floor, degrading silently to no line on any failure. The
 line rides only on opted-in repos, so a non-opted-in launch keeps its
 pre-Phase-2 argv exactly.
+
+### Hook log credential redaction (#2210)
+
+The `block-bad-cmd.log` writer applies
+`secret_redaction::redact_for_log` before writing any message. Rotation
+therefore carries already-redacted new records into `.log.1`; existing logs
+are not scrubbed. The pure function covers credential shapes and contextual
+password/header/`gh secret set` literals (see the
+[owning module](../../crates/clud-bin/src/secret_redaction/README.md)).
+Redaction changes only the persisted message, never the command evaluated,
+the decision, returned tool input or executed command. This one-way log API
+has no reversible placeholder map and does not alter #2211's gateway API.

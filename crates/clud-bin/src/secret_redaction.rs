@@ -4,6 +4,8 @@
 use std::sync::OnceLock;
 
 mod detect;
+mod logging;
+pub use logging::redact_for_log;
 pub mod policy;
 pub mod reversible;
 mod session;
