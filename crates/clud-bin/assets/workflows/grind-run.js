@@ -22,7 +22,7 @@ export const meta = {
 //   goals: [{ id, title, brief }], ci: false, lane?: 'job-id',
 //   models?: { planner, editor, reviewer, integrator, chaperone },   // omitted = session model; chaperone defaults to opus
 //   scripts?: { lint?: './lint', test?: './test' },     // omitted = planner picks verify
-//   queueWatchSeconds?: 540, queueFixups?: 2,           // chaperone watch deadline and automatic fixups after a queue ejection (#2467)
+//   queueWatchSeconds?: 3300, queueFixups?: 2,          // chaperone watch deadline and automatic fixups after a queue ejection (#2467)
 //   fixupPool?: 2,                                      // chaperone fixup worktrees that may exist and build at once (DD-205)
 //   maxAgents?: 4, maxFixRounds?: 10, agentErrors?: 3,   // agentErrors: tool-misuse allowance, apart from fix rounds (#1331)
 //   gateAttempts?: 3, gateBackoffMs?: 1000, gateEpoch?: 0, gateEpochs?: {goalId: 0},
@@ -871,7 +871,20 @@ const integrateAndHandOff = async ({ p: planned, review: rv }, g) => {
 // merge into the feature branch), follow the queue. On an exception it fixes up
 // itself in a slot of a bounded worktree pool, then watches the new head. The
 // next goal never waits for any of this; a dependent waits on landed[goal].
-const QUEUE_WATCH_S = gateInteger('queueWatchSeconds', 540, 60, 3600)
+// Measured 2026-11-07 (#2233), 24 h of local transcripts: 851 queue follows,
+// 589 of them at the old 540 s deadline, and 564 of those ended in a timeout
+// whose median restart gap was 542 s — one session re-invoked the waiter 31
+// times for one PR. Every re-invocation is a full request at the chaperone's
+// live context, spent only to learn the queue had not moved. A waiter that runs
+// in the background costs nothing while it waits, the tool runner allows
+// 3600 s, and a timeout never cancels CI (CANCEL_ON_DEFAULTS, #1332), so the
+// deadline now sits just under the runner's cap instead of waking the model
+// every nine minutes.
+const QUEUE_WATCH_S = gateInteger('queueWatchSeconds', 3300, 60, 3600)
+// The one last wait after every chain has stopped stays short: the run is over,
+// so a PR still in the queue is reported as `queued` rather than holding the
+// workflow open for another hour.
+const FINAL_WATCH_S = 600
 const MAX_QUEUE_FIXUPS = gateInteger('queueFixups', 2, 0, 5)
 const POOL_SIZE = gateInteger('fixupPool', 2, 1, 8)
 const MAX_QUEUED_WATCHES = 3
@@ -893,17 +906,17 @@ const handoffOf = (p, g, integ, rv) => `${packOf(p)}Handoff. You have no other h
   `Branch: ${p.branch}\nBase: origin/${baseOf(g)}\nPR: ${integ.pr_url}\nPlanned tasks: ${p.tasks.map(t => `${t.id} (${t.files.join(', ')})`).join('; ')}\n` +
   `Reviewer: ${rv ? rv.summary : '(none)'}\nIntegrator: ${nonempty(integ.handoff) ? integ.handoff : integ.summary}\n`
 const headLine = (e) => `Head: ${e.head || '(resolve the full SHA with gh pr view --json headRefOid)'}\n`
-const landSteps = (e) => {
-  const watchChecks = `clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --no-merge-wait --timeout ${QUEUE_WATCH_S}`
+const landSteps = (e, budget = QUEUE_WATCH_S) => {
+  const watchChecks = `clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --no-merge-wait --timeout ${budget}`
   if (isFeatureGoal(e.g)) return `1. Wait for the PR's checks: ${watchChecks}\n2. The feature branch has no merge queue.${featureLandNote(e.g)}\nReturn merged only after you observe the merge.`
-  const follow = `clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --until merged --timeout ${QUEUE_WATCH_S}`
+  const follow = `clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --until merged --timeout ${budget}`
   if (e.enqueued) return `The PR is already in the queue. Run once: ${follow}`
   return `1. Wait for the PR's required checks: ${watchChecks}\n` +
     `2. Enqueue it pinned to the head: clud tool run github/pr_merge.py -- ${e.pr} --repo ${GITHUB_REPO} --match-head-commit <full-head-sha>\n` +
     `3. Follow the queue, once: ${follow}`
 }
-const watch = (e, tag) => agent(
-  `${e.handoff}\nFollow your WATCH procedure.\n${headLine(e)}${landSteps(e)}\n` +
+const watch = (e, tag, budget) => agent(
+  `${e.handoff}\nFollow your WATCH procedure.\n${headLine(e)}${landSteps(e, budget)}\n` +
   `Run each waiter in the background and wait for its notification. ` +
   `Fix rounds used: ${e.fixes} of ${MAX_FIX}. Queue fixups used: ${e.fixups} of ${MAX_QUEUE_FIXUPS}. Return your verdict by the exit codes.`,
   opts('chaperone', `chaperone:${e.g.id}#${tag}`, 'Chaperone', CHAPERONE)).then(r => collect(r, 'chaperone', e.g.id))
@@ -972,9 +985,9 @@ const judge = (e, v) => {
   finish(e, 'stuck', false, `stuck: ${why}`)
   return 'done'
 }
-const observe = async (e, tag) => {
+const observe = async (e, tag, budget) => {
   let v = null
-  try { v = await watch(e, tag) } catch (err) { v = { verdict: 'stuck', summary: `chaperone failed: ${err && err.message ? err.message : err}` } }
+  try { v = await watch(e, tag, budget) } catch (err) { v = { verdict: 'stuck', summary: `chaperone failed: ${err && err.message ? err.message : err}` } }
   return judge(e, v)
 }
 // Bounded by the fix budgets, the misuse allowance and MAX_QUEUED_WATCHES.
@@ -1009,7 +1022,7 @@ const handOff = (p, g, integ, rv) => {
 const finishChains = async () => {
   await Promise.all(CHAINS.map(e => e.running))
   await Promise.all(CHAINS.filter(e => e.state === 'queued').map(async e => {
-    const next = await observe(e, 'final')
+    const next = await observe(e, 'final', FINAL_WATCH_S)
     if (next === 'done') return
     if (next === 'queued' || next === 'watch') {
       return finish(e, 'queued', false, `queued: ${e.pr} is still in the merge queue at Finish (not a failure)`)
