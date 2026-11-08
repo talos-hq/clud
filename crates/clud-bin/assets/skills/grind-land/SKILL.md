@@ -24,7 +24,7 @@ fix what fails ([DD-205](https://github.com/talos-hq/clud/blob/main/docs/DESIGN_
 1. **Choose the wait budget and scope.** Check the declared execution tools
    and the slowest selected CI lane, including queue/setup time. With a
    persistent session or supported background completion, a typical bounded
-   watch is `clud tool run github/pr_merge_watch.py -- <n> --repo <github-repo> --timeout 1080 --require '.*'`.
+   watch is `clud tool run github/pr_merge_watch.py -- <n> --repo <github-repo> --timeout 1080`.
    Keep its deadline within the verified clud wrapper/runtime limit. With
    foreground execution only, choose a deadline below that tool's actual cap;
    do not assume every environment has a 600-second cap. A long-running lane
@@ -35,10 +35,10 @@ fix what fails ([DD-205](https://github.com/talos-hq/clud/blob/main/docs/DESIGN_
    a live session. Run the waiter bare; its exit code is the result (do not
    pipe it through `tail`). The shared capability and outcome contract is
    [watch recovery](https://github.com/zackees/clud/blob/main/docs/architecture/hook-dispatch.md#watch-recovery-and-continuation-2004).
-   `--require '.*'` selects every reported check, including advisory lanes;
-   without it, green covers branch-required checks only. Preserve the same
-   repository, PR, head and selected scope when resuming. Add `--no-cancel`
-   when the user's policy requires keeping runs intact.
+   Use the default branch-required check selection, matching the merge queue;
+   advisory checks do not block landing. Preserve the same repository, PR,
+   head and scope when resuming. Keep the default cancellation policy; add
+   `--no-cancel` only when the user's policy requires keeping runs intact.
 2. By exit code:
    - `0` (checks green, mergeable): satisfy required review, resolve the full
      head SHA, then submit with `clud tool run github/pr_merge.py -- <n>

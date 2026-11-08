@@ -1202,3 +1202,32 @@ fn grind_integrator_resolves_formatting_without_stashes() {
     assert!(router.contains("Integrators never mutate stashes"));
     assert!(router.contains("Never pop/drop unrelated entries"));
 }
+
+#[test]
+fn grind_assets_wait_for_branch_required_checks_only() {
+    let skills = BUNDLED_SKILLS
+        .iter()
+        .filter(|skill| skill.name == "grind" || skill.name.starts_with("grind-"))
+        .map(|skill| (skill.name, skill.skill_md));
+    let agents_and_workflows = crate::claude_files::BUNDLED_CLAUDE_FILES
+        .iter()
+        .filter(|file| {
+            file.rel_path.starts_with("agents/grind-")
+                || file.rel_path.starts_with("workflows/grind")
+        })
+        .map(|file| (file.rel_path, file.body));
+    let contract = [(
+        "docs/architecture/grind.md",
+        include_str!("../../../docs/architecture/grind.md"),
+    )];
+    // Grind uses the watcher's branch-required default, never a check override.
+    let violations: Vec<_> = skills
+        .chain(agents_and_workflows)
+        .chain(contract)
+        .filter_map(|(path, text)| text.contains("--require").then_some(path))
+        .collect();
+    assert!(
+        violations.is_empty(),
+        "grind must omit the pr_merge_watch check override: {violations:?}"
+    );
+}
