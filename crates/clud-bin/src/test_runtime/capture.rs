@@ -327,13 +327,14 @@ mod tests {
 
     #[test]
     fn no_deadline_stays_absent_with_an_injected_clock() {
-        let now = Instant::now() - Duration::from_secs(172_800);
+        let now = Instant::now();
+        let far_future = now.checked_add(Duration::from_secs(172_800)).unwrap();
         assert!(capture_deadline(None, now).unwrap().is_none());
         assert!(
             capture_deadline(Some(Duration::from_secs(1)), now)
                 .unwrap()
                 .unwrap()
-                < Instant::now()
+                < far_future
         );
     }
 
