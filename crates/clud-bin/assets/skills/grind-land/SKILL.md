@@ -46,10 +46,10 @@ fix what fails ([DD-205](https://github.com/talos-hq/clud/blob/main/docs/DESIGN_
      required merge queue. Without a chaperone's prompt saying to follow the queue, return
      `status=enqueued` with `head_sha` at once. Return
      `status=merged` only when pr_merge.py itself reports the PR merged (a
-     base with no queue). The watch never waits for
-     CodeRabbit unless you pass `--coderabbit-wait N`; never pass it for a
-     repo that suppresses CodeRabbit or a head validated by the local
-     bosn gate. Every `coderabbit=` note (`suppressed`, `absent`,
+     base with no queue). The watch waits (up to 900 s)
+     for an active CodeRabbit to review the head; pass `--coderabbit-wait 0`
+     only for a head validated by the local bosn gate. A `4` while CodeRabbit
+     is still reviewing is normal: watch again. Every `coderabbit=` note (`suppressed`, `absent`,
      `completed`, `rate_limited`, `skipped`, `pending`, `timeout`) is still
      `0`: merge.
    - `1` (a required check failed): `gh pr checks --repo <github-repo> <n> --json name,state --jq '[.[]|select(.state!="SUCCESS" and .state!="SKIPPED")]'`

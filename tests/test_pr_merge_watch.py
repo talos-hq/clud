@@ -2099,12 +2099,16 @@ def coderabbit_watch(
     required=frozenset({"linux"}),
     extra_rows=(),
     suppressed: bool = False,
+    age: float = 0.0,
 ) -> dict:
     """Run `watch()` with green CI; `statuses(poll)` names the fixture each
     statuses read returns (None = the read failed). `coderabbit_wait` defaults
-    to an explicit 600 s opt-in; pass None to run with the CLI default."""
+    to an explicit 600 s opt-in; pass None to run with the CLI default.
+    `age` is how old the pending status already was when the watch began."""
     clock = {"now": 1000.0}
     monkeypatch.setattr(watcher.time, "monotonic", lambda: clock["now"])
+    created = datetime.fromisoformat("2026-09-28T18:02:11+00:00").timestamp()
+    monkeypatch.setattr(watcher, "_wall_now", lambda: created + clock["now"] - 1000.0 + age)
 
     def sleep(seconds: float) -> None:
         clock["now"] += seconds
@@ -2196,9 +2200,10 @@ def test_no_coderabbit_status_on_the_head_is_absent(watcher) -> None:
     assert watcher.newest_coderabbit_status(CODERABBIT_STATUSES["absent"]) is None
 
 
-def test_coderabbit_wait_is_an_explicit_opt_in(watcher) -> None:
-    # A missing CodeRabbit must never stall a local bosn -> act gate.
-    assert watcher.parse_args(["527"]).coderabbit_wait == 0
+def test_coderabbit_wait_is_on_by_default(watcher) -> None:
+    # An active CodeRabbit is waited for; `0` opts out for a local bosn gate.
+    assert watcher.parse_args(["527"]).coderabbit_wait == 900
+    assert watcher.parse_args(["527", "--coderabbit-wait", "0"]).coderabbit_wait == 0
     assert watcher.parse_args(["527", "--coderabbit-wait", "90"]).coderabbit_wait == 90
 
 
@@ -2209,8 +2214,8 @@ def test_green_waits_while_coderabbit_is_pending_then_goes_green(
         watcher, tmp_path, monkeypatch, lambda poll: "pending" if poll < 3 else "completed"
     )
     assert state["code"] == watcher.EXIT_GREEN
-    assert state["polls"] == 3
-    assert state["elapsed"] == pytest.approx(40)
+    assert state["polls"] == 4  # one confirming poll re-reads the new threads
+    assert state["elapsed"] == pytest.approx(60)
     assert _green_event(state)["coderabbit"] == "completed"
     waits = [e for e in state["events"] if e["event"] == "coderabbit_wait"]
     assert [w["state"] for w in waits] == ["pending"]  # logged once, not every poll
@@ -2234,6 +2239,23 @@ def test_new_coderabbit_thread_during_the_wait_exits_two(watcher, tmp_path, monk
     assert not [e for e in state["events"] if e["event"] == "green"]
 
 
+def test_thread_posted_as_the_review_completes_exits_two_not_green(
+    watcher, tmp_path, monkeypatch
+) -> None:
+    thread = watcher.CodeRabbitObservation(
+        "actionable", actionable=True, unresolved_threads=1, ids=frozenset({77})
+    )
+    state = coderabbit_watch(
+        watcher,
+        tmp_path,
+        monkeypatch,
+        lambda poll: "pending" if poll < 3 else "completed",
+        observations=lambda poll: thread if poll >= 4 else watcher.CodeRabbitObservation("quiet"),
+    )
+    assert state["code"] == watcher.EXIT_REVIEW_ACTIVITY
+    assert not [e for e in state["events"] if e["event"] == "green"]
+
+
 @pytest.mark.parametrize("fixture", ["rate_limited", "skipped"])
 def test_rate_limited_or_skipped_review_is_finished_and_green_with_a_note(
     watcher, tmp_path, monkeypatch, capsys, fixture: str
@@ -2246,14 +2268,13 @@ def test_rate_limited_or_skipped_review_is_finished_and_green_with_a_note(
     assert state["cancels"] == []
 
 
-def test_no_coderabbit_status_is_absent_at_once_with_no_grace(
+def test_no_coderabbit_status_gets_a_short_grace_then_is_absent(
     watcher, tmp_path, monkeypatch, capsys
 ) -> None:
-    # Even under an explicit 600 s opt-in, an absent status is final.
+    # CodeRabbit is active but has not started on the head: wait the grace.
     state = coderabbit_watch(watcher, tmp_path, monkeypatch, lambda poll: "absent")
     assert state["code"] == watcher.EXIT_GREEN
-    assert state["polls"] == 1
-    assert state["elapsed"] == pytest.approx(0)
+    assert state["elapsed"] == pytest.approx(watcher.CODERABBIT_ABSENT_GRACE_SEC)
     assert _green_event(state)["coderabbit"] == "absent"
     assert "coderabbit=absent" in capsys.readouterr().out
 
@@ -2264,7 +2285,7 @@ def test_an_unreadable_status_is_not_mistaken_for_absent(watcher, tmp_path, monk
     )
     assert state["code"] == watcher.EXIT_GREEN
     assert _green_event(state)["coderabbit"] == "completed"
-    assert state["polls"] == 10
+    assert state["polls"] == 11  # plus the confirming poll
 
 
 def test_coderabbit_wait_cap_goes_green_with_timeout_and_never_cancels(
@@ -2281,14 +2302,37 @@ def test_coderabbit_wait_cap_goes_green_with_timeout_and_never_cancels(
     assert not [e for e in state["events"] if e["event"] == "timeout"]
 
 
-def test_watch_timeout_during_the_coderabbit_wait_is_green_not_exit_four(
+def test_watch_timeout_during_the_coderabbit_wait_exits_four_not_green(
     watcher, tmp_path, monkeypatch
 ) -> None:
+    # A short (chaperone) watch never merges around a review still running.
     state = coderabbit_watch(watcher, tmp_path, monkeypatch, lambda poll: "pending", timeout=90)
+    assert state["code"] == watcher.EXIT_TIMEOUT
+    assert not [e for e in state["events"] if e["event"] == "green"]
+    assert state["cancels"] == []
+
+
+def test_an_unreadable_status_ends_within_one_watch_not_a_rewatch_loop(
+    watcher, tmp_path, monkeypatch
+) -> None:
+    # No status age to share: the wait is bounded by this watch's --timeout.
+    state = coderabbit_watch(
+        watcher, tmp_path, monkeypatch, lambda poll: None, coderabbit_wait=900, timeout=540
+    )
     assert state["code"] == watcher.EXIT_GREEN
     assert _green_event(state)["coderabbit"] == "timeout"
-    assert state["elapsed"] < 90
-    assert state["cancels"] == []
+
+
+def test_a_rewatch_counts_the_review_age_toward_the_cap(
+    watcher, tmp_path, monkeypatch
+) -> None:
+    # The pending status is already 590 s old: a fresh watch waits ~10 s more.
+    state = coderabbit_watch(
+        watcher, tmp_path, monkeypatch, lambda poll: "pending", age=590.0
+    )
+    assert state["code"] == watcher.EXIT_GREEN
+    assert _green_event(state)["coderabbit"] == "timeout"
+    assert state["elapsed"] <= 20
 
 
 def test_coderabbit_not_detected_reads_no_status_and_goes_green_at_once(
@@ -2324,13 +2368,28 @@ def test_suppressed_repo_is_green_with_no_wait_and_no_status_read(
     assert "coderabbit=suppressed" in capsys.readouterr().out
 
 
-def test_default_never_waits_on_a_pending_coderabbit_review(
+def test_default_waits_for_a_pending_coderabbit_review(
+    watcher, tmp_path, monkeypatch
+) -> None:
+    # No --coderabbit-wait: green waits for the review, never merging around it.
+    state = coderabbit_watch(
+        watcher,
+        tmp_path,
+        monkeypatch,
+        lambda poll: "pending" if poll < 5 else "completed",
+        coderabbit_wait=None,
+    )
+    assert state["code"] == watcher.EXIT_GREEN
+    assert state["polls"] == 6
+    assert _green_event(state)["coderabbit"] == "completed"
+
+
+def test_coderabbit_wait_zero_never_waits_on_a_pending_review(
     watcher, tmp_path, monkeypatch, capsys
 ) -> None:
-    # No --coderabbit-wait: a head whose remote jobs were skipped (attested)
-    # or a repo still running CodeRabbit goes green as soon as CI is green.
+    # `--coderabbit-wait 0`: a head validated by a local bosn -> act gate.
     state = coderabbit_watch(
-        watcher, tmp_path, monkeypatch, lambda poll: "pending", coderabbit_wait=None
+        watcher, tmp_path, monkeypatch, lambda poll: "pending", coderabbit_wait=0
     )
     assert state["code"] == watcher.EXIT_GREEN
     assert state["polls"] == 1
@@ -2340,9 +2399,9 @@ def test_default_never_waits_on_a_pending_coderabbit_review(
     assert "coderabbit=pending" in capsys.readouterr().out
 
 
-def test_default_with_no_status_is_absent_at_once(watcher, tmp_path, monkeypatch) -> None:
+def test_wait_zero_with_no_status_is_absent_at_once(watcher, tmp_path, monkeypatch) -> None:
     state = coderabbit_watch(
-        watcher, tmp_path, monkeypatch, lambda poll: "absent", coderabbit_wait=None
+        watcher, tmp_path, monkeypatch, lambda poll: "absent", coderabbit_wait=0
     )
     assert state["code"] == watcher.EXIT_GREEN
     assert state["polls"] == 1
@@ -2360,8 +2419,8 @@ def test_explicit_opt_in_still_waits_for_a_pending_review(
         coderabbit_wait=300,
     )
     assert state["code"] == watcher.EXIT_GREEN
-    assert state["polls"] == 4
-    assert state["elapsed"] == pytest.approx(60)
+    assert state["polls"] == 5
+    assert state["elapsed"] == pytest.approx(80)
     assert _green_event(state)["coderabbit"] == "completed"
     assert [e["state"] for e in state["events"] if e["event"] == "coderabbit_wait"] == [
         "pending"
