@@ -878,14 +878,16 @@ plan (up to maxAgents) → editor (1) → review (up to maxAgents) → integrato
   `124` with `status: in-progress`; the chaperone watches again and never merges
   on that code. A chaperone passes `--timeout 540`, below its
   600 s tool cap, so the watch always exits on its own; a watch never cancels
-  runs on a head SHA it did not start on (#1418). Green never waits for
-  CodeRabbit by default: nothing can reproduce it under the local
-  bosn gate, and the fleet suppresses it with `.coderabbit.yaml`
-  (`reviews.auto_review.enabled: false`). A suppressed repo or a head with no
-  `CodeRabbit` status goes green at once with `coderabbit=suppressed` or
-  `coderabbit=absent`; there is no grace period. Waiting for a `pending`
-  review is an explicit opt-in (`--coderabbit-wait N`, bounded by
-  `--timeout`; it always ends `0`, #1332). It judges each check by the newest run of
+  runs on a head SHA it did not start on (#1418). Where CodeRabbit is
+  active, green waits for its review of the head (`--coderabbit-wait`,
+  default 900 s, measured from the `CodeRabbit` status's creation so
+  re-watches share it); a watch whose `--timeout` ends first exits `4` and
+  the chaperone watches again, and a review that finishes mid-wait gets one
+  more poll so its threads exit `2`. A suppressed repo
+  (`reviews.auto_review.enabled: false`) or one without CodeRabbit goes green
+  at once; an active one that posts no status within 180 s reads
+  `coderabbit=absent`. `--coderabbit-wait 0` opts out for a head validated
+  by the local bosn gate (#1332). It judges each check by the newest run of
   its workflow, so a superseded cancelled run is not a failure; the full rule
   lives in the watcher's docstring
   (`crates/clud-bin/assets/tools/github/pr_merge_watch.py`).
