@@ -7715,3 +7715,25 @@ the text last. Output without that shape is treated as no transcript.
 **Not chosen:** vendoring talos-vox source; a clud-managed model download for the
 CLI to use (voxtype manages its own models); honoring `--engine`/`--model`
 settings, since voxtype's own config already selects them.
+
+## DD-207: PR checks are enforced by the PreToolUse hook, not a git hook
+
+**Context:** agents pushed PRs with lint or unit-test failures that hosted CI
+caught 10+ minutes later (#2720). Git hooks need a per-clone install that fresh
+clones and worktrees lack, and the old managed pre-push hook was slow (#2037)
+and drifted from policy (#2265).
+
+**Decision:** a repo declares `pr_checks.commands` in `.clud/settings.json`.
+`clud pr-check` runs them and records a receipt keyed by repo root,
+`HEAD^{tree}` and the command list; `block_bad_cmd` denies `git push` and
+`gh pr create` in that repo until the receipt exists. Opt-outs:
+`CLUD_SKIP_PR_CHECKS=1`, `pr_checks.enabled: false`, `CLUD_ALLOW_ALL_CMDS=1`.
+
+**Why the hook:** clud already installs it into every session it launches, so
+no per-clone setup exists to forget. **Why the tree:** a reworded commit or a
+rebase onto the same content does not need a rerun.
+
+**Not changed:** DD-190. Hosted CI stays the merge gate; the receipt is not an
+attestation, adds no `Local-Gate` trailer and fails open like the rest of
+`block_bad_cmd`. See
+[hook-dispatch.md](architecture/hook-dispatch.md#pr-checks-gate-2720).

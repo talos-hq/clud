@@ -84,6 +84,7 @@ pub mod dsh_harness;
 pub mod extern_cli;
 pub mod extern_root;
 pub mod opencode_harness;
+pub mod pr_checks;
 
 pub mod build_id;
 pub mod clud_repo_dev;

@@ -628,6 +628,12 @@ which test tier a change belongs in — lives in
   continues. Failing open there is deliberate: a broken guard must not become a
   wall in front of every tool call. The only in-repo user of
   `StdinMode::Piped`. See `docs/architecture/hook-dispatch.md`.
+- `block_bad_cmd_pr_checks.rs` - PR-checks gate (#2720): denies `git push` /
+  `gh pr create` in a repo declaring `pr_checks.commands` until `clud pr-check`
+  passed for `HEAD^{tree}`; pure `decide` over `Facts`, tests in
+  `block_bad_cmd_pr_checks_tests.rs`. Settings, receipts and the runner live in
+  `pr_checks.rs` (`clud pr-check`, tests in `pr_checks_tests.rs`). See
+  [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md#pr-checks-gate-2720).
 - `block_bad_cmd_cd.rs` - `bash.block_cd` session-cwd pinning (#967 Phase 1,
   DD-047; Phase 5 relaxation = DD-063). Scans for `cd`s that would move the
   *session* cwd — subshells, `$(...)`, and nested shells are skipped because

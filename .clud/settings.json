@@ -13,5 +13,8 @@
   },
   "gh": {
     "backend": "ghd"
+  },
+  "pr_checks": {
+    "commands": ["bash lint --host-only", "bash test --host"]
   }
 }

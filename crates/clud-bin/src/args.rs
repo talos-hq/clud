@@ -1030,6 +1030,10 @@ pub enum Command {
     /// Report hook and alias health: stale or retired aliases in clud's own
     /// alias dirs, a foreign `clud-cmd-scan` first on PATH, and the hook
     /// matcher's tool coverage (#1954). Exits 1 when anything is wrong.
+    /// Run the repo's declared `pr_checks.commands` in order and, when all
+    /// pass, record a receipt for `HEAD^{tree}` that unblocks `git push` /
+    /// `gh pr create` in the PreToolUse hook (#2720).
+    PrCheck,
     Doctor {
         /// Print the report as one JSON document.
         #[arg(long)]
@@ -2110,6 +2114,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "codex-update",
     "dsh-update",
     "doctor",
+    "pr-check",
     "setup",
     "install",
     "ci",
