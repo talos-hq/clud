@@ -102,7 +102,7 @@ The native `clud-cmd-scan` rollout has a similarly narrow foreground
 startup repair outside the launch-setup selector: when hook auto-repair is
 enabled, clud rewrites only exact old `clud tool run hooks/block-bad-cmd.py`
 and `clud-block-bad-cmd` hook commands to `clud-cmd-scan`, an argv[0] alias of
-`clud` that the launcher links into its per-build `helper-bin` (DD-203) and appends to
+`clud` that the launcher links into its per-build `helper-bin` (DD-203, DD-208) and prepends to
 PATH (DD-121). Non-exact user hook commands are left
 alone.
 

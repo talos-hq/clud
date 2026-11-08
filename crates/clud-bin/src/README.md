@@ -786,8 +786,8 @@ Skills and hooks:
   `clud-cmd-scan` helper (an alias of `clud`): exact old hook command
   rewrites, including the legacy `clud-block-bad-cmd` name. Every scope only ever gets
   the portable bare `clud-cmd-scan`, never an absolute path (#1426, #1334);
-  when the helper is not already resolvable, the session links `clud` alone (as `clud-cmd-scan` and
-  `clud-block-bad-cmd`) into its per-build `helper-bin` under `~/.clud/state/versions/` (DD-203) and appends that directory to PATH (never the
+  the session links `clud` alone (as `clud-cmd-scan` and
+  `clud-block-bad-cmd`) into its per-build `helper-bin` under `~/.clud/state/versions/` (DD-203, DD-208) and prepends that directory to PATH (never the
   install directory, whose other programs would leak into descendants), and
   launch warns about hooks whose program does not exist.
   `ci/banned_hook_paths.py` keeps committed hook configs portable.
@@ -1038,8 +1038,8 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   resolution checks, shared by both hook entrypoints.
 - `optional_context.rs` — opt-in external personality references prepared for Claude and Codex; see [optional context](../../../docs/architecture/optional-context.md).
 - `setup_command.rs` — `clud setup` (#2219): alias install, shared provider setup (`self_install/setup.rs`), optional shell activation; `setup_command/hermes.rs` owns offer-only credential imports and reference-only personality resolution. See [setup-command.md](../../../docs/architecture/setup-command.md) and [optional context](../../../docs/architecture/optional-context.md).
-- `doctor.rs` — `clud doctor [--json]` (#1954): reports stale, missing and retired aliases in clud's interpreter, session and helper alias dirs (`inspect_dir`), lists non-alias files there without deleting them, flags a foreign first `clud-cmd-scan` on PATH, and computes scanner coverage of the launch fragment and of each hook config on disk (`coverage_report`); exit 1 on an alias finding; tests in `doctor_tests.rs`. See [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md#hook-health-clud-doctor).
-- `hook_handshake.rs` — the hook build handshake (#1954): startup exports the launcher path and build fingerprint; `multicall::run_cmd_scan` relays a skewed `clud-cmd-scan` to `<launcher> __cmd-scan` and logs `HOOK-SKEW`; decision is `decide` over injected `Facts`; tests in `hook_handshake_tests.rs`; see [launch-setup.md](../../../docs/architecture/launch-setup.md).
+- `doctor.rs` — `clud doctor [--json]` (#1954): reports stale, missing and retired aliases in clud's interpreter, session and helper alias dirs (`inspect_dir`), lists non-alias files there without deleting them, flags a foreign first `clud-cmd-scan` on PATH, counts HOOK-SKEW relays in retained hook logs, and computes scanner coverage of the launch fragment and of each hook config on disk (`coverage_report`); exit 1 on an alias finding; tests in `doctor_tests.rs`. See [hook-dispatch.md](../../../docs/architecture/hook-dispatch.md#hook-health-clud-doctor).
+- `hook_handshake.rs` — the hook build handshake (#1954): startup exports the launcher path and build fingerprint; `multicall::run_cmd_scan` relays a skewed `clud-cmd-scan` to `<launcher> __cmd-scan` and logs `HOOK-SKEW`; doctor counts these relays in retained hook logs; decision is `decide` over injected `Facts`; tests in `hook_handshake_tests.rs`; see [launch-setup.md](../../../docs/architecture/launch-setup.md).
 - `multicall.rs` — argv[0] dispatch, the first thing `main` does (#1551,
   DD-121): `clud-cmd-scan`/`clud-block-bad-cmd` → `block_bad_cmd::run`,
   `clud-shim` and every `shim_registry::SHIMS` name → `shim_main::run`, plus the

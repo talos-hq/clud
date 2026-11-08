@@ -31,7 +31,7 @@ pub const STDIN_READ_CHUNK_BYTES: usize = 64 * 1024;
 pub const STDIN_READ_MAX_BYTES: usize = 1024 * 1024;
 const DEFAULT_STDIN_READ_IDLE_TIMEOUT_SEC: f64 = 0.25;
 const DEFAULT_STDIN_READ_DEADLINE_SEC: f64 = 2.0;
-const LOG_REL_PATH: &str = ".clud/tools/hooks/block-bad-cmd.log";
+pub(crate) const LOG_REL_PATH: &str = ".clud/tools/hooks/block-bad-cmd.log";
 /// Rotate the hook log to a single `.1` backup once it reaches this size.
 /// The hook runs as a short-lived process per tool call, so an unbounded
 /// append grows without limit (observed at 117 MB) until rotation was added.

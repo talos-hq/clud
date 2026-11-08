@@ -96,6 +96,28 @@ pub struct DirReport {
     /// Entries that are neither a current nor a retired alias. Reported only:
     /// clud does not own them, so it never deletes them.
     pub unknown: Vec<PathBuf>,
+    /// Mismatched scanner calls recorded in the retained hook logs.
+    pub relayed_invocations: u64,
+}
+
+/// Count structured skew events in the hook's current log and single backup.
+/// Retention is bounded by the hook logger; this is not a lifetime/session total.
+fn hook_skew_count(home: Option<&Path>) -> u64 {
+    use std::io::BufRead;
+
+    let Some(home) = home else { return 0 };
+    let log = home.join(crate::block_bad_cmd::LOG_REL_PATH);
+    [log.clone(), log.with_extension("log.1")]
+        .into_iter()
+        .filter_map(|path| std::fs::File::open(path).ok())
+        .flat_map(|file| std::io::BufReader::new(file).lines().map_while(Result::ok))
+        .filter_map(|line| {
+            // The logger prefixes each JSON event with a timestamp and PID.
+            let start = line.find('{')?;
+            serde_json::from_str::<Value>(&line[start..]).ok()
+        })
+        .filter(|event| event["event"] == "HOOK-SKEW")
+        .count() as u64
 }
 
 /// Check the on-disk `files` and `retired` names in `dir` against the
@@ -207,6 +229,7 @@ pub fn inspect(exe: &Path, own: &str, home: Option<&Path>, path_env: &str) -> Di
             }
         }
     }
+    report.relayed_invocations = hook_skew_count(home);
     report
 }
 
@@ -336,6 +359,10 @@ fn json_report(
         "build": own,
         "version_dir": active.map(|dir| dir.display().to_string()),
         "guarded_tools": GUARDED_TOOLS,
+        "hook_skew": {
+            "relayed_invocations": aliases.relayed_invocations,
+            "scope": "retained hook logs (current + .1)",
+        },
         "findings": aliases.findings.iter().map(|f| json!({
             "kind": f.kind(),
             "path": f.path().display().to_string(),
@@ -358,6 +385,10 @@ fn print_report(
     coverage: &[Coverage],
 ) {
     println!("clud {} (build {own})", exe.display());
+    println!(
+        "HOOK-SKEW: {} relayed/mismatched scanner invocations in retained hook logs (current + .1)",
+        aliases.relayed_invocations
+    );
     if let Some(active) = active {
         println!("version dir: {}", active.display());
     }

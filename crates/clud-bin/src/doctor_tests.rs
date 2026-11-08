@@ -227,3 +227,37 @@ fn a_script_first_on_path_is_reported_and_left_alone() {
     assert!(actions[0].starts_with("left alone:"), "{actions:?}");
     assert_eq!(std::fs::read(&stub).unwrap(), body);
 }
+
+#[test]
+fn hook_skew_count_is_in_json_even_without_alias_findings() {
+    let report = json_report("build", Path::new("clud"), None, &DirReport::default(), &[]);
+    assert_eq!(report["hook_skew"]["relayed_invocations"], 0);
+}
+
+#[test]
+fn hook_skew_count_includes_rotated_log_and_ignores_other_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    let log = tmp.path().join(".clud/tools/hooks/block-bad-cmd.log");
+    std::fs::create_dir_all(log.parent().unwrap()).unwrap();
+    std::fs::write(
+        &log,
+        concat!(
+            "[123] pid=42 {\"event\":\"HOOK-SKEW\",\"hook_build\":\"old\"}\n",
+            "[124] pid=42 {\"event\":\"other\",\"message\":\"HOOK-SKEW\"}\n",
+            "[125] pid=42 {broken HOOK-SKEW\n",
+        ),
+    )
+    .unwrap();
+    std::fs::write(
+        log.with_extension("log.1"),
+        "[122] pid=41 {\"event\":\"HOOK-SKEW\"}\n",
+    )
+    .unwrap();
+    let aliases = inspect(Path::new("missing-clud"), "build", Some(tmp.path()), "");
+    let report = json_report("build", Path::new("clud"), None, &aliases, &[]);
+    assert_eq!(report["hook_skew"]["relayed_invocations"], 2);
+    assert_eq!(
+        report["hook_skew"]["scope"],
+        "retained hook logs (current + .1)"
+    );
+}
