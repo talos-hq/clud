@@ -174,9 +174,18 @@ fn printed_bytes_counts_every_line_of_the_range_plus_its_newline() {
     let dir = tempdir().expect("dir");
     let path = source(dir.path(), "count.rs", 100, 40);
     // 40-byte lines, range 10..19 == ten lines.
-    assert_eq!(printed_bytes(&path, 10, 19), Some(10 * 41));
-    assert_eq!(printed_bytes(&path, 100, 140), Some(41));
-    assert_eq!(printed_bytes(&path, 101, 140), None);
+    assert_eq!(
+        printed_bytes_capped(&path, 10, 19, Caps::unbounded()),
+        Some(10 * 41)
+    );
+    assert_eq!(
+        printed_bytes_capped(&path, 100, 140, Caps::unbounded()),
+        Some(41)
+    );
+    assert_eq!(
+        printed_bytes_capped(&path, 101, 140, Caps::unbounded()),
+        None
+    );
 }
 
 #[test]
@@ -422,4 +431,88 @@ fn whole_file_state_errors_fail_open() {
         check_whole_at(dir.path(), "s1", &whole, 1_000, 1),
         CatVerdict::Allow
     );
+}
+
+// ---- reads bounded by a pipe -------------------------------------------------
+
+#[test]
+fn a_wide_range_behind_a_head_is_sized_by_the_lines_the_head_keeps() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "wide.rs", 900, 60);
+    // 200 lines of 61 B each: the pipe bounds the read, but not below the cap.
+    let slice = detect("sed -n '1,700p' wide.rs | head -200", dir.path()).expect("detected");
+    assert_eq!(slice.bytes, 200 * 61);
+    assert_eq!((slice.start, slice.end), (1, 700));
+}
+
+#[test]
+fn a_head_that_keeps_only_a_few_lines_is_left_alone() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "wide.rs", 900, 60);
+    assert!(detect("sed -n '1,700p' wide.rs | head -20", dir.path()).is_none());
+    assert!(detect("sed -n '1,700p' wide.rs | head", dir.path()).is_none());
+}
+
+#[test]
+fn a_column_cut_that_still_prints_a_lot_is_sized_by_the_columns_it_keeps() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "lines.rs", 700, 400);
+    let slice = detect("sed -n '1,700p' lines.rs | cut -c1-350", dir.path()).expect("detected");
+    assert_eq!(slice.bytes, 700 * 351);
+}
+
+#[test]
+fn a_head_and_a_cut_together_apply_both_bounds() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "lines.rs", 900, 400);
+    let slice = detect(
+        "sed -n '1,900p' lines.rs | head -200 | cut -c1-80",
+        dir.path(),
+    )
+    .expect("detected");
+    assert_eq!(slice.bytes, 200 * 81);
+}
+
+#[test]
+fn a_pipe_whose_bound_cannot_be_predicted_stays_invisible() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "wide.rs", 900, 60);
+    for command in [
+        "sed -n '1,700p' wide.rs | tail -200",
+        "sed -n '1,700p' wide.rs | grep needle",
+        "sed -n '1,700p' wide.rs | sort",
+        "sed -n '1,700p' wide.rs | head -c 40000",
+    ] {
+        assert!(detect(command, dir.path()).is_none(), "{command}");
+    }
+}
+
+#[test]
+fn a_piped_read_that_bounds_nothing_is_still_not_counted() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "wide.rs", 900, 60);
+    assert!(detect("sed -n '1,700p' wide.rs | head -200 > out.txt", dir.path()).is_none());
+    assert!(detect("sed -ni '1,700p' wide.rs | head -200", dir.path()).is_none());
+}
+
+#[test]
+fn a_cat_behind_a_head_is_sized_by_the_lines_the_head_keeps() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "handoff.md", 300, 60);
+    let whole = detect_whole("cat handoff.md | head -300", dir.path()).expect("detected");
+    assert_eq!(whole.bytes, 300 * 61);
+    assert!(
+        detect_whole("cat handoff.md | head -20", dir.path()).is_none(),
+        "twenty lines is cheap"
+    );
+}
+
+#[test]
+fn a_cat_inside_a_subshell_is_sized_like_any_other() {
+    let dir = tempdir().expect("dir");
+    source(dir.path(), "a.md", 80, 60);
+    source(dir.path(), "b.md", 80, 60);
+    let whole = detect_whole("(cd deep; cat a.md b.md)", dir.path()).expect("detected");
+    assert_eq!(whole.paths.len(), 2);
+    assert!(whole.bytes >= CAP_BYTES);
 }

@@ -32,8 +32,15 @@
 //! * the target must exist, carry a source extension and be at least
 //!   [`MIN_FILE_BYTES`]; logs and data files are never counted;
 //! * the range must predict at least [`CAP_BYTES`] of printed text;
-//! * segments with a pipe, a redirect or `sed -i` are reads whose output is
-//!   bounded or writes, and pass untouched;
+//! * a redirect or `sed -i` is a write and passes untouched;
+//! * a read through a pipe the stages *bound* (`head -N`, `cut -c1-M`) is sized
+//!   with that bound applied instead of being waved through: `hunt_ranges`
+//!   skips every piped segment, so `sed -n '1,700p' f | head -200` (200 full
+//!   lines) and `cat a.md | head -300` reached the transcript unmeasured. A
+//!   pipe through `tail`/`grep`/`sort`/`awk` has no predictable bound and is
+//!   still left alone;
+//! * a `cat` inside a subshell (`(cd dir; cat a.rs b.rs)`) is sized like any
+//!   other, instead of being dropped by the `)` on its last path;
 //! * past [`DEFAULT_LIMIT`] oversized reads in one session the next *distinct*
 //!   one is refused ONCE with the exact `code/slice.py` call. A retry of the
 //!   identical command passes, so the guard can never wedge a session;
@@ -49,7 +56,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
-use super::block_bad_cmd_hunt::{hunt_ranges, is_source_file, plausible_path, program, Range};
+use super::block_bad_cmd_hunt::{
+    hunt_ranges, is_in_place_sed, is_source_file, parse_range, plausible_path, program,
+    writes_file, Range,
+};
 
 /// Oversized single-range reads allowed per session before the next distinct
 /// one is refused.
@@ -166,27 +176,6 @@ fn trim(state: &mut State, now: u64) {
     }
 }
 
-/// The bytes a `sed -n A,Bp FILE` range would print: line length plus newline
-/// for every line in the range. `None` when the file cannot be read cheaply
-/// enough to be sure.
-fn printed_bytes(path: &Path, start: u32, end: u32) -> Option<u64> {
-    let meta = std::fs::metadata(path).ok()?;
-    if !meta.is_file() || meta.len() > MAX_SCAN_BYTES {
-        return None;
-    }
-    let text = std::fs::read_to_string(path).ok()?;
-    let first = usize::try_from(start).ok()?.saturating_sub(1);
-    let take = usize::try_from(end.saturating_sub(start).saturating_add(1)).ok()?;
-    text.lines().nth(first)?;
-    let bytes: u64 = text
-        .lines()
-        .skip(first)
-        .take(take)
-        .map(|line| line.len() as u64 + 1)
-        .sum();
-    Some(bytes)
-}
-
 fn resolve(target: &str, cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
     if let Some(rest) = target.strip_prefix("~/") {
         return Some(home?.join(rest));
@@ -205,20 +194,193 @@ fn resolve(target: &str, cwd: &Path, home: Option<&Path>) -> Option<PathBuf> {
     )
 }
 
-/// The oversized read this command is, or `None` when it does not qualify.
-pub(super) fn detect(command: &str, cwd: &Path) -> Option<Slice> {
-    let ranges = hunt_ranges(command);
-    if ranges.len() != 1 {
+/// A pipeline stage's bound on the text a read prints: `head -N` keeps the
+/// first N lines, `cut -c1-M` keeps the first M characters of every line. No
+/// caps means the read prints its whole range, exactly as an unpiped `sed` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) struct Caps {
+    lines: Option<u32>,
+    cols: Option<u32>,
+}
+
+impl Caps {
+    const fn unbounded() -> Self {
+        Self {
+            lines: None,
+            cols: None,
+        }
+    }
+
+    fn bounds(self) -> bool {
+        self.lines.is_some() || self.cols.is_some()
+    }
+
+    /// Lines kept, or `usize::MAX` when no stage caps lines.
+    fn keep(self) -> usize {
+        self.lines.map_or(usize::MAX, |lines| {
+            usize::try_from(lines).unwrap_or(usize::MAX)
+        })
+    }
+
+    /// The width one line prints at, after the caps. `cut -c` counts characters
+    /// and an uncut line prints its bytes, so both units are used for what they
+    /// actually measure.
+    fn width(self, line: &str) -> u64 {
+        match self.cols {
+            None => line.len() as u64,
+            Some(cols) => line
+                .chars()
+                .count()
+                .min(usize::try_from(cols).unwrap_or(usize::MAX)) as u64,
+        }
+    }
+}
+
+/// The caps the stages after a pipe place on a read, or `None` when any stage's
+/// bound is unknown. Only `head -N` and `cut -c...` are modelled because both
+/// are exact; `tail`, `sort`, `grep` and `awk` move or filter the text in ways
+/// this guard cannot predict, so a read through them stays invisible.
+fn pipe_caps(segment: &str) -> Option<Caps> {
+    let mut caps = Caps::unbounded();
+    let mut stages = segment.split('|').skip(1).peekable();
+    stages.peek()?;
+    for stage in stages {
+        let tokens: Vec<&str> = stage.split_whitespace().collect();
+        match program(tokens.first()?) {
+            "head" => {
+                let lines = head_lines(&tokens[1..])?;
+                caps.lines = Some(caps.lines.map_or(lines, |seen| seen.min(lines)));
+            }
+            "cut" => {
+                let cols = cut_cols(&tokens[1..])?;
+                caps.cols = Some(caps.cols.map_or(cols, |seen| seen.min(cols)));
+            }
+            _ => return None,
+        }
+    }
+    caps.bounds().then_some(caps)
+}
+
+/// `head`, `head -20`, `head -n 20`, `head -n20` -> the line count (bare `head`
+/// keeps 10). `head -c BYTES` is not a line bound and is rejected.
+fn head_lines(args: &[&str]) -> Option<u32> {
+    let mut count = 10;
+    let mut index = 0;
+    while let Some(arg) = args.get(index).copied() {
+        let value = if arg == "-n" {
+            index += 1;
+            *args.get(index)?
+        } else {
+            arg.strip_prefix('-')?
+        };
+        count = value.strip_prefix('n').unwrap_or(value).parse().ok()?;
+        index += 1;
+    }
+    Some(count)
+}
+
+/// `cut -c1-350` / `cut -c 1-350` / `cut -c1,20-40` -> the widest column window
+/// in characters. Any other `cut` form walks fields, not columns, and is
+/// rejected.
+fn cut_cols(args: &[&str]) -> Option<u32> {
+    let spec = match args.first()?.strip_prefix("-c")? {
+        "" => *args.get(1)?,
+        rest => rest,
+    };
+    let mut widest = 0;
+    for part in spec.split(',') {
+        let part = part.trim_matches(|c| c == '"' || c == '\'');
+        let width = match part.split_once('-') {
+            Some((first, last)) => {
+                let first: u32 = first.parse().ok()?;
+                match last {
+                    "" => u32::MAX,
+                    last => last
+                        .parse::<u32>()
+                        .ok()?
+                        .saturating_sub(first)
+                        .saturating_add(1),
+                }
+            }
+            None => 1,
+        };
+        widest = widest.max(width);
+    }
+    Some(widest)
+}
+
+/// The bytes a ranged read prints, after the pipeline's caps.
+fn printed_bytes_capped(path: &Path, start: u32, end: u32, caps: Caps) -> Option<u64> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() > MAX_SCAN_BYTES {
         return None;
     }
-    let range: Range = ranges.into_iter().next()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    let first = usize::try_from(start).ok()?.saturating_sub(1);
+    let take = usize::try_from(end.saturating_sub(start).saturating_add(1)).ok()?;
+    text.lines().nth(first)?;
+    let bytes: u64 = text
+        .lines()
+        .skip(first)
+        .take(take)
+        .take(caps.keep())
+        .map(|line| caps.width(line) + 1)
+        .sum();
+    Some(bytes)
+}
+
+/// The ranged reads that sit in front of a *bounding* pipe, with the caps that
+/// pipe places on them. [`hunt_ranges`] skips every piped segment because a
+/// pipe may bound the text; when the stages name the bound the read is
+/// sizeable, and `sed -n '1,700p' f | head -200` used to pass every guard.
+fn piped_ranges(command: &str) -> Vec<(Range, Caps)> {
+    let mut out = Vec::new();
+    for segment in command.split([';', '&', '\n']) {
+        let Some((head, _)) = segment.split_once('|') else {
+            continue;
+        };
+        let tokens: Vec<&str> = head.split_whitespace().collect();
+        if tokens.is_empty()
+            || segment.contains('>')
+            || is_in_place_sed(&tokens)
+            || writes_file(&tokens)
+        {
+            continue;
+        }
+        if !tokens.iter().any(|token| program(token) == "sed") {
+            continue;
+        }
+        let Some(caps) = pipe_caps(segment) else {
+            continue;
+        };
+        let mut range: Option<(u32, u32)> = None;
+        let mut path: Option<String> = None;
+        for token in &tokens {
+            if range.is_none() {
+                if let Some(parsed) = parse_range(token) {
+                    range = Some(parsed);
+                    continue;
+                }
+            } else if plausible_path(token) {
+                path = Some(token.trim_matches(|c| c == '"' || c == '\'').to_string());
+            }
+        }
+        if let (Some((start, end)), Some(path)) = (range, path) {
+            out.push((Range { path, start, end }, caps));
+        }
+    }
+    out
+}
+
+/// The oversized read this range is, after the caps, or `None` when it is cheap.
+fn sized(range: &Range, caps: Caps, cwd: &Path) -> Option<Slice> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
     let path = resolve(&range.path, cwd, home.as_deref())?;
     let meta = std::fs::metadata(&path).ok()?;
     if !meta.is_file() || meta.len() < MIN_FILE_BYTES {
         return None;
     }
-    let bytes = printed_bytes(&path, range.start, range.end)?;
+    let bytes = printed_bytes_capped(&path, range.start, range.end, caps)?;
     if bytes < CAP_BYTES {
         return None;
     }
@@ -228,6 +390,24 @@ pub(super) fn detect(command: &str, cwd: &Path) -> Option<Slice> {
         end: range.end,
         bytes,
     })
+}
+
+/// The oversized read this command is, or `None` when it does not qualify.
+pub(super) fn detect(command: &str, cwd: &Path) -> Option<Slice> {
+    let ranges = hunt_ranges(command);
+    if ranges.len() == 1 {
+        let range: Range = ranges.into_iter().next()?;
+        return sized(&range, Caps::unbounded(), cwd);
+    }
+    if !ranges.is_empty() {
+        return None;
+    }
+    let piped = piped_ranges(command);
+    if piped.len() != 1 {
+        return None;
+    }
+    let (range, caps) = piped.into_iter().next()?;
+    sized(&range, caps, cwd)
 }
 
 /// Whether the command carries [`ALLOW_TOKEN`] as a whole word.
@@ -445,14 +625,21 @@ pub(super) fn detect_whole(command: &str, cwd: &Path) -> Option<WholeRead> {
     let mut paths: Vec<String> = Vec::new();
     let mut bytes: u64 = 0;
     for segment in command.split([';', '&', '\n']) {
-        let tokens: Vec<&str> = segment.split_whitespace().collect();
-        if tokens.is_empty()
-            || segment.contains('|')
-            || segment.contains('>')
-            || program(tokens[0]) != "cat"
-        {
+        let read = segment.split('|').next().unwrap_or(segment);
+        let tokens: Vec<&str> = read.split_whitespace().collect();
+        if tokens.is_empty() || segment.contains('>') || program(tokens[0]) != "cat" {
             continue;
         }
+        // A `cat ... | head -N` prints N full lines, which can still be tens of
+        // kilobytes; a stage whose bound is unknown skips the segment as before.
+        let caps = if segment.contains('|') {
+            let Some(caps) = pipe_caps(segment) else {
+                continue;
+            };
+            caps
+        } else {
+            Caps::unbounded()
+        };
         let mut segment_bytes: u64 = 0;
         let mut segment_paths: Vec<String> = Vec::new();
         let mut eligible = true;
@@ -460,7 +647,11 @@ pub(super) fn detect_whole(command: &str, cwd: &Path) -> Option<WholeRead> {
             if token.starts_with('-') {
                 continue;
             }
-            let token = token.trim_matches(|c| c == '"' || c == '\'');
+            // `(cd dir; cat a.rs b.rs)` closes the subshell on the last path,
+            // which used to make the whole segment ineligible.
+            let token = token
+                .trim_matches(|c| c == '"' || c == '\'')
+                .trim_end_matches(')');
             if !plausible_path(token) || !is_source_file(token) {
                 eligible = false;
                 break;
@@ -483,10 +674,33 @@ pub(super) fn detect_whole(command: &str, cwd: &Path) -> Option<WholeRead> {
         if !eligible || segment_paths.is_empty() {
             continue;
         }
+        if caps.bounds() {
+            let Some(bounded) = capped_cat_bytes(&segment_paths, caps) else {
+                continue;
+            };
+            segment_bytes = bounded;
+        }
         bytes = bytes.saturating_add(segment_bytes);
         paths.extend(segment_paths);
     }
     (bytes >= CAP_BYTES && !paths.is_empty()).then_some(WholeRead { paths, bytes })
+}
+
+/// The bytes a `cat` of `paths` prints after the pipeline's caps.
+fn capped_cat_bytes(paths: &[String], caps: Caps) -> Option<u64> {
+    let mut remaining = caps.keep();
+    let mut total = 0u64;
+    for path in paths {
+        let text = std::fs::read_to_string(path).ok()?;
+        for line in text.lines() {
+            if remaining == 0 {
+                return Some(total);
+            }
+            total = total.saturating_add(caps.width(line) + 1);
+            remaining -= 1;
+        }
+    }
+    Some(total)
 }
 
 /// Compare-and-decide a whole-file read against the persisted session state.
