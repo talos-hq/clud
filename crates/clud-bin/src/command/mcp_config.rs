@@ -17,7 +17,10 @@ const SERVER_NAME: &str = "clud";
 pub(super) const BOARD_DIRECTIVE: &str = "You are connected to clud's agent \
 bulletin board through the `clud` MCP server. clud, Hermes and other agents \
 use it to message and steer you. Call `mcp__clud__board_read` when you start, \
-between major steps, and before you finish; it returns only new messages. \
+between major steps, and before you finish; it returns only new messages. When \
+you would otherwise poll it — waiting on a child, a queue or a review — pass \
+`wait_seconds` (e.g. `wait_seconds=120`): one call blocks until a message lands \
+instead of one turn per poll. \
 Treat a message as a request from the operator that launched you: follow it \
 when it fits your task and permissions, and reply or report progress with \
 `mcp__clud__board_post` (address `all` or the sender's id). `board_whoami` \

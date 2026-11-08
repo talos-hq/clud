@@ -140,3 +140,94 @@ def test_zero_override_withholds_every_broadcast(bridge, fake_api, monkeypatch) 
     page = json.loads(asyncio.run(bridge.board_read()))
     assert [m["body"] for m in page["messages"]] == ["direct-0"]
     assert page["skipped_broadcasts"] == 20
+
+
+def _late_message_api(bridge, monkeypatch, bridge_after_polls: int, body: str = "steer"):
+    """A fake daemon that stays silent for N polls, then has one message.
+
+    Returns the list of GET paths, so a test can prove the call actually waited
+    (re-read the page) instead of returning the first empty page.
+    """
+    board: list[dict] = []
+    paths: list[str] = []
+
+    async def discover():
+        return "http://127.0.0.1:1", "tok"
+
+    async def api(base, token, method, path, body_=None, headers=None):
+        del base, token, headers
+        if method == "POST":
+            message = {**(body_ or {}), "cursor": len(board) + 1}
+            board.append(message)
+            return 201, message
+        paths.append(path)
+        if len(paths) > bridge_after_polls and not board:
+            board.append({"cursor": 1, "from": "clud", "to": "sess-1", "body": body})
+        after = int(path.split("after=")[1])
+        page = [m for m in board if m["cursor"] > after]
+        return 200, {"messages": page, "next_cursor": len(board)}
+
+    monkeypatch.setattr(bridge, "_discover_api", discover)
+    monkeypatch.setattr(bridge, "_api", api)
+    monkeypatch.setattr(bridge, "_board_cursor", 0)
+    monkeypatch.setattr(bridge, "_board_first_read_done", False)
+    monkeypatch.setattr(bridge, "_WAIT_TICK_SECONDS", 0.01)
+    monkeypatch.setenv("CLUD_SESSION_ID", "sess-1")
+    monkeypatch.delenv("CLUD_BOARD_ID", raising=False)
+    return paths
+
+
+def test_a_waiting_message_is_returned_without_waiting(bridge, fake_api) -> None:
+    asyncio.run(bridge.board_post("sess-1", "already here"))
+    page = json.loads(asyncio.run(bridge.board_read(-1, 120)))
+    assert [m["body"] for m in page["messages"]] == ["already here"]
+    assert "note" not in page
+    assert "waited_s" not in page
+
+
+def test_read_blocks_until_a_message_arrives(bridge, monkeypatch) -> None:
+    paths = _late_message_api(bridge, monkeypatch, bridge_after_polls=3)
+    page = json.loads(asyncio.run(bridge.board_read(-1, 5)))
+    assert [m["body"] for m in page["messages"]] == ["steer"]
+    assert len(paths) >= 4, "the call returned an empty page instead of waiting"
+
+
+def test_wait_advances_the_cursor_so_the_next_read_is_a_delta(bridge, monkeypatch) -> None:
+    _late_message_api(bridge, monkeypatch, bridge_after_polls=2)
+    asyncio.run(bridge.board_read(-1, 5))
+    second = json.loads(asyncio.run(bridge.board_read()))
+    assert second["messages"] == []
+    assert "skipped_broadcasts" not in second
+
+
+def test_empty_read_without_a_wait_offers_one(bridge, fake_api) -> None:
+    del fake_api
+    page = json.loads(asyncio.run(bridge.board_read()))
+    assert page["messages"] == []
+    assert page["next_wait_seconds"] == bridge.BOARD_POLL_REARM_SECONDS
+    assert f"wait_seconds={bridge.BOARD_POLL_REARM_SECONDS}" in page["note"]
+
+
+def test_expired_wait_reports_the_budget_and_rearms(bridge, monkeypatch) -> None:
+    _late_message_api(bridge, monkeypatch, bridge_after_polls=10_000)
+    page = json.loads(asyncio.run(bridge.board_read(-1, 1)))
+    assert page["messages"] == []
+    assert page["waited_s"] >= 1
+    assert page["next_wait_seconds"] == 1
+    assert "wait_seconds=1 blocks" in page["note"]
+
+
+def test_wait_is_capped_below_the_client_deadline(bridge, monkeypatch) -> None:
+    assert bridge.BOARD_MAX_WAIT_SECONDS == 540
+    assert bridge._board_wait_budget(100_000) == 540.0
+    monkeypatch.setattr(bridge, "BOARD_MAX_WAIT_SECONDS", 1)
+    _late_message_api(bridge, monkeypatch, bridge_after_polls=10_000)
+    page = json.loads(asyncio.run(bridge.board_read(-1, 100_000)))
+    assert page["wait_seconds_capped_to"] == 1
+    assert page["waited_s"] < 5, "a capped wait must not outlive the client deadline"
+
+
+def test_negative_wait_is_rejected_before_the_daemon_is_called(bridge, fake_api) -> None:
+    page = json.loads(asyncio.run(bridge.board_read(-1, -5)))
+    assert page["code"] == "invalid_argument"
+    assert fake_api == []
