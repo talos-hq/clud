@@ -484,6 +484,19 @@ fn pr_check_is_a_dispatched_subcommand() {
 }
 
 #[test]
+fn pr_check_and_doctor_keep_their_own_help_text() {
+    let cmd = <Args as clap::CommandFactory>::command();
+    let about = |name: &str| {
+        cmd.find_subcommand(name)
+            .and_then(|sub| sub.get_about())
+            .map(ToString::to_string)
+            .unwrap_or_default()
+    };
+    assert!(about("pr-check").starts_with("Run the repo's declared"));
+    assert!(about("doctor").starts_with("Report hook and alias health"));
+}
+
+#[test]
 fn doctor_is_a_dispatched_subcommand() {
     let args = parse(&["clud", "doctor"]);
     assert!(matches!(
