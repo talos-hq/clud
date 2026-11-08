@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::clud_hooks_compile::{dispatcher_command, is_plain_scanner_handler};
+use crate::clud_hooks_compile::{
+    dispatcher_command, is_plain_scanner_handler, SCANNER_EXIT_SUFFIX,
+};
 
 fn config_paths(repo: &Path, home: Option<&Path>) -> Vec<PathBuf> {
     let mut unique = BTreeSet::new();
@@ -37,21 +39,34 @@ fn config_paths(repo: &Path, home: Option<&Path>) -> Vec<PathBuf> {
 /// installation that did not already have one. Unrelated handlers and fields
 /// remain in their original files. Prefer the user's registration over a repo's.
 pub fn migrate(repo: &Path, home: Option<&Path>) -> io::Result<()> {
+    migrate_with_suffix(repo, home, BTreeSet::new())
+}
+
+fn migrate_with_suffix(
+    repo: &Path,
+    home: Option<&Path>,
+    mut required: BTreeSet<String>,
+) -> io::Result<()> {
     let lock_path = home
         .unwrap_or(repo)
         .join(".clud")
         .join(crate::codex_hook_normalize::LOCK_FILE_NAME);
     let _lock = crate::codex_hook_normalize::acquire_lock(&lock_path)?;
-    let mut seen = BTreeSet::new();
+    let mut docs = Vec::new();
     for path in config_paths(repo, home) {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let Ok(mut doc) = serde_json::from_str::<Value>(&text) else {
+        let Ok(doc) = serde_json::from_str::<Value>(&text) else {
             continue;
         };
+        required.extend(suffixed_events(&doc));
+        docs.push((path, doc));
+    }
+    let mut seen = BTreeSet::new();
+    for (path, mut doc) in docs {
         let before = doc.clone();
-        normalize(&mut doc, &mut seen);
+        normalize(&mut doc, &mut seen, &required);
         if doc != before {
             let mut text = serde_json::to_string_pretty(&doc).map_err(io::Error::other)?;
             text.push('\n');
@@ -78,7 +93,33 @@ fn write_config(path: &Path, text: &str) -> io::Result<()> {
     Ok(())
 }
 
-fn normalize(doc: &mut Value, seen: &mut BTreeSet<String>) {
+fn suffixed_events(doc: &Value) -> BTreeSet<String> {
+    let mut required = BTreeSet::new();
+    if let Some(events) = doc.get("hooks").and_then(Value::as_object) {
+        for (event, groups) in events {
+            if groups.as_array().is_some_and(|groups| {
+                groups.iter().any(|group| {
+                    group
+                        .get("hooks")
+                        .and_then(Value::as_array)
+                        .is_some_and(|handlers| {
+                            handlers.iter().any(|handler| {
+                                is_plain_scanner_handler(handler, event)
+                                    && handler["command"]
+                                        .as_str()
+                                        .is_some_and(|c| c.ends_with(SCANNER_EXIT_SUFFIX))
+                            })
+                        })
+                })
+            }) {
+                required.insert(event.clone());
+            }
+        }
+    }
+    required
+}
+
+fn normalize(doc: &mut Value, seen: &mut BTreeSet<String>, required: &BTreeSet<String>) {
     let Some(events) = doc.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
     };
@@ -108,7 +149,8 @@ fn normalize(doc: &mut Value, seen: &mut BTreeSet<String>) {
             });
             if seen.insert(event.clone()) {
                 groups.push(json!({"matcher":"*", "hooks":[{
-                    "type":"command", "command":dispatcher_command(event)
+                    "type":"command", "command":format!("{}{}", dispatcher_command(event),
+                        if required.contains(event) { SCANNER_EXIT_SUFFIX } else { "" })
                 }]}));
             }
         }
@@ -160,13 +202,20 @@ fn canonical_group(group: &Value, event: &str) -> bool {
             .is_some_and(|handlers| {
                 handlers.iter().any(|handler| {
                     is_plain_scanner_handler(handler, event)
-                        && handler["command"] == dispatcher_command(event)
+                        && handler["command"].as_str().is_some_and(|c| {
+                            c.strip_suffix(SCANNER_EXIT_SUFFIX).unwrap_or(c)
+                                == dispatcher_command(event)
+                        })
                 })
             })
 }
 
 /// The inherited scanner owns these events; retain every unrelated launch hook.
 pub fn remove_inherited(settings: &mut Value, repo: &Path, home: Option<&Path>) {
+    let required = suffixed_events(settings);
+    if !required.is_empty() && migrate_with_suffix(repo, home, required).is_err() {
+        return;
+    }
     let Some(events) = settings.get_mut("hooks").and_then(Value::as_object_mut) else {
         return;
     };
@@ -190,6 +239,135 @@ pub fn remove_inherited(settings: &mut Value, repo: &Path, home: Option<&Path>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exit_suffix_consolidation_and_migration() {
+        let suffix = "; exit $LASTEXITCODE";
+        for spelling in [
+            "clud-cmd-scan",
+            "clud-block-bad-cmd",
+            "clud tool run hooks/block-bad-cmd.py",
+            "& $env:CLUD_EXE tool run hooks/block-bad-cmd.py",
+            "clud-cmd-scan --event PreToolUse",
+        ] {
+            let mut launch = json!({"hooks":{"PreToolUse":[{"matcher":"*", "hooks":[
+                {"type":"command","command":format!("{spelling}{suffix}")},
+                {"type":"command","command":"clud-cmd-scan --event PreToolUse"},
+                {"type":"command","command":"clud-cmd-scan; echo custom"}
+            ]}]}});
+            crate::clud_hooks_compile::consolidate_scanner_hooks(&mut launch);
+            assert_eq!(
+                launch["hooks"]["PreToolUse"].as_array().unwrap().len(),
+                2,
+                "{spelling}"
+            );
+            assert_eq!(
+                launch["hooks"]["PreToolUse"][1]["hooks"][0]["command"],
+                format!("clud-cmd-scan --event PreToolUse{suffix}")
+            );
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            let home = tmp.path().join("home");
+            let user = home.join(".claude/settings.json");
+            write(
+                &user,
+                &json!({"hooks":{"PreToolUse":[{"matcher":"*", "hooks":[
+                    {"type":"command","command":format!("{spelling}{suffix}")}
+                ]}]}}),
+            );
+            migrate(&repo, Some(&home)).unwrap();
+            let before = std::fs::read(&user).unwrap();
+            migrate(&repo, Some(&home)).unwrap();
+            assert_eq!(before, std::fs::read(&user).unwrap());
+            let doc: Value = serde_json::from_slice(&before).unwrap();
+            assert_eq!(
+                doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+                format!("clud-cmd-scan --event PreToolUse{suffix}")
+            );
+            remove_inherited(&mut launch, &repo, Some(&home));
+            assert_eq!(launch["hooks"]["PreToolUse"].as_array().unwrap().len(), 1);
+        }
+    }
+
+    #[test]
+    fn exit_suffix_launch_upgrades_plain_inherited_scanner() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let home = tmp.path().join("home");
+        let user = home.join(".claude/settings.json");
+        write(
+            &user,
+            &json!({"hooks":{"PreToolUse":[{"matcher":"*", "hooks":[
+                {"type":"command","command":"clud-cmd-scan --event PreToolUse"}
+            ]}]}}),
+        );
+        let mut launch = json!({"hooks":{"PreToolUse":[{"matcher":"*", "hooks":[
+            {"type":"command","command":"clud-cmd-scan --event PreToolUse; exit $LASTEXITCODE"}
+        ]}]}});
+        remove_inherited(&mut launch, &repo, Some(&home));
+        assert_eq!(launch["hooks"]["PreToolUse"], json!([]));
+        let doc: Value = serde_json::from_slice(&std::fs::read(&user).unwrap()).unwrap();
+        assert_eq!(
+            doc["hooks"]["PreToolUse"][0]["hooks"][0]["command"],
+            "clud-cmd-scan --event PreToolUse; exit $LASTEXITCODE"
+        );
+    }
+
+    #[test]
+    fn exit_suffix_from_project_is_preserved_in_user_copy() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let home = tmp.path().join("home");
+        let user = home.join(".claude/settings.json");
+        let project = repo.join(".claude/settings.json");
+        for (path, command) in [
+            (&user, "clud-cmd-scan --event PostToolUse"),
+            (
+                &project,
+                "clud-cmd-scan --event PostToolUse; exit $LASTEXITCODE",
+            ),
+        ] {
+            write(
+                path,
+                &json!({"hooks":{"PostToolUse":[{"matcher":"*", "hooks":[
+                    {"type":"command","command":command}
+                ]}]}}),
+            );
+        }
+        migrate(&repo, Some(&home)).unwrap();
+        let doc: Value = serde_json::from_slice(&std::fs::read(&user).unwrap()).unwrap();
+        assert_eq!(
+            doc["hooks"]["PostToolUse"][0]["hooks"][0]["command"],
+            "clud-cmd-scan --event PostToolUse; exit $LASTEXITCODE"
+        );
+        let doc: Value = serde_json::from_slice(&std::fs::read(&project).unwrap()).unwrap();
+        assert_eq!(doc["hooks"]["PostToolUse"], json!([]));
+    }
+
+    #[test]
+    fn exit_suffix_customizations_are_untouched() {
+        for command in [
+            "clud-cmd-scan; exit 0",
+            "clud-cmd-scan; exit $LASTEXITCODE ",
+            "clud-cmd-scan; echo custom; exit $LASTEXITCODE",
+            "clud-cmd-scan; exit $LASTEXITCODE; echo custom",
+            "clud-cmd-scan --event Stop; exit $LASTEXITCODE",
+        ] {
+            let mut doc = json!({"hooks":{"PreToolUse":[{"matcher":"*", "hooks":[
+                {"type":"command","command":command}
+            ]}]}});
+            let before = doc.clone();
+            crate::clud_hooks_compile::consolidate_scanner_hooks(&mut doc);
+            normalize(&mut doc, &mut BTreeSet::new(), &BTreeSet::new());
+            assert_eq!(doc, before, "{command}");
+        }
+        assert!(!is_plain_scanner_handler(
+            &json!({
+                "type":"command", "command":"clud-cmd-scan; exit $LASTEXITCODE", "timeout":10
+            }),
+            "PreToolUse"
+        ));
+    }
 
     fn write(path: &Path, doc: &Value) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

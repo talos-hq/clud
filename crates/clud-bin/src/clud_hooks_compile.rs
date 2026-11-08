@@ -290,6 +290,7 @@ pub fn consolidate_scanner_hooks(settings: &mut Value) {
             continue;
         };
         let mut found = false;
+        let mut exit_suffix = false;
         let mut matchers = Vec::new();
         for group in groups.iter_mut() {
             let matcher = group
@@ -303,6 +304,9 @@ pub fn consolidate_scanner_hooks(settings: &mut Value) {
             handlers.retain(|handler| {
                 if is_plain_scanner_handler(handler, event) {
                     found = true;
+                    exit_suffix |= handler["command"]
+                        .as_str()
+                        .is_some_and(|c| c.ends_with(SCANNER_EXIT_SUFFIX));
                     if !matchers.contains(&matcher) {
                         matchers.push(matcher.clone());
                     }
@@ -324,13 +328,20 @@ pub fn consolidate_scanner_hooks(settings: &mut Value) {
             } else {
                 matchers.join("|")
             };
+            let command = format!(
+                "{}{}",
+                dispatcher_command(event),
+                if exit_suffix { SCANNER_EXIT_SUFFIX } else { "" }
+            );
             groups.push(json!({
                 "matcher": matcher,
-                "hooks": [{"type": "command", "command": dispatcher_command(event)}]
+                "hooks": [{"type": "command", "command": command}]
             }));
         }
     }
 }
+
+pub(crate) const SCANNER_EXIT_SUFFIX: &str = "; exit $LASTEXITCODE";
 
 pub(crate) fn is_plain_scanner_handler(handler: &Value, event: &str) -> bool {
     let Some(fields) = handler.as_object() else {
@@ -344,11 +355,15 @@ pub(crate) fn is_plain_scanner_handler(handler: &Value, event: &str) -> bool {
     let Some(command) = handler.get("command").and_then(Value::as_str) else {
         return false;
     };
+    let command = command.strip_suffix(SCANNER_EXIT_SUFFIX).unwrap_or(command);
     command == dispatcher_command(event)
         || (event == PRE_TOOL_USE
             && matches!(
                 command,
-                "clud-cmd-scan" | "clud-block-bad-cmd" | "clud tool run hooks/block-bad-cmd.py"
+                "clud-cmd-scan"
+                    | "clud-block-bad-cmd"
+                    | "clud tool run hooks/block-bad-cmd.py"
+                    | "& $env:CLUD_EXE tool run hooks/block-bad-cmd.py"
             ))
 }
 
