@@ -1027,13 +1027,13 @@ pub enum Command {
     /// to migrate clud's provider credentials into it (#2609). `clud setup
     /// <product>` is an exact alias. See docs/architecture/install-products.md.
     Install(InstallArgs),
-    /// Report hook and alias health: stale or retired aliases in clud's own
-    /// alias dirs, a foreign `clud-cmd-scan` first on PATH, and the hook
-    /// matcher's tool coverage (#1954). Exits 1 when anything is wrong.
     /// Run the repo's declared `pr_checks.commands` in order and, when all
     /// pass, record a receipt for `HEAD^{tree}` that unblocks `git push` /
     /// `gh pr create` in the PreToolUse hook (#2720).
     PrCheck,
+    /// Report hook and alias health: stale or retired aliases in clud's own
+    /// alias dirs, a foreign `clud-cmd-scan` first on PATH, and the hook
+    /// matcher's tool coverage (#1954). Exits 1 when anything is wrong.
     Doctor {
         /// Print the report as one JSON document.
         #[arg(long)]
