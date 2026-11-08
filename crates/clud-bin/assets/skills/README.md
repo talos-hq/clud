@@ -28,6 +28,7 @@ every backend's skills dir on launch. `clud-loop` was retired once
   [grind-review/](grind-review/SKILL.md),
   [grind-integrate/](grind-integrate/SKILL.md),
   [grind-land/](grind-land/SKILL.md), [grind-cron/](grind-cron/SKILL.md).
+  Integrators commit goal formatting or restore verified formatter-only paths; they never mutate stashes.
   Contract: [grind.md](../../../../docs/architecture/grind.md). It replaces
   the retired `clud-meta-work`.
 - [clud-issue/](clud-issue/README.md) - File a researched GitHub issue without

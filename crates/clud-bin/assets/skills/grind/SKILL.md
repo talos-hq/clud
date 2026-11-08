@@ -650,6 +650,10 @@ two), whether or not every goal merged:
    Then `git status --porcelain`
    prints nothing: no untracked files, no uncommitted changes, and no stash
    the run created other than the preflight stash step 4 pops.
+   Integrators never mutate stashes: they commit goal formatting or restore
+   verified formatter-only paths that were clean before lint, as specified in
+   `/grind-integrate`. Never pop/drop unrelated entries to satisfy this check;
+   report unexpected entries and preserve them.
 4. **Restore only what `preflight` recorded.** `git fetch origin`, then
    `git switch <preflight.branch>`; run `git pull --ff-only origin <main>`
    only when that branch is `<main>`. Then, by `preflight.action`:

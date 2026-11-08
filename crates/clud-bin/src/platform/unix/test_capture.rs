@@ -282,7 +282,10 @@ mod tests {
         for path in [&reporter, &alias, &hard_link] {
             let mut watchdog =
                 crate::tool_run::watchdog_for_tool(path.to_str().unwrap(), path, root.path());
-            watchdog.started_at = std::time::Instant::now() - Duration::from_secs(172_800);
+            let now = std::time::Instant::now();
+            // A freshly booted host may not have two days of monotonic history.
+            watchdog.started_at = now.checked_sub(Duration::from_secs(172_800)).unwrap_or(now);
+            assert_eq!(watchdog.command_timeout, Duration::MAX);
             assert_eq!(
                 watchdog.check(),
                 crate::tool_watchdog::WatchdogDecision::Continue

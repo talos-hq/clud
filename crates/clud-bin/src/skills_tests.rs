@@ -1187,3 +1187,18 @@ fn pending_upgrade_patch_is_refreshed() {
         "alpha body\n"
     );
 }
+
+#[test]
+fn grind_integrator_resolves_formatting_without_stashes() {
+    let integrate = bundled_skill_md("grind-integrate");
+    assert!(integrate.contains("**Never mutate the stash stack.**"));
+    assert!(!integrate.contains("`git stash` first"));
+    assert!(integrate.contains("`git switch -c <branch>` at the current HEAD"));
+    assert!(integrate.contains("git rebase --onto origin/<base> <starting-head> <branch>"));
+    assert!(integrate.contains("`git restore -- <explicit paths>`"));
+    assert!(integrate.contains("those paths were clean before"));
+    assert!(integrate.contains("attribution is uncertain, stop and report"));
+    let router = bundled_skill_md("grind");
+    assert!(router.contains("Integrators never mutate stashes"));
+    assert!(router.contains("Never pop/drop unrelated entries"));
+}

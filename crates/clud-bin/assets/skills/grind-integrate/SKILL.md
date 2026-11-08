@@ -17,12 +17,18 @@ You hold the run's build lock, so nothing else builds while you do.
 
 1. **Branch.** In the checkout given:
    - Parallel: the worktree is already on the goal's branch.
-   - Sequential: `git fetch origin <base>`, then
-     `git switch -c <branch> origin/<base>` (`<base>` as in step 2), carrying the worker edits
-     (`git stash` first if the switch needs it).
+   - Sequential: record `git rev-parse HEAD` as `<starting-head>`, then
+     `git switch -c <branch>` at the current HEAD, carrying the worker edits.
+     Commit before fetching and rebasing in step 2; do not switch dirty edits
+     directly onto a different base.
+   **Never mutate the stash stack.** Only `git stash list` is permitted;
+   preflight/carry stashes belong to the router, never the integrator.
    Commit the goal's files by name (never `git add -A`) with a conventional
    message naming the issue.
-2. **Rebase** onto `origin/<base>` after a fresh fetch, where `<base>` is
+2. **Rebase** after a fresh fetch. Sequential mode uses
+   `git rebase --onto origin/<base> <starting-head> <branch>` to transplant
+   only this goal's commits: the previous goal may still be awaiting merge.
+   Parallel mode rebases normally onto `origin/<base>`. Here `<base>` is
    `<main>` in the bug stage and the feature branch
    (`grind/meta-<M>-<run-id>`) in the feature stage. A dependent goal's
    dependency has already merged, so `origin/<base>` contains it. In the
@@ -34,6 +40,14 @@ You hold the run's build lock, so nothing else builds while you do.
 3. **RED -> GREEN.** Run the goal's focused regression test and show it
    fails without the fix (check out the test alone on the base, or cite the
    reproduction), then passes with it.
+   **Formatter output.** Before lint, record the changed paths and their diffs.
+   After lint, inspect the diff again. Commit formatting needed by the goal,
+   naming its files explicitly. For unrelated formatter-only changes, use
+   `git restore -- <explicit paths>` only when those paths were clean before
+   lint and the diff proves the changes came solely from that lint run.
+   Never restore a whole tree, a pre-existing edit or carried user work. If
+   attribution is uncertain, stop and report the paths instead of discarding
+   or stashing them. Resolve this output before switching goals or pushing.
 3b. **Multi-platform lint gate, required before every push (DD-205).** In a
    Rust workspace that declares `[workspace.metadata.soldr].targets`, run
    Clippy and Dylint for every declared target through soldr: `soldr lint rust`
