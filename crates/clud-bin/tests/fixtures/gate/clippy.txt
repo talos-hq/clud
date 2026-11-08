@@ -1,4 +1,19 @@
 # t0=2026-11-03
-Checking fixture
- --> src/lib.rs:2:1
+    Checking fixture v0.1.0
+warning: unused variable: `value`
+ --> src/lib.rs:1:5
+  |
+1 | let value = 1;
+  |     ^^^^^ help: if this is intentional, prefix it with an underscore: `_value`
+  |
+  = note: `#[warn(unused_variables)]` on by default
+
 error: unneeded `return` statement
+ --> src/lib.rs:2:1
+  |
+2 | return 42;
+  | ^^^^^^^^^
+  |
+  = help: for further information visit https://rust-lang.github.io/rust-clippy/master/index.html#needless_return
+  = note: `-D clippy::needless-return` implied by `-D warnings`
+error: could not compile `fixture` (lib) due to 1 previous error; 1 warning emitted

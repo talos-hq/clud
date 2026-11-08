@@ -1,6 +1,14 @@
 use super::*;
 
 #[test]
+fn clippy_error_outranks_warnings_and_notes() {
+    assert_eq!(
+        first_error(include_str!("../../tests/fixtures/gate/clippy.txt")).as_deref(),
+        Some("error: unneeded `return` statement")
+    );
+}
+
+#[test]
 fn diagnostic_tool_fixtures_rank_candidates() {
     for (text, expected) in [
         (
