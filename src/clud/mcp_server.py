@@ -261,6 +261,21 @@ _RESULT_EVENT_CAP = 2048
 #: Poll cadence for `session_wait`. One second matches the daemon's own tick and
 #: keeps a wait cheap (a local loopback GET) while still returning promptly.
 _WAIT_TICK_SECONDS = 1.0
+#: The tool-call deadline this bridge designs against. clud's own direct backend
+#: caps one tool call at 600 s (`DIRECT_TIMEOUT_MS` in `route_plan.rs`), and the
+#: MCP clients it serves sit at or below that, so a blocking wait has to leave
+#: headroom under it.
+_CLIENT_TOOL_DEADLINE_S = 600
+#: Default `session_wait` budget: the client deadline minus a 60 s margin, so one
+#: wait covers as much of a child's life as a single tool call safely can.
+#:
+#: Why not the old 300 s: measured over one day (2026-11-08), 68% of 195 waits hit
+#: their budget and returned `done: false`, and each timeout costs the caller a
+#: full request at its live context (~366 k tokens in the sessions measured) just
+#: to re-arm the wait. A 540 s budget collapsed 195 wait turns to 144 over the
+#: same 96 children. Callers on a tighter client deadline pass a smaller value
+#: explicitly; nothing here clamps an explicit budget.
+_DEFAULT_WAIT_SECONDS = 540
 #: Session states in which no turn can still be running.
 _TERMINAL_SESSION_STATES = frozenset({"idle", "failed", "terminated"})
 #: Turn states that mean "this turn is over, for good or ill".
@@ -608,11 +623,21 @@ async def _result_payload(
     if include_events:
         payload["events"] = collected["events"]
     if not snapshot["done"]:
-        payload["note"] = (
-            "STILL RUNNING - the turn has not sealed. Keep the session_id and "
-            "probe again (session_result) or wait (session_wait); do not relaunch "
-            "the work."
-        )
+        if waited_s is None:
+            payload["note"] = (
+                "STILL RUNNING - the turn has not sealed. Keep the session_id and "
+                "call session_wait to block on it (an unwaited probe only re-sends "
+                "this answer); do not relaunch the work."
+            )
+        else:
+            payload["next_wait_seconds"] = _DEFAULT_WAIT_SECONDS
+            payload["note"] = (
+                f"STILL RUNNING after a {round(waited_s, 1)} s wait - the budget ran "
+                "out, not the work. Re-arm with "
+                f"session_wait(wait_seconds={_DEFAULT_WAIT_SECONDS}) and repeat until "
+                "done: true; keep the session_id, do not relaunch, and do not poll "
+                "session_status/session_result between waits."
+            )
     return payload
 
 
@@ -817,7 +842,7 @@ async def session_result(
 async def session_wait(
     session_id: str,
     ctx: Context,
-    wait_seconds: int = 300,
+    wait_seconds: int = _DEFAULT_WAIT_SECONDS,
     turn_id: str = "",
     after: int = 0,
     include_events: bool = False,
@@ -827,15 +852,25 @@ async def session_wait(
     This is the synchronous-but-cheap path: one call, no model-side polling, and
     it returns THE MOMENT the turn finishes rather than burning the whole
     budget. When the budget runs out it returns `done: false` with the partial
-    text — never an error, and the run keeps going on the daemon.
+    text, `next_wait_seconds`, and a note telling you to RE-ARM this wait —
+    never an error, and the run keeps going on the daemon.
 
-    Keep `wait_seconds` comfortably below the client's tool-call deadline
-    (Hermes: `timeouts.tools.sequential_call`, 420 s by default) so the result
-    comes back as a result rather than a client-side abandonment.
+    The default budget is 540 s, i.e. the 600 s client tool-call deadline this
+    bridge designs against minus a 60 s margin: one wait should cover as much of
+    the child's life as a single call safely can. Do not shave it down "to be
+    safe" — a shorter budget only adds round-trips, and each one re-sends the
+    whole conversation. If your client abandons tool calls earlier than 600 s
+    (Hermes: `timeouts.tools.sequential_call`), pass a value under that deadline
+    instead of relying on the default.
+
+    Do NOT poll `session_status`/`session_result` in a loop between waits: those
+    return instantly and usually just say "still running", which costs a full
+    request each time. Wait instead.
 
     Args:
         session_id: The id returned by `session_start`.
-        wait_seconds: Maximum seconds to block (default 300).
+        wait_seconds: Maximum seconds to block (default 540, under the 600 s
+            client tool-call deadline).
         turn_id: Turn to wait for; empty means the session's latest turn.
         after: Event cursor to start collecting text from.
         include_events: Include the normalised event records in the result.
