@@ -443,7 +443,7 @@ pub fn ensure_helper_on_session_path() {
 }
 
 /// `path_env` with the helper-only directory (populated for `clud`)
-/// appended, or `None` when it is already there or cannot be populated.
+/// prepended, or `None` when it is already first or cannot be populated.
 fn session_path_with_helper(path_env: &str, clud: &Path, home: &Path) -> Option<String> {
     let dir = expose_helper_at(home, clud).ok()?;
     path_with_helper(path_env, &dir, Some(home))
@@ -569,7 +569,7 @@ fn refresh_found_helper(found: &Path, clud: &Path, home: Option<&Path>) -> Optio
     foreign_helper_warning(found, clud, owned)
 }
 
-/// `path_env` with `dir` last and every other clud helper dir gone, or `None`
+/// `path_env` with `dir` first and every other clud helper dir gone, or `None`
 /// when that is already so. A clud started inside an older session inherits
 /// that build's helper dir, which would otherwise shadow its own (DD-203).
 fn path_with_helper(path_env: &str, dir: &Path, home: Option<&Path>) -> Option<String> {
@@ -578,14 +578,17 @@ fn path_with_helper(path_env: &str, dir: &Path, home: Option<&Path>) -> Option<S
         .collect();
     let other_helper =
         |entry: &PathBuf| entry != dir && home.is_some_and(|home| is_clud_helper_dir(entry, home));
-    if all.iter().any(|entry| entry == dir) && !all.iter().any(other_helper) {
+    if all.first().is_some_and(|entry| entry == dir)
+        && all.iter().filter(|entry| entry.as_path() == dir).count() == 1
+        && !all.iter().any(other_helper)
+    {
         return None;
     }
     let mut entries: Vec<PathBuf> = all
         .into_iter()
         .filter(|entry| entry != dir && !other_helper(entry))
         .collect();
-    entries.push(dir.to_path_buf());
+    entries.insert(0, dir.to_path_buf());
     std::env::join_paths(entries)
         .ok()
         .and_then(|joined| joined.into_string().ok())
@@ -976,7 +979,7 @@ mod tests {
             .unwrap();
         let updated = path_with_helper(&base, &new, Some(home)).unwrap();
         let entries: Vec<PathBuf> = std::env::split_paths(&updated).collect();
-        assert_eq!(entries, vec![PathBuf::from("/usr/bin"), new.clone()]);
+        assert_eq!(entries, vec![new.clone(), PathBuf::from("/usr/bin")]);
         assert_eq!(path_with_helper(&updated, &new, Some(home)), None);
     }
 
@@ -1122,7 +1125,7 @@ mod tests {
     /// the session's PATH as a fallback, or every hook then fails with
     /// `clud-cmd-scan: command not found`.
     #[test]
-    fn helper_dir_is_appended_even_when_path_already_finds_a_helper() {
+    fn helper_dir_is_prepended_even_when_path_already_finds_a_helper() {
         let tmp = tempdir().unwrap();
         let clud = tmp.path().join("install").join("clud");
         write(&clud, "clud-v2");
@@ -1137,26 +1140,38 @@ mod tests {
         let updated = session_path_with_helper(&base, &clud, &home).unwrap();
 
         let entries: Vec<PathBuf> = std::env::split_paths(&updated).collect();
-        // Appended after the found copy, so it never shadows it.
+        // This build wins over the foreign scanner.
         let helper = crate::version_dir::locate(&home, &clud).unwrap().helper();
-        assert_eq!(entries, vec![other, helper.clone()]);
+        assert_eq!(entries, vec![helper.clone(), other]);
         assert!(helper.join(native_helper_name()).is_file());
         assert_eq!(session_path_with_helper(&updated, &clud, &home), None);
     }
 
     #[test]
-    fn helper_dir_is_appended_to_path_once() {
+    fn helper_dir_is_prepended_to_path_once() {
         let tmp = tempdir().unwrap();
         let a = tmp.path().join("a");
         let dir = tmp.path().join("helper");
         let base = std::env::join_paths([&a]).unwrap().into_string().unwrap();
         let updated = path_with_helper(&base, &dir, None).unwrap();
         let entries: Vec<PathBuf> = std::env::split_paths(&updated).collect();
-        assert_eq!(entries, vec![a, dir.clone()]);
+        assert_eq!(entries, vec![dir.clone(), a]);
         assert_eq!(path_with_helper(&updated, &dir, None), None);
         assert_eq!(
             path_with_helper("", &dir, None).unwrap(),
             dir.to_string_lossy()
+        );
+    }
+
+    #[test]
+    fn helper_dir_is_moved_to_front_and_deduplicated() {
+        let dir = PathBuf::from("helper");
+        let other = PathBuf::from("other");
+        let base = std::env::join_paths([&other, &dir, &dir]).unwrap();
+        let updated = path_with_helper(base.to_str().unwrap(), &dir, None).unwrap();
+        assert_eq!(
+            std::env::split_paths(&updated).collect::<Vec<_>>(),
+            vec![dir, other]
         );
     }
 

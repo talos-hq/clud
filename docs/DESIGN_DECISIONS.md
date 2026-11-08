@@ -7737,3 +7737,23 @@ rebase onto the same content does not need a rerun.
 attestation, adds no `Local-Gate` trailer and fails open like the rest of
 `block_bad_cmd`. See
 [hook-dispatch.md](architecture/hook-dispatch.md#pr-checks-gate-2720).
+
+
+## DD-208: the session's helper-only directory comes first on PATH
+
+**Context:** DD-203 isolates aliases per build but appending `helper-bin`
+still lets an unrelated installation's `clud-cmd-scan` win PATH resolution.
+The build handshake preserves enforcement by relaying to the launcher, at the
+cost of another process and a `HOOK-SKEW` event for each guarded call (#2463).
+
+**Decision:** amend DD-203: prepend the launching build's helper-only directory,
+remove older clud helper directories, and move an existing entry to the front
+without duplicates. Keep only the scanner aliases there; exposing the whole
+install directory would shadow unrelated tools. Use the platform-aware PATH
+split/join helpers so native Windows separators follow the same ordering.
+
+**Consequences:** direct scanner resolution uses the selected build. The
+handshake remains a safety net if a descendant resets PATH. Doctor reports
+HOOK-SKEW relay counts from the current hook log and its single rotated backup,
+explicitly scoped to retained history, rather than implying a session or
+lifetime total. No new counter store or hook config rewrite is needed.
