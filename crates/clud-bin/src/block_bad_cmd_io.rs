@@ -203,6 +203,10 @@ pub(super) fn append_log(message: &str) {
     let Some(path) = log_path() else {
         return;
     };
+    append_log_at(&path, message);
+}
+
+fn append_log_at(path: &Path, message: &str) {
     if let Some(parent) = path.parent() {
         if std::fs::create_dir_all(parent).is_err() {
             return;
