@@ -74,8 +74,9 @@ server = MCPServer(
         "To delegate work to a Codex (OpenAI) sub-agent, call session_start with "
         'backend="codex" and a self-contained prompt and cwd, then session_wait or '
         "session_result for its result. Use run for short blocking jobs. Pass model "
-        "to pick a specific Codex model. Check board_read periodically for messages "
-        "from clud, Hermes or other agents, and answer with board_post. To steer a "
+        "to pick a specific Codex model. Read the board with board_read — pass "
+        "wait_seconds instead of polling, it blocks until a message arrives — for "
+        "messages from clud, Hermes or other agents, and answer with board_post. To steer a "
         "running session_start session without restarting it, call session_inject "
         '(kind="directive" replaces the earlier directive; kind="note" only informs).'
     ),
@@ -998,6 +999,26 @@ FIRST_READ_BROADCASTS_ENV_VAR = "CLUD_BOARD_FIRST_READ_BROADCASTS"
 #: Later reads return deltas, which are small by construction.
 _board_first_read_done = False
 
+#: Longest single ``board_read`` block, in seconds.
+#:
+#: A caller that polls the board on a timer pays a WHOLE model turn per poll: a
+#: measured 24 h window held 352 ``board_read`` calls of which 173 (49%) returned
+#: ``messages: []`` — half the calls existed only to learn that nothing had been
+#: said, at the session's live context (~250-360 k tokens) each. ``wait_seconds``
+#: turns that loop into one call that returns the moment a message lands.
+#:
+#: The bridge cannot see the client's tool-call deadline (Hermes: 420 s by
+#: default, 600 s in the observed harness), and a call that outlives it is
+#: abandoned client-side — the agent pays the turn and gets nothing, the exact
+#: waste this removes. So the wait is capped below the common deadline and the
+#: payload says it was capped rather than silently shortening.
+BOARD_MAX_WAIT_SECONDS = 540
+
+#: Wait suggested to a caller that polled with no budget and found nothing.
+#: Short enough that a truly empty board still returns promptly, long enough
+#: that an idle supervisor stops spinning.
+BOARD_POLL_REARM_SECONDS = 120
+
 
 def _board_identity() -> str:
     """This agent's bulletin-board address: ``CLUD_BOARD_ID`` or the session id."""
@@ -1085,12 +1106,21 @@ def _dump_page(payload: dict) -> str:
         return json.dumps({"error": "result was not JSON-serializable"})
 
 
+def _board_wait_budget(wait_seconds: int) -> float:
+    """Seconds this call may block: ``wait_seconds`` capped for the client."""
+    return min(float(wait_seconds), float(BOARD_MAX_WAIT_SECONDS))
+
+
 @server.tool()
-async def board_read(after: int = -1) -> str:
+async def board_read(after: int = -1, wait_seconds: int = 0) -> str:
     """Read new bulletin-board messages addressed to this agent or to "all".
 
     Each call returns only what arrived since the previous call. Act on any
     instructions from clud, Hermes or the user, and reply with `board_post`.
+
+    Pass `wait_seconds` instead of polling on a timer: the call then blocks
+    until a message arrives or the budget expires, so one turn covers the whole
+    idle interval. The default 0 returns immediately, exactly as before.
 
     The first read of a fresh process returns every message addressed to this
     agent, plus the newest 8 broadcasts, and reports `skipped_broadcasts` when
@@ -1099,21 +1129,59 @@ async def board_read(after: int = -1) -> str:
 
     Args:
         after: Cursor to read from; -1 (default) continues from the last read.
+        wait_seconds: Block up to this many seconds for the next message
+            (default 0 = return immediately). Capped at 540 s.
     """
     global _board_cursor, _board_first_read_done
+    rejected = v.check_seconds("wait_seconds", wait_seconds, minimum=0, tool="board_read")
+    if rejected is not None:
+        return _dump(rejected.payload())
     try:
         base, token = await _discover_api()
     except Exception as exc:
         return _dump(v.daemon_unavailable(exc).payload())
     cursor = _board_cursor if after < 0 else after
-    query = urllib.parse.urlencode({"to": _board_identity(), "after": cursor})
-    status, payload = await _api(base, token, "GET", f"/v1/board/messages?{query}")
-    if status != 200 or not isinstance(payload, dict):
-        return _dump({"error": f"read failed ({status}): {payload}"})
-    if not _board_first_read_done and after < 0:
+    first_read = not _board_first_read_done and after < 0
+    budget = _board_wait_budget(wait_seconds)
+    capped = budget < float(wait_seconds)
+    started = time.monotonic()
+    while True:
+        query = urllib.parse.urlencode({"to": _board_identity(), "after": cursor})
+        status, payload = await _api(base, token, "GET", f"/v1/board/messages?{query}")
+        if status != 200 or not isinstance(payload, dict):
+            return _dump({"error": f"read failed ({status}): {payload}"})
+        messages = payload.get("messages") or []
+        if messages or not budget or time.monotonic() - started >= budget:
+            break
+        await asyncio.sleep(_WAIT_TICK_SECONDS)
+    if first_read:
         payload = _bound_first_read(payload)
     _board_first_read_done = True
     _board_cursor = int(payload.get("next_cursor", cursor))
+    waited_s = round(time.monotonic() - started, 1)
+    if not messages:
+        # An empty read is the one moment the caller is deciding what to do
+        # next: say plainly that waiting is free, and how long to wait. When the
+        # budget was already spent this is the re-arm instruction, not a hint.
+        payload = {
+            **payload,
+            "waited_s": waited_s,
+            "next_wait_seconds": BOARD_POLL_REARM_SECONDS if not budget else int(budget),
+            "note": (
+                f"nothing on the board; waited {waited_s:.0f}s. "
+                + (
+                    "Call board_read with wait_seconds instead of polling again: "
+                    f"wait_seconds={int(budget)} blocks until a message arrives."
+                    if budget
+                    else "If you are polling, call board_read(wait_seconds="
+                    f"{BOARD_POLL_REARM_SECONDS}) so one call covers the wait."
+                )
+            ),
+        }
+        if capped:
+            payload["wait_seconds_capped_to"] = int(budget)
+    elif waited_s >= _WAIT_TICK_SECONDS:
+        payload = {**payload, "waited_s": waited_s}
     return _dump_page(payload)
 
 
