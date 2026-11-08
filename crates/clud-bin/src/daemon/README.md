@@ -230,3 +230,7 @@ Session rm activation and hook identity checks: [rm protection](../../../../docs
 `command::builder` also uses the canonical `experimental_enabled` routing decision
 to keep foreground-only print rendering out of managed/native session logs; see
 [prompt-output.md](../../../../docs/architecture/prompt-output.md).
+
+`daemon_events.rs` redacts error text before persistence, preserving event
+identity, paths, pids and classifications. See the
+[structured-record field contract](../../../../docs/architecture/secret-redaction.md#one-way-structured-record-persistence-2210).

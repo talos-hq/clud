@@ -77,8 +77,19 @@ fn append_event_line(path: &Path, event: &Value) -> io::Result<()> {
     // concurrent reader doing `read_to_string` can hit EOF mid-object,
     // producing the `EOF while parsing an object` failure the rp_broker /
     // reap-orphans tests saw on Linux ARM and macOS ARM.
-    let mut buf =
-        serde_json::to_vec(event).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+    let mut event = event.clone();
+    crate::secret_redaction::redact_record_fields(
+        &mut event,
+        &["error", "write_error", "wait_error"],
+    );
+    if matches!(
+        event.get("op").and_then(Value::as_str),
+        Some("adopt_kill_accepted" | "adopt_kill_started" | "adopt_kill_finished")
+    ) {
+        crate::secret_redaction::redact_record_fields(&mut event, &["reason"]);
+    }
+    let mut buf = serde_json::to_vec(&event)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     buf.push(b'\n');
     if writer.is_none() {
         *writer = Some(CachedWriter {
@@ -133,6 +144,39 @@ fn thread_name() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_redaction_preserves_daemon_behavior() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = daemon_events_path(tmp.path());
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let event = json!({"op":"adopt_kill_accepted", "request_id":secret, "daemon_pid":42,
+            "ts_ms":123, "path":format!("/{secret}"), "error":secret,
+            "write_error":secret, "wait_error":secret, "reason":secret});
+        append_event_line(&path, &event).unwrap();
+        let text = fs::read_to_string(path).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        let mut actual: Value = serde_json::from_str(text.trim()).unwrap();
+        let mut expected = event.clone();
+        for field in ["error", "write_error", "wait_error", "reason"] {
+            assert!(
+                !actual[field].to_string().contains(&secret),
+                "{field} persisted verbatim: {}",
+                actual[field]
+            );
+            actual[field] = Value::Null;
+            expected[field] = Value::Null;
+        }
+        assert_eq!(actual, expected);
+        assert_eq!(event["error"], secret);
+        let ordinary = json!({"op":"request_replied", "error":"ordinary error",
+            "write_error":"ordinary write error", "wait_error":"ordinary wait error",
+            "reason":"fixed_reason", "request_id":7});
+        append_event_line(&daemon_events_path(tmp.path()), &ordinary).unwrap();
+        let text = fs::read_to_string(daemon_events_path(tmp.path())).unwrap();
+        let last: Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(last, ordinary);
+    }
 
     fn read_lines(path: &Path) -> Vec<Value> {
         fs::read_to_string(path)

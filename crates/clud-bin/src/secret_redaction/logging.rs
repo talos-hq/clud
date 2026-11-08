@@ -19,6 +19,27 @@ pub fn redact_for_log(text: &str) -> String {
     redact_plain(&redact_embedded_strings(text))
 }
 
+/// Rewrite only explicitly selected text fields on a persistence-only copy.
+/// Unselected fields (including structured IDs and paths) are never visited.
+pub(crate) fn redact_record_fields(record: &mut serde_json::Value, fields: &[&str]) {
+    for field in fields {
+        let Some(value) = record.get_mut(*field) else {
+            continue;
+        };
+        match value {
+            serde_json::Value::String(text) => *text = redact_for_log(text),
+            serde_json::Value::Array(items) => {
+                for item in items {
+                    if let serde_json::Value::String(text) = item {
+                        *text = redact_for_log(text);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 fn redact_embedded_strings(text: &str) -> String {
     static QUOTED: OnceLock<regex::Regex> = OnceLock::new();
     let quoted = QUOTED.get_or_init(|| {

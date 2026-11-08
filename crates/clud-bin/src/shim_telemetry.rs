@@ -110,6 +110,8 @@ fn append(path: &Path, record: &serde_json::Value) {
 }
 
 fn append_with_cap(path: &Path, record: &serde_json::Value, cap: u64) {
+    let mut record = record.clone();
+    crate::secret_redaction::redact_record_fields(&mut record, &["argv"]);
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -131,6 +133,36 @@ fn append_with_cap(path: &Path, record: &serde_json::Value, cap: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_redaction_preserves_shim_behavior() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = log_path(tmp.path());
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let args = vec![OsString::from("status"), OsString::from(&secret)];
+        let recorder = Recorder::start_at("git", &args, Some(path.clone()));
+        recorder.record(7);
+        recorder.record(9);
+        let text = std::fs::read_to_string(path).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        let mut actual: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        let mut expected = serde_json::json!({
+            "ts_ms": recorder.ts_ms, "tool": "git", "argv": ["status", secret],
+            "cwd": std::env::current_dir().ok(), "exit_code": 7,
+            "duration_ms": actual["duration_ms"], "session_id": session_id(),
+            "pid": sysinfo::get_current_pid().unwrap().as_u32(), "parent": parent_name(),
+        });
+        assert_eq!(recorder.argv[1], secret);
+        assert_eq!(args[1], OsString::from(&secret));
+        assert!(
+            !text.contains(&secret),
+            "credential persisted verbatim: {text}"
+        );
+        assert_eq!(actual["argv"][0], "status");
+        actual["argv"] = serde_json::Value::Null;
+        expected["argv"] = serde_json::Value::Null;
+        assert_eq!(actual, expected);
+    }
 
     fn read_lines(path: &Path) -> Vec<serde_json::Value> {
         std::fs::read_to_string(path)

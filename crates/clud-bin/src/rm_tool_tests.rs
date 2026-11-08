@@ -973,3 +973,28 @@ fn bogus_git_marker_does_not_widen_roots_to_the_enclosing_repo() {
     );
     assert!(refused.is_err(), "{refused:?}");
 }
+
+#[test]
+fn record_redaction_keeps_deletion_targets_and_refusals_exact() {
+    let w = world();
+    let name = format!("ghp_{}", "A".repeat(36));
+    let victim = w.root.join(&name);
+    let outside = w.home.join(&name);
+    std::fs::write(&victim, b"delete this temporary fixture").unwrap();
+    std::fs::write(&outside, b"keep this temporary fixture").unwrap();
+    let outside_arg = outside.to_string_lossy().into_owned();
+    let (code, _, _) = w.run(Kind::File, &["--purge", &name, &outside_arg]);
+    assert_eq!(code, 1);
+    assert!(!victim.exists());
+    assert!(outside.exists());
+    let records = w.audit_records();
+    let paths = records[0]["paths"].as_array().unwrap();
+    assert!(paths
+        .iter()
+        .any(|entry| entry["path"] == victim.to_string_lossy().as_ref()
+            && entry["action"] == "purged"));
+    assert!(paths
+        .iter()
+        .any(|entry| entry["path"] == outside.to_string_lossy().as_ref()
+            && entry["action"] == "refused"));
+}

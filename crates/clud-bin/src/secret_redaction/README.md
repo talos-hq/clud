@@ -16,6 +16,6 @@ See [the architecture contract](../../../../docs/architecture/secret-redaction.m
 `logging.rs::redact_for_log` is the pure, one-way persistence API. It reuses
 `detect.rs` and adds log-only argument, header, quoted Apple password and
 `gh secret set` literal contexts. It emits `[REDACTED:<kind>]` without a
-session map. The hook log is its first sink; known-value matching, other
-sinks, historical scrubbing, command guards and entropy detection remain
-outside this slice of #2210. Operational inputs never pass through it.
+session map. The hook log and selected structured records use this API. Field selection
+and the remaining #2210 scope are documented in the architecture contract
+above. Operational inputs never pass through it.

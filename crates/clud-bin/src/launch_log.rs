@@ -261,6 +261,7 @@ fn take_failure_reason(id: &str) -> Option<String> {
 /// `ANTHROPIC_*` value -- and makes no claim to catch every shape those two
 /// values could take.
 fn sanitize_failure_reason(reason: &str) -> String {
+    let reason = crate::secret_redaction::redact_for_log(reason);
     let mut words: Vec<String> = Vec::new();
     let mut after_bearer = false;
     for word in reason.split_whitespace() {
@@ -340,7 +341,12 @@ fn write_record(state_dir: &Path, record: &LaunchRecord) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let bytes = serde_json::to_vec_pretty(record).map_err(io::Error::other)?;
+    let mut value = serde_json::to_value(record).map_err(io::Error::other)?;
+    crate::secret_redaction::redact_record_fields(
+        &mut value,
+        &["command", "clud_argv", "failure_reason", "metered_warning"],
+    );
+    let bytes = serde_json::to_vec_pretty(&value).map_err(io::Error::other)?;
     fs::write(path, bytes)
 }
 
@@ -379,6 +385,60 @@ fn prune_old_records(state_dir: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_redaction_preserves_launch_behavior() {
+        let tmp = tempfile::tempdir().unwrap();
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let original = serde_json::json!({
+            "id": secret, "source": "direct", "clud_pid": 42, "backend": "codex",
+            "launch_mode": "subprocess", "cwd": format!("/{secret}"), "repo_root": null,
+            "command": ["codex", secret], "clud_argv": ["clud", secret],
+            "launched_at_ms": 123, "exited_at_ms": 456, "exit_code": 7,
+            "failure_reason": format!("request failed: {secret}"),
+            "metered_warning": format!("warning {secret}"),
+        });
+        let record: LaunchRecord = serde_json::from_value(original.clone()).unwrap();
+        write_record(tmp.path(), &record).unwrap();
+        let bytes = fs::read(record_path(tmp.path(), &record.id)).unwrap();
+        let mut actual: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let mut expected = original.clone();
+        assert_eq!(serde_json::to_value(&record).unwrap(), original);
+        assert_eq!(actual["command"][0], "codex");
+        assert_eq!(actual["clud_argv"][0], "clud");
+        for field in ["command", "clud_argv", "failure_reason", "metered_warning"] {
+            assert!(
+                !actual[field].to_string().contains(&secret),
+                "{field} persisted verbatim: {}",
+                actual[field]
+            );
+            actual[field] = serde_json::Value::Null;
+            expected[field] = serde_json::Value::Null;
+        }
+        assert_eq!(actual, expected);
+        let mut ordinary = original;
+        ordinary["command"] = serde_json::json!(["codex", "ordinary argument"]);
+        ordinary["clud_argv"] = serde_json::json!(["clud", "ordinary argument"]);
+        ordinary["failure_reason"] = serde_json::json!("ordinary failure");
+        ordinary["metered_warning"] = serde_json::json!("ordinary warning");
+        let record: LaunchRecord = serde_json::from_value(ordinary.clone()).unwrap();
+        write_record(tmp.path(), &record).unwrap();
+        let bytes = fs::read(record_path(tmp.path(), &record.id)).unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            ordinary
+        );
+    }
+
+    #[test]
+    fn record_redaction_precedes_failure_reason_bound() {
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let prefix = "x ".repeat(MAX_FAILURE_REASON_CHARS / 2 - 10);
+        let reason = sanitize_failure_reason(&format!("{prefix}{secret}"));
+        assert!(!reason.contains("ghp_"));
+        assert!(reason.contains("[REDACTED:github]"));
+        assert!(reason.chars().count() <= MAX_FAILURE_REASON_CHARS);
+    }
 
     #[test]
     fn serialized_launch_argv_masks_keys_but_keeps_non_secret_arguments() {
