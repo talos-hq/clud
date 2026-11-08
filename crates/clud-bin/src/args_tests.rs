@@ -477,6 +477,13 @@ fn inject_is_a_dispatched_subcommand_not_backend_passthrough() {
 }
 
 #[test]
+fn pr_check_is_a_dispatched_subcommand() {
+    let args = parse(&["clud", "pr-check"]);
+    assert!(matches!(args.command, Some(Command::PrCheck)));
+    assert!(args.passthrough.is_empty());
+}
+
+#[test]
 fn doctor_is_a_dispatched_subcommand() {
     let args = parse(&["clud", "doctor"]);
     assert!(matches!(

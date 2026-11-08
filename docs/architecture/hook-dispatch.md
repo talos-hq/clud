@@ -1109,3 +1109,31 @@ password/header/`gh secret set` literals (see the
 Redaction changes only the persisted message, never the command evaluated,
 the decision, returned tool input or executed command. This one-way log API
 has no reversible placeholder map and does not alter #2211's gateway API.
+
+## PR-checks gate (#2720)
+
+A repo opts in by listing shell commands under `pr_checks.commands` in
+`.clud/settings.json` (this repo: `bash lint --host-only`, `bash test --host`).
+A repo without the key is not gated.
+
+- **Runner.** `clud pr-check` (`crates/clud-bin/src/pr_checks.rs`) runs the
+  commands in order at the repo root through `running-process`, stops at the
+  first non-zero exit, and on full success writes a receipt under
+  `<state dir>/pr-checks/`. The receipt key hashes the repo root,
+  `git rev-parse HEAD^{tree}` and the command list, so amending a message or
+  rebasing onto an identical tree keeps it, and editing the command list
+  invalidates it.
+- **Gate.** `block_bad_cmd_pr_checks.rs` recognizes `git push` (not
+  `--dry-run`) and `gh pr create`, including `VAR=… ` prefixes and the `ghd`
+  wrapper. In a gated repo without a receipt for the current tree, the call
+  is denied with a message naming `clud pr-check`, the commands and the
+  opt-outs. The decision (`decide`) is pure over injected facts.
+- **Opt-outs.** `CLUD_SKIP_PR_CHECKS=1` in the command text or environment
+  (logged as `PR-CHECKS-OVERRIDE` in the hook log), `pr_checks.enabled: false`
+  in `.clud/settings.local.json`, `.clud/settings.json` or
+  `~/.clud/settings.json` (highest layer that sets it wins), or
+  `CLUD_ALLOW_ALL_CMDS=1` like every other check.
+- **Fail open.** An unparsable command, no repo root or HEAD, or an
+  unreadable/invalid settings file allows the call. This is a fast local
+  pre-push check, not a security boundary or attestation; hosted CI remains
+  the merge gate ([DD-207](../DESIGN_DECISIONS.md#dd-207-pr-checks-are-enforced-by-the-pretooluse-hook-not-a-git-hook)).

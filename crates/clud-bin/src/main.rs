@@ -597,6 +597,13 @@ fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
         args::Command::Secret(options) => clud::secret_prompt::run(options),
         args::Command::SecretsMcp => clud::secrets_catalog::serve(),
         args::Command::SecretsDaemon => clud::secrets_catalog::daemon(),
+        args::Command::PrCheck => {
+            if !args.passthrough.is_empty() {
+                eprintln!("pr-check accepts no passthrough arguments");
+                return Some(2);
+            }
+            clud::pr_checks::run()
+        }
         args::Command::Doctor { json, fix } => {
             if !args.passthrough.is_empty() {
                 eprintln!("doctor accepts no passthrough arguments");

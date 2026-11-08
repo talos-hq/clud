@@ -342,6 +342,26 @@ fn command_opts_out(command: &str) -> bool {
     })
 }
 
+/// Git-state gates on a shell call, as `(log tag, denial)`: a diff against a
+/// stale upstream (#1301), or a push before the repo's PR checks passed
+/// (#2720). A push allowed only by `CLUD_SKIP_PR_CHECKS=1` is logged here.
+fn push_gate_reason(command: &str, cwd: &Path) -> Option<(&'static str, String)> {
+    if let Some(reason) = block_bad_cmd_stale_upstream::reason(command, cwd) {
+        return Some(("STALE-UPSTREAM-BLOCKED", reason));
+    }
+    match block_bad_cmd_pr_checks::evaluate(command, cwd)? {
+        block_bad_cmd_pr_checks::Decision::Deny(reason) => Some(("PR-CHECKS-BLOCKED", reason)),
+        block_bad_cmd_pr_checks::Decision::Skipped => {
+            append_log(&format!(
+                "PR-CHECKS-OVERRIDE: {}=1: PR-check gate bypassed for {command:?}",
+                crate::pr_checks::SKIP_ENV
+            ));
+            None
+        }
+        block_bad_cmd_pr_checks::Decision::Allow => None,
+    }
+}
+
 /// The event a bare invocation serves.
 pub const PRE_TOOL_USE_EVENT: &str = "PreToolUse";
 
@@ -882,8 +902,8 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
     // reads the whole rebase delta. Any caller, not only grind roles: the
     // built-in `/code-review` hardcodes that range and clud does not own it.
     if event == PRE_TOOL_USE_EVENT && block_bad_cmd_gate::gates_tool(&payload.tool_name) {
-        if let Some(reason) = block_bad_cmd_stale_upstream::reason(&payload.command, &payload.cwd) {
-            append_log(&format!("STALE-UPSTREAM-BLOCKED: {reason}"));
+        if let Some((tag, reason)) = push_gate_reason(&payload.command, &payload.cwd) {
+            append_log(&format!("{tag}: {reason}"));
             println!("{}", deny_json(&reason));
             eprintln!("[clud] {reason}");
             return 2;
@@ -4131,6 +4151,9 @@ mod block_bad_cmd_grind_gate;
 
 #[path = "block_bad_cmd_stale_upstream.rs"]
 mod block_bad_cmd_stale_upstream;
+
+#[path = "block_bad_cmd_pr_checks.rs"]
+mod block_bad_cmd_pr_checks;
 
 #[path = "block_bad_cmd_repeat.rs"]
 mod block_bad_cmd_repeat;
