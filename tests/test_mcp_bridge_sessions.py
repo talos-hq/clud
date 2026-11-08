@@ -38,6 +38,10 @@ class _DaemonState:
         self.terminal_state: str | None = None
         #: Override the recorded turns list (e.g. [] for the submit window).
         self.turns: list[dict] | None = None
+        #: Per-session seal override: session_id -> polls needed before it seals.
+        self.seal_after_by_session: dict[str, int] = {}
+        #: Per-session poll counters, used with `seal_after_by_session`.
+        self.polls_by_session: dict[str, int] = {}
         self.base_url = ""
         #: client_msg_id -> seq, mirroring the daemon's idempotency.
         self.injections: dict[str, int] = {}
@@ -67,7 +71,12 @@ def _make_handler(state: _DaemonState):  # noqa: C901
 
         def _record_payload(self, session_id: str) -> dict:
             state.polls += 1
-            sealed = state.polls >= state.seal_after_polls
+            if session_id in state.seal_after_by_session:
+                seen = state.polls_by_session.get(session_id, 0) + 1
+                state.polls_by_session[session_id] = seen
+                sealed = seen >= state.seal_after_by_session[session_id]
+            else:
+                sealed = state.polls >= state.seal_after_polls
             session_state = state.terminal_state or ("idle" if sealed else "running")
             active = None if (state.terminal_state or sealed) else "turn-1"
             if state.turns is not None:
@@ -321,6 +330,87 @@ def test_session_wait_returns_as_soon_as_the_turn_seals(bridge, wired):
     assert payload["done"] is True
     assert elapsed < 5, "a wait must return on completion, not burn its budget"
     assert payload["waited_s"] < 5
+
+
+# --------------------------------------------------------------------------- #
+# session_wait_any (fan-out)
+# --------------------------------------------------------------------------- #
+
+
+def test_session_wait_any_returns_on_the_first_completion(bridge, wired):
+    # sess-slow never seals inside the budget; sess-fast seals on its 2nd poll.
+    wired.seal_after_polls = 10_000
+    wired.seal_after_by_session = {"sess-fast": 2}
+    started = time.monotonic()
+    payload = _result(
+        _run(bridge.session_wait_any(["sess-slow", "sess-fast"], _FakeCtx(), wait_seconds=30))
+    )
+    elapsed = time.monotonic() - started
+    assert payload["done"] is True
+    assert payload["session_id"] == "sess-fast"
+    # The whole point: a turn must buy a completion, not a timeout.
+    assert elapsed < 5, "a fan-out wait must return on the first completion"
+    assert payload["waited_s"] < 5
+    # The rest of the fan-out is reported without expanding it.
+    assert [row["session_id"] for row in payload["still_running"]] == ["sess-slow"]
+    assert payload["still_running"][0]["state"] == "running"
+
+
+def test_session_wait_any_expands_only_the_session_that_woke_it(bridge, wired):
+    wired.events = [_event(1, "turn-1", "the answer")]
+    wired.seal_after_by_session = {"sess-a": 1, "sess-b": 1}
+    payload = _result(
+        _run(bridge.session_wait_any(["sess-a", "sess-b"], _FakeCtx(), wait_seconds=30))
+    )
+    assert payload["done"] is True
+    expanded = [row for row in payload["sealed"] if row.get("expanded")]
+    collapsed = [row for row in payload["sealed"] if not row.get("expanded")]
+    assert len(expanded) == 1
+    assert expanded[0]["text"] == "the answer"
+    # A second completion in the same tick is named, not expanded: the wake
+    # payload stays flat however wide the fan-out is.
+    assert [row["session_id"] for row in collapsed] == ["sess-b"]
+    assert "session_result" in collapsed[0]["note"]
+
+
+def test_session_wait_any_times_out_cleanly_without_poll_advice(bridge, wired):
+    wired.seal_after_polls = 10_000
+    payload = _result(
+        _run(bridge.session_wait_any(["sess-x", "sess-y"], _FakeCtx(), wait_seconds=1))
+    )
+    assert payload["done"] is False
+    assert "error" not in payload
+    assert "NO CHILD FINISHED" in payload["note"]
+    # The re-arm must be another wait, never a status poll.
+    assert "session_status" in payload["note"]
+    assert {row["session_id"] for row in payload["still_running"]} == {"sess-x", "sess-y"}
+
+
+def test_session_wait_any_reports_a_vanished_child_instead_of_failing(bridge, wired):
+    wired.seal_after_polls = 10_000
+    payload = _result(
+        _run(bridge.session_wait_any(["missing", "sess-y"], _FakeCtx(), wait_seconds=1))
+    )
+    assert payload["done"] is False
+    assert [row["session_id"] for row in payload["unreadable"]] == ["missing"]
+    assert [row["session_id"] for row in payload["still_running"]] == ["sess-y"]
+
+
+def test_session_wait_any_rejects_an_empty_or_oversized_fan_out(bridge, wired):
+    empty = _result(_run(bridge.session_wait_any([], _FakeCtx())))
+    assert empty["ok"] is False
+    assert "session_ids is required" in empty["message"]
+    too_many = [f"sess-{i}" for i in range(17)]
+    oversized = _result(_run(bridge.session_wait_any(too_many, _FakeCtx())))
+    assert oversized["ok"] is False
+    assert "at most 16" in oversized["message"]
+
+
+def test_session_wait_any_validates_every_id_before_touching_the_daemon(bridge, wired):
+    payload = _result(_run(bridge.session_wait_any(["sess-ok", "not a session"], _FakeCtx())))
+    assert payload["ok"] is False
+    assert payload["code"] == "invalid_session_id"
+    assert not wired.requests, "validation must not reach the daemon"
 
 
 def test_an_unrecorded_turn_is_not_reported_done_while_the_session_lives(bridge, wired):
