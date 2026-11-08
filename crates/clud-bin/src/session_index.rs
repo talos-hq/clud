@@ -234,7 +234,9 @@ pub fn append_event(ctx: &SessionContext, event: &IndexEvent) -> io::Result<()> 
         "v".to_string(),
         serde_json::Value::Number(INDEX_SCHEMA_VERSION.into()),
     );
-    let mut buf = serde_json::to_vec(&serde_json::Value::Object(object))
+    let mut value = serde_json::Value::Object(object);
+    crate::secret_redaction::redact_record_fields(&mut value, &["args"]);
+    let mut buf = serde_json::to_vec(&value)
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
     buf.push(b'\n');
     let mut file = OpenOptions::new()
@@ -273,6 +275,38 @@ fn state_root() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_redaction_preserves_index_behavior() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = ctx_in(&tmp, 1234, 5678);
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let event = IndexEvent::Started {
+            tool_id: 1,
+            tool: secret.clone(),
+            args: vec!["status".into(), secret.clone()],
+            pid: 42,
+            pid_start_time: 123,
+            started_at_ms: 456,
+        };
+        let original = serde_json::to_value(&event).unwrap();
+        append_event(&ctx, &event).unwrap();
+        let text = fs::read_to_string(ctx.index_path()).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        let mut actual: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert!(
+            !actual["args"].to_string().contains(&secret),
+            "args persisted verbatim: {}",
+            actual["args"]
+        );
+        assert_eq!(actual["args"][0], "status");
+        actual["args"] = original["args"].clone();
+        assert_eq!(actual["v"], INDEX_SCHEMA_VERSION);
+        actual.as_object_mut().unwrap().remove("v");
+        assert_eq!(actual, original);
+        assert_eq!(serde_json::to_value(&event).unwrap(), original);
+    }
+
     use tempfile::TempDir;
 
     fn ctx_in(tmp: &TempDir, pid: u32, epoch: u64) -> SessionContext {

@@ -1068,3 +1068,10 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
 The diagnostic reporter's outer watchdog is disabled, including filesystem aliases
 of its installed script; native capture owns explicit deadlines. See
 [`test_runtime/README.md`](test_runtime/README.md#diagnostic-capture).
+
+Structured-record persistence redacts only the text fields listed in
+[the redaction contract](../../../docs/architecture/secret-redaction.md#one-way-structured-record-persistence-2210).
+This covers shim telemetry, launch records, bridge diagnostics, daemon errors,
+the tool index, rm handoff diagnostics and GC selection-rule explanations;
+identifiers and filesystem fields remain exact. Settings metadata and reap
+identity/counter records contain no eligible text and remain unchanged.

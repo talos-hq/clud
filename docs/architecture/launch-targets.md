@@ -405,7 +405,8 @@ body itself. Issue #772 adds an always-on forensic floor at
 attempts, buffered across workers, capped at 1 MiB with a visible
 `truncated` marker. Records contain only fixed bridge reasons and fields already
 exposed by `UpstreamFailure` (status, class, correlation IDs, retry hints, and
-scrubbed detail); request/response bodies, credentials, bearers, authorization
+scrubbed detail, with the persistence shape redactor applied to `detail`
+before buffering); request/response bodies, credentials, bearers, authorization
 headers, and upstream URLs are never inputs to the logger. Issue #999 adds the
 model-discovery handshake to that floor **on the direct Codex route only** — a
 `catalog_advertised` entry per `GET /v1/models` served by `serve_codex_catalog`,

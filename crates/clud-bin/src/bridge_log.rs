@@ -88,10 +88,11 @@ impl BridgeLog {
         self.record_with(event, false);
     }
 
-    fn record_with(&mut self, event: serde_json::Value, notable: bool) {
+    fn record_with(&mut self, mut event: serde_json::Value, notable: bool) {
         if self.disabled || self.truncated {
             return;
         }
+        crate::secret_redaction::redact_record_fields(&mut event, &["detail"]);
         let line = event.to_string();
         let line_bytes = line.len() + 1;
         if self.written_bytes + self.buffered_bytes + line_bytes > self.max_bytes {
@@ -203,6 +204,39 @@ pub fn unix_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn record_redaction_preserves_bridge_behavior() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("bridge.jsonl");
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let event = serde_json::json!({"event":"upstream_attempt", "attempt":2,
+            "decision":"retry", "backoff_ms":100, "x_request_id":secret,
+            "path":format!("/{secret}"), "detail":format!("command failed: {secret}")});
+        let mut log = BridgeLog::new(path.clone());
+        log.record(event.clone());
+        log.record_ambient(serde_json::json!({"detail":"ordinary text"}));
+        assert!(log.has_records());
+        assert!(log.has_notable_records());
+        log.flush();
+        let text = fs::read_to_string(path).unwrap();
+        let lines: Vec<serde_json::Value> = text
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(lines.len(), 2);
+        let mut actual = lines[0].clone();
+        let mut expected = event;
+        assert!(
+            !actual["detail"].to_string().contains(&secret),
+            "detail persisted verbatim: {}",
+            actual["detail"]
+        );
+        actual["detail"] = serde_json::Value::Null;
+        expected["detail"] = serde_json::Value::Null;
+        assert_eq!(actual, expected);
+        assert_eq!(lines[1], serde_json::json!({"detail":"ordinary text"}));
+    }
 
     #[test]
     fn healthy_log_creates_no_file() {

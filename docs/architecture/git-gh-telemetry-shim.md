@@ -55,7 +55,7 @@ to `<state>/logs/shim/git-gh.jsonl`. `<state>` is `~/.clud/state`, or
 | --- | --- |
 | `ts_ms` | start time, Unix ms |
 | `tool` | `git` or `gh` |
-| `argv` | arguments after argv\[0\] (lossy UTF-8) |
+| `argv` | arguments after argv\[0\] (lossy UTF-8, credential shapes redacted before writing) |
 | `cwd` | working directory |
 | `exit_code` | the child's code, `128 + N` for signal N, `126` if it could not start |
 | `duration_ms` | wall time of the invocation |

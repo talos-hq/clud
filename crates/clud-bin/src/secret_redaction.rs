@@ -6,6 +6,7 @@ use std::sync::OnceLock;
 mod detect;
 mod logging;
 pub use logging::redact_for_log;
+pub(crate) use logging::redact_record_fields;
 pub mod policy;
 pub mod reversible;
 mod session;

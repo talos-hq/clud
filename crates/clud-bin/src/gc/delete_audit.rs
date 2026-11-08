@@ -6,7 +6,8 @@
 //! durable fix has two halves and this module is one of them: every deletion
 //! path that could touch user data writes one JSONL line to
 //! `<state>/gc-audit.jsonl` **immediately before** acting, naming the sweep
-//! site, the exact filesystem path, and the rule that selected it. A future
+//! site, the exact filesystem path, and the rule that selected it (with
+//! credential shapes redacted from free-text explanations). A future
 //! incident is then answerable by grepping one file instead of being
 //! reconstructed from an unrelated daemon crash log.
 //!
@@ -83,6 +84,7 @@ pub(crate) fn record_required(site: &str, path: &Path, rule: &str) -> std::io::R
 }
 
 fn record_required_at(log_path: &Path, site: &str, path: &Path, rule: &str) -> std::io::Result<()> {
+    let rule = crate::secret_redaction::redact_for_log(rule);
     let line = serde_json::json!({
         "ts_ms": SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis(),
         "event": "delete",
@@ -103,6 +105,7 @@ fn record_required_at(log_path: &Path, site: &str, path: &Path, rule: &str) -> s
 
 /// Testable core of [`record`] — appends one JSONL line synchronously.
 pub fn record_at(log_path: &Path, site: &str, path: &Path, rule: &str) {
+    let rule = crate::secret_redaction::redact_for_log(rule);
     let line = serde_json::json!({
         "ts_ms": SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -171,6 +174,62 @@ impl Drop for StateDirGuard {
 mod tests {
     use super::*;
     use serde_json::Value;
+
+    #[test]
+    fn record_redaction_required_gc_audit() {
+        assert_rule_redaction(true);
+    }
+
+    #[test]
+    fn record_redaction_best_effort_gc_audit() {
+        assert_rule_redaction(false);
+    }
+
+    fn assert_rule_redaction(required: bool) {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("audit.jsonl");
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let target = tmp.path().join(&secret);
+        fs::create_dir(&target).unwrap();
+        let rule = format!("override explanation: command --token {secret}");
+        let write = |rule: &str| {
+            if required {
+                record_required_at(&log, &secret, &target, rule).unwrap();
+            } else {
+                record_at(&log, &secret, &target, rule);
+            }
+        };
+        write(&rule);
+        let text = fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        let mut actual: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert!(
+            !actual["rule"].to_string().contains(&secret),
+            "rule persisted verbatim: {}",
+            actual["rule"]
+        );
+        assert!(actual["rule"]
+            .as_str()
+            .unwrap()
+            .starts_with("override explanation: command --token "));
+        actual["rule"] = serde_json::json!(rule);
+        assert_eq!(
+            actual,
+            serde_json::json!({"ts_ms":actual["ts_ms"],
+            "event":"delete", "site":secret, "path":target, "rule":rule})
+        );
+        assert!(target.is_dir());
+        write("ordinary selection rule");
+        let text = fs::read_to_string(&log).unwrap();
+        assert_eq!(text.lines().count(), 2);
+        let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(
+            last,
+            serde_json::json!({"ts_ms":last["ts_ms"],
+            "event":"delete", "site":secret, "path":target, "rule":"ordinary selection rule"})
+        );
+        assert!(target.is_dir());
+    }
 
     #[test]
     fn record_at_writes_parseable_jsonl_with_site_path_rule() {

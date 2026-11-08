@@ -72,3 +72,33 @@ status secrecy in `secret_redaction/status.rs` and `toast/statusline_tests.rs`;
 CLI route-policy assertions in `tests/test_secret_redaction.py`.
 Run them through the repository's Bosn CI path. Successful core tests alone
 do not establish retry, failover, or gateway HTTP integration coverage.
+
+## One-way structured-record persistence (#2210)
+
+`secret_redaction::redact_for_log` also owns shape-based persistence redaction.
+It emits `[REDACTED:<kind>]` without a session mapping. Writers select only
+text fields; the field selector adds no credential patterns or policy.
+Operational commands, arguments and decisions never use the rewritten copy.
+
+| Writer | Redacted fields | Preserved fields |
+| --- | --- | --- |
+| Shim telemetry | `argv` | Tool, cwd, session identity, parent, pid, times and exit code |
+| Launch record | `command`, `clud_argv`, `failure_reason`, `metered_warning` | Launch ID, source, backend, mode, cwd, repo root, pid, times and exit code |
+| Bridge JSONL | `detail` | Correlation/model IDs, classifications, retry decisions, counts and times |
+| Daemon events | `error`, `write_error`, `wait_error`, adopt-kill `reason` | Event/request/session IDs, paths, pids, labels, fixed reasons, counters and times |
+| Session tool index | Started-event `args` | Tool identity, lifecycle reasons, tool ID, pids, exit code, schema and times |
+| GC required/best-effort audit | `rule` (may include a human root-override explanation) | Site, exact filesystem path, event and timestamp |
+| rm audit | Handoff argv, top-level `reason`, per-outcome `reason` | Operands (filesystem paths), command identity, paths/trash paths/roots/cwd, role, session, flags, actions, exit code and time |
+
+GC selection rules can include the human reason from `safe_rm.extra_roots`,
+so both required and best-effort writers redact that text. Settings audit
+contains key pointers, protected roots,
+target, outcome, pid and time, with no setting values. Reap JSONL contains
+process identity (including image name), action, reason and phase; its flight
+recorder contains counters. These records remain unchanged.
+
+Remaining work includes test-capture artifacts, output tee/caps and raw CI-log
+continuations (byte-exact/verdict contracts); session logs/transcripts, crash
+reports, workflow replay cache and Python tool artifacts; known-value matching,
+historical scrubbing, the hook guard and high-entropy detection. This slice
+neither rewrites historical state nor broadens the detector from #2711.

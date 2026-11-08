@@ -1619,6 +1619,16 @@ fn audit(
 
 /// Append `record` to the day's audit file under `dir`.
 pub fn append_audit(dir: &Path, now: SystemTime, record: &serde_json::Value) {
+    let mut record = record.clone();
+    crate::secret_redaction::redact_record_fields(&mut record, &["handoff", "reason"]);
+    if let Some(paths) = record
+        .get_mut("paths")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for path in paths {
+            crate::secret_redaction::redact_record_fields(path, &["reason"]);
+        }
+    }
     let fields = crate::civil_time::civil_from_unix_secs(unix_secs(now));
     let file = dir.join(format!(
         "{:04}-{:02}-{:02}.jsonl",
@@ -1824,3 +1834,45 @@ pub(crate) mod session_grants;
 #[cfg(test)]
 #[path = "rm_tool_tests.rs"]
 pub(crate) mod tests;
+
+#[cfg(test)]
+mod record_redaction_tests {
+    use super::*;
+
+    #[test]
+    fn record_redaction_preserves_rm_behavior() {
+        let tmp = tempfile::tempdir().unwrap();
+        let secret = format!("ghp_{}", "A".repeat(36));
+        let record = serde_json::json!({"ts_unix":0, "command":"rm", "cwd":secret,
+            "operands":[secret], "handoff":["safe-rm", secret], "exit":2,
+            "reason":format!("handoff failed: {secret}"),
+            "paths":[{"path":secret, "action":"refused", "reason":secret,
+                "trash_path":null}]});
+        append_audit(tmp.path(), UNIX_EPOCH, &record);
+        let text = std::fs::read_to_string(tmp.path().join("1970-01-01.jsonl")).unwrap();
+        assert_eq!(text.lines().count(), 1);
+        let mut actual: serde_json::Value = serde_json::from_str(text.trim()).unwrap();
+        assert!(
+            !actual["handoff"].to_string().contains(&secret),
+            "handoff persisted verbatim: {}",
+            actual["handoff"]
+        );
+        assert!(
+            !actual["reason"].to_string().contains(&secret),
+            "reason persisted verbatim: {}",
+            actual["reason"]
+        );
+        assert!(!actual["paths"][0]["reason"].to_string().contains(&secret));
+        assert_eq!(actual["handoff"][0], "safe-rm");
+        actual["handoff"] = record["handoff"].clone();
+        actual["reason"] = record["reason"].clone();
+        actual["paths"][0]["reason"] = record["paths"][0]["reason"].clone();
+        assert_eq!(actual, record);
+        let ordinary = serde_json::json!({"handoff":["safe-rm", "--purge", "file"],
+            "reason":"ordinary diagnostic", "paths":[{"path":"file", "reason":"missing"}]});
+        append_audit(tmp.path(), UNIX_EPOCH, &ordinary);
+        let text = std::fs::read_to_string(tmp.path().join("1970-01-01.jsonl")).unwrap();
+        let last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        assert_eq!(last, ordinary);
+    }
+}
