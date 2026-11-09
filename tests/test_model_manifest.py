@@ -224,8 +224,18 @@ def test_model_stage_preserves_same_origin_downloads(monkeypatch, tmp_path) -> N
     original = {f"{publish.PAGES}/{name}": b"existing" for name in publish.published_paths()}
     original[f"{publish.PAGES}/index.html"] = page
     original[f"{publish.PAGES}/{relative}"] = b"verified executable"
-    monkeypatch.setattr(publish, "fetch", lambda url: original[url])
+    monkeypatch.setattr(publish, "fetch", lambda url, **_kwargs: original[url])
     assert publish.stage_site(
         tmp_path, trigger="manual", now=datetime(2026, 10, 3, 21, tzinfo=timezone.utc)
     ) == "publish"
     assert (tmp_path / relative).read_bytes() == b"verified executable"
+
+
+def test_binary_fetch_can_exceed_document_limit(monkeypatch) -> None:
+    from io import BytesIO
+
+    body = b"x" * (publish.MAX_RESPONSE + 1)
+    monkeypatch.setattr(publish.urllib.request, "urlopen", lambda *_a, **_kw: BytesIO(body))
+    with pytest.raises(ValueError, match="response too large"):
+        publish.fetch("https://example.com/document")
+    assert publish.fetch("https://example.com/binary", max_response=128_000_000) == body

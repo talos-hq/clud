@@ -94,7 +94,8 @@ Both download variants use those same bytes: `download="clud"` (Windows:
 `clud.exe`) for normal use, and `download="clud-setup"` (`clud-setup.exe`)
 for installer entry. Same-origin hosting is required because browsers ignore
 `download` filenames on cross-origin GitHub release links. The catalog retains
-its upstream release URLs and versioned asset names.
+its upstream release URLs and versioned asset names. Model-only publication
+allows up to 128 MB for each binary while retaining its 8 MB document limit.
 
 `multicall.rs` recognizes `clud-installer`, `clud-install`, and `clud-setup`
 case-insensitively, with optional `.exe` and numeric browser duplicate suffixes

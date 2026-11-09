@@ -27,12 +27,12 @@ MAX_RESPONSE = 8_000_000
 POLICY_PATH = Path(__file__).with_name("selection-policy.json")
 
 
-def fetch(url: str) -> bytes:
+def fetch(url: str, *, max_response: int = MAX_RESPONSE) -> bytes:
     headers = {"User-Agent": "clud-model-publisher/1"}
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=15) as response:
-        body = response.read(MAX_RESPONSE + 1)
-    if len(body) > MAX_RESPONSE:
+        body = response.read(max_response + 1)
+    if len(body) > max_response:
         raise ValueError(f"response too large: {url}")
     return body
 
@@ -132,7 +132,7 @@ def stage_site(destination: Path, *, trigger: str, now: datetime) -> str:
             raise ValueError("unsafe installer download path")
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(fetch(f"{PAGES}/{relative}"))
+        target.write_bytes(fetch(f"{PAGES}/{relative}", max_response=128_000_000))
     (destination / ".nojekyll").write_text("", encoding="utf-8")
     model_path = destination / "models" / "manifest.json"
     model_path.parent.mkdir(parents=True, exist_ok=True)
