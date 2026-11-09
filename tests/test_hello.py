@@ -792,9 +792,9 @@ def test_openrouter_privacy_flags_reach_both_routes() -> None:
                 assert routing["zdr"] is True
             if "--no-data-collection" in flags:
                 assert routing["data_collection"] == "deny"
-            pinned = _dry_run_route(
-                *route_flags, *flags, "--provider-only", "parasail/fp8"
-            )["route"]["upstream_routing"]
+            pinned = _dry_run_route(*route_flags, *flags, "--provider-only", "parasail/fp8")[
+                "route"
+            ]["upstream_routing"]
             assert pinned["only"] == ["parasail/fp8"]
             assert pinned["allow_fallbacks"] is False
         refused = _run("--dry-run", *flags, "-p", "hi")
@@ -840,9 +840,7 @@ def test_provider_only_works_on_the_unified_gateway() -> None:
         "allow_fallbacks": False,
     }
     # The direct route builds the identical value: one decision, two renderers.
-    direct = _dry_run_route(
-        "--openrouter", "--provider-only", "parasail/fp8"
-    )["route"]
+    direct = _dry_run_route("--openrouter", "--provider-only", "parasail/fp8")["route"]
     assert direct["upstream_routing"] == unified["upstream_routing"]
     # And where the object cannot be carried, the check says so.
     bridge = _dry_run_route("--codex")["route"]
@@ -2339,8 +2337,14 @@ def test_video_dry_run_loads_plugin_only_for_that_session() -> None:
 
 def test_openrouter_deepseek_effort_works_without_claude_effort_flag() -> None:
     result = _run(
-        "--dry-run", "--openrouter", "--model", "deepseek/deepseek-v4.1-flash",
-        "--effort", "low", "-p", "hello",
+        "--dry-run",
+        "--openrouter",
+        "--model",
+        "deepseek/deepseek-v4.1-flash",
+        "--effort",
+        "low",
+        "-p",
+        "hello",
     )
     assert result.returncode == 0, result.stderr
     command = json.loads(result.stdout)["command"]
@@ -2348,3 +2352,26 @@ def test_openrouter_deepseek_effort_works_without_claude_effort_flag() -> None:
     assert command[command.index("--model") + 1] == "deepseek/deepseek-v4.1-flash"
     settings = json.loads(command[command.index("--settings") + 1])
     assert settings["effortLevel"] == "low"
+
+
+def test_openrouter_dry_run_never_probes_codex_models(tmp_path: Path) -> None:
+    """#2756: an OpenRouter dry run must not spawn `codex` for its model list."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "codex-ran"
+    fake = bin_dir / "codex"
+    fake.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n", encoding="utf-8")
+    fake.chmod(0o755)
+    result = _run(
+        "--dry-run",
+        "--openrouter",
+        "--model",
+        "deepseek/deepseek-v4.1-flash-1017",
+        "-p",
+        "hello",
+        env_overrides={"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"},
+    )
+    assert result.returncode == 0, result.stderr
+    assert not marker.exists(), "an OpenRouter dry run spawned codex"
+    assert "Codex model" not in result.stderr, result.stderr
+    assert json.loads(result.stdout)["codex_model_source"] is None

@@ -191,7 +191,7 @@ fn selecting_openrouter_always_resolves_to_openrouter() {
         (
             &[("CLUD_PROVIDER", "openrouter"), ("CLUD_ALLOW_METERED", "1")],
             &[],
-            "ignoring",
+            "has no effect",
         ),
         (
             &[
@@ -199,7 +199,7 @@ fn selecting_openrouter_always_resolves_to_openrouter() {
                 ("CLUD_METERED_PROVIDER", "openrouter"),
             ],
             &[],
-            "ignoring",
+            "has no effect",
         ),
         (
             &[
@@ -208,17 +208,17 @@ fn selecting_openrouter_always_resolves_to_openrouter() {
                 ("CLUD_METERED_PROVIDER", "deepseek"),
             ],
             &[],
-            "ignoring",
+            "has no effect",
         ),
         (
             &[("CLUD_METERED_PROVIDER", "openrouter")],
             &["--openrouter"],
-            "ignoring",
+            "has no effect",
         ),
         (
             &[("CLUD_ALLOW_METERED", "1")],
             &["--openrouter"],
-            "ignoring",
+            "has no effect",
         ),
         (
             &[("CLUD_SUBSCRIPTION_PROVIDER", "openrouter")],

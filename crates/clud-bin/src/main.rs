@@ -2265,7 +2265,10 @@ fn print_dry_run_and_exit(
         // was typed, so a dry run shows what will actually be billed.
         "codex_model": plan.codex_model,
         "model_selection": plan.model_selection,
+        // Only a Codex selection has a live Codex source; asking for any other
+        // provider's model would spawn `codex` for nothing (#2756).
         "codex_model_source": plan.model_selection.as_ref()
+            .filter(|selection| selection.provider == backend::ModelProvider::Codex)
             .and_then(|selection| selection.model.as_deref())
             .and_then(|model| clud::codex_runtime::active_choice().source_for(model))
             .map(clud::codex_runtime::Source::as_str),

@@ -27,7 +27,8 @@ clud setup --check
   nothing (no aliases, settings, credential or lock files). It works without a
   terminal.
 - `--yes` runs without prompts. Without `--provider` it keeps the saved
-  provider, or Claude when none is saved. An OpenRouter key then comes from
+  provider; with none saved it prefers OpenRouter when an OpenRouter key is
+  stored or exported (#2752), else Claude. An OpenRouter key then comes from
   the vault or `OPENROUTER_API_KEY`; with neither, setup exits 2 and says so.
 - Without a terminal and without `--yes`, setup exits 2 at once with a
   message naming `--yes`. It never waits for input it cannot get.

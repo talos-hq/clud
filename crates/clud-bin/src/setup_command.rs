@@ -55,12 +55,7 @@ pub fn check() -> i32 {
     let provider = crate::clud_settings::load_launch_preferences_read_only_at(&home)
         .ok()
         .and_then(|snapshot| snapshot.global.model_provider);
-    let descriptor = crate::provider_registry::descriptor_for(ModelProvider::OpenRouter)
-        .expect("OpenRouter descriptor");
-    let openrouter_key = crate::provider_auth::has_well_formed_persisted_key(descriptor)
-        .unwrap_or(false)
-        || std::env::var(descriptor.api_key_env).is_ok_and(|key| !key.trim().is_empty());
-    if needs_setup(provider, openrouter_key) {
+    if needs_setup(provider, openrouter_key_available()) {
         println!("clud setup: not set up yet; run `clud setup`");
         EXIT_NEEDS_SETUP
     } else {
@@ -271,9 +266,7 @@ fn configure_provider(home: &Path, options: &Options, prompt: bool, out: &mut dy
             Ok(provider) => provider,
             Err(code) => return code,
         },
-        (None, false) => current
-            .filter(|provider| provider_setup::OFFERED.contains(provider))
-            .unwrap_or(ModelProvider::Claude),
+        (None, false) => scripted_provider(current, openrouter_key_available()),
     };
     if provider == ModelProvider::OpenRouter {
         let code = configure_openrouter(home, options.dry_run, prompt, out);
@@ -288,6 +281,25 @@ fn configure_provider(home: &Path, options: &Options, prompt: bool, out: &mut dy
         );
     }
     save_default(home, provider, current, options.dry_run, out)
+}
+
+/// The provider a scripted setup (`--yes`, `--dry-run`) picks without
+/// `--provider`: the saved one when setup offers it, else OpenRouter when its
+/// key is available (setup prefers OpenRouter, #2752), else Claude.
+fn scripted_provider(current: Option<ModelProvider>, openrouter_key: bool) -> ModelProvider {
+    match current.filter(|provider| provider_setup::OFFERED.contains(provider)) {
+        Some(saved) => saved,
+        None if openrouter_key => ModelProvider::OpenRouter,
+        None => ModelProvider::Claude,
+    }
+}
+
+/// An OpenRouter key in the credential store or `OPENROUTER_API_KEY`.
+fn openrouter_key_available() -> bool {
+    let descriptor = crate::provider_registry::descriptor_for(ModelProvider::OpenRouter)
+        .expect("OpenRouter descriptor");
+    crate::provider_auth::has_well_formed_persisted_key(descriptor).unwrap_or(false)
+        || std::env::var(descriptor.api_key_env).is_ok_and(|key| !key.trim().is_empty())
 }
 
 fn save_default(
@@ -453,6 +465,23 @@ mod tests {
         };
         let code = run_at(home, Some(source), options, tty, &none, &mut out);
         (code, String::from_utf8(out).unwrap())
+    }
+
+    /// #2752: a scripted setup prefers OpenRouter when its key is available,
+    /// and never replaces a saved provider.
+    #[test]
+    fn scripted_setup_prefers_openrouter_when_a_key_is_available() {
+        assert_eq!(scripted_provider(None, true), ModelProvider::OpenRouter);
+        assert_eq!(scripted_provider(None, false), ModelProvider::Claude);
+        for saved in provider_setup::OFFERED {
+            assert_eq!(scripted_provider(Some(saved), true), saved);
+            assert_eq!(scripted_provider(Some(saved), false), saved);
+        }
+        // A saved provider setup does not offer falls back like no provider.
+        assert_eq!(
+            scripted_provider(Some(ModelProvider::Kimi), true),
+            ModelProvider::OpenRouter
+        );
     }
 
     #[test]
