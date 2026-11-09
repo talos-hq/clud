@@ -1,6 +1,7 @@
 //! Native client for the clud.bot operator protocol.
 pub mod connect;
 mod console;
+mod paste;
 pub mod proxy;
 mod terminal;
 #[cfg(test)]
