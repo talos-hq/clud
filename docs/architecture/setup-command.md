@@ -20,6 +20,7 @@ resolution for opt-in launches; see [optional context](optional-context.md).
 
 ```
 clud setup [--dry-run] [--yes|-y] [--provider claude|codex|openrouter] [--write-profile] [--import-hermes]
+clud setup --check
 ```
 
 - `--dry-run` prints every step and what is already in place, and writes
@@ -31,6 +32,13 @@ clud setup [--dry-run] [--yes|-y] [--provider claude|codex|openrouter] [--write-
 - Without a terminal and without `--yes`, setup exits 2 at once with a
   message naming `--yes`. It never waits for input it cannot get.
 - `--provider` skips the provider menu.
+- `--check` changes nothing and prompts for nothing. It exits 0 when a
+  provider is saved (and, for OpenRouter, a key is stored or exported) and 3
+  when setup still needs to run. `installer/install.sh` uses it to ask
+  `Set up clud now? [y/n]` on the terminal right after installing, then runs
+  the installed binary's `clud setup` by full path (`--no-setup` skips the
+  offer; without a terminal it is never asked). The OpenRouter model menu
+  lists `deepseek/deepseek-v4.1-flash-1017` first, as the default.
 
 Exit 0 on success, 2 for a refused request, 1 when a step fails.
 

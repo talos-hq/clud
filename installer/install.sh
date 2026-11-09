@@ -8,10 +8,18 @@
 #   --dry-run          print what would be fetched and where it would go; download nothing
 #   --version <tag>    install this release tag instead of the latest release
 #   --write-profile    append the install directory to ~/.profile when it is not on PATH
+#   --no-setup         do not offer to run `clud setup` after installing
 #   -h, --help         show this help
 #
 # Environment:
 #   CLUD_INSTALL_DIR   install directory (default: $HOME/.local/bin)
+#   NO_COLOR           print the next step without colour
+#
+# After installing, when the new binary reports that setup has not been run
+# (`clud setup --check` exits 3) and a terminal is available, the installer
+# asks "Set up clud now? [y/n]" on the terminal (stdin is the piped script)
+# and runs the installed binary's `clud setup` by its full path, so it works
+# before the install directory is on PATH.
 #
 # The binary is verified against the release's SHA256SUMS before it is
 # installed; a mismatch or a missing entry aborts. Windows is not handled
@@ -30,16 +38,19 @@ usage() {
     say "  --dry-run        print what would be fetched and where it would go; download nothing"
     say "  --version <tag>  install this release tag instead of the latest release"
     say "  --write-profile  append the install directory to ~/.profile when it is not on PATH"
+    say "  --no-setup       do not offer to run 'clud setup' after installing"
     say "  CLUD_INSTALL_DIR overrides the install directory (default: \$HOME/.local/bin)"
 }
 
 dry_run=0
 version=""
 write_profile=0
+offer_setup=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) dry_run=1 ;;
         --write-profile) write_profile=1 ;;
+        --no-setup) offer_setup=0 ;;
         --version)
             [ $# -ge 2 ] || die "--version needs a release tag (for example --version 2.8.56)"
             version="$2"
@@ -47,7 +58,7 @@ while [ $# -gt 0 ]; do
             ;;
         --version=*) version="${1#--version=}" ;;
         -h|--help) usage; exit 0 ;;
-        *) die "unknown option: $1 (supported: --dry-run, --version <tag>, --write-profile, --help)" ;;
+        *) die "unknown option: $1 (supported: --dry-run, --version <tag>, --write-profile, --no-setup, --help)" ;;
     esac
     shift
 done
@@ -135,4 +146,31 @@ case ":${PATH}:" in
         ;;
 esac
 
-say "Next step: run 'clud setup'"
+# Green when printing to a colour terminal (NO_COLOR opts out).
+green() {
+    if { [ -t 1 ] || [ "${CLUD_INSTALL_COLOR:-}" = always ]; } && [ -z "${NO_COLOR:-}" ]; then
+        printf '\033[32m%s\033[0m\n' "$*"
+    else
+        say "$*"
+    fi
+}
+
+# `curl ... | sh` makes the script itself stdin, so questions go to the
+# terminal. CLUD_INSTALL_TTY overrides the device; empty means none.
+tty="${CLUD_INSTALL_TTY-/dev/tty}"
+has_tty() { [ -n "$tty" ] && { : <"$tty"; } 2>/dev/null; }
+
+if [ "$offer_setup" = 1 ] && has_tty && { "$dest" setup --check >/dev/null 2>&1; [ $? -eq 3 ]; }; then
+    exec 3<"$tty"
+    printf 'clud is not set up yet. Set up clud now? [y/n] '
+    answer=""
+    read -r answer <&3 || answer=""
+    case "$answer" in
+        y|Y|yes|Yes|YES)
+            "$dest" setup <&3 3<&- || die "clud setup did not finish; run it again with: $dest setup"
+            exit 0
+            ;;
+    esac
+    exec 3<&-
+fi
+green "Next step: run 'clud setup'"

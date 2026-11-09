@@ -33,9 +33,7 @@ MAC_SAFARI = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
     "(KHTML, like Gecko) Version/17.4 Safari/605.1.15"
 )
-MAC_FIREFOX = (
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0"
-)
+MAC_FIREFOX = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0"
 CHROME_WIN = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
@@ -282,9 +280,7 @@ def test_detection_table_maps_every_agent_to_the_right_asset_or_none() -> None:
         assert name == expected, case
 
 
-MAC_ASSUMPTION_STATUS = (
-    "Detected: macOS · assuming Apple Silicon (aarch64) — most Macs since 2020."
-)
+MAC_ASSUMPTION_STATUS = "Detected: macOS · assuming Apple Silicon (aarch64) — most Macs since 2020."
 
 
 def run_node(program: str, *args: str) -> object:
@@ -399,7 +395,6 @@ def test_unknown_agent_gets_no_recommendation_and_no_override() -> None:
         "status": "Could not detect a supported system. Choose your download below.",
         "override": None,
     }
-
 
 
 class Page(HTMLParser):
@@ -521,7 +516,7 @@ def make_stubs(tmp_path: Path, uname_s: str, uname_m: str, sums: str, digest: st
         "fi\n"
         'case "$url" in\n'
         '  */SHA256SUMS) printf "%s" "$STUB_SUMS" > "$out";;\n'
-        '  *) printf "binary" > "$out";;\n'
+        '  *) printf "%s" "${STUB_BINARY:-binary}" > "$out";;\n'
         "esac\n",
     )
     script("sha256sum", f'printf "%s  %s\\n" "{digest}" "$1"\n')
@@ -530,14 +525,23 @@ def make_stubs(tmp_path: Path, uname_s: str, uname_m: str, sums: str, digest: st
         "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
         "HOME": str(tmp_path / "home"),
         "STUB_SUMS": sums,
+        # Never reach the developer's real terminal; tests opt in with a file.
+        "CLUD_INSTALL_TTY": "",
     }
     return {"env": env, "log": log}
 
 
 def run_install(
-    tmp_path: Path, args: list[str], uname_s="Linux", uname_m="x86_64", sums="", digest="0" * 64
+    tmp_path: Path,
+    args: list[str],
+    uname_s="Linux",
+    uname_m="x86_64",
+    sums="",
+    digest="0" * 64,
+    env: dict | None = None,
 ):
     stubs = make_stubs(tmp_path, uname_s, uname_m, sums, digest)
+    stubs["env"].update(env or {})
     sh = shutil.which("sh")
     assert sh
     done = run_process(
@@ -643,3 +647,122 @@ def test_install_sh_rejects_unknown_flag(tmp_path) -> None:
     done, _ = run_install(tmp_path, ["--bogus"])
     assert done.returncode != 0
     assert "--bogus" in done.stderr
+
+
+# ------------------------------------------------- setup offer after install
+
+ASSET = "clud-2.8.56-x86_64-unknown-linux-musl"
+DIGEST = "c" * 64
+SUMS = f"{DIGEST}  ./{ASSET}\n"
+
+
+def fake_clud(tmp_path: Path, check_exit: int, setup_exit: int = 0) -> tuple[str, Path]:
+    """A stand-in clud binary: logs its argv and stdin, answers --check."""
+    log = tmp_path / "clud-calls.log"
+    body = (
+        "#!/bin/sh\n"
+        f'echo "argv:$*" >> "{log}"\n'
+        f'if [ "$*" = "setup --check" ]; then exit {check_exit}; fi\n'
+        f'if [ "$1" = setup ]; then IFS= read -r line; echo "stdin:$line" >> "{log}"; '
+        f"exit {setup_exit}; fi\n"
+        "exit 0\n"
+    )
+    return body, log
+
+
+def install_with(tmp_path: Path, answer: str | None, check_exit: int, args=(), **kw):
+    body, log = fake_clud(tmp_path, check_exit, **kw)
+    env = {"STUB_BINARY": body}
+    if answer is not None:
+        tty = tmp_path / "tty"
+        tty.write_text(answer, encoding="utf-8")
+        env["CLUD_INSTALL_TTY"] = str(tty)
+    done, _ = run_install(
+        tmp_path, ["--version", "2.8.56", *args], sums=SUMS, digest=DIGEST, env=env
+    )
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return done, calls
+
+
+@posix_only
+def test_install_sh_offers_setup_and_runs_the_installed_binary_on_yes(tmp_path) -> None:
+    done, calls = install_with(tmp_path, "y\nopenrouter\n", check_exit=3)
+    assert done.returncode == 0, done.stderr
+    assert "Set up clud now? [y/n]" in done.stdout
+    assert calls[0] == "argv:setup --check"
+    assert calls[1] == "argv:setup"
+    # setup reads the terminal, not the piped script.
+    assert calls[2] == "stdin:openrouter"
+
+
+@posix_only
+@pytest.mark.parametrize("answer", ["n\n", "\n", "no\n", ""])
+def test_install_sh_skips_setup_unless_the_user_says_yes(tmp_path, answer) -> None:
+    done, calls = install_with(tmp_path, answer, check_exit=3)
+    assert done.returncode == 0, done.stderr
+    assert "Set up clud now? [y/n]" in done.stdout
+    assert calls == ["argv:setup --check"]
+    assert "Next step: run 'clud setup'" in done.stdout
+
+
+@posix_only
+def test_install_sh_does_not_offer_setup_when_already_set_up(tmp_path) -> None:
+    done, calls = install_with(tmp_path, "y\n", check_exit=0)
+    assert done.returncode == 0, done.stderr
+    assert "Set up clud now?" not in done.stdout
+    assert calls == ["argv:setup --check"]
+
+
+@posix_only
+@pytest.mark.parametrize("check_exit", [1, 2, 127])
+def test_install_sh_does_not_offer_setup_when_the_check_is_unsupported(
+    tmp_path, check_exit
+) -> None:
+    # An older binary without --check exits 2 (usage); only 3 means "needs setup".
+    done, calls = install_with(tmp_path, "y\n", check_exit=check_exit)
+    assert done.returncode == 0, done.stderr
+    assert "Set up clud now?" not in done.stdout
+    assert "argv:setup" not in calls
+
+
+@posix_only
+def test_install_sh_never_prompts_without_a_terminal(tmp_path) -> None:
+    done, calls = install_with(tmp_path, None, check_exit=3)
+    assert done.returncode == 0, done.stderr
+    assert "Set up clud now?" not in done.stdout
+    assert calls == []
+    assert "Next step: run 'clud setup'" in done.stdout
+
+
+@posix_only
+def test_install_sh_no_setup_flag_skips_the_offer(tmp_path) -> None:
+    done, calls = install_with(tmp_path, "y\n", check_exit=3, args=("--no-setup",))
+    assert done.returncode == 0, done.stderr
+    assert calls == []
+
+
+@posix_only
+def test_install_sh_reports_a_failed_setup_with_the_full_path(tmp_path) -> None:
+    done, _ = install_with(tmp_path, "y\n", check_exit=3, setup_exit=1)
+    assert done.returncode == 1
+    dest = tmp_path / "home" / ".local" / "bin" / "clud"
+    assert f"run it again with: {dest} setup" in done.stderr
+
+
+@posix_only
+@pytest.mark.parametrize(
+    ("env", "green"),
+    [
+        ({"CLUD_INSTALL_COLOR": "always"}, True),
+        ({}, False),
+        ({"CLUD_INSTALL_COLOR": "always", "NO_COLOR": "1"}, False),
+    ],
+)
+def test_install_sh_prints_the_next_step_in_green_on_a_colour_terminal(
+    tmp_path, env, green
+) -> None:
+    done, _ = run_install(tmp_path, ["--version", "2.8.56"], sums=SUMS, digest=DIGEST, env=env)
+    assert done.returncode == 0, done.stderr
+    coloured = "\033[32mNext step: run 'clud setup'\033[0m" in done.stdout
+    assert coloured is green
+    assert "Next step: run 'clud setup'" in done.stdout
