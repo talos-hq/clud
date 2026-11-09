@@ -1165,7 +1165,9 @@ fn announce_metered_route(
         launch_log::set_metered_warning(warning);
         return;
     }
-    if !policy.allows(provider) {
+    // OpenRouter, DeepSeek and Kimi need no consent, so the overrides never
+    // take credit for selecting them (#2763).
+    if !policy.allows(provider) || clud::metered_policy::provider_is_metered(provider) {
         let warning = if clud::metered_policy::explicitly_selected_metered(provider, explicit_cli) {
             Some(clud::metered_policy::explicit_metered_warning(provider))
         } else {

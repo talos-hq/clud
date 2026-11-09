@@ -282,7 +282,7 @@ fn subscription_provider_env_selects_codex_without_a_warning() {
 }
 
 #[test]
-fn both_metered_overrides_allow_openrouter_with_the_loud_warning() {
+fn both_metered_overrides_with_openrouter_warn_without_crediting_the_overrides() {
     let fx = fixture();
     let (exit, output) = run(
         &fx,
@@ -299,7 +299,7 @@ fn both_metered_overrides_allow_openrouter_with_the_loud_warning() {
         "{output}"
     );
     assert!(
-        output.contains(&clud::metered_policy::metered_warning(
+        output.contains(&clud::metered_policy::configured_metered_warning(
             clud::backend::ModelProvider::OpenRouter
         )),
         "{output}"
@@ -412,4 +412,30 @@ fn clud_provider_deepseek_launches_without_overrides() {
             "{output}"
         );
     }
+}
+
+/// #2763: a complete override pair does not take credit for an OpenRouter
+/// launch the command line selected, nor tell the user unsetting it returns
+/// them to their subscription.
+#[test]
+fn a_complete_pair_never_claims_an_explicit_openrouter_launch() {
+    let fx = fixture();
+    let (exit, output) = run(
+        &fx,
+        &[
+            ("CLUD_ALLOW_METERED", "1"),
+            ("CLUD_METERED_PROVIDER", "openrouter"),
+        ],
+        &["--openrouter", "--dry-run", "-p", "hello"],
+    );
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        output.contains("selected explicitly with --openrouter"),
+        "{output}"
+    );
+    assert!(
+        !output.contains("enabled by CLUD_ALLOW_METERED"),
+        "{output}"
+    );
+    assert!(!output.contains("return to your subscription"), "{output}");
 }
