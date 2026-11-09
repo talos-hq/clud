@@ -265,46 +265,96 @@ fn deny_message_tells_the_model_to_stop_and_names_the_override() {
 #[test]
 fn poll_count_survives_gaps_the_burst_guard_resets() {
     // One identical query every 10 minutes for a day: `decide` starts a new
-    // streak at every call, while `poll_count` keeps counting.
+    // streak at every call, while the ledger keeps counting.
     let mut previous: Option<Streak> = None;
     for index in 0..12_u64 {
         let now = 1_000 + 600 * index;
         let (verdict, mut streak) = decide(previous.as_ref(), "k", now, DEFAULT_LIMIT);
         assert_eq!(verdict, Verdict::Allow);
-        let (steady, steady_last) = poll_count(previous.as_ref(), "k", now);
+        let polls = ledger_for_count(previous.as_ref(), "k", "k");
+        let (steady, steady_last) = poll_count(&polls, "k", now);
         streak.steady = steady;
         streak.steady_last = steady_last;
+        streak.polls = ledger_after(&polls, "k", steady, now);
         assert_eq!(steady, u32::try_from(index).unwrap() + 1);
         previous = Some(streak);
     }
 }
 
 #[test]
-fn poll_count_resets_on_a_different_call_and_after_the_window() {
+fn poll_count_counts_one_query_and_expires_it() {
     let previous = Streak {
-        key: "k".to_string(),
+        key: "exact".to_string(),
         count: 1,
         last: 1_000,
-        steady: 5,
-        steady_last: 1_000,
-        polls: Vec::new(),
-    };
-    assert_eq!(poll_count(Some(&previous), "k", 1_600).0, 6);
-    assert_eq!(poll_count(Some(&previous), "other", 1_600).0, 1);
-    assert_eq!(
-        poll_count(Some(&previous), "k", 1_000 + POLL_WINDOW_SECS + 1).0,
-        1
-    );
-    // A legacy streak without the steady fields still counts from one.
-    let legacy = Streak {
-        key: "k".to_string(),
-        count: 7,
-        last: 2_000,
         steady: 0,
         steady_last: 0,
+        polls: vec![PollEntry {
+            key: "k".to_string(),
+            count: 5,
+            last: 1_000,
+        }],
+    };
+    assert_eq!(poll_count(&previous.polls, "k", 1_600).0, 6);
+    // Another query has its own count — it neither resets nor inherits this one.
+    assert_eq!(poll_count(&previous.polls, "other", 1_600).0, 1);
+    // Outside the window the count starts over rather than carrying forward.
+    assert_eq!(
+        poll_count(&previous.polls, "k", 1_000 + POLL_WINDOW_SECS + 1).0,
+        1
+    );
+}
+
+/// A session file written before the ledger existed holds one slot; the count
+/// it carries survives the upgrade rather than restarting at one.
+#[test]
+fn a_legacy_streak_seeds_the_ledger() {
+    let tmp = tempfile::tempdir().unwrap();
+    let now = 5_000_u64;
+    let legacy = Streak {
+        key: "exact".to_string(),
+        count: 94,
+        last: now - 1,
+        steady: 94,
+        steady_last: now - 1,
         polls: Vec::new(),
     };
-    assert_eq!(poll_count(Some(&legacy), "k", 2_100).0, 2);
+    let path = session_file(tmp.path(), "s");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&legacy).unwrap()).unwrap();
+    let (_, note) = check_at(
+        tmp.path(),
+        "s",
+        "exact",
+        Past {
+            is_query: true,
+            poll_key: "poll",
+            poll_limit: POLL_DENY_AT,
+        },
+        now,
+        DEFAULT_LIMIT,
+    );
+    assert_eq!(note, None);
+    let streak: Streak = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(streak.polls.len(), 1);
+    assert_eq!(streak.polls[0].key, "poll");
+    assert_eq!(streak.polls[0].count, 95);
+    // And the migrated count keeps climbing under a different exact call.
+    let (verdict, _) = check_at(
+        tmp.path(),
+        "s",
+        "exact-2",
+        Past {
+            is_query: true,
+            poll_key: "poll",
+            poll_limit: POLL_DENY_AT,
+        },
+        now + 1,
+        DEFAULT_LIMIT,
+    );
+    assert_eq!(verdict, Verdict::Allow);
+    let streak: Streak = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(streak.polls[0].count, 96);
 }
 
 // ---- #2233: one query, many dressings -------------------------------
@@ -318,33 +368,43 @@ const FLAPPED: [&str; 3] = [
     "cat /home/n/.clud/tmp/claude-1000/x/tasks/b1yx2mbil.output; sleep 50; gh pr list --state all --json url,number,state --head fix/2002-false-green-matrix",
 ];
 
+fn flapped_key(command: &str) -> String {
+    poll_key("Bash", Some(&json!({"command": command})))
+}
+
+fn flapped_scan(state: &std::path::Path, command: &str, now: u64) -> (Verdict, Option<u32>) {
+    let exact = call_key("Bash", Some(&json!({"command": command})));
+    let poll = flapped_key(command);
+    check_at(
+        state,
+        "s",
+        &exact,
+        Past {
+            is_query: is_query(command),
+            poll_key: &poll,
+            poll_limit: POLL_DENY_AT,
+        },
+        now,
+        DEFAULT_LIMIT,
+    )
+}
+
 #[test]
 fn poll_key_ignores_the_sleep_and_task_output_dressing() {
-    let keys: Vec<String> = FLAPPED
-        .iter()
-        .map(|cmd| poll_key("Bash", Some(&json!({"command": cmd}))))
-        .collect();
+    let keys: Vec<String> = FLAPPED.iter().map(|cmd| flapped_key(cmd)).collect();
     assert_eq!(keys[0], keys[1], "{keys:?}");
     assert_eq!(keys[0], keys[2], "{keys:?}");
     // A different branch is a different query.
-    let other = poll_key(
-        "Bash",
-        Some(
-            &json!({"command": "sleep 60; gh pr list --head fix/1989-racy-stat-guard --state all"}),
-        ),
-    );
+    let other = flapped_key("sleep 60; gh pr list --head fix/1989-racy-stat-guard --state all");
     assert_ne!(keys[0], other);
-    // Reading state and writing it are never the same key, and a command with
-    // nothing but noise falls back to the exact call key.
+    // A read and a write are never the same key, and a command with nothing
+    // but noise falls back to the exact call key.
     assert_ne!(
-        poll_key(
-            "Bash",
-            Some(&json!({"command": "gh pr view 1 --json state"}))
-        ),
-        poll_key("Bash", Some(&json!({"command": "gh pr merge 1 --squash"})))
+        flapped_key("gh pr view 1 --json state"),
+        flapped_key("gh pr merge 1 --squash")
     );
     assert_eq!(
-        poll_key("Bash", Some(&json!({"command": "sleep 60"}))),
+        flapped_key("sleep 60"),
         call_key("Bash", Some(&json!({"command": "sleep 60"})))
     );
     assert_eq!(poll_core("sleep 60; echo waiting; true"), "");
@@ -358,20 +418,10 @@ fn an_alternating_poll_dressing_still_counts_as_one_query() {
     let tmp = tempfile::tempdir().unwrap();
     let mut notes = Vec::new();
     for index in 0..30_u64 {
-        let command = FLAPPED[index as usize % FLAPPED.len()];
-        let exact = call_key("Bash", Some(&json!({"command": command})));
-        let poll = poll_key("Bash", Some(&json!({"command": command})));
-        let (verdict, note) = check_at(
+        let (verdict, note) = flapped_scan(
             tmp.path(),
-            "s",
-            &exact,
-            Past {
-                is_query: is_query(command),
-                poll_key: &poll,
-                poll_limit: POLL_DENY_AT,
-            },
+            FLAPPED[index as usize % FLAPPED.len()],
             1_000 + 300 * index,
-            DEFAULT_LIMIT,
         );
         assert_eq!(verdict, Verdict::Allow);
         if let Some(count) = note {
@@ -386,20 +436,10 @@ fn the_poll_guard_refuses_an_alternating_poll_past_its_limit() {
     let tmp = tempfile::tempdir().unwrap();
     let mut refusals = 0;
     for index in 0..=u64::from(POLL_DENY_AT) + 2 {
-        let command = FLAPPED[index as usize % FLAPPED.len()];
-        let exact = call_key("Bash", Some(&json!({"command": command})));
-        let poll = poll_key("Bash", Some(&json!({"command": command})));
-        let (verdict, _) = check_at(
+        let (verdict, _) = flapped_scan(
             tmp.path(),
-            "s",
-            &exact,
-            Past {
-                is_query: is_query(command),
-                poll_key: &poll,
-                poll_limit: POLL_DENY_AT,
-            },
+            FLAPPED[index as usize % FLAPPED.len()],
             1_000 + 300 * index,
-            DEFAULT_LIMIT,
         );
         if let Verdict::PollDeny { .. } = verdict {
             refusals += 1;
@@ -445,7 +485,7 @@ fn the_ledger_is_bounded_and_forgets_expired_queries() {
         ..streak
     };
     assert_eq!(
-        poll_count(Some(&stale), "q", 1_000 + POLL_WINDOW_SECS + 1).0,
+        poll_count(&stale.polls, "q", 1_000 + POLL_WINDOW_SECS + 1).0,
         1
     );
 }

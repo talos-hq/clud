@@ -139,49 +139,56 @@ pub(super) fn decide(
 /// gap longer than [`POLL_WINDOW_SECS`] starts a new count: the point is the
 /// patient poll the burst guard deliberately ignores.
 ///
-/// A legacy streak written before the ledger existed contributes its
-/// `steady`/`steady_last` slot, so an upgrade does not restart a live count.
-pub(super) fn poll_count(streak: Option<&Streak>, key: &str, now: u64) -> (u32, u64) {
-    let Some(streak) = streak else {
-        return (1, now);
-    };
-    let ledger = streak
-        .polls
+/// A streak written before the ledger existed is seeded by [`migrated`], so an
+/// upgrade does not restart a live count.
+pub(super) fn poll_count(polls: &[PollEntry], key: &str, now: u64) -> (u32, u64) {
+    polls
         .iter()
         .filter(|entry| entry.key == key && now.saturating_sub(entry.last) <= POLL_WINDOW_SECS)
         .map(|entry| entry.count.max(1))
-        .max();
-    // A file written before the ledger existed still carries one slot, and a
-    // zero there means "counted once, never advised" — the legacy reader
-    // counted it as one, so keep that rather than restarting at zero.
-    let legacy = (streak.key == key
-        && now.saturating_sub(streak.steady_last.max(streak.last)) <= POLL_WINDOW_SECS)
-        .then_some(streak.steady.max(1));
-    match ledger.into_iter().chain(legacy).max() {
-        Some(count) => (count.saturating_add(1), now),
-        None => (1, now),
+        .max()
+        .map_or((1, now), |count| (count.saturating_add(1), now))
+}
+
+/// The ledger a call counts against, with a `steady` slot folded in.
+///
+/// A session file written before the ledger existed holds one slot instead:
+/// the exact `key` plus `steady`. That slot belongs to the call whose exact key
+/// it names, so it is folded into **this** query only when the call being
+/// counted is that same call — attributing it to any other query would grant
+/// one query's count to another.
+fn ledger_for_count(streak: Option<&Streak>, poll_key: &str, exact_key: &str) -> Vec<PollEntry> {
+    let Some(prev) = streak else {
+        return Vec::new();
+    };
+    let mut polls = prev.polls.clone();
+    if prev.key != exact_key || prev.steady == 0 {
+        return polls;
     }
+    match polls.iter_mut().find(|entry| entry.key == poll_key) {
+        Some(entry) => {
+            if prev.steady > entry.count {
+                entry.count = prev.steady;
+                entry.last = entry.last.max(prev.steady_last);
+            }
+        }
+        None => polls.push(PollEntry {
+            key: poll_key.to_string(),
+            count: prev.steady,
+            last: prev.steady_last.max(prev.last),
+        }),
+    }
+    polls
 }
 
 /// The ledger after this call: upsert `key`, drop entries outside the window,
 /// and keep the newest [`MAX_POLL_KEYS`].
-pub(super) fn ledger_after(
-    streak: Option<&Streak>,
-    key: &str,
-    count: u32,
-    now: u64,
-) -> Vec<PollEntry> {
-    let mut entries: Vec<PollEntry> = streak
-        .map(|prev| {
-            prev.polls
-                .iter()
-                .filter(|entry| {
-                    entry.key != key && now.saturating_sub(entry.last) <= POLL_WINDOW_SECS
-                })
-                .cloned()
-                .collect()
-        })
-        .unwrap_or_default();
+pub(super) fn ledger_after(polls: &[PollEntry], key: &str, count: u32, now: u64) -> Vec<PollEntry> {
+    let mut entries: Vec<PollEntry> = polls
+        .iter()
+        .filter(|entry| entry.key != key && now.saturating_sub(entry.last) <= POLL_WINDOW_SECS)
+        .cloned()
+        .collect();
     entries.push(PollEntry {
         key: key.to_string(),
         count,
@@ -618,6 +625,16 @@ pub(super) enum Outcome {
     PollDeny(String),
 }
 
+/// The poll facts a call carries, as one argument so the burst inputs stay
+/// readable: whether the command reads state, the ledger key of its
+/// state-reading core, and the session's poll limit.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Past<'a> {
+    pub is_query: bool,
+    pub poll_key: &'a str,
+    pub poll_limit: u32,
+}
+
 /// Record this call against the session's ledger in `state_dir` and return
 /// the burst verdict plus the poll-note count. Every failure allows.
 pub(super) fn check_at(
@@ -636,16 +653,21 @@ pub(super) fn check_at(
     let previous = existing
         .as_deref()
         .and_then(|bytes| serde_json::from_slice::<Streak>(bytes).ok());
+    let ledger = ledger_for_count(
+        previous.as_ref().filter(|_| past.is_query),
+        past.poll_key,
+        key,
+    );
     let (verdict, mut streak) = decide(previous.as_ref(), key, now, limit);
     let (steady, steady_last) = if past.is_query {
-        poll_count(previous.as_ref(), past.poll_key, now)
+        poll_count(&ledger, past.poll_key, now)
     } else {
         (0, 0)
     };
     streak.steady = steady;
     streak.steady_last = steady_last;
     streak.polls = if past.is_query {
-        ledger_after(previous.as_ref(), past.poll_key, steady, now)
+        ledger_after(&ledger, past.poll_key, steady, now)
     } else {
         previous
             .as_ref()
@@ -674,16 +696,6 @@ pub(super) fn check_at(
 }
 
 /// Hook entry: deny, an advisory note, or allow.
-/// The poll facts a call carries, as one argument so the burst inputs stay
-/// readable: whether the command reads state, the ledger key of its
-/// state-reading core, and the session's poll limit.
-#[derive(Debug, Clone, Copy)]
-pub(super) struct Past<'a> {
-    pub is_query: bool,
-    pub poll_key: &'a str,
-    pub poll_limit: u32,
-}
-
 pub(super) fn outcome(
     tool_name: &str,
     tool_input: Option<&Value>,
