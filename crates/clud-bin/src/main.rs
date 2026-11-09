@@ -1013,12 +1013,9 @@ fn resolve_launch(args: &mut args::Args) -> LaunchResolution {
         deepseek_credential_fallback,
         &env_policy,
     );
-    if let Err(error) = clud::metered_policy::enforce_resolved(
-        &env_policy,
-        launch_target.model_provider,
-        args.explicit_model_provider(),
-        args.failover_allow_metered,
-    ) {
+    if let Err(error) =
+        clud::metered_policy::enforce_resolved(&env_policy, args.failover_allow_metered)
+    {
         eprintln!("[clud] error: {error}");
         std::process::exit(2);
     }
@@ -1166,8 +1163,13 @@ fn announce_metered_route(
         return;
     }
     if !policy.allows(provider) {
-        if clud::metered_policy::explicitly_selected_metered(provider, explicit_cli) {
-            let warning = clud::metered_policy::explicit_metered_warning(provider);
+        let warning = if clud::metered_policy::explicitly_selected_metered(provider, explicit_cli) {
+            Some(clud::metered_policy::explicit_metered_warning(provider))
+        } else {
+            clud::metered_policy::provider_is_metered(provider)
+                .then(|| clud::metered_policy::configured_metered_warning(provider))
+        };
+        if let Some(warning) = warning {
             eprintln!("{warning}");
             launch_log::set_metered_warning(warning);
         }

@@ -96,7 +96,6 @@ pub enum PolicyError {
         value: String,
     },
     MeteredSubscriptionDefault(ModelProvider),
-    MeteredWithoutOverrides(ModelProvider),
     MeteredWithoutAllow(ModelProvider),
     AllowWithoutMeteredProvider,
     MeteredProviderMismatch {
@@ -109,9 +108,6 @@ pub enum PolicyError {
         cli: ModelProvider,
         env: ModelProvider,
     },
-    /// A flag, saved setting or credential fallback resolved to a metered
-    /// provider the environment did not consent to.
-    ResolvedMeteredWithoutConsent(ModelProvider),
     /// `--failover-allow-metered` without the environment consent.
     FailoverMeteredWithoutConsent,
 }
@@ -131,12 +127,6 @@ impl std::fmt::Display for PolicyError {
                  default can only be claude (alias native) or codex. To use {provider}, set \
                  CLUD_PROVIDER={provider} with CLUD_ALLOW_METERED=1 and \
                  CLUD_METERED_PROVIDER={provider}"
-            ),
-            Self::MeteredWithoutOverrides(provider) => write!(
-                f,
-                "CLUD_PROVIDER={provider} is metered (pay-per-token API billing) and is refused: \
-                 {two}. Set CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER={provider}, or unset \
-                 CLUD_PROVIDER to use your subscription"
             ),
             Self::MeteredWithoutAllow(provider) => write!(
                 f,
@@ -159,14 +149,6 @@ impl std::fmt::Display for PolicyError {
                 "contradiction: CLUD_ALLOW_METERED / CLUD_METERED_PROVIDER are set while \
                  CLUD_PROVIDER={provider} is a subscription provider. Unset the metered \
                  overrides, or select the metered provider you meant"
-            ),
-            Self::ResolvedMeteredWithoutConsent(provider) => write!(
-                f,
-                "provider {provider} is metered (pay-per-token API billing) and is refused: \
-                 it was selected by a flag, --model, a saved setting or a credential fallback \
-                 without consent. Set CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER={provider} \
-                 (and CLUD_PROVIDER={provider} if you set CLUD_PROVIDER), or launch your \
-                 subscription instead"
             ),
             Self::FailoverMeteredWithoutConsent => write!(
                 f,
@@ -294,7 +276,9 @@ fn check_overrides(
         return Ok(Vec::new());
     }
     match (allow, metered_provider) {
-        (false, None) => Err(PolicyError::MeteredWithoutOverrides(provider)),
+        // DeepSeek, Kimi and OpenRouter have no subscription to protect
+        // (DD-209): selecting one needs no overrides.
+        (false, None) => Ok(Vec::new()),
         (false, Some(named)) => Err(PolicyError::MeteredWithoutAllow(named)),
         (true, None) => Err(PolicyError::AllowWithoutMeteredProvider),
         (true, Some(named)) if named != provider => Err(PolicyError::MeteredProviderMismatch {
@@ -330,30 +314,26 @@ pub fn explicitly_selected_metered(
     is_metered(provider) && explicit_cli == Some(provider)
 }
 
-/// The final gate on a resolved launch: a metered provider is reached only
-/// when the user named it on the command line or the environment consents to
-/// exactly it.
+/// The final gate on a resolved launch. The policy protects only the Claude
+/// and Codex subscriptions (DD-209): DeepSeek, Kimi and OpenRouter are always
+/// pay-per-token, so reaching one by any route needs no consent. Only
+/// `--failover-allow-metered`, which moves a subscription session onto API
+/// billing, still needs the environment overrides.
 pub fn enforce_resolved(
     policy: &EnvPolicy,
-    provider: ModelProvider,
-    explicit_cli: Option<ModelProvider>,
     failover_allow_metered: bool,
 ) -> Result<(), PolicyError> {
-    if is_metered(provider)
-        && !policy.allows(provider)
-        && !explicitly_selected_metered(provider, explicit_cli)
-    {
-        return Err(PolicyError::ResolvedMeteredWithoutConsent(provider));
-    }
     if failover_allow_metered && policy.consented.is_empty() {
         return Err(PolicyError::FailoverMeteredWithoutConsent);
     }
     Ok(())
 }
 
-/// Whether the process environment consents to `provider`'s metered key.
+/// Whether `provider`'s metered key may be used. Always true for the
+/// inherently metered providers (DD-209); Codex's API key needs consent.
 pub fn process_allows_metered(provider: ModelProvider) -> bool {
-    resolve(&EnvSnapshot::from_process()).is_ok_and(|policy| policy.allows(provider))
+    is_metered(provider)
+        || resolve(&EnvSnapshot::from_process()).is_ok_and(|policy| policy.allows(provider))
 }
 
 /// The warning printed (and recorded on the launch) for a metered route.
@@ -363,6 +343,21 @@ pub fn metered_warning(provider: ModelProvider) -> String {
          [clud] WARNING: this launch uses pay-per-token API billing, not your subscription.\n\
          [clud] WARNING: enabled by CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER={provider}.\n\
          [clud] WARNING: unset both (and CLUD_PROVIDER) to return to your subscription."
+    )
+}
+
+/// Whether a launch on `provider` is pay-per-token.
+pub fn provider_is_metered(provider: ModelProvider) -> bool {
+    is_metered(provider)
+}
+
+/// The warning for a metered provider reached without the overrides, e.g. a
+/// saved provider setting or a provider inferred from `--model`.
+pub fn configured_metered_warning(provider: ModelProvider) -> String {
+    format!(
+        "[clud] WARNING: METERED PROVIDER IN USE: {provider}\n\
+     [clud] WARNING: this launch uses pay-per-token API billing, not your subscription.\n\
+     [clud] WARNING: selected by your configuration (saved setting, --model or CLUD_PROVIDER)."
     )
 }
 

@@ -9,9 +9,8 @@
 //!
 //! Setup only *offers* the import: it prints what it found and asks
 //! `Import these OpenRouter settings into clud? [y/N]` (default no). `--yes`
-//! never imports without `--import-hermes`, and an import still needs the
-//! metered consent (`CLUD_ALLOW_METERED=1`, `CLUD_METERED_PROVIDER=openrouter`)
-//! because OpenRouter bills per token. The key is never printed.
+//! never imports without `--import-hermes`. It prints the metered warning
+//! because OpenRouter bills per token, but needs no consent (DD-209). The key is never printed.
 
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
