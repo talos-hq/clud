@@ -15,7 +15,7 @@ use tungstenite::Message;
 use crate::selector::{self, Key, Note, Row, Selector, Step, View};
 use crate::subprocess::ManagedSubprocess;
 
-use super::{proxy, resume, transport};
+use super::{bridge, proxy, resume, transport};
 
 const MODEL_RESERVED: &str = "clud connect: --model is reserved for future use and is disabled; \
                               the server chooses the proxied model";
@@ -196,6 +196,7 @@ struct ProxySession {
     /// Set while the socket is lost and being re-established.
     reconnect: Option<resume::Reconnector>,
     heard: Instant,
+    bridge: Option<bridge::Bridge>,
 }
 
 impl ProxySession {
@@ -205,6 +206,10 @@ impl ProxySession {
 
     /// Returns the exit code once the session is over before an agent started.
     fn handle(&mut self, event: &Value) -> Result<Option<i32>, String> {
+        // The agent has not started yet: `hello` is the first event.
+        if self.agent.is_none() && self.bridge.is_none() {
+            self.bridge = bridge::offer(event, &mut self.proxy)?;
+        }
         match classify(event) {
             ProxyEvent::Approved if self.agent.is_none() => {
                 println!("{APPROVED}");
@@ -248,6 +253,12 @@ impl ProxySession {
                 }
                 self.handle(&event)
             }
+            Ok(Message::Binary(bytes)) if bytes.first() == Some(&bridge::CHANNEL) => {
+                if let Some(bridge) = &self.bridge {
+                    bridge.deliver(&bytes)?;
+                }
+                Ok(None)
+            }
             Ok(Message::Close(frame)) => match resume::close_meaning(frame.as_ref()) {
                 resume::Close::Lost => Err(super::CONNECTION_LOST.into()),
                 resume::Close::Final(message) => Err(message.into()),
@@ -266,11 +277,15 @@ impl ProxySession {
     }
 
     /// The socket is gone. A resumable session reconnects in the background
-    /// (the agent keeps working through the HTTPS proxy meanwhile); otherwise
+    /// (model requests on the socket bridge fail with 502 meanwhile and the
+    /// agent retries them; the HTTPS route keeps working); otherwise
     /// the old contract: wait for the agent, or end.
     fn lost(&mut self, error: String) -> Result<Option<i32>, String> {
         if !self.resumes || error != super::CONNECTION_LOST {
             return finish_without_socket(self, error).map(Some);
+        }
+        if let Some(bridge) = &self.bridge {
+            bridge.reset();
         }
         if self.agent.is_none() {
             println!("{}", resume::LOST_NOTICE);
@@ -373,6 +388,7 @@ fn run_proxy_session(host: &str) -> Result<i32, String> {
         resumes: false,
         reconnect: None,
         heard: Instant::now(),
+        bridge: None,
     };
     state.send(proxy_caps())?;
     drive(&mut state, &stop)
@@ -409,6 +425,12 @@ fn drive(state: &mut ProxySession, stop: &AtomicBool) -> Result<i32, String> {
                 }
                 continue;
             }
+        }
+        if let Err(error) = bridge::flush(state.bridge.as_ref(), &mut state.socket) {
+            if let Some(code) = state.lost(error)? {
+                return Ok(code);
+            }
+            continue;
         }
         let step = match state.pump() {
             Err(error) => state.lost(error)?,

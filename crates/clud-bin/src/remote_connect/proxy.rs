@@ -9,11 +9,15 @@ use zeroize::Zeroizing;
 const ORIGIN: &str = "CLUD_REMOTE_PROXY_ORIGIN";
 const TOKEN: &str = "CLUD_REMOTE_PROXY_TOKEN";
 const MODEL: &str = "CLUD_REMOTE_PROXY_MODEL";
+/// The loopback model endpoint of the session socket (`bridge.rs`), when the
+/// server offers one. Model requests go there instead of to the origin.
+const BRIDGE: &str = "CLUD_REMOTE_PROXY_BRIDGE";
 
 pub struct SessionProxy {
     origin: String,
     token: Zeroizing<String>,
     model: String,
+    bridge: Option<String>,
 }
 
 impl SessionProxy {
@@ -35,7 +39,23 @@ impl SessionProxy {
             origin: origin.to_string(),
             token: Zeroizing::new(token.into()),
             model: model.into(),
+            bridge: None,
         })
+    }
+
+    /// Send model requests to the session socket's loopback endpoint.
+    pub fn set_bridge(&mut self, bridge: &str) -> Result<(), String> {
+        let url = super::transport::base_url(bridge)?;
+        if url.scheme() != "http" || url.host_str() != Some("127.0.0.1") || url.port().is_none() {
+            return Err("remote model bridge must be a loopback HTTP origin".into());
+        }
+        self.bridge = Some(url.to_string());
+        Ok(())
+    }
+
+    /// The session bearer, which the loopback endpoint requires of its callers.
+    pub(super) fn bearer(&self) -> &str {
+        &self.token
     }
 
     pub fn from_process() -> Result<Option<Self>, String> {
@@ -45,7 +65,11 @@ impl SessionProxy {
         match (origin, token, model) {
             (None, None, None) => Ok(None),
             (Some(origin), Some(token), Some(model)) => {
-                Self::new(&origin, &token, &model).map(Some)
+                let mut proxy = Self::new(&origin, &token, &model)?;
+                if let Ok(bridge) = std::env::var(BRIDGE) {
+                    proxy.set_bridge(&bridge)?;
+                }
+                Ok(Some(proxy))
             }
             _ => Err("incomplete remote proxy context; refusing local credential fallback".into()),
         }
@@ -57,13 +81,17 @@ impl SessionProxy {
         config: &Path,
     ) -> Vec<(String, String)> {
         let mut env: BTreeMap<_, _> = ambient.into_iter().filter(|(key, _)| !scrub(key)).collect();
+        let inference = self.bridge.as_deref().unwrap_or(&self.origin);
+        if let Some(bridge) = &self.bridge {
+            env.insert(BRIDGE.into(), bridge.clone());
+        }
         for (key, value) in [
             (ORIGIN, self.origin.clone()),
             (TOKEN, self.token.to_string()),
             (MODEL, self.model.clone()),
-            ("ANTHROPIC_BASE_URL", format!("{}api/proxy", self.origin)),
+            ("ANTHROPIC_BASE_URL", format!("{inference}api/proxy")),
             ("ANTHROPIC_AUTH_TOKEN", self.token.to_string()),
-            ("OPENAI_BASE_URL", format!("{}api/proxy/v1", self.origin)),
+            ("OPENAI_BASE_URL", format!("{inference}api/proxy/v1")),
             ("OPENAI_API_KEY", self.token.to_string()),
             ("ANTHROPIC_MODEL", self.model.clone()),
             ("ANTHROPIC_DEFAULT_OPUS_MODEL", self.model.clone()),
@@ -137,6 +165,7 @@ fn scrub(key: &str) -> bool {
             ORIGIN
                 | TOKEN
                 | MODEL
+                | BRIDGE
                 | "CLAUDE_CODE_API_KEY_HELPER"
                 | "CLAUDE_CODE_CUSTOM_HEADERS"
                 | "CLAUDE_CODE_USE_BEDROCK"
@@ -251,6 +280,42 @@ mod tests {
         assert!(!serde_json::to_string(&env).unwrap().contains("own-"));
         assert!(Path::new(&env["CLAUDE_CONFIG_DIR"]).starts_with(config.path()));
         assert_eq!(std::fs::read_dir(config.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_socket_bridge_takes_model_traffic_off_the_inspected_origin() {
+        let mut proxy = SessionProxy::new("https://clud.bot", BEARER, "m").unwrap();
+        proxy.set_bridge("http://127.0.0.1:41234").unwrap();
+        let config = tempfile::tempdir().unwrap();
+        let ambient = vec![(BRIDGE.into(), "http://127.0.0.1:1/".into())];
+        let env: BTreeMap<_, _> = proxy
+            .environment(ambient, config.path())
+            .into_iter()
+            .collect();
+        assert_eq!(
+            env["ANTHROPIC_BASE_URL"],
+            "http://127.0.0.1:41234/api/proxy"
+        );
+        assert_eq!(
+            env["OPENAI_BASE_URL"],
+            "http://127.0.0.1:41234/api/proxy/v1"
+        );
+        // A nested clud rebuilds the same environment from these.
+        assert_eq!(env[BRIDGE], "http://127.0.0.1:41234/");
+        assert_eq!(env[ORIGIN], "https://clud.bot/");
+        assert_eq!(env["ANTHROPIC_AUTH_TOKEN"], BEARER);
+        for bridge in [
+            "https://127.0.0.1:41234",
+            "http://localhost:41234",
+            "http://127.0.0.1",
+            "https://clud.bot",
+        ] {
+            let mut proxy = SessionProxy::new("https://clud.bot", BEARER, "m").unwrap();
+            assert!(
+                proxy.set_bridge(bridge).is_err(),
+                "{bridge} is not a loopback bridge"
+            );
+        }
     }
 
     #[test]

@@ -18,6 +18,9 @@ consent boundary, protocol and executable integration check.
   queries, clipboard writes and input-reporting modes, keeps all drawing.
 - `transport.rs`: bounded session creation, same-origin bearer validation and
   HTTP/WebSocket TLS with bundled plus system roots.
+- `bridge.rs`: loopback model endpoint that carries the agent's requests over
+  the session socket (channel 2), past the hosting edge's HTTPS body firewall.
+  See [model requests ride the session socket](../../../../docs/architecture/remote-assistance.md#model-requests-ride-the-session-socket).
 - `proxy.rs`: ephemeral inference environment, credential isolation and
   foreground-only nested launch selection before local credential access.
 - `terminal.rs`: consented shell PTY, binary streams, resize and cleanup through
