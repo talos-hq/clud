@@ -527,6 +527,7 @@ def make_stubs(tmp_path: Path, uname_s: str, uname_m: str, sums: str, digest: st
         "STUB_SUMS": sums,
         # Never reach the developer's real terminal; tests opt in with a file.
         "CLUD_INSTALL_TTY": "",
+        "SHELL": "/bin/sh",
     }
     return {"env": env, "log": log}
 
@@ -640,6 +641,87 @@ def test_install_sh_write_profile_is_opt_in(tmp_path) -> None:
     assert done.returncode == 0, done.stderr
     profile = (tmp_path / "home" / ".profile").read_text(encoding="utf-8")
     assert ".local/bin" in profile
+    assert "open a new terminal" in done.stdout
+
+
+def install_with_shell(tmp_path, shell, uname_s="Darwin", args=(), answer=None):
+    arch = "arm64" if uname_s == "Darwin" else "x86_64"
+    triple = "aarch64-apple-darwin" if uname_s == "Darwin" else "x86_64-unknown-linux-musl"
+    digest = "a" * 64
+    env = {"SHELL": shell}
+    if answer is not None:
+        tty = tmp_path / "tty"
+        tty.write_text(answer, encoding="utf-8")
+        env["CLUD_INSTALL_TTY"] = str(tty)
+    return run_install(
+        tmp_path,
+        ["--version", "2.8.56", *args],
+        uname_s,
+        arch,
+        sums=f"{digest}  ./clud-2.8.56-{triple}\n",
+        digest=digest,
+        env=env,
+    )[0]
+
+
+@posix_only
+@pytest.mark.parametrize(
+    ("shell", "uname_s", "rc", "needle"),
+    [
+        ("/bin/zsh", "Darwin", ".zshrc", "export PATH="),
+        ("/bin/bash", "Darwin", ".bash_profile", "export PATH="),
+        ("/bin/bash", "Linux", ".bashrc", "export PATH="),
+        ("/usr/bin/fish", "Linux", ".config/fish/config.fish", "fish_add_path"),
+        ("/bin/dash", "Linux", ".profile", "export PATH="),
+    ],
+)
+def test_install_sh_asks_and_writes_the_login_shell_rc(
+    tmp_path, shell, uname_s, rc, needle
+) -> None:
+    done = install_with_shell(tmp_path, shell, uname_s, answer="\n")
+    assert done.returncode == 0, done.stderr
+    text = (tmp_path / "home" / rc).read_text(encoding="utf-8")
+    assert needle in text
+    assert ".local/bin" in text
+    assert f"source {tmp_path / 'home' / rc}" in done.stdout
+    assert "open a new terminal" in done.stdout
+    assert "[Y/n]" in done.stderr
+
+
+@posix_only
+def test_install_sh_declined_prompt_only_prints_the_line(tmp_path) -> None:
+    done = install_with_shell(tmp_path, "/bin/zsh", answer="n\n")
+    assert done.returncode == 0, done.stderr
+    assert not (tmp_path / "home" / ".zshrc").exists()
+    assert ".zshrc" in done.stdout
+    assert "open a new terminal" in done.stdout
+
+
+@posix_only
+def test_install_sh_no_terminal_never_writes(tmp_path) -> None:
+    done = install_with_shell(tmp_path, "/bin/zsh")
+    assert done.returncode == 0, done.stderr
+    assert not (tmp_path / "home" / ".zshrc").exists()
+    assert "export PATH=" in done.stdout
+
+
+@posix_only
+def test_install_sh_no_modify_path_skips_the_question(tmp_path) -> None:
+    done = install_with_shell(tmp_path, "/bin/zsh", args=["--no-modify-path"], answer="y\n")
+    assert done.returncode == 0, done.stderr
+    assert not (tmp_path / "home" / ".zshrc").exists()
+    assert "[Y/n]" not in done.stderr
+
+
+@posix_only
+def test_install_sh_does_not_append_the_line_twice(tmp_path) -> None:
+    install_with_shell(tmp_path, "/bin/zsh", answer="y\n")
+    shutil.rmtree(tmp_path / "stubs")
+    done = install_with_shell(tmp_path, "/bin/zsh", answer="y\n")
+    assert done.returncode == 0, done.stderr
+    text = (tmp_path / "home" / ".zshrc").read_text(encoding="utf-8")
+    assert text.count("export PATH=") == 1
+    assert "source" in done.stdout
 
 
 @posix_only

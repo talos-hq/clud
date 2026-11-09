@@ -96,9 +96,17 @@ JavaScript off, the plain list of all native downloads still works.
 assets (Linux uses static musl; a Rosetta shell on Apple Silicon gets aarch64),
 resolves the latest release tag from the `releases/latest` redirect unless
 `--version <tag>` is given, downloads the asset and the release's
-`SHA256SUMS`, and installs to `${CLUD_INSTALL_DIR:-$HOME/.local/bin}/clud`. It
-never edits shell profiles unless `--write-profile` (appends a PATH line to
-`~/.profile`), and prints `clud setup` as the next step instead of running it.
+`SHA256SUMS`, and installs to `${CLUD_INSTALL_DIR:-$HOME/.local/bin}/clud`.
+When that directory is not on `PATH`, it picks the startup file the login
+shell (`$SHELL`) reads: zsh `${ZDOTDIR:-~}/.zshrc`, bash `~/.bash_profile` on
+macOS or `~/.bashrc` on Linux, fish `config.fish` (`fish_add_path`), otherwise
+`~/.profile`. It then asks on `/dev/tty` (stdin is the piped script) whether to
+add the line there, defaulting to yes. Afterwards it tells the user to `source`
+the file or open a new terminal (#2743). macOS's default zsh never reads
+`~/.profile`, so the old `.profile`-only write left `clud` off `PATH`. With no
+terminal it prints the line and writes nothing. `--write-profile` answers yes
+without asking, `--no-modify-path` skips the step, and an existing line is never
+appended twice. It prints `clud setup` as the next step instead of running it.
 `--dry-run` prints the platform, release, both URLs and the destination and
 downloads nothing (without `--version` it makes one header-only request to
 resolve the tag). It exits non-zero on: an unknown flag; an unsupported OS or
