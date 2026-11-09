@@ -645,7 +645,9 @@ mod tests {
         );
         assert!(plan.manual_instruction.is_none());
         let bin = home.path().join(".local/bin");
-        assert!(plan.snippet.contains(&format!("PATH={}:\"$PATH\"", bin.display())));
+        assert!(plan
+            .snippet
+            .contains(&format!("PATH={}:\"$PATH\"", bin.display())));
         for edit in &plan.edits {
             assert!(edit.prior.is_none());
             assert_eq!(edit.next, plan.snippet.as_bytes());
@@ -659,7 +661,10 @@ mod tests {
         let hint = reload_hint(&plan);
         assert!(hint.contains("Open a new terminal"), "{hint}");
         assert!(
-            hint.contains(&format!("source {}", home.path().join(".zprofile").display())),
+            hint.contains(&format!(
+                "source {}",
+                home.path().join(".zprofile").display()
+            )),
             "{hint}"
         );
         let manual = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/tcsh")).unwrap();
@@ -673,7 +678,10 @@ mod tests {
         let mut env = mac_env(home.path(), "/bin/zsh");
         env.zdotdir = Some(zdot.clone());
         let plan = plan_in(&dest(home.path()), &env).unwrap();
-        assert_eq!(edit_paths(&plan), [zdot.join(".zprofile"), zdot.join(".zshrc")]);
+        assert_eq!(
+            edit_paths(&plan),
+            [zdot.join(".zprofile"), zdot.join(".zshrc")]
+        );
         env.zdotdir = Some(PathBuf::from("relative"));
         assert!(plan_in(&dest(home.path()), &env).is_err());
     }
@@ -698,15 +706,21 @@ mod tests {
         let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/bash")).unwrap();
         assert_eq!(
             edit_paths(&plan),
-            [home.path().join(".bash_profile"), home.path().join(".bashrc")]
+            [
+                home.path().join(".bash_profile"),
+                home.path().join(".bashrc")
+            ]
         );
     }
 
     #[test]
     fn macos_fish_writes_its_own_conf_d_file() {
         let home = tempfile::tempdir().unwrap();
-        let plan =
-            plan_in(&dest(home.path()), &mac_env(home.path(), "/opt/homebrew/bin/fish")).unwrap();
+        let plan = plan_in(
+            &dest(home.path()),
+            &mac_env(home.path(), "/opt/homebrew/bin/fish"),
+        )
+        .unwrap();
         assert_eq!(
             edit_paths(&plan),
             [home.path().join(".config/fish/conf.d/clud-path.fish")]
@@ -737,7 +751,10 @@ mod tests {
         let snippet = format!("{START}\nnew\n{END}\n");
         // No trailing newline in the user's file: append on its own line.
         let once = merge_managed_block(b"eval \"$(brew shellenv)\"", &snippet, path).unwrap();
-        assert_eq!(once, format!("eval \"$(brew shellenv)\"\n{snippet}").into_bytes());
+        assert_eq!(
+            once,
+            format!("eval \"$(brew shellenv)\"\n{snippet}").into_bytes()
+        );
         let twice = merge_managed_block(&once, &snippet, path).unwrap();
         assert_eq!(twice, once);
         // An older block in the middle is replaced in place.
@@ -755,7 +772,10 @@ mod tests {
             format!("{END}\n{START}\n"),
             format!("{START}\nunterminated\n"),
         ] {
-            assert!(merge_managed_block(text.as_bytes(), &snippet, path).is_err(), "{text}");
+            assert!(
+                merge_managed_block(text.as_bytes(), &snippet, path).is_err(),
+                "{text}"
+            );
         }
         assert!(merge_managed_block(&[0xff, 0xfe], &snippet, path).is_err());
     }
