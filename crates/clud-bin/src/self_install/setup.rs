@@ -12,7 +12,8 @@ use crate::args::DeepseekAuthSubcommand;
 use crate::backend::{HarnessSelection, ModelProvider};
 use crate::selector::{self, Key, Note, Row, Selector, Step, View};
 
-const DEEPSEEK: &str = "deepseek/deepseek-v4.1-flash";
+/// The default OpenRouter model: DeepSeek V4.1 Flash, pinned to its 1017 checkpoint.
+const DEEPSEEK: &str = "deepseek/deepseek-v4.1-flash-1017";
 const GLM: &str = "z-ai/glm-5.3-flash";
 
 /// The providers setup offers, in menu order. A [`ModelProvider`] missing
