@@ -15,7 +15,7 @@ use tungstenite::Message;
 use crate::selector::{self, Key, Note, Row, Selector, Step, View};
 use crate::subprocess::ManagedSubprocess;
 
-use super::{proxy, transport};
+use super::{bridge, proxy, transport};
 
 const MODEL_RESERVED: &str = "clud connect: --model is reserved for future use and is disabled; \
                               the server chooses the proxied model";
@@ -188,6 +188,7 @@ struct ProxySession {
     proxy: proxy::SessionProxy,
     config: tempfile::TempDir,
     agent: Option<ManagedSubprocess>,
+    bridge: Option<bridge::Bridge>,
 }
 
 impl ProxySession {
@@ -197,6 +198,10 @@ impl ProxySession {
 
     /// Returns the exit code once the session is over before an agent started.
     fn handle(&mut self, event: &Value) -> Result<Option<i32>, String> {
+        // The agent has not started yet: `hello` is the first event.
+        if self.agent.is_none() && self.bridge.is_none() {
+            self.bridge = bridge::offer(event, &mut self.proxy)?;
+        }
         match classify(event) {
             ProxyEvent::Approved if self.agent.is_none() => {
                 println!("{APPROVED}");
@@ -226,6 +231,12 @@ impl ProxySession {
                 let event: Value =
                     serde_json::from_str(&text).map_err(|_| "invalid remote event")?;
                 self.handle(&event)
+            }
+            Ok(Message::Binary(bytes)) if bytes.first() == Some(&bridge::CHANNEL) => {
+                if let Some(bridge) = &self.bridge {
+                    bridge.deliver(&bytes)?;
+                }
+                Ok(None)
             }
             Ok(Message::Close(_)) => Err("remote connection closed".into()),
             Err(tungstenite::Error::Io(error))
@@ -289,6 +300,7 @@ fn run_proxy_session(host: &str) -> Result<i32, String> {
         proxy,
         config,
         agent: None,
+        bridge: None,
     };
     state.send(json!({"type":"caps", "caps":["proxy"], "client":concat!("clud/", env!("CARGO_PKG_VERSION"))}))?;
     drive(&mut state, &stop)
@@ -316,6 +328,9 @@ fn drive(state: &mut ProxySession, stop: &AtomicBool) -> Result<i32, String> {
             if let Err(error) = state.send(json!({"type":"ping"})) {
                 return finish_without_socket(state, error);
             }
+        }
+        if let Err(error) = bridge::flush(state.bridge.as_ref(), &mut state.socket) {
+            return finish_without_socket(state, error);
         }
         match state.pump() {
             Ok(Some(code)) => return Ok(code),
