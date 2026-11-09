@@ -828,7 +828,10 @@ plan (up to maxAgents) → editor (1) → review (up to maxAgents) → integrato
   required checks (`pr_merge_watch --no-merge-wait`), enqueue pinned to the head
   (`github/pr_merge.py --match-head-commit`), then one bounded
   `--until merged --timeout <queueWatchSeconds, 540>`. A verdict of `queued` is
-  watched again without re-enqueueing, up to 3 times. Verdicts: `merged`,
+  watched again without re-enqueueing, up to 3 times. Every waiter runs in the
+  foreground under the 600 s Bash cap (so `queueWatchSeconds` is at most 540):
+  a Workflow subagent never receives a background completion notification, and
+  a backgrounded waiter used to end the chaperone's turn unenqueued (#2732). Verdicts: `merged`,
   `queued`, `needs_fix`, `needs_fixup`, `stuck`, `base_red`, `tool_misuse`.
 - **A feature-stage goal PR has no queue.** Its chaperone waits for checks,
   merges into the feature branch with `--admin --merge`, and records the landing
