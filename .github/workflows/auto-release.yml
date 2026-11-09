@@ -585,6 +585,59 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python -m ci.public_release promote release-state/candidate-public-state.json
 
+  # Only after the post-promotion acceptance gate: a release rollback-public
+  # demotes must never reach `brew install`.
+  publish-homebrew:
+    name: Update the Homebrew tap formula
+    needs: [preflight, released-acceptance-gate]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Render Formula/clud.rb from the promoted release's SHA256SUMS
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir release-sums
+          python -m installer.homebrew_formula "$RELEASE_TAG" release-sums/SHA256SUMS > clud.rb
+          cat clud.rb
+      # Same clud-refresh App as the catalog refresh jobs: a token that lives
+      # at most an hour, scoped to the tap repo, and no PAT to rotate.
+      - name: Mint tap App token
+        id: tap-app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          app-id: ${{ vars.CLUD_REFRESH_APP_ID }}
+          private-key: ${{ secrets.CLUD_REFRESH_APP_PRIVATE_KEY }}
+          owner: talos-hq
+          repositories: homebrew-tap
+      - name: Push the formula to talos-hq/homebrew-tap
+        env:
+          TAP_TOKEN: ${{ steps.tap-app.outputs.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+        run: |
+          git clone --depth 1 "https://x-access-token:${TAP_TOKEN}@github.com/talos-hq/homebrew-tap.git" tap
+          mkdir -p tap/Formula
+          cp clud.rb tap/Formula/clud.rb
+          cd tap
+          git add Formula/clud.rb
+          if git diff --cached --quiet; then
+            echo "Formula already at $RELEASE_TAG"
+            exit 0
+          fi
+          git config user.name "clud-refresh-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "clud $RELEASE_TAG"
+          git push origin HEAD:main
+
   build-install-site:
     name: Build and validate installer Pages
     needs: [preflight, promote-release]

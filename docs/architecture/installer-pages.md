@@ -154,3 +154,20 @@ new `latest-stable` pointer. A failed post-promotion gate demotes the release,
 restores the prior latest release, redeploys the prior catalog pointer, and
 leaves the workflow red if any restoration step fails. Publication shares a
 serialized concurrency group with both Pages publishers.
+
+### Homebrew tap
+
+`brew install talos-hq/tap/clud` installs the same direct release assets as
+`install.sh`: macOS arm64/x86_64 and static musl Linux arm64/x86_64, each
+pinned by the release's `SHA256SUMS`. Homebrew puts its own prefix on PATH, so
+a brew install needs no startup-file edits. `installer/homebrew_formula.py`
+renders `Formula/clud.rb` and refuses an unstable version or a missing
+platform asset. The `publish-homebrew` job in `auto-release.yml` runs it after
+`released-acceptance-gate`, so a release that `rollback-public` demotes never
+reaches the tap. The job then pushes to `talos-hq/homebrew-tap` with a
+one-hour token from the clud-refresh GitHub App. That App must have the tap
+repo in its selected repositories. clud's alias shims live in
+`~/.clud/state/shims/` and are relinked on the next launch, so `brew upgrade`
+replacing the Cellar binary is safe. `tests/test_homebrew_formula.py` covers
+the renderer.
+

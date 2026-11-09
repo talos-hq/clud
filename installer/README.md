@@ -12,6 +12,8 @@ built static musl Linux binaries before publication. The release build flow
 lives in [CI architecture](../docs/architecture/ci.md#release-profile-containment).
 `candidate_catalog.py` attaches a separate versioned catalog to a public
 prerelease while keeping the canonical stable pointer unchanged.
+`homebrew_formula.py` renders the `talos-hq/homebrew-tap` formula for a promoted
+release ([Homebrew tap](../docs/architecture/installer-pages.md#homebrew-tap)).
 
 The repository root `install` file and the existing `install.sh` and
 `install.ps1` are separate developer and shell installation routes; this
