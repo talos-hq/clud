@@ -14,5 +14,8 @@ consent boundary, protocol and executable integration check.
   foreground-only nested launch selection before local credential access.
 - `terminal.rs`: consented shell PTY, binary streams, resize and cleanup through
   running-process and the existing platform boundary.
+- `paste.rs`: drops bracketed-paste markers from operator input while the
+  remote shell has not enabled the mode, so a console paste never reaches the
+  shell as `^[[200~...~`.
 
 Called by `main.rs` before backend selection; registered in `args.rs`.

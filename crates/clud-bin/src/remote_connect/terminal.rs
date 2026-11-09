@@ -1,4 +1,5 @@
 //! Bounded terminal pumps over the existing running-process PTY boundary.
+use super::paste::{InputFilter, OutputTracker, PasteMode};
 use running_process::pty::NativePtyProcess;
 use serde_json::{json, Value};
 use std::sync::{
@@ -40,8 +41,13 @@ fn input_pump(
     process: Arc<NativePtyProcess>,
     rx: mpsc::Receiver<Vec<u8>>,
     failed: Arc<AtomicBool>,
+    mut paste: InputFilter,
 ) {
     for bytes in rx {
+        let bytes = paste.filter(&bytes);
+        if bytes.is_empty() {
+            continue;
+        }
         if process.write_impl(&bytes, false).is_err() {
             if !process.wait_for_reader_closed_impl(Some(0.0)) {
                 failed.store(true, Ordering::Relaxed);
@@ -69,6 +75,7 @@ fn output_pump(
     tx: mpsc::SyncSender<Message>,
     id: String,
     failed: Arc<AtomicBool>,
+    mut paste: OutputTracker,
 ) {
     let mut awaiting_startup_query = crate::platform::host::WINDOWS;
     loop {
@@ -93,6 +100,7 @@ fn output_pump(
                         let _ = process.write_impl(CONPTY_STARTUP_REPLY, false);
                     }
                 }
+                paste.observe(&bytes);
                 for chunk in bytes.chunks(FRAME_BYTES) {
                     let mut frame = vec![0];
                     frame.extend_from_slice(chunk);
@@ -210,8 +218,12 @@ impl Terminal {
         let input_failed = Arc::clone(&self.failed);
         let output_failed = Arc::clone(&self.failed);
         let output_id = id.clone();
-        std::thread::spawn(move || input_pump(writer, input_rx, input_failed));
-        std::thread::spawn(move || output_pump(reader, output_tx, output_id, output_failed));
+        let mode = PasteMode::default();
+        let (paste_in, paste_out) = (InputFilter::new(mode.clone()), OutputTracker::new(mode));
+        std::thread::spawn(move || input_pump(writer, input_rx, input_failed, paste_in));
+        std::thread::spawn(move || {
+            output_pump(reader, output_tx, output_id, output_failed, paste_out);
+        });
         self.process = Some(process);
         self.input = Some(input_tx);
         self.output = Some(output_rx);
@@ -293,6 +305,59 @@ mod tests {
         );
         assert_eq!(without_startup_query(b"\x1b[6n").unwrap(), b"");
         assert_eq!(without_startup_query(b"plain"), None);
+    }
+
+    fn read_until(terminal: &mut Terminal, needle: &str) -> String {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut output = String::new();
+        while Instant::now() < deadline && !output.contains(needle) {
+            match terminal.output().unwrap() {
+                Some(Message::Binary(bytes)) => {
+                    output.push_str(&String::from_utf8_lossy(&bytes[1..]));
+                }
+                _ => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        output
+    }
+
+    /// A paste the operator console wrapped in bracketed-paste markers reaches
+    /// a program that never enabled bracketed paste as the plain text, not as
+    /// `^[[200~curl ... | sh~` (the clud.bot install one-liner report).
+    #[test]
+    fn a_bracketed_paste_reaches_a_program_without_the_mode_as_plain_text() {
+        if crate::platform::host::WINDOWS {
+            return;
+        }
+        let config = tempfile::tempdir().unwrap();
+        let proxy = super::super::proxy::SessionProxy::new(
+            "http://127.0.0.1:1234",
+            "ct_paste_gate_fixture_1234567890",
+            "m",
+        )
+        .unwrap();
+        let mut terminal = Terminal::default();
+        terminal.environment = Some(proxy.environment(std::env::vars().collect(), config.path()));
+        terminal.open(&json!({"pty_id":"paste-test"})).unwrap();
+        // The shell turns bracketed paste off before running a command, so
+        // `read` waits with the mode off, as `sudo` or `install.sh` would.
+        terminal
+            .input(b"stty -echo; printf 'READ%s\\n' Y; IFS= read -r x; printf 'GOT[%s]\\n' \"$x\" | od -c | tr -s ' ' | tr -d '\\n'; printf '\\nEN%s\\n' D\n")
+            .unwrap();
+        let ready = read_until(&mut terminal, "READY");
+        assert!(ready.contains("READY"), "{ready}");
+        terminal
+            .input(b"\x1b[200~curl -fsSL https://clud.bot/install.sh | sh\x1b[201~\r")
+            .unwrap();
+        let output = read_until(&mut terminal, "END");
+        terminal.stop();
+        assert!(output.contains("END"), "{output}");
+        assert!(output.contains("G O T [ c u r l"), "{output}");
+        assert!(output.contains("| s h ]"), "{output}");
+        assert!(
+            !output.contains("033"),
+            "paste markers reached the program: {output}"
+        );
     }
 
     #[test]
