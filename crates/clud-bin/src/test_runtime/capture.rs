@@ -346,11 +346,12 @@ mod tests {
             argv.extend(["--", "validation"]);
             let args = crate::args::Args::try_parse_from(argv).unwrap();
             let Some(crate::args::Command::Test {
-                subcommand: crate::args::TestSubcommand::Capture { timeout_secs, .. },
+                subcommand: crate::args::TestSubcommand::Capture(options),
             }) = args.command
             else {
                 panic!("capture must parse as its own command");
             };
+            let crate::args::TestCaptureArgs { timeout_secs, .. } = *options;
             assert_eq!(timeout_secs, expected);
         }
     }

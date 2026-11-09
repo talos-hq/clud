@@ -18,30 +18,34 @@ pub fn run(subcommand: &ToolSubcommand) -> i32 {
                 2
             }
         },
-        ToolSubcommand::Info {
-            reference,
-            pid,
-            lines,
-            json,
-        } => match tool_info::run(reference.as_deref(), *pid, *lines, *json) {
-            Ok(code) => code,
-            Err(err) => {
-                eprintln!("[clud tool] info failed: {err}");
-                2
+        ToolSubcommand::Info(options) => {
+            let crate::args::ToolInfoArgs {
+                reference,
+                pid,
+                lines,
+                json,
+            } = options.as_ref();
+            match tool_info::run(reference.as_deref(), *pid, *lines, *json) {
+                Ok(code) => code,
+                Err(err) => {
+                    eprintln!("[clud tool] info failed: {err}");
+                    2
+                }
             }
-        },
-        ToolSubcommand::Log {
-            reference,
-            pid,
-            stream,
-            since,
-            until,
-            between,
-            grep,
-            head,
-            tail,
-            json,
-        } => {
+        }
+        ToolSubcommand::Log(options) => {
+            let crate::args::ToolLogArgs {
+                reference,
+                pid,
+                stream,
+                since,
+                until,
+                between,
+                grep,
+                head,
+                tail,
+                json,
+            } = options.as_ref();
             let Some(stream_sel) = tool_log::StreamSelector::parse(stream) else {
                 eprintln!("[clud tool] log: --stream must be stdout|stderr|combined");
                 return 2;
@@ -72,11 +76,12 @@ pub fn run(subcommand: &ToolSubcommand) -> i32 {
                 }
             }
         }
-        ToolSubcommand::Ledger {
-            tool,
-            session,
-            json,
-        } => {
+        ToolSubcommand::Ledger(options) => {
+            let crate::args::ToolLedgerArgs {
+                tool,
+                session,
+                json,
+            } = options.as_ref();
             let Some(scope) = tool_ledger::SessionScope::parse(session) else {
                 eprintln!("[clud tool] ledger: --session must be current|previous|all");
                 return 2;

@@ -20,17 +20,17 @@ fn serve_grammar_is_dispatched_without_backend_passthrough() {
             "{arguments:?} must not reach the harness"
         );
         let args = Args::try_parse_from(known).expect("serve arguments must parse");
-        let Some(Command::Serve {
+        let Some(Command::Serve(options)) = args.command else {
+            panic!("{arguments:?} must dispatch serve");
+        };
+        let crate::args::ServeArgs {
             claude,
             codex,
             openrouter,
             deepseek,
             kimi,
             port,
-        }) = args.command
-        else {
-            panic!("{arguments:?} must dispatch serve");
-        };
+        } = *options;
         let requested = |flag: &str| arguments.contains(&flag);
         assert_eq!(port, 8317);
         assert!(!codex, "{arguments:?} must not enable Codex");
@@ -57,7 +57,7 @@ fn serve_codex_flags_stay_local_and_can_add_routes() {
         let args = Args::try_parse_from(known).unwrap();
         assert!(matches!(
             args.command,
-            Some(Command::Serve { codex: true, .. })
+            Some(Command::Serve(options)) if options.codex
         ));
         assert!(!args.codex, "serve must not select an interactive backend");
     }
@@ -565,12 +565,9 @@ fn action_first_auth_subcommands_are_registered() {
     assert!(matches!(
         args.command,
         Some(Command::Auth {
-            subcommand: Some(AuthSubcommand::Login {
-                provider: AuthProvider::Codex,
-                acknowledge_experimental: true,
-                no_browser: true,
-            })
+            subcommand: Some(AuthSubcommand::Login(options))
         })
+        if matches!(*options, AuthLoginArgs { provider: AuthProvider::Codex, acknowledge_experimental: true, no_browser: true })
     ));
 
     let args = Args::try_parse_from(["clud", "auth", "status", "deepseek", "--json"]).unwrap();
@@ -1420,8 +1417,8 @@ fn test_session_new_parses() {
     assert!(matches!(
         args.command,
         Some(Command::Session {
-            action: crate::args::SessionAction::New { ref backend, .. },
-        }) if backend == "codex"
+            action: crate::args::SessionAction::New(options),
+        }) if options.backend == "codex"
     ));
 }
 
@@ -1440,12 +1437,13 @@ fn test_session_show_parses() {
 fn test_logs_with_session_id() {
     let args = parse(&["clud", "logs", "sess-abc"]);
     match args.command {
-        Some(Command::Logs {
-            session_id,
-            follow,
-            lines,
-            last,
-        }) => {
+        Some(Command::Logs(options)) => {
+            let crate::args::LogsArgs {
+                session_id,
+                follow,
+                lines,
+                last,
+            } = *options;
             assert_eq!(session_id.as_deref(), Some("sess-abc"));
             assert!(!follow);
             assert!(lines.is_none());
@@ -1459,12 +1457,13 @@ fn test_logs_with_session_id() {
 fn test_logs_follow_flag() {
     let args = parse(&["clud", "logs", "-f", "sess-abc"]);
     match args.command {
-        Some(Command::Logs {
-            session_id,
-            follow,
-            last,
-            ..
-        }) => {
+        Some(Command::Logs(options)) => {
+            let crate::args::LogsArgs {
+                session_id,
+                follow,
+                last,
+                ..
+            } = *options;
             assert_eq!(session_id.as_deref(), Some("sess-abc"));
             assert!(follow);
             assert!(!last);
@@ -1477,12 +1476,13 @@ fn test_logs_follow_flag() {
 fn test_logs_lines_flag() {
     let args = parse(&["clud", "logs", "-n", "100", "sess-abc"]);
     match args.command {
-        Some(Command::Logs {
-            session_id,
-            lines,
-            last,
-            ..
-        }) => {
+        Some(Command::Logs(options)) => {
+            let crate::args::LogsArgs {
+                session_id,
+                lines,
+                last,
+                ..
+            } = *options;
             assert_eq!(session_id.as_deref(), Some("sess-abc"));
             assert_eq!(lines, Some(100));
             assert!(!last);
@@ -1495,12 +1495,13 @@ fn test_logs_lines_flag() {
 fn test_logs_last_flag() {
     let args = parse(&["clud", "logs", "--last"]);
     match args.command {
-        Some(Command::Logs {
-            session_id,
-            follow,
-            last,
-            ..
-        }) => {
+        Some(Command::Logs(options)) => {
+            let crate::args::LogsArgs {
+                session_id,
+                follow,
+                last,
+                ..
+            } = *options;
             assert!(session_id.is_none());
             assert!(!follow);
             assert!(last);
@@ -1513,7 +1514,8 @@ fn test_logs_last_flag() {
 fn test_logs_last_short_flag() {
     let args = parse(&["clud", "logs", "-l"]);
     match args.command {
-        Some(Command::Logs { last, .. }) => {
+        Some(Command::Logs(options)) => {
+            let crate::args::LogsArgs { last, .. } = *options;
             assert!(last);
         }
         _ => panic!("expected Logs subcommand"),
@@ -2035,12 +2037,13 @@ fn ci_is_a_dispatched_subcommand_with_its_flags() {
         "--json",
     ]);
     match args.command {
-        Some(Command::Ci {
-            job,
-            filter,
-            json,
-            workflow,
-        }) => {
+        Some(Command::Ci(options)) => {
+            let crate::args::CiArgs {
+                job,
+                filter,
+                json,
+                workflow,
+            } = *options;
             assert_eq!(job.as_deref(), Some("test-linux-x64-unit"));
             assert_eq!(filter.as_deref(), Some("openrouter_free"));
             assert!(json);
@@ -2091,11 +2094,12 @@ fn test_workflow_subcommand_with_args() {
         r#"{"mode":"fast"}"#,
     ]);
     match args.command {
-        Some(Command::Workflow {
-            ref script,
-            ref args_json,
-            ..
-        }) => {
+        Some(Command::Workflow(options)) => {
+            let crate::args::WorkflowArgs {
+                ref script,
+                ref args_json,
+                ..
+            } = *options;
             assert_eq!(script, "review.js");
             assert_eq!(args_json.as_deref(), Some(r#"{"mode":"fast"}"#));
         }
@@ -2108,7 +2112,7 @@ fn test_workflow_reuse_flag() {
     let args = parse(&["clud", "workflow", "w.js", "--reuse"]);
     assert!(matches!(
         args.command,
-        Some(Command::Workflow { resume: true, .. })
+        Some(Command::Workflow(options)) if options.resume
     ));
 }
 
