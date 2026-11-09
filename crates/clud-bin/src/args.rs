@@ -884,6 +884,11 @@ pub struct SetupArgs {
     /// CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=openrouter are too.
     #[arg(long = "import-hermes")]
     pub import_hermes: bool,
+    /// Change nothing; exit 0 when a provider is set up, 3 when `clud setup`
+    /// still needs to run (no provider saved, or OpenRouter with no key).
+    /// The installer uses it to offer setup right after install.
+    #[arg(long = "check", conflicts_with_all = ["dry_run", "yes", "provider", "write_profile", "import_hermes"])]
+    pub check: bool,
 }
 
 #[derive(clap::Args, Debug, Clone)]

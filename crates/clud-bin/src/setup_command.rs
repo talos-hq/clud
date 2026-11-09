@@ -33,6 +33,42 @@ pub(crate) fn hermes_context_reference(home: &Path) -> Result<String, String> {
 /// Exit status for a refused or impossible request (usage-level failure).
 pub const EXIT_USAGE: i32 = 2;
 
+/// `clud setup --check`: setup has not been run, or left no usable credential.
+pub const EXIT_NEEDS_SETUP: i32 = 3;
+
+/// Whether a machine still needs `clud setup`: no saved provider, or OpenRouter
+/// (the only provider whose key clud stores) with no key stored or exported.
+fn needs_setup(provider: Option<ModelProvider>, openrouter_key: bool) -> bool {
+    match provider {
+        None => true,
+        Some(ModelProvider::OpenRouter) => !openrouter_key,
+        Some(_) => false,
+    }
+}
+
+/// `clud setup --check`: report whether setup is needed; change nothing.
+pub fn check() -> i32 {
+    let Some(home) = crate::home::user_home() else {
+        eprintln!("clud setup: cannot resolve the home directory");
+        return 1;
+    };
+    let provider = crate::clud_settings::load_launch_preferences_read_only_at(&home)
+        .ok()
+        .and_then(|snapshot| snapshot.global.model_provider);
+    let descriptor = crate::provider_registry::descriptor_for(ModelProvider::OpenRouter)
+        .expect("OpenRouter descriptor");
+    let openrouter_key = crate::provider_auth::has_well_formed_persisted_key(descriptor)
+        .unwrap_or(false)
+        || std::env::var(descriptor.api_key_env).is_ok_and(|key| !key.trim().is_empty());
+    if needs_setup(provider, openrouter_key) {
+        println!("clud setup: not set up yet; run `clud setup`");
+        EXIT_NEEDS_SETUP
+    } else {
+        println!("clud setup: set up");
+        0
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Options {
     pub dry_run: bool,
@@ -384,6 +420,19 @@ mod tests {
         };
         let code = run_at(home, Some(source), options, tty, &none, &mut out);
         (code, String::from_utf8(out).unwrap())
+    }
+
+    #[test]
+    fn check_needs_setup_without_a_provider_or_an_openrouter_key() {
+        assert!(needs_setup(None, false));
+        assert!(needs_setup(None, true));
+        assert!(needs_setup(Some(ModelProvider::OpenRouter), false));
+        assert!(!needs_setup(Some(ModelProvider::OpenRouter), true));
+        for provider in provider_setup::OFFERED {
+            if provider != ModelProvider::OpenRouter {
+                assert!(!needs_setup(Some(provider), false), "{provider:?}");
+            }
+        }
     }
 
     #[test]

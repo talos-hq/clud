@@ -240,6 +240,7 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
             provider,
             write_profile,
             import_hermes,
+            check,
         } = options.as_ref();
         if let Some(product) = product {
             return Some(clud::install::command::run(
@@ -263,6 +264,9 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
         if !args.passthrough.is_empty() {
             eprintln!("setup accepts no passthrough arguments");
             return Some(2);
+        }
+        if *check {
+            return Some(clud::setup_command::check());
         }
         return Some(clud::setup_command::run(&clud::setup_command::Options {
             dry_run: *dry_run,
