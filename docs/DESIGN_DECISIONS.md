@@ -7778,3 +7778,18 @@ still errors. Supersedes the implicit-route half of DD-199.
 **Why:** an always-metered provider cannot surprise the user with a bill they
 avoided by subscribing; selecting it in any form is the choice.
 
+
+## DD-210: browser download names use same-origin copies of verified release bytes
+
+**Context:** GitHub release asset names include versions and target triples.
+Browsers ignore an HTML `download` filename across origins, so setting that
+attribute on a GitHub link cannot reliably select the multicall installer.
+
+**Decision:** Pages stages native binaries on its own origin, rechecking each
+catalog SHA-256. Normal and setup links share one staged file and select
+`clud` or `clud-setup` (with `.exe` on Windows) using `download`. Model-only
+Pages publication preserves those files alongside the installer page.
+
+**Why:** One executable and one installer implementation remain authoritative;
+no second setup build or unverified proxy is needed. The catalog keeps the
+original release URLs for CLI consumers.

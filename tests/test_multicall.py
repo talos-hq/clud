@@ -101,3 +101,17 @@ def test_link_aliases_materializes_every_alias(tmp_path: Path) -> None:
         timeout=30,
     )
     assert again.returncode == 0, again
+
+
+@pytest.mark.parametrize(
+    "spelling", ["clud-installer", "clud-install", "clud-setup", "CLUD-SETUP (1)"]
+)
+@pytest.mark.parametrize("flags", [[], ["--installer"]])
+def test_installer_alias_enters_installer_before_backend(
+    tmp_path: Path, spelling: str, flags: list[str]
+) -> None:
+    alias = tmp_path / f"{spelling}{SUFFIX}"
+    _link("hardlink", _clud(), alias)
+    result = process.run([str(alias), *flags], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 2
+    assert "a terminal is required" in result.stderr

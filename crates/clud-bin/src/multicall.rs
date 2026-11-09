@@ -42,6 +42,7 @@ pub enum Personality {
     Shim,
     Secret,
     Askpass,
+    Installer,
 }
 
 /// Every name `clud` answers to besides its own, in materialization order.
@@ -69,7 +70,16 @@ pub fn personality_for(argv0: &OsStr) -> Option<Personality> {
 }
 
 fn personality_for_name(name: &str) -> Option<Personality> {
-    if name == "clud-secret" {
+    let stem = name
+        .strip_suffix(')')
+        .and_then(|name| {
+            let (stem, number) = name.rsplit_once(" (")?;
+            (!number.is_empty() && number.bytes().all(|b| b.is_ascii_digit())).then_some(stem)
+        })
+        .unwrap_or(name);
+    if matches!(stem, "clud-installer" | "clud-install" | "clud-setup") {
+        Some(Personality::Installer)
+    } else if name == "clud-secret" {
         Some(Personality::Secret)
     } else if name == "clud-askpass" {
         Some(Personality::Askpass)
@@ -108,6 +118,19 @@ pub fn maybe_run(argv: &[OsString]) -> Option<i32> {
 
 fn run_personality(personality: Personality, argv: &[OsString]) -> i32 {
     match personality {
+        Personality::Installer => {
+            let mut installer_argv = argv.to_vec();
+            if !installer_argv.iter().skip(1).any(|arg| arg == "--installer") {
+                installer_argv.insert(1, "--installer".into());
+            }
+            let args = crate::args::Args::parse_from_raw(
+                installer_argv
+                    .iter()
+                    .map(|arg| arg.to_string_lossy().into_owned())
+                    .collect(),
+            );
+            crate::self_install::entry::run_explicit(&args).unwrap_or(2)
+        }
         Personality::CmdScan => run_cmd_scan(argv),
         Personality::Secret => crate::secret_prompt::run_alias(argv),
         Personality::Askpass => crate::secret_prompt::run_askpass(argv),
@@ -168,6 +191,35 @@ fn link_aliases(dir: Option<&OsString>) -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installer_download_names_dispatch() {
+        for name in ["clud-installer", "clud-install", "clud-setup"] {
+            for case in [name.to_string(), name.to_ascii_uppercase()] {
+                for suffix in ["", ".exe", " (1)", " (12).EXE"] {
+                    for prefix in ["", "/downloads/", "C:\\Downloads\\"] {
+                        let argv0 = format!("{prefix}{case}{suffix}");
+                        assert_eq!(personality(&argv0), Some(Personality::Installer), "{argv0}");
+                    }
+                }
+            }
+        }
+        for name in [
+            "clud",
+            "clud.exe",
+            "install",
+            "setup",
+            "clud-setup-old",
+            "clud-installer.txt",
+            "clud-setup ()",
+            "clud-setup (x).exe",
+            "clud-setup (1).exe.bak",
+            "/clud-setup/clud",
+            "reinstall-clud",
+        ] {
+            assert_eq!(personality(name), None, "{name}");
+        }
+    }
 
     fn personality(argv0: &str) -> Option<Personality> {
         personality_for(OsStr::new(argv0))

@@ -27,3 +27,6 @@ Codex CLI pin must match this verified probe version. A `codex_upstream` guard
 test enforces that relationship: the ChatGPT backend uses the `version` header
 to gate model access (#2299). Update the record and both consumers together
 when verifying a newer Codex release.
+
+Model-only publication also preserves same-origin binary links from the installer
+page; see [download naming](../docs/architecture/installer-pages.md#download-page-detection).

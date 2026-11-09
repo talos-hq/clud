@@ -848,3 +848,17 @@ def test_install_sh_prints_the_next_step_in_green_on_a_colour_terminal(
     coloured = "\033[32mNext step: run 'clud setup'\033[0m" in done.stdout
     assert coloured is green
     assert "Next step: run 'clud setup'" in done.stdout
+
+
+def test_download_names_and_same_origin_bytes() -> None:
+    parsed = Page()
+    parsed.feed(render_page(assets_catalog()))
+    for option in parsed.options:
+        if not option.get("value"):
+            continue
+        name = "clud.exe" if option["data-os"] == "windows" else "clud"
+        assert option["data-download-name"] == name
+        assert option["data-download-url"].startswith("/clud/downloads/")
+    page = render_page(assets_catalog())
+    for name in ["clud", "clud.exe", "clud-setup", "clud-setup.exe"]:
+        assert f'download="{name}"' in page

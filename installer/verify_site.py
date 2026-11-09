@@ -8,7 +8,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from installer.catalog import TARGETS
-from installer.site import CATALOG_HREF, DETECT_SCRIPT, select_native_downloads
+from installer.site import CATALOG_HREF, DETECT_SCRIPT, download_path, select_native_downloads
 
 
 class Links(HTMLParser):
@@ -87,13 +87,14 @@ def verify(site: Path) -> str:  # noqa: C901
     page_links = Links()
     page_links.feed(page)
     expected_downloads = select_native_downloads(catalog)
-    if page_links.native != expected_downloads:
+    local_downloads = [{**row, "url": download_path(row)} for row in expected_downloads]
+    if page_links.native != local_downloads:
         raise ValueError(f"native download links differ from catalog: {page_links.native}")
     if expected_downloads and page_links.options != [row["url"] for row in expected_downloads]:
         raise ValueError(f"platform dropdown differs from catalog: {page_links.options}")
     if expected_downloads and DETECT_SCRIPT not in page:
         raise ValueError("download page lacks the platform detection script")
-    allowed_links = {row["url"] for row in expected_downloads}
+    allowed_links = {download_path(row) for row in expected_downloads}
     allowed_links.update((CATALOG_HREF, "https://support.apple.com/en-us/102445"))
     for href in page_links.hrefs:
         if href not in allowed_links:

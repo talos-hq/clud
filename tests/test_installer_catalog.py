@@ -179,7 +179,10 @@ def test_page_links_only_verified_native_asset_from_selected_stable(tmp_path) ->
         lambda url: direct if url == direct_url else data,
     )
     page = (tmp_path / "install" / "index.html").read_text(encoding="utf-8")
-    assert f'href="{direct_url}"' in page
+    assert 'href="/clud/downloads/windows/x86_64/clud-2.9.0-x86_64-pc-windows-msvc.exe"' in page
+    staged = tmp_path / "downloads/windows/x86_64/clud-2.9.0-x86_64-pc-windows-msvc.exe"
+    assert staged.read_bytes() == direct
+    assert verify(tmp_path) == "2.9.0"
     assert "https://example.com/wheel" not in page
     assert "releases/latest/download" not in page
     assert "--installer" in page
@@ -226,7 +229,8 @@ def test_page_prefers_static_musl_and_escapes_catalog_urls() -> None:
         ],
     }
     page = render_page(catalog)
-    assert 'href="https://example.com/static?a=1&amp;b=2"' in page
+    assert 'value="https://example.com/static?a=1&amp;b=2"' in page
+    assert 'href="/clud/downloads/linux/x86_64/clud-2.10.0-x86_64-unknown-linux-musl"' in page
     assert "https://example.com/gnu" not in page
     assert "chmod +x" in page
     assert "Open Anyway" in page
@@ -440,3 +444,22 @@ def test_page_does_not_link_unverified_installer_asset(tmp_path) -> None:
     page = (tmp_path / "install" / "index.html").read_text(encoding="utf-8")
     assert "releases/latest/download/clud-installer.exe" not in page
     assert "No native downloads are available" in page
+
+
+def test_site_refuses_changed_native_bytes(tmp_path) -> None:
+    import hashlib
+
+    from installer.site import publish_downloads
+
+    name = "clud-2.9.0-x86_64-pc-windows-msvc.exe"
+    catalog = {"channels": {"latest-stable": "2.9.0"}, "releases": [{
+        "version": "2.9.0", "platforms": [{
+            "platform": {"os": "windows", "arch": "x86_64"},
+            "asset": {"filename": name, "media_type": "application/octet-stream",
+                      "urls": ["https://example.com/native"],
+                      "sha256": hashlib.sha256(b"verified").hexdigest()},
+        }],
+    }]}
+    with pytest.raises(ValueError, match="download checksum changed"):
+        publish_downloads(tmp_path, catalog, lambda _: b"changed")
+    assert not (tmp_path / "downloads").exists()

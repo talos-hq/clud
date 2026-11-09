@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -107,7 +108,9 @@ def stage_site(destination: Path, *, trigger: str, now: datetime) -> str:
     checked_at = now.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
     blocked_ids = policy["blocked_chatgpt_backend_models"]
-    if not isinstance(blocked_ids, list) or not all(isinstance(value, str) for value in blocked_ids):
+    if not isinstance(blocked_ids, list) or not all(
+        isinstance(value, str) for value in blocked_ids
+    ):
         raise ValueError("invalid blocked ChatGPT backend model policy")
     document = merge_manifest(
         previous, observed_model_ids(), checked_at=checked_at, trigger=trigger,
@@ -119,6 +122,14 @@ def stage_site(destination: Path, *, trigger: str, now: datetime) -> str:
     # Pages deployment replaces the entire site. Preserve the already-verified
     # installer subtree byte for byte, and only then add the new model document.
     for relative in published_paths():
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(fetch(f"{PAGES}/{relative}"))
+    page = (destination / "index.html").read_text(encoding="utf-8")
+    for href in sorted(set(re.findall(r'href="(/clud/downloads/[^"<>]+)"', page))):
+        relative = href.removeprefix("/clud/")
+        if ".." in Path(relative).parts:
+            raise ValueError("unsafe installer download path")
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(fetch(f"{PAGES}/{relative}"))
