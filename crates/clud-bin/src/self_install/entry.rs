@@ -305,7 +305,9 @@ fn finish_activation(
             Outcome::failed(1, "activation_failed")
         };
     }
-    activation_result(Ok(()), version)
+    let outcome = activation_result(Ok(()), version);
+    eprintln!("{}", activation.reload_hint());
+    outcome
 }
 
 fn offer_activation_repair(previous: &ActivationPlan, version: &str) -> Outcome {

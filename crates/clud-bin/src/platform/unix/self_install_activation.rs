@@ -52,11 +52,39 @@ pub fn terminal_commands(destination: &Path) -> Result<Vec<(&'static str, String
     ])
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
-)]
+/// The environment `plan` reads, captured once so the startup-file choice is
+/// a pure function of it (and unit-testable for any host layout).
+#[derive(Debug, Clone)]
+struct ShellEnv {
+    home: PathBuf,
+    shell: PathBuf,
+    zdotdir: Option<PathBuf>,
+    xdg_config_home: Option<PathBuf>,
+}
+
+impl ShellEnv {
+    fn from_process() -> Result<Self, String> {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .ok_or("HOME is unavailable")?;
+        let shell = std::env::var_os("SHELL")
+            .map(PathBuf::from)
+            .or_else(account_shell)
+            .ok_or("cannot determine the account login shell")?;
+        Ok(Self {
+            home,
+            shell,
+            zdotdir: std::env::var_os("ZDOTDIR").map(PathBuf::from),
+            xdg_config_home: std::env::var_os("XDG_CONFIG_HOME").map(PathBuf::from),
+        })
+    }
+}
+
 pub fn plan(destination: &Path) -> Result<ActivationHost, String> {
+    plan_in(destination, &ShellEnv::from_process()?)
+}
+
+fn plan_in(destination: &Path, env: &ShellEnv) -> Result<ActivationHost, String> {
     let bin = destination.parent().ok_or("missing install directory")?;
     if bin
         .as_os_str()
@@ -66,24 +94,50 @@ pub fn plan(destination: &Path) -> Result<ActivationHost, String> {
     {
         return Err("install directory contains a PATH separator or control character".into());
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .ok_or("HOME is unavailable")?;
-    if !home.is_absolute() {
+    if !env.home.is_absolute() {
         return Err("HOME must be absolute".into());
     }
-    let shell = std::env::var_os("SHELL")
-        .map(PathBuf::from)
-        .or_else(account_shell)
-        .ok_or("cannot determine the account login shell")?;
-    if !shell.is_absolute() {
+    if !env.shell.is_absolute() {
         return Err("login shell must be an absolute path".into());
     }
-    let name = shell
+    let name = env
+        .shell
         .file_name()
         .and_then(|name| name.to_str())
         .ok_or("login shell name is unavailable")?;
-    let paths = match name {
+    let Some(paths) = startup_files(name, env)? else {
+        let bin_text = bin.to_string_lossy();
+        let quoted = shell_words::quote(&bin_text);
+        return Ok(ActivationHost {
+            shell: env.shell.clone(),
+            snippet: String::new(),
+            edits: Vec::new(),
+            manual_instruction: Some(format!(
+                "add `export PATH={quoted}:\"$PATH\"` to this shell's startup file, then run a new shell"
+            )),
+        });
+    };
+    let snippet = managed_snippet(name, bin)?;
+    let edits = paths
+        .into_iter()
+        .map(|path| profile_edit(path, &snippet))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ActivationHost {
+        shell: env.shell.clone(),
+        snippet,
+        edits,
+        manual_instruction: None,
+    })
+}
+
+/// The startup files a fresh terminal of this login shell reads, or `None`
+/// when clud does not manage this shell. zsh gets `.zprofile` because macOS
+/// Terminal opens login shells and `/etc/zprofile` (path_helper) rebuilds
+/// PATH before it; bash reuses the login file that already exists so a new
+/// `.bash_profile` never shadows the user's `.profile`.
+fn startup_files(name: &str, env: &ShellEnv) -> Result<Option<Vec<PathBuf>>, String> {
+    let home = &env.home;
+    Ok(Some(match name {
         "bash" => {
             let login = [".bash_profile", ".bash_login", ".profile"]
                 .iter()
@@ -93,115 +147,102 @@ pub fn plan(destination: &Path) -> Result<ActivationHost, String> {
             vec![login, home.join(".bashrc")]
         }
         "zsh" => {
-            let zdotdir = std::env::var_os("ZDOTDIR")
-                .map(PathBuf::from)
-                .unwrap_or_else(|| home.clone());
+            let zdotdir = env.zdotdir.clone().unwrap_or_else(|| home.clone());
             if !zdotdir.is_absolute() {
                 return Err("ZDOTDIR must be absolute".into());
             }
             vec![zdotdir.join(".zprofile"), zdotdir.join(".zshrc")]
         }
         "fish" => {
-            let config = std::env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
+            let config = env
+                .xdg_config_home
+                .clone()
                 .unwrap_or_else(|| home.join(".config"));
             if !config.is_absolute() {
                 return Err("XDG_CONFIG_HOME must be absolute".into());
             }
             vec![config.join("fish/conf.d/clud-path.fish")]
         }
-        _ => {
-            let bin_text = bin.to_string_lossy();
-            let quoted = shell_words::quote(&bin_text);
-            return Ok(ActivationHost {
-                shell,
-                snippet: String::new(),
-                edits: Vec::new(),
-                manual_instruction: Some(format!(
-                    "add `export PATH={quoted}:\"$PATH\"` to this shell's startup file, then run a new shell"
-                )),
-            });
-        }
-    };
-    let snippet = if name == "fish" {
-        format!(
+        _ => return Ok(None),
+    }))
+}
+
+fn managed_snippet(shell_name: &str, bin: &Path) -> Result<String, String> {
+    if shell_name == "fish" {
+        return Ok(format!(
             "{START}\nfish_add_path --path --move -- {}\n{END}\n",
             fish_quote(bin)?
-        )
-    } else {
-        let bin_text = bin.to_string_lossy();
-        let quoted = shell_words::quote(&bin_text);
-        format!(
-            "{START}\ncase \"$PATH\" in\n  {quoted}:*) ;;\n  *) PATH={quoted}:\"$PATH\"; export PATH ;;\nesac\n{END}\n"
-        )
-    };
-    let mut edits = Vec::new();
-    for path in paths {
-        let prior = read_profile(&path)?;
-        let next = match &prior {
-            Some(bytes) => {
-                let text = std::str::from_utf8(bytes)
-                    .map_err(|_| format!("profile is not UTF-8: {}", path.display()))?;
-                if text.contains(START) || text.contains(END) {
-                    if text.matches(START).count() != 1 || text.matches(END).count() != 1 {
-                        return Err(format!(
-                            "startup file has ambiguous installer markers: {}",
-                            path.display()
-                        ));
-                    }
-                    let start = text.find(START).ok_or("missing installer start marker")?;
-                    let end_start = text.find(END).ok_or("missing installer end marker")?;
-                    if end_start <= start {
-                        return Err(format!("invalid installer markers: {}", path.display()));
-                    }
-                    let end = end_start + END.len();
-                    let end = if text.as_bytes().get(end) == Some(&b'\n') {
-                        end + 1
-                    } else {
-                        end
-                    };
-                    let mut result = bytes[..start].to_vec();
-                    result.extend_from_slice(snippet.as_bytes());
-                    result.extend_from_slice(&bytes[end..]);
-                    result
-                } else {
-                    let mut result = bytes.clone();
-                    if !result.is_empty() && !result.ends_with(b"\n") {
-                        result.push(b'\n');
-                    }
-                    result.extend_from_slice(snippet.as_bytes());
-                    result
-                }
-            }
-            None => snippet.as_bytes().to_vec(),
-        };
-        if next.len() as u64 > MAX_PROFILE_BYTES {
-            return Err(format!(
-                "startup file would be too large: {}",
-                path.display()
-            ));
-        }
-        let mut missing_parents = Vec::new();
-        let mut ancestor = path.parent();
-        while let Some(directory) = ancestor {
-            if fs::symlink_metadata(directory).is_ok() {
-                break;
-            }
-            missing_parents.push(directory.to_path_buf());
-            ancestor = directory.parent();
-        }
-        edits.push(ProfileEdit {
-            path,
-            prior,
-            next,
-            missing_parents,
-        });
+        ));
     }
-    Ok(ActivationHost {
-        shell,
-        snippet,
-        edits,
-        manual_instruction: None,
+    let bin_text = bin.to_string_lossy();
+    let quoted = shell_words::quote(&bin_text);
+    Ok(format!(
+        "{START}\ncase \"$PATH\" in\n  {quoted}:*) ;;\n  *) PATH={quoted}:\"$PATH\"; export PATH ;;\nesac\n{END}\n"
+    ))
+}
+
+/// Replace the one managed block in `prior`, or append it. The user's own
+/// text is never parsed or rewritten; only the marker-delimited block moves.
+fn merge_managed_block(prior: &[u8], snippet: &str, path: &Path) -> Result<Vec<u8>, String> {
+    let text = std::str::from_utf8(prior)
+        .map_err(|_| format!("profile is not UTF-8: {}", path.display()))?;
+    if !text.contains(START) && !text.contains(END) {
+        let mut result = prior.to_vec();
+        if !result.is_empty() && !result.ends_with(b"\n") {
+            result.push(b'\n');
+        }
+        result.extend_from_slice(snippet.as_bytes());
+        return Ok(result);
+    }
+    if text.matches(START).count() != 1 || text.matches(END).count() != 1 {
+        return Err(format!(
+            "startup file has ambiguous installer markers: {}",
+            path.display()
+        ));
+    }
+    let start = text.find(START).ok_or("missing installer start marker")?;
+    let end_start = text.find(END).ok_or("missing installer end marker")?;
+    if end_start <= start {
+        return Err(format!("invalid installer markers: {}", path.display()));
+    }
+    let end = end_start + END.len();
+    let end = if prior.get(end) == Some(&b'\n') {
+        end + 1
+    } else {
+        end
+    };
+    let mut result = prior[..start].to_vec();
+    result.extend_from_slice(snippet.as_bytes());
+    result.extend_from_slice(&prior[end..]);
+    Ok(result)
+}
+
+fn profile_edit(path: PathBuf, snippet: &str) -> Result<ProfileEdit, String> {
+    let prior = read_profile(&path)?;
+    let next = match &prior {
+        Some(bytes) => merge_managed_block(bytes, snippet, &path)?,
+        None => snippet.as_bytes().to_vec(),
+    };
+    if next.len() as u64 > MAX_PROFILE_BYTES {
+        return Err(format!(
+            "startup file would be too large: {}",
+            path.display()
+        ));
+    }
+    let mut missing_parents = Vec::new();
+    let mut ancestor = path.parent();
+    while let Some(directory) = ancestor {
+        if fs::symlink_metadata(directory).is_ok() {
+            break;
+        }
+        missing_parents.push(directory.to_path_buf());
+        ancestor = directory.parent();
+    }
+    Ok(ProfileEdit {
+        path,
+        prior,
+        next,
+        missing_parents,
     })
 }
 
@@ -350,6 +391,18 @@ pub fn description(_destination: &Path, plan: &ActivationHost) -> String {
         lines.join("; "),
         plan.snippet
     )
+}
+
+/// What to tell the user once the startup files are written: the current
+/// terminal still has the old PATH until it re-reads them.
+pub fn reload_hint(plan: &ActivationHost) -> String {
+    match plan.edits.first() {
+        Some(edit) => format!(
+            "Open a new terminal, or run `source {}`, to use clud in this one.",
+            shell_words::quote(&edit.path.to_string_lossy())
+        ),
+        None => "Open a new terminal to use clud.".to_owned(),
+    }
 }
 
 pub fn apply_and_verify(
@@ -557,8 +610,155 @@ fn parse_shell_probe(output: &[u8]) -> (String, String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_shell_probe, terminal_commands};
-    use std::path::Path;
+    use super::{
+        merge_managed_block, parse_shell_probe, plan_in, reload_hint, terminal_commands, ShellEnv,
+        END, START,
+    };
+    use std::path::{Path, PathBuf};
+
+    /// A fresh macOS-style account: `/Users/<name>`-like home, the default
+    /// zsh login shell, and `~/.local/bin` (which macOS never puts on PATH).
+    fn mac_env(home: &Path, shell: &str) -> ShellEnv {
+        ShellEnv {
+            home: home.to_path_buf(),
+            shell: PathBuf::from(shell),
+            zdotdir: None,
+            xdg_config_home: None,
+        }
+    }
+
+    fn dest(home: &Path) -> PathBuf {
+        home.join(".local/bin/clud")
+    }
+
+    fn edit_paths(plan: &super::ActivationHost) -> Vec<PathBuf> {
+        plan.edits.iter().map(|edit| edit.path.clone()).collect()
+    }
+
+    #[test]
+    fn macos_default_zsh_activates_zprofile_and_zshrc() {
+        let home = tempfile::tempdir().unwrap();
+        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/zsh")).unwrap();
+        assert_eq!(
+            edit_paths(&plan),
+            [home.path().join(".zprofile"), home.path().join(".zshrc")]
+        );
+        assert!(plan.manual_instruction.is_none());
+        let bin = home.path().join(".local/bin");
+        assert!(plan.snippet.contains(&format!("PATH={}:\"$PATH\"", bin.display())));
+        for edit in &plan.edits {
+            assert!(edit.prior.is_none());
+            assert_eq!(edit.next, plan.snippet.as_bytes());
+        }
+    }
+
+    #[test]
+    fn macos_reload_hint_names_the_login_file_to_source() {
+        let home = tempfile::tempdir().unwrap();
+        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/zsh")).unwrap();
+        let hint = reload_hint(&plan);
+        assert!(hint.contains("Open a new terminal"), "{hint}");
+        assert!(
+            hint.contains(&format!("source {}", home.path().join(".zprofile").display())),
+            "{hint}"
+        );
+        let manual = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/tcsh")).unwrap();
+        assert_eq!(reload_hint(&manual), "Open a new terminal to use clud.");
+    }
+
+    #[test]
+    fn macos_zsh_honors_zdotdir() {
+        let home = tempfile::tempdir().unwrap();
+        let zdot = home.path().join(".config/zsh");
+        let mut env = mac_env(home.path(), "/bin/zsh");
+        env.zdotdir = Some(zdot.clone());
+        let plan = plan_in(&dest(home.path()), &env).unwrap();
+        assert_eq!(edit_paths(&plan), [zdot.join(".zprofile"), zdot.join(".zshrc")]);
+        env.zdotdir = Some(PathBuf::from("relative"));
+        assert!(plan_in(&dest(home.path()), &env).is_err());
+    }
+
+    #[test]
+    fn macos_bash_reuses_existing_profile_instead_of_shadowing_it() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(home.path().join(".profile"), "export EDITOR=vim\n").unwrap();
+        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/bash")).unwrap();
+        assert_eq!(
+            edit_paths(&plan),
+            [home.path().join(".profile"), home.path().join(".bashrc")]
+        );
+        assert!(!home.path().join(".bash_profile").exists());
+        let profile = String::from_utf8(plan.edits[0].next.clone()).unwrap();
+        assert!(profile.starts_with("export EDITOR=vim\n"));
+    }
+
+    #[test]
+    fn macos_bash_fresh_home_uses_bash_profile() {
+        let home = tempfile::tempdir().unwrap();
+        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/bash")).unwrap();
+        assert_eq!(
+            edit_paths(&plan),
+            [home.path().join(".bash_profile"), home.path().join(".bashrc")]
+        );
+    }
+
+    #[test]
+    fn macos_fish_writes_its_own_conf_d_file() {
+        let home = tempfile::tempdir().unwrap();
+        let plan =
+            plan_in(&dest(home.path()), &mac_env(home.path(), "/opt/homebrew/bin/fish")).unwrap();
+        assert_eq!(
+            edit_paths(&plan),
+            [home.path().join(".config/fish/conf.d/clud-path.fish")]
+        );
+        assert!(plan.snippet.contains("fish_add_path --path --move --"));
+    }
+
+    #[test]
+    fn unmanaged_shell_gets_manual_instruction_and_no_edits() {
+        let home = tempfile::tempdir().unwrap();
+        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/tcsh")).unwrap();
+        assert!(plan.edits.is_empty());
+        assert!(plan.manual_instruction.unwrap().contains("export PATH="));
+    }
+
+    #[test]
+    fn relative_home_or_shell_is_refused() {
+        let home = tempfile::tempdir().unwrap();
+        let mut env = mac_env(Path::new("relative"), "/bin/zsh");
+        assert!(plan_in(&dest(home.path()), &env).is_err());
+        env = mac_env(home.path(), "zsh");
+        assert!(plan_in(&dest(home.path()), &env).is_err());
+    }
+
+    #[test]
+    fn rerun_keeps_one_block_and_user_text_byte_exact() {
+        let path = Path::new("/x/.zprofile");
+        let snippet = format!("{START}\nnew\n{END}\n");
+        // No trailing newline in the user's file: append on its own line.
+        let once = merge_managed_block(b"eval \"$(brew shellenv)\"", &snippet, path).unwrap();
+        assert_eq!(once, format!("eval \"$(brew shellenv)\"\n{snippet}").into_bytes());
+        let twice = merge_managed_block(&once, &snippet, path).unwrap();
+        assert_eq!(twice, once);
+        // An older block in the middle is replaced in place.
+        let old = format!("a\n{START}\nold\n{END}\nb\n");
+        let merged = merge_managed_block(old.as_bytes(), &snippet, path).unwrap();
+        assert_eq!(merged, format!("a\n{snippet}b\n").into_bytes());
+    }
+
+    #[test]
+    fn ambiguous_or_reversed_markers_are_refused() {
+        let path = Path::new("/x/.zshrc");
+        let snippet = format!("{START}\nnew\n{END}\n");
+        for text in [
+            format!("{START}\n{END}\n{START}\n{END}\n"),
+            format!("{END}\n{START}\n"),
+            format!("{START}\nunterminated\n"),
+        ] {
+            assert!(merge_managed_block(text.as_bytes(), &snippet, path).is_err(), "{text}");
+        }
+        assert!(merge_managed_block(&[0xff, 0xfe], &snippet, path).is_err());
+    }
 
     #[test]
     fn terminal_commands_refuse_unrepresentable_path_entries() {
