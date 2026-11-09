@@ -597,7 +597,8 @@ Full rationale:
 
 clud is subscription-first. With nothing set it launches the Claude
 subscription; `CLUD_SUBSCRIPTION_PROVIDER` (`claude`, alias `native`, or
-`codex`) changes that default and may never name a metered provider. The
+`codex`) changes that default; naming OpenRouter, DeepSeek or Kimi makes that
+provider the default, like a saved setting (#2747). The
 policy lives in `crates/clud-bin/src/metered_policy.rs` and reuses
 `failover::CostOwner::for_provider` to decide what is metered (DeepSeek, Kimi,
 OpenRouter, and the Codex bridge's `OPENAI_API_KEY`).
@@ -611,11 +612,11 @@ OpenRouter, and the Codex bridge's `OPENAI_API_KEY`).
 | `CLUD_ALLOW_METERED=1` + `CLUD_METERED_PROVIDER=<p>[,<q>…]`, no `CLUD_PROVIDER` | subscription default; consent applies when the CLI or a unified gateway selects a listed provider |
 | `--openrouter`, `--deepseek`, `--kimi` or `--provider <metered>` on the command line | that provider, loud warning; naming it is consent ([DD-199](../DESIGN_DECISIONS.md#dd-199-naming-a-metered-provider-on-the-command-line-is-consent)) |
 | `CLUD_PROVIDER=<metered>`, a saved setting, a qualified `--model` or the credential fallback | that provider, loud warning; inherently metered providers need no consent ([DD-209](../DESIGN_DECISIONS.md#dd-209-the-metered-gate-protects-only-the-claude-and-codex-subscriptions)) |
-| `CLUD_ALLOW_METERED=1` without `CLUD_METERED_PROVIDER` (or the reverse) | error |
+| an incomplete or mismatched override pair involving `codex` | error |
+| an incomplete or mismatched pair naming only OpenRouter, DeepSeek or Kimi | ignored with a one-line note, no consent (#2746) |
 | overrides with `CLUD_PROVIDER=claude` or `CLUD_METERED_PROVIDER=claude` | error (contradiction) |
-| `CLUD_METERED_PROVIDER` differs from `CLUD_PROVIDER` | error |
-| `CLUD_SUBSCRIPTION_PROVIDER=<metered>` | error |
-| a CLI provider that differs from `CLUD_PROVIDER` | error |
+| `CLUD_SUBSCRIPTION_PROVIDER=<metered>` | that provider as the default, loud warning (#2747) |
+| a CLI provider that differs from `CLUD_PROVIDER` | error: an OpenRouter launch is refused for Claude and Codex launches (#2748) |
 
 Errors exit 2 in `resolve_launch`, before settings, launch records, the daemon
 or any child exist. A metered route prints this to stderr and stores it in the

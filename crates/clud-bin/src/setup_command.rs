@@ -94,10 +94,7 @@ pub fn run(options: &Options) -> i32 {
         source.as_deref(),
         options,
         interactive,
-        &Hermes {
-            detection,
-            metered_ok: hermes::metered_consent(),
-        },
+        &Hermes { detection },
         &mut stdout,
     );
     let _ = stdout.flush();
@@ -107,7 +104,6 @@ pub fn run(options: &Options) -> i32 {
 /// What setup learned about Hermes before any step ran.
 struct Hermes {
     detection: hermes::Detection,
-    metered_ok: bool,
 }
 
 fn run_at(
@@ -184,7 +180,6 @@ fn offer_hermes(
         mode,
         &mut hermes::stdin_lock(),
         out,
-        state.metered_ok,
         &mut store,
     ) {
         hermes::Outcome::Skipped => Ok(false),
@@ -281,7 +276,7 @@ fn configure_provider(home: &Path, options: &Options, prompt: bool, out: &mut dy
             .unwrap_or(ModelProvider::Claude),
     };
     if provider == ModelProvider::OpenRouter {
-        let code = configure_openrouter(options.dry_run, prompt, out);
+        let code = configure_openrouter(home, options.dry_run, prompt, out);
         if code != 0 {
             return code;
         }
@@ -323,7 +318,7 @@ fn save_default(
     }
 }
 
-fn configure_openrouter(dry_run: bool, prompt: bool, out: &mut dyn Write) -> i32 {
+fn configure_openrouter(home: &Path, dry_run: bool, prompt: bool, out: &mut dyn Write) -> i32 {
     let descriptor = crate::provider_registry::descriptor_for(ModelProvider::OpenRouter)
         .expect("OpenRouter descriptor");
     let stored = crate::provider_auth::has_well_formed_persisted_key(descriptor).unwrap_or(false);
@@ -356,8 +351,11 @@ fn configure_openrouter(dry_run: bool, prompt: bool, out: &mut dyn Write) -> i32
         );
         EXIT_USAGE
     };
-    if code != 0 || !prompt {
+    if code != 0 {
         return code;
+    }
+    if !prompt {
+        return default_openrouter_model(home, dry_run, out);
     }
     match provider_setup::choose_openrouter_model() {
         Ok(model) => {
@@ -365,6 +363,42 @@ fn configure_openrouter(dry_run: bool, prompt: bool, out: &mut dyn Write) -> i32
             0
         }
         Err(code) => code,
+    }
+}
+
+/// Without the model menu (`--yes`, `--dry-run`), save the menu's default
+/// OpenRouter model unless one is already saved, so a scripted setup launches
+/// the recommended model rather than the catalog fallback (#2749).
+fn default_openrouter_model(home: &Path, dry_run: bool, out: &mut dyn Write) -> i32 {
+    let saved = crate::clud_settings::load_launch_preferences_read_only_at(home)
+        .ok()
+        .and_then(|snapshot| snapshot.profile(ModelProvider::OpenRouter)?.model.clone());
+    let model = provider_setup::DEEPSEEK;
+    if let Some(saved) = saved {
+        let _ = writeln!(out, "model: OpenRouter default already {saved}");
+        return 0;
+    }
+    if dry_run {
+        let _ = writeln!(out, "model: would set the OpenRouter default to {model}");
+        return 0;
+    }
+    let patch = crate::clud_settings::GlobalSettingsPatch {
+        provider_profiles: vec![crate::clud_settings::ProviderProfilePatch {
+            provider: Some(ModelProvider::OpenRouter),
+            model: Some(model.to_owned()),
+            ..crate::clud_settings::ProviderProfilePatch::default()
+        }],
+        ..crate::clud_settings::GlobalSettingsPatch::default()
+    };
+    match crate::clud_settings::save_settings_patch_at(home, patch) {
+        Ok(()) => {
+            let _ = writeln!(out, "model: OpenRouter default set to {model}");
+            0
+        }
+        Err(error) => {
+            eprintln!("clud setup: could not save OpenRouter model: {error}");
+            1
+        }
     }
 }
 
@@ -416,7 +450,6 @@ mod tests {
         let mut out = Vec::new();
         let none = Hermes {
             detection: hermes::Detection::None,
-            metered_ok: false,
         };
         let code = run_at(home, Some(source), options, tty, &none, &mut out);
         (code, String::from_utf8(out).unwrap())
@@ -482,6 +515,75 @@ mod tests {
                 "{second}"
             );
         }
+    }
+
+    fn saved_openrouter_model(home: &Path) -> Option<String> {
+        crate::clud_settings::load_launch_preferences_read_only_at(home)
+            .ok()?
+            .profile(ModelProvider::OpenRouter)?
+            .model
+            .clone()
+    }
+
+    /// #2749: a non-interactive OpenRouter setup saves the same default the
+    /// menu would select (DeepSeek V4.1 Flash, 1017 checkpoint).
+    #[test]
+    fn non_interactive_openrouter_setup_saves_the_default_model() {
+        let root = tempfile::tempdir().unwrap();
+        let mut out = Vec::new();
+        assert_eq!(default_openrouter_model(root.path(), false, &mut out), 0);
+        assert_eq!(
+            saved_openrouter_model(root.path()).as_deref(),
+            Some("deepseek/deepseek-v4.1-flash-1017")
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("model: OpenRouter default set to deepseek/deepseek-v4.1-flash-1017"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn non_interactive_openrouter_setup_keeps_a_saved_model() {
+        let root = tempfile::tempdir().unwrap();
+        crate::clud_settings::save_settings_patch_at(
+            root.path(),
+            crate::clud_settings::GlobalSettingsPatch {
+                provider_profiles: vec![crate::clud_settings::ProviderProfilePatch {
+                    provider: Some(ModelProvider::OpenRouter),
+                    model: Some("z-ai/glm-5.3-flash".into()),
+                    ..crate::clud_settings::ProviderProfilePatch::default()
+                }],
+                ..crate::clud_settings::GlobalSettingsPatch::default()
+            },
+        )
+        .unwrap();
+        let mut out = Vec::new();
+        assert_eq!(default_openrouter_model(root.path(), false, &mut out), 0);
+        assert_eq!(
+            saved_openrouter_model(root.path()).as_deref(),
+            Some("z-ai/glm-5.3-flash")
+        );
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains("model: OpenRouter default already z-ai/glm-5.3-flash"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn dry_run_reports_the_default_model_and_writes_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let mut out = Vec::new();
+        assert_eq!(default_openrouter_model(root.path(), true, &mut out), 0);
+        assert_eq!(saved_openrouter_model(root.path()), None);
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            text.contains(
+                "model: would set the OpenRouter default to deepseek/deepseek-v4.1-flash-1017"
+            ),
+            "{text}"
+        );
     }
 
     #[test]

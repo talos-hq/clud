@@ -1134,6 +1134,9 @@ fn resolve_env_policy(args: &args::Args) -> clud::metered_policy::EnvPolicy {
         eprintln!("[clud] error: {error}");
         std::process::exit(2);
     }
+    if let Some(note) = &policy.ignored_overrides {
+        eprintln!("{note}");
+    }
     if args.verbose && policy.subscription_default_applied {
         verbose_log::log(
             "[clud] provider: CLUD_SUBSCRIPTION_PROVIDER unset; defaulting to the Claude subscription",

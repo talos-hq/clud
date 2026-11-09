@@ -150,17 +150,6 @@ fn assert_refused_without_side_effects(fx: &Fixture, exit: i32, output: &str, ne
 fn contradictory_policy_env_is_refused_before_any_side_effect() {
     let table: &[(&[(&str, &str)], &str)] = &[
         (
-            &[("CLUD_PROVIDER", "openrouter"), ("CLUD_ALLOW_METERED", "1")],
-            "without CLUD_METERED_PROVIDER",
-        ),
-        (
-            &[
-                ("CLUD_PROVIDER", "openrouter"),
-                ("CLUD_METERED_PROVIDER", "openrouter"),
-            ],
-            "without CLUD_ALLOW_METERED=1",
-        ),
-        (
             &[
                 ("CLUD_PROVIDER", "claude"),
                 ("CLUD_ALLOW_METERED", "1"),
@@ -169,16 +158,12 @@ fn contradictory_policy_env_is_refused_before_any_side_effect() {
             "contradiction",
         ),
         (
-            &[
-                ("CLUD_PROVIDER", "openrouter"),
-                ("CLUD_ALLOW_METERED", "1"),
-                ("CLUD_METERED_PROVIDER", "deepseek"),
-            ],
-            "disagrees with CLUD_PROVIDER=openrouter",
+            &[("CLUD_PROVIDER", "codex"), ("CLUD_ALLOW_METERED", "1")],
+            "without CLUD_METERED_PROVIDER",
         ),
         (
-            &[("CLUD_SUBSCRIPTION_PROVIDER", "openrouter")],
-            "subscription default can only be",
+            &[("CLUD_METERED_PROVIDER", "codex")],
+            "without CLUD_ALLOW_METERED=1",
         ),
     ];
     for (policy, needle) in table {
@@ -190,14 +175,82 @@ fn contradictory_policy_env_is_refused_before_any_side_effect() {
     }
 }
 
+/// (policy env, extra CLI flags, a substring the output must contain).
+type OpenRouterRow = (
+    &'static [(&'static str, &'static str)],
+    &'static [&'static str],
+    &'static str,
+);
+
+/// OpenRouter always works once selected outside a Claude or Codex launch
+/// (#2746, #2747): leftover or half-set overrides and
+/// `CLUD_SUBSCRIPTION_PROVIDER` resolve to an OpenRouter launch.
 #[test]
-fn a_cli_provider_contradicting_clud_provider_is_refused() {
-    let fx = fixture();
-    let mut args = vec!["--claude".to_string()];
-    args.extend(launch_args(&fx));
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
-    let (exit, output) = run(&fx, &[("CLUD_PROVIDER", "codex")], &args);
-    assert_refused_without_side_effects(&fx, exit, &output, "contradiction");
+fn selecting_openrouter_always_resolves_to_openrouter() {
+    let rows: &[OpenRouterRow] = &[
+        (
+            &[("CLUD_PROVIDER", "openrouter"), ("CLUD_ALLOW_METERED", "1")],
+            &[],
+            "ignoring",
+        ),
+        (
+            &[
+                ("CLUD_PROVIDER", "openrouter"),
+                ("CLUD_METERED_PROVIDER", "openrouter"),
+            ],
+            &[],
+            "ignoring",
+        ),
+        (
+            &[
+                ("CLUD_PROVIDER", "openrouter"),
+                ("CLUD_ALLOW_METERED", "1"),
+                ("CLUD_METERED_PROVIDER", "deepseek"),
+            ],
+            &[],
+            "ignoring",
+        ),
+        (
+            &[("CLUD_METERED_PROVIDER", "openrouter")],
+            &["--openrouter"],
+            "ignoring",
+        ),
+        (
+            &[("CLUD_ALLOW_METERED", "1")],
+            &["--openrouter"],
+            "ignoring",
+        ),
+        (
+            &[("CLUD_SUBSCRIPTION_PROVIDER", "openrouter")],
+            &[],
+            "METERED PROVIDER IN USE",
+        ),
+    ];
+    for (policy, flags, needle) in rows {
+        let fx = fixture();
+        let mut args: Vec<&str> = flags.to_vec();
+        args.extend(["--dry-run", "-p", "hello"]);
+        let (exit, output) = run(&fx, policy, &args);
+        assert_eq!(exit, 0, "{policy:?} {flags:?}: {output}");
+        assert!(
+            output.contains("\"model_provider\": \"openrouter\""),
+            "{policy:?} {flags:?}: {output}"
+        );
+        assert!(output.contains(needle), "{policy:?} {flags:?}: {output}");
+    }
+}
+
+/// A Claude or Codex launch is never moved onto OpenRouter (directive, #2748).
+#[test]
+fn openrouter_is_refused_for_claude_and_codex_launches() {
+    for selected in ["claude", "codex"] {
+        let fx = fixture();
+        let mut args = vec!["--openrouter".to_string()];
+        args.extend(launch_args(&fx));
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (exit, output) = run(&fx, &[("CLUD_PROVIDER", selected)], &args);
+        assert_refused_without_side_effects(&fx, exit, &output, "contradiction");
+    }
 }
 
 #[test]

@@ -880,8 +880,8 @@ pub struct SetupArgs {
     #[arg(long = "write-profile")]
     pub write_profile: bool,
     /// Import the OpenRouter settings and key found in Hermes' config.
-    /// Required for an import under --yes; OpenRouter is metered, so
-    /// CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=openrouter are too.
+    /// Required for an import under --yes. OpenRouter is pay-per-token and
+    /// needs no metered overrides (DD-209).
     #[arg(long = "import-hermes")]
     pub import_hermes: bool,
     /// Change nothing; exit 0 when a provider is set up, 3 when `clud setup`

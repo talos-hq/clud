@@ -261,7 +261,6 @@ pub fn offer(
     mode: Mode,
     input: &mut dyn BufRead,
     out: &mut dyn Write,
-    metered_ok: bool,
     store: &mut dyn FnMut(&Found, &mut dyn Write) -> i32,
 ) -> Outcome {
     let requested = matches!(
@@ -307,13 +306,12 @@ pub fn offer(
         );
         return Outcome::Skipped;
     }
-    import(found, out, metered_ok, store)
+    import(found, out, store)
 }
 
 fn import(
     found: &Found,
     out: &mut dyn Write,
-    metered_ok: bool,
     store: &mut dyn FnMut(&Found, &mut dyn Write) -> i32,
 ) -> Outcome {
     if found.key.is_none() {
@@ -327,15 +325,8 @@ fn import(
     let _ = writeln!(
         out,
         "{}",
-        metered_policy::metered_warning(ModelProvider::OpenRouter)
+        metered_policy::configured_metered_warning(ModelProvider::OpenRouter)
     );
-    if !metered_ok {
-        eprintln!(
-            "clud setup: OpenRouter is metered (pay-per-token); importing needs \
-             CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=openrouter; nothing imported"
-        );
-        return Outcome::Failed(crate::setup_command::EXIT_USAGE);
-    }
     if found.base_url.trim_end_matches('/') != OPENROUTER_DEFAULT_BASE_URL {
         let _ = writeln!(
             out,
@@ -389,10 +380,6 @@ pub fn store_import(home: &Path, found: &Found, out: &mut dyn Write) -> i32 {
 }
 
 /// Metered consent for an import, from the real environment.
-pub fn metered_consent() -> bool {
-    metered_policy::process_allows_metered(ModelProvider::OpenRouter)
-}
-
 pub fn stdin_lock() -> io::StdinLock<'static> {
     io::stdin().lock()
 }

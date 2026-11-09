@@ -110,19 +110,6 @@ fn metered_warning_text_is_verbatim() {
 fn contradictions_are_errors_with_actionable_messages() {
     let table: &[(Pairs, PolicyError, &str)] = &[
         (
-            &[(PROVIDER_ENV, "openrouter"), (ALLOW_METERED_ENV, "1")],
-            PolicyError::AllowWithoutMeteredProvider,
-            "without CLUD_METERED_PROVIDER",
-        ),
-        (
-            &[
-                (PROVIDER_ENV, "openrouter"),
-                (METERED_PROVIDER_ENV, "openrouter"),
-            ],
-            PolicyError::MeteredWithoutAllow(ModelProvider::OpenRouter),
-            "without CLUD_ALLOW_METERED=1",
-        ),
-        (
             &[
                 (PROVIDER_ENV, "claude"),
                 (ALLOW_METERED_ENV, "1"),
@@ -142,30 +129,8 @@ fn contradictions_are_errors_with_actionable_messages() {
             "without CLUD_METERED_PROVIDER",
         ),
         (
-            &[
-                (PROVIDER_ENV, "openrouter"),
-                (ALLOW_METERED_ENV, "1"),
-                (METERED_PROVIDER_ENV, "deepseek"),
-            ],
-            PolicyError::MeteredProviderMismatch {
-                provider: "openrouter".into(),
-                metered: "deepseek".into(),
-            },
-            "disagrees with CLUD_PROVIDER=openrouter",
-        ),
-        (
-            &[(SUBSCRIPTION_PROVIDER_ENV, "openrouter")],
-            PolicyError::MeteredSubscriptionDefault(ModelProvider::OpenRouter),
-            "can only be claude (alias native) or codex",
-        ),
-        (
-            &[(ALLOW_METERED_ENV, "1")],
-            PolicyError::AllowWithoutMeteredProvider,
-            "without CLUD_METERED_PROVIDER",
-        ),
-        (
-            &[(METERED_PROVIDER_ENV, "kimi")],
-            PolicyError::MeteredWithoutAllow(ModelProvider::Kimi),
+            &[(METERED_PROVIDER_ENV, "codex")],
+            PolicyError::MeteredWithoutAllow(ModelProvider::Codex),
             "without CLUD_ALLOW_METERED=1",
         ),
         (
@@ -199,20 +164,82 @@ fn contradictions_are_errors_with_actionable_messages() {
     }
 }
 
+/// A Claude or Codex launch is never moved onto another provider by the
+/// command line (maintainer directive on #2748).
 #[test]
 fn a_cli_provider_may_not_contradict_clud_provider() {
-    let codex = resolve(&env(&[(PROVIDER_ENV, "codex")])).expect("codex resolves");
+    let claude = resolve(&env(&[(PROVIDER_ENV, "claude")])).expect("claude resolves");
     assert_eq!(
-        reconcile_cli(&codex, Some(ModelProvider::Claude)),
+        reconcile_cli(&claude, Some(ModelProvider::OpenRouter)),
         Err(PolicyError::CliContradictsEnv {
-            cli: ModelProvider::Claude,
-            env: ModelProvider::Codex,
+            cli: ModelProvider::OpenRouter,
+            env: ModelProvider::Claude,
         })
     );
+    let codex = resolve(&env(&[(PROVIDER_ENV, "codex")])).expect("codex resolves");
+    assert!(reconcile_cli(&codex, Some(ModelProvider::OpenRouter)).is_err());
+    assert!(reconcile_cli(&codex, Some(ModelProvider::Claude)).is_err());
     assert_eq!(reconcile_cli(&codex, Some(ModelProvider::Codex)), Ok(()));
     assert_eq!(reconcile_cli(&codex, None), Ok(()));
     let unset = resolve(&EnvSnapshot::default()).expect("default resolves");
     assert_eq!(reconcile_cli(&unset, Some(ModelProvider::Codex)), Ok(()));
+}
+
+/// #2746: an incomplete or mismatched override pair that cannot touch a
+/// subscription is a leftover. It is ignored with a note, never refused, and
+/// it consents to nothing.
+#[test]
+fn leftover_overrides_never_refuse_an_always_metered_launch() {
+    let rows: &[Pairs] = &[
+        &[(PROVIDER_ENV, "openrouter"), (ALLOW_METERED_ENV, "1")],
+        &[
+            (PROVIDER_ENV, "openrouter"),
+            (METERED_PROVIDER_ENV, "openrouter"),
+        ],
+        &[
+            (PROVIDER_ENV, "openrouter"),
+            (ALLOW_METERED_ENV, "1"),
+            (METERED_PROVIDER_ENV, "deepseek"),
+        ],
+        &[(ALLOW_METERED_ENV, "1")],
+        &[(METERED_PROVIDER_ENV, "openrouter")],
+        &[(METERED_PROVIDER_ENV, "kimi")],
+        &[
+            (PROVIDER_ENV, "deepseek"),
+            (METERED_PROVIDER_ENV, "deepseek"),
+        ],
+        &[(PROVIDER_ENV, "kimi"), (ALLOW_METERED_ENV, "1")],
+    ];
+    for pairs in rows {
+        let policy = resolve(&env(pairs)).unwrap_or_else(|e| panic!("{pairs:?} refused: {e}"));
+        let note = policy.ignored_overrides.as_deref().expect("a note");
+        assert!(note.contains("ignoring"), "{pairs:?}: {note}");
+        assert!(policy.consented.is_empty(), "{pairs:?}");
+        assert!(!policy.allows_codex_api_key(), "{pairs:?}");
+    }
+    // A complete pair is consent, not a leftover.
+    let full = resolve(&env(&[
+        (ALLOW_METERED_ENV, "1"),
+        (METERED_PROVIDER_ENV, "openrouter"),
+    ]))
+    .expect("full pair resolves");
+    assert_eq!(full.ignored_overrides, None);
+}
+
+/// #2747: `CLUD_SUBSCRIPTION_PROVIDER` naming an always-metered provider makes
+/// it the default provider instead of refusing the launch.
+#[test]
+fn subscription_provider_may_name_an_always_metered_provider() {
+    for (value, provider) in [
+        ("openrouter", ModelProvider::OpenRouter),
+        ("deepseek", ModelProvider::DeepSeek),
+        ("kimi", ModelProvider::Kimi),
+    ] {
+        let policy = resolve(&env(&[(SUBSCRIPTION_PROVIDER_ENV, value)])).expect(value);
+        assert_eq!(policy.subscription_default, provider);
+        assert_eq!(policy.provider(), provider);
+        assert!(policy.consented.is_empty());
+    }
 }
 
 #[test]
@@ -278,8 +305,11 @@ fn a_consent_list_serves_a_unified_session_but_not_a_single_route() {
         (ALLOW_METERED_ENV, "1"),
         (METERED_PROVIDER_ENV, "openrouter,deepseek"),
     ]))
-    .expect_err("CLUD_PROVIDER needs exactly its own consent");
-    assert!(pinned.to_string().contains("disagrees"), "{pinned}");
+    .expect("an OpenRouter launch is never refused (#2746)");
+    // CLUD_PROVIDER needs exactly its own consent; a wider list is a leftover.
+    assert!(pinned.consented.is_empty());
+    let note = pinned.ignored_overrides.expect("a note");
+    assert!(note.contains("disagrees"), "{note}");
 }
 
 #[test]
