@@ -110,17 +110,22 @@ plain `clud` keeps its normal behavior. Setup run instructions use that name.
 assets (Linux uses static musl; a Rosetta shell on Apple Silicon gets aarch64),
 resolves the latest release tag from the `releases/latest` redirect unless
 `--version <tag>` is given, downloads the asset and the release's
-`SHA256SUMS`, and installs to `${CLUD_INSTALL_DIR:-$HOME/.local/bin}/clud`.
-When that directory is not on `PATH`, it picks the startup file the login
-shell (`$SHELL`) reads: zsh `${ZDOTDIR:-~}/.zshrc`, bash `~/.bash_profile` on
-macOS or `~/.bashrc` on Linux, fish `config.fish` (`fish_add_path`), otherwise
-`~/.profile`. It then asks on `/dev/tty` (stdin is the piped script) whether to
-add the line there, defaulting to yes. Afterwards it tells the user to `source`
-the file or open a new terminal (#2743). macOS's default zsh never reads
-`~/.profile`, so the old `.profile`-only write left `clud` off `PATH`. With no
-terminal it prints the line and writes nothing. `--write-profile` answers yes
-without asking, `--no-modify-path` skips the step, and an existing line is never
-appended twice. It prints `clud setup` as the next step instead of running it.
+`SHA256SUMS`, and then hands the verified binary to itself:
+`clud --installer --install-current --installer-json`, with
+`CLUD_INSTALL_DIR` exported and stdin taken from `/dev/tty` (stdin is the piped
+script). The script itself never edits a shell startup file. The native
+installer owns the install and the PATH activation in one place
+([native-installer.md](native-installer.md)): when the install directory is
+missing from `PATH` it shows the startup-file plan for the login shell (zsh
+`~/.zprofile` + `~/.zshrc`, so macOS Terminal's login shells see it after
+`path_helper`), asks, writes a marker-delimited block, checks that a fresh shell
+resolves `clud`, and prints `source <file>` or "open a new terminal" (#2743).
+The script adds `--no-modify-path` when the directory is already on `PATH`,
+`--yes --no-modify-path` with no terminal (never writes without consent), `--yes`
+for `--write-profile`, and passes `--no-modify-path` through. It reads the JSON
+outcome's `binary_committed`: a declined install exits 0 with "clud was not
+installed", an activation failure keeps the binary and says so. It prints
+`clud setup` as the next step, or offers to run it.
 `--dry-run` prints the platform, release, both URLs and the destination and
 downloads nothing (without `--version` it makes one header-only request to
 resolve the tag). It exits non-zero on: an unknown flag; an unsupported OS or

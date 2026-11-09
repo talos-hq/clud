@@ -490,6 +490,32 @@ def test_site_serves_download_page_at_root_and_install_sh(tmp_path) -> None:
 posix_only = pytest.mark.skipif(os.name == "nt", reason="install.sh targets macOS and Linux")
 
 
+def installer_stub(tmp_path: Path) -> str:
+    """Shell that stands in for `clud --installer --install-current`.
+
+    It records its argv and whether stdin was the terminal file, copies itself
+    to $CLUD_INSTALL_DIR/clud like the real installer, and prints the outcome
+    JSON. STUB_OUTCOME picks declined / failed / activation_failed paths.
+    """
+    log = tmp_path / "installer.log"
+    return (
+        'if [ "$1" = --installer ]; then\n'
+        f'  echo "argv:$*" >> "{log}"\n'
+        f'  echo "dir:$CLUD_INSTALL_DIR" >> "{log}"\n'
+        '  [ -n "${CLUD_INSTALL_TTY:-}" ] && [ "$(readlink /proc/$$/fd/0 2>/dev/null)" = '
+        f'"$CLUD_INSTALL_TTY" ] && echo "stdin:tty" >> "{log}"\n'
+        '  case "${STUB_OUTCOME:-complete}" in\n'
+        '    declined) echo \'{"status":"refused","binary_committed":false}\'; exit 0;;\n'
+        '    failed) echo \'{"status":"failed","binary_committed":false}\'; exit 1;;\n'
+        "  esac\n"
+        '  mkdir -p "$CLUD_INSTALL_DIR" && cp "$0" "$CLUD_INSTALL_DIR/clud"\n'
+        '  echo \'{"status":"complete","binary_committed":true}\'\n'
+        '  [ "${STUB_OUTCOME:-}" = activation_failed ] && exit 1\n'
+        "  exit 0\n"
+        "fi\n"
+    )
+
+
 def make_stubs(tmp_path: Path, uname_s: str, uname_m: str, sums: str, digest: str) -> dict:
     stubs = tmp_path / "stubs"
     stubs.mkdir()
@@ -526,6 +552,7 @@ def make_stubs(tmp_path: Path, uname_s: str, uname_m: str, sums: str, digest: st
         "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}",
         "HOME": str(tmp_path / "home"),
         "STUB_SUMS": sums,
+        "STUB_BINARY": "#!/bin/sh\n" + installer_stub(tmp_path) + "exit 0\n",
         # Never reach the developer's real terminal; tests opt in with a file.
         "CLUD_INSTALL_TTY": "",
         "SHELL": "/bin/sh",
@@ -596,7 +623,7 @@ def test_install_sh_installs_verified_binary(tmp_path) -> None:
     done, _ = run_install(tmp_path, ["--version", "2.8.56"], sums=sums, digest=digest)
     assert done.returncode == 0, done.stderr
     installed = tmp_path / "home" / ".local" / "bin" / "clud"
-    assert installed.read_text(encoding="utf-8") == "binary"
+    assert "--installer" in installed.read_text(encoding="utf-8")
     assert os.access(installed, os.X_OK)
     assert "clud setup" in done.stdout + done.stderr
     assert not (tmp_path / "home" / ".profile").exists()
@@ -632,97 +659,103 @@ def test_install_sh_rejects_unsupported_platform_naming_supported_ones(
     assert calls == []
 
 
-@posix_only
-def test_install_sh_write_profile_is_opt_in(tmp_path) -> None:
-    digest = "a" * 64
-    sums = f"{digest}  ./clud-2.8.56-x86_64-unknown-linux-musl\n"
+def handoff(tmp_path, args=(), tty=None, env=None):
+    """Run install.sh and return (result, installer argv, installer log lines)."""
+    extra = dict(env or {})
+    if tty is not None:
+        tty_file = tmp_path / "tty"
+        tty_file.write_text(tty, encoding="utf-8")
+        extra["CLUD_INSTALL_TTY"] = str(tty_file)
     done, _ = run_install(
-        tmp_path, ["--version", "2.8.56", "--write-profile"], sums=sums, digest=digest
+        tmp_path, ["--version", "2.8.56", *args], sums=SUMS, digest=DIGEST, env=extra
     )
-    assert done.returncode == 0, done.stderr
-    profile = (tmp_path / "home" / ".profile").read_text(encoding="utf-8")
-    assert ".local/bin" in profile
-    assert "open a new terminal" in done.stdout
+    log = tmp_path / "installer.log"
+    lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    argv = next((line[5:].split() for line in lines if line.startswith("argv:")), None)
+    return done, argv, lines
 
 
-def install_with_shell(tmp_path, shell, uname_s="Darwin", args=(), answer=None):
-    arch = "arm64" if uname_s == "Darwin" else "x86_64"
-    triple = "aarch64-apple-darwin" if uname_s == "Darwin" else "x86_64-unknown-linux-musl"
-    digest = "a" * 64
-    env = {"SHELL": shell}
-    if answer is not None:
-        tty = tmp_path / "tty"
-        tty.write_text(answer, encoding="utf-8")
-        env["CLUD_INSTALL_TTY"] = str(tty)
-    return run_install(
-        tmp_path,
-        ["--version", "2.8.56", *args],
-        uname_s,
-        arch,
-        sums=f"{digest}  ./clud-2.8.56-{triple}\n",
-        digest=digest,
-        env=env,
-    )[0]
+BASE = ["--installer", "--install-current", "--installer-json"]
 
 
 @posix_only
-@pytest.mark.parametrize(
-    ("shell", "uname_s", "rc", "needle"),
-    [
-        ("/bin/zsh", "Darwin", ".zshrc", "export PATH="),
-        ("/bin/bash", "Darwin", ".bash_profile", "export PATH="),
-        ("/bin/bash", "Linux", ".bashrc", "export PATH="),
-        ("/usr/bin/fish", "Linux", ".config/fish/config.fish", "fish_add_path"),
-        ("/bin/dash", "Linux", ".profile", "export PATH="),
-    ],
-)
-def test_install_sh_asks_and_writes_the_login_shell_rc(
-    tmp_path, shell, uname_s, rc, needle
-) -> None:
-    done = install_with_shell(tmp_path, shell, uname_s, answer="\n")
+def test_install_sh_hands_activation_to_the_binary_on_a_terminal(tmp_path) -> None:
+    # ~/.local/bin is not on PATH (the macOS default): Rust plans and asks.
+    done, argv, lines = handoff(tmp_path, tty="")
     assert done.returncode == 0, done.stderr
-    text = (tmp_path / "home" / rc).read_text(encoding="utf-8")
-    assert needle in text
-    assert ".local/bin" in text
-    assert f"source {tmp_path / 'home' / rc}" in done.stdout
-    assert "open a new terminal" in done.stdout
-    assert "[Y/n]" in done.stderr
+    assert argv == BASE
+    assert f"dir:{tmp_path / 'home' / '.local' / 'bin'}" in lines
+    if Path("/proc/self/fd/0").exists():
+        assert "stdin:tty" in lines
+    assert (tmp_path / "home" / ".local" / "bin" / "clud").exists()
+    # install.sh itself never edits a startup file any more.
+    home = tmp_path / "home"
+    for rc in (".zprofile", ".zshrc", ".bash_profile", ".bashrc", ".profile"):
+        assert not (home / rc).exists()
 
 
 @posix_only
-def test_install_sh_declined_prompt_only_prints_the_line(tmp_path) -> None:
-    done = install_with_shell(tmp_path, "/bin/zsh", answer="n\n")
+def test_install_sh_without_a_terminal_installs_without_activation(tmp_path) -> None:
+    done, argv, _ = handoff(tmp_path)
     assert done.returncode == 0, done.stderr
-    assert not (tmp_path / "home" / ".zshrc").exists()
-    assert ".zshrc" in done.stdout
-    assert "open a new terminal" in done.stdout
+    assert argv == [*BASE, "--yes", "--no-modify-path"]
 
 
 @posix_only
-def test_install_sh_no_terminal_never_writes(tmp_path) -> None:
-    done = install_with_shell(tmp_path, "/bin/zsh")
+def test_install_sh_skips_activation_when_the_directory_is_on_path(tmp_path) -> None:
+    bin_dir = tmp_path / "home" / ".local" / "bin"
+    path = f"{bin_dir}{os.pathsep}{os.environ['PATH']}"
+    stubs = tmp_path / "stubs"
+    done, argv, _ = handoff(tmp_path, tty="", env={"PATH": f"{stubs}{os.pathsep}{path}"})
     assert done.returncode == 0, done.stderr
-    assert not (tmp_path / "home" / ".zshrc").exists()
-    assert "export PATH=" in done.stdout
+    assert argv == [*BASE, "--no-modify-path"]
 
 
 @posix_only
-def test_install_sh_no_modify_path_skips_the_question(tmp_path) -> None:
-    done = install_with_shell(tmp_path, "/bin/zsh", args=["--no-modify-path"], answer="y\n")
+def test_install_sh_write_profile_activates_without_asking(tmp_path) -> None:
+    done, argv, _ = handoff(tmp_path, args=["--write-profile"], tty="")
     assert done.returncode == 0, done.stderr
-    assert not (tmp_path / "home" / ".zshrc").exists()
-    assert "[Y/n]" not in done.stderr
+    assert argv == [*BASE, "--yes"]
 
 
 @posix_only
-def test_install_sh_does_not_append_the_line_twice(tmp_path) -> None:
-    install_with_shell(tmp_path, "/bin/zsh", answer="y\n")
-    shutil.rmtree(tmp_path / "stubs")
-    done = install_with_shell(tmp_path, "/bin/zsh", answer="y\n")
+def test_install_sh_no_modify_path_is_passed_through(tmp_path) -> None:
+    done, argv, _ = handoff(tmp_path, args=["--no-modify-path"], tty="")
     assert done.returncode == 0, done.stderr
-    text = (tmp_path / "home" / ".zshrc").read_text(encoding="utf-8")
-    assert text.count("export PATH=") == 1
-    assert "source" in done.stdout
+    assert argv == [*BASE, "--no-modify-path"]
+
+
+@posix_only
+def test_install_sh_honors_clud_install_dir(tmp_path) -> None:
+    custom = tmp_path / "opt" / "bin"
+    done, _, lines = handoff(tmp_path, env={"CLUD_INSTALL_DIR": str(custom)})
+    assert done.returncode == 0, done.stderr
+    assert f"dir:{custom}" in lines
+    assert (custom / "clud").exists()
+
+
+@posix_only
+def test_install_sh_declined_install_changes_nothing(tmp_path) -> None:
+    done, _, _ = handoff(tmp_path, tty="", env={"STUB_OUTCOME": "declined"})
+    assert done.returncode == 0, done.stderr
+    assert "clud was not installed." in done.stdout
+    assert "Next step" not in done.stdout
+    assert not (tmp_path / "home" / ".local" / "bin" / "clud").exists()
+
+
+@posix_only
+def test_install_sh_failed_install_exits_non_zero(tmp_path) -> None:
+    done, _, _ = handoff(tmp_path, tty="", env={"STUB_OUTCOME": "failed"})
+    assert done.returncode != 0
+    assert "did not finish" in done.stderr
+
+
+@posix_only
+def test_install_sh_activation_failure_keeps_the_installed_binary(tmp_path) -> None:
+    done, _, _ = handoff(tmp_path, tty="", env={"STUB_OUTCOME": "activation_failed"})
+    assert done.returncode == 0, done.stderr
+    assert "shell activation did not finish" in done.stdout
+    assert (tmp_path / "home" / ".local" / "bin" / "clud").exists()
 
 
 @posix_only
@@ -743,8 +776,7 @@ def fake_clud(tmp_path: Path, check_exit: int, setup_exit: int = 0) -> tuple[str
     """A stand-in clud binary: logs its argv and stdin, answers --check."""
     log = tmp_path / "clud-calls.log"
     body = (
-        "#!/bin/sh\n"
-        f'echo "argv:$*" >> "{log}"\n'
+        "#!/bin/sh\n" + installer_stub(tmp_path) + f'echo "argv:$*" >> "{log}"\n'
         f'if [ "$*" = "setup --check" ]; then exit {check_exit}; fi\n'
         f'if [ "$1" = setup ]; then IFS= read -r line; echo "stdin:$line" >> "{log}"; '
         f"exit {setup_exit}; fi\n"

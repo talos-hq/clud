@@ -190,6 +190,12 @@ pub fn description(destination: &Path, plan: &ActivationHost) -> String {
     )
 }
 
+/// What to tell the user once the User PATH is written: running terminals keep
+/// their old environment.
+pub fn reload_hint(_plan: &ActivationHost) -> String {
+    "Open a new terminal to use clud.".to_owned()
+}
+
 pub fn apply_and_verify(
     destination: &Path,
     plan: &ActivationHost,

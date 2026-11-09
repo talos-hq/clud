@@ -105,6 +105,17 @@ references, then broadcasts the environment change. An ordinary install succeeds
 after a fresh shell or OS-built Windows user environment resolves `clud` by
 name to the approved destination and returns the selected version. Shadows or
 startup files that undo the edit produce a repair error, not success.
+After a verified activation the installer prints how to pick up the new PATH
+in the already-open terminal: `source` the first managed startup file (zsh's
+`~/.zprofile`, which macOS Terminal's login shells read after `path_helper`),
+or open a new terminal (#2743). On POSIX the approved destination is
+`$CLUD_INSTALL_DIR/clud` when that variable is set (it must be absolute),
+otherwise the first user-owned `~/.local/bin` or `~/bin` already on PATH, else
+`~/.local/bin/clud`. The startup-file choice is a pure function of `HOME`,
+`SHELL`, `ZDOTDIR` and `XDG_CONFIG_HOME`, unit-tested for macOS layouts in
+`platform/unix/self_install_activation.rs`. `installer/install.sh` delegates
+here rather than editing startup files itself
+([installer-pages.md](installer-pages.md#installsh)).
 
 If activation fails after an interactive install, the installer recomputes a
 read-only activation plan and displays it for separate approval. **Not now**

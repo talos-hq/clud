@@ -125,6 +125,14 @@ pub fn approved_destination() -> Result<PathBuf, String> {
     if !home.is_absolute() {
         return Err("HOME must be absolute".into());
     }
+    // `install.sh` (and anyone scripting the installer) can pin the directory.
+    if let Some(directory) = std::env::var_os("CLUD_INSTALL_DIR").filter(|dir| !dir.is_empty()) {
+        let directory = PathBuf::from(directory);
+        if !directory.is_absolute() {
+            return Err("CLUD_INSTALL_DIR must be an absolute path".into());
+        }
+        return Ok(directory.join("clud"));
+    }
     let path = std::env::var_os("PATH").unwrap_or_default();
     for directory in [home.join(".local/bin"), home.join("bin")] {
         let on_path = std::env::split_paths(&path).any(|entry| entry == directory);

@@ -32,6 +32,11 @@ impl ActivationPlan {
         host_activation::description(&self.destination, &self.host)
     }
 
+    /// How the user picks up the new PATH in an already-open terminal.
+    pub fn reload_hint(&self) -> String {
+        host_activation::reload_hint(&self.host)
+    }
+
     pub fn apply_and_verify(&self, version: &str) -> Result<(), String> {
         super::transaction::inspect_destination(&self.destination, false)?;
         let parent = self
