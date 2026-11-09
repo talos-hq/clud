@@ -428,12 +428,28 @@ one `hookSpecificOutput.additionalContext` line naming the bundled waiter:
 `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120
 --timeout 3600`, which blocks and prints only the delta.
 
+**One query, many dressings (#2233).** Counting by exact call was not enough
+either. Measured over 2026-11-08/09, one session issued the same
+`gh pr list --head fix/2002-false-green-matrix …` query 193 times while waiting
+on a PR that did not exist yet, and produced **zero** notes and **zero**
+refusals. It alternated two dressings — `sleep 60; gh pr list …` and
+`cat …/tasks/<id>.output; sleep 55; gh pr list …` where `cat` read a *different*
+background task file on every turn — so each call had a different exact
+signature, and the single `steady` slot was reset by whichever call came in
+between. The ledger now keeps one entry per poll query (up to eight, oldest
+outside the 6 h window dropped), and the poll key is the query's
+*state-reading core*: leading `sleep` / `true` / `:` / `echo` / `printf` /
+`date` / `pwd` segments and reads of a background task's own `.output` are
+stripped, and `--json` field lists and word order are canonicalized. A poll
+dressed differently on alternate turns therefore still shares one count, while
+a different branch, PR or query keeps its own.
+
 Those two notes are advisory, and the measured session above ignored both: 127
 more identical polls in the next 24 h. So the ladder ends. Repeat
 `POLL_DENY_AT + 1 = 97` of the *same read-only query* in one session is refused
 with `[clud poll-guard]`, the same waiter command, and the deliberate-repeat
-escape `CLUD_ALLOW_REPEAT=1` (any different call resets the count, and the
-refusal is per exact call signature). Nothing that is not a read-only query is
+escape `CLUD_ALLOW_REPEAT=1` (a count belongs to its query, and the refusal is
+per query, not per exact call signature). Nothing that is not a read-only query is
 ever counted, so builds, tests and writes keep the burst guard's own 200-call
 limit; `CLUD_REPEAT_CALL_LIMIT=0` still disables the whole module.
 `CLUD_POLL_CALL_LIMIT=<n>` or `hooks.poll_call_limit` moves the poll limit alone

@@ -124,17 +124,53 @@ fn check_at_persists_only_hashes_and_counts_per_session() {
     let tmp = tempfile::tempdir().unwrap();
     for i in 0..3 {
         assert_eq!(
-            check_at(tmp.path(), "sess-1", "k", 10 + i, 3, false, POLL_DENY_AT).0,
+            check_at(
+                tmp.path(),
+                "sess-1",
+                "k",
+                Past {
+                    is_query: false,
+                    poll_key: "k",
+                    poll_limit: POLL_DENY_AT,
+                },
+                10 + i,
+                3,
+            )
+            .0,
             Verdict::Allow
         );
     }
     assert_eq!(
-        check_at(tmp.path(), "sess-1", "k", 14, 3, false, POLL_DENY_AT).0,
+        check_at(
+            tmp.path(),
+            "sess-1",
+            "k",
+            Past {
+                is_query: false,
+                poll_key: "k",
+                poll_limit: POLL_DENY_AT,
+            },
+            14,
+            3,
+        )
+        .0,
         Verdict::Deny { count: 4 }
     );
     // Another session has its own streak.
     assert_eq!(
-        check_at(tmp.path(), "sess-2", "k", 14, 3, false, POLL_DENY_AT).0,
+        check_at(
+            tmp.path(),
+            "sess-2",
+            "k",
+            Past {
+                is_query: false,
+                poll_key: "k",
+                poll_limit: POLL_DENY_AT,
+            },
+            14,
+            3,
+        )
+        .0,
         Verdict::Allow
     );
     let dir = tmp.path().join(DIR_NAME);
@@ -156,7 +192,19 @@ fn state_failures_fail_open() {
     std::fs::write(&blocked, b"not a dir").unwrap();
     for i in 0..10 {
         assert_eq!(
-            check_at(&blocked, "s", "k", i, 2, false, POLL_DENY_AT).0,
+            check_at(
+                &blocked,
+                "s",
+                "k",
+                Past {
+                    is_query: false,
+                    poll_key: "k",
+                    poll_limit: POLL_DENY_AT,
+                },
+                i,
+                2,
+            )
+            .0,
             Verdict::Allow
         );
     }
@@ -166,12 +214,36 @@ fn state_failures_fail_open() {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, b"{garbage").unwrap();
     assert_eq!(
-        check_at(&ok, "s", "k", 1, 1, false, POLL_DENY_AT).0,
+        check_at(
+            &ok,
+            "s",
+            "k",
+            Past {
+                is_query: false,
+                poll_key: "k",
+                poll_limit: POLL_DENY_AT,
+            },
+            1,
+            1,
+        )
+        .0,
         Verdict::Allow
     );
     // No session id: allow.
     assert_eq!(
-        check_at(&ok, "", "k", 1, 0, false, POLL_DENY_AT).0,
+        check_at(
+            &ok,
+            "",
+            "k",
+            Past {
+                is_query: false,
+                poll_key: "k",
+                poll_limit: POLL_DENY_AT,
+            },
+            1,
+            0,
+        )
+        .0,
         Verdict::Allow
     );
 }
@@ -215,6 +287,7 @@ fn poll_count_resets_on_a_different_call_and_after_the_window() {
         last: 1_000,
         steady: 5,
         steady_last: 1_000,
+        polls: Vec::new(),
     };
     assert_eq!(poll_count(Some(&previous), "k", 1_600).0, 6);
     assert_eq!(poll_count(Some(&previous), "other", 1_600).0, 1);
@@ -229,8 +302,152 @@ fn poll_count_resets_on_a_different_call_and_after_the_window() {
         last: 2_000,
         steady: 0,
         steady_last: 0,
+        polls: Vec::new(),
     };
     assert_eq!(poll_count(Some(&legacy), "k", 2_100).0, 2);
+}
+
+// ---- #2233: one query, many dressings -------------------------------
+
+/// The three command shapes one session actually emitted 193 times while it
+/// waited on a PR that did not exist yet: a bare chained sleep, and the same
+/// sleep behind a read of a *different* background-task output file each time.
+const FLAPPED: [&str; 3] = [
+    "sleep 60; gh pr list --head fix/2002-false-green-matrix --state all --json number,state,url",
+    "cat /home/n/.clud/tmp/claude-1000/x/tasks/b36l7m4nq.output; sleep 55; gh pr list --head fix/2002-false-green-matrix --state all --json number,state,url",
+    "cat /home/n/.clud/tmp/claude-1000/x/tasks/b1yx2mbil.output; sleep 50; gh pr list --state all --json url,number,state --head fix/2002-false-green-matrix",
+];
+
+#[test]
+fn poll_key_ignores_the_sleep_and_task_output_dressing() {
+    let keys: Vec<String> = FLAPPED
+        .iter()
+        .map(|cmd| poll_key("Bash", Some(&json!({"command": cmd}))))
+        .collect();
+    assert_eq!(keys[0], keys[1], "{keys:?}");
+    assert_eq!(keys[0], keys[2], "{keys:?}");
+    // A different branch is a different query.
+    let other = poll_key(
+        "Bash",
+        Some(
+            &json!({"command": "sleep 60; gh pr list --head fix/1989-racy-stat-guard --state all"}),
+        ),
+    );
+    assert_ne!(keys[0], other);
+    // Reading state and writing it are never the same key, and a command with
+    // nothing but noise falls back to the exact call key.
+    assert_ne!(
+        poll_key(
+            "Bash",
+            Some(&json!({"command": "gh pr view 1 --json state"}))
+        ),
+        poll_key("Bash", Some(&json!({"command": "gh pr merge 1 --squash"})))
+    );
+    assert_eq!(
+        poll_key("Bash", Some(&json!({"command": "sleep 60"}))),
+        call_key("Bash", Some(&json!({"command": "sleep 60"})))
+    );
+    assert_eq!(poll_core("sleep 60; echo waiting; true"), "");
+}
+
+#[test]
+fn an_alternating_poll_dressing_still_counts_as_one_query() {
+    // 2026-11-08: the single-slot steady counter reset on every flip, so 193
+    // calls of one query produced no note and no refusal. The ledger keeps a
+    // count per query, so the flip no longer erases it.
+    let tmp = tempfile::tempdir().unwrap();
+    let mut notes = Vec::new();
+    for index in 0..30_u64 {
+        let command = FLAPPED[index as usize % FLAPPED.len()];
+        let exact = call_key("Bash", Some(&json!({"command": command})));
+        let poll = poll_key("Bash", Some(&json!({"command": command})));
+        let (verdict, note) = check_at(
+            tmp.path(),
+            "s",
+            &exact,
+            Past {
+                is_query: is_query(command),
+                poll_key: &poll,
+                poll_limit: POLL_DENY_AT,
+            },
+            1_000 + 300 * index,
+            DEFAULT_LIMIT,
+        );
+        assert_eq!(verdict, Verdict::Allow);
+        if let Some(count) = note {
+            notes.push(count);
+        }
+    }
+    assert_eq!(notes, vec![POLL_NOTE_AT, POLL_NOTE_AGAIN_AT]);
+}
+
+#[test]
+fn the_poll_guard_refuses_an_alternating_poll_past_its_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut refusals = 0;
+    for index in 0..=u64::from(POLL_DENY_AT) + 2 {
+        let command = FLAPPED[index as usize % FLAPPED.len()];
+        let exact = call_key("Bash", Some(&json!({"command": command})));
+        let poll = poll_key("Bash", Some(&json!({"command": command})));
+        let (verdict, _) = check_at(
+            tmp.path(),
+            "s",
+            &exact,
+            Past {
+                is_query: is_query(command),
+                poll_key: &poll,
+                poll_limit: POLL_DENY_AT,
+            },
+            1_000 + 300 * index,
+            DEFAULT_LIMIT,
+        );
+        if let Verdict::PollDeny { .. } = verdict {
+            refusals += 1;
+        }
+    }
+    assert_eq!(refusals, 3);
+}
+
+#[test]
+fn the_ledger_is_bounded_and_forgets_expired_queries() {
+    let tmp = tempfile::tempdir().unwrap();
+    for index in 0..(MAX_POLL_KEYS as u64 + 6) {
+        let key = format!("q{index}");
+        check_at(
+            tmp.path(),
+            "s",
+            &key,
+            Past {
+                is_query: true,
+                poll_key: &key,
+                poll_limit: POLL_DENY_AT,
+            },
+            1_000 + index,
+            DEFAULT_LIMIT,
+        );
+    }
+    let dir = tmp.path().join(DIR_NAME);
+    let path = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    let streak: Streak = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(streak.polls.len(), MAX_POLL_KEYS);
+    // A query older than the window starts over rather than carrying a count.
+    let stale = Streak {
+        polls: vec![PollEntry {
+            key: "q".to_string(),
+            count: 40,
+            last: 1_000,
+        }],
+        ..streak
+    };
+    assert_eq!(
+        poll_count(Some(&stale), "q", 1_000 + POLL_WINDOW_SECS + 1).0,
+        1
+    );
 }
 
 #[test]
@@ -242,10 +459,13 @@ fn the_note_fires_once_at_six_and_once_at_twenty_four() {
             tmp.path(),
             "s",
             "k",
+            Past {
+                is_query: true,
+                poll_key: "k",
+                poll_limit: POLL_DENY_AT,
+            },
             1_000 + 300 * index,
             200,
-            true,
-            POLL_DENY_AT,
         );
         assert_eq!(verdict, Verdict::Allow);
         if let Some(count) = note {
@@ -263,10 +483,13 @@ fn a_non_query_repeat_never_produces_the_poll_note() {
             tmp.path(),
             "s",
             "k",
+            Past {
+                is_query: false,
+                poll_key: "k",
+                poll_limit: POLL_DENY_AT,
+            },
             1_000 + 300 * index,
             200,
-            false,
-            POLL_DENY_AT,
         );
         assert_eq!(note, None);
     }
@@ -323,10 +546,13 @@ fn the_poll_guard_refuses_the_identical_query_past_its_own_limit() {
             tmp.path(),
             "s",
             "k",
+            Past {
+                is_query: true,
+                poll_key: "k",
+                poll_limit: POLL_DENY_AT,
+            },
             1_000 + 300 * index,
             DEFAULT_LIMIT,
-            true,
-            POLL_DENY_AT,
         );
         if let Verdict::PollDeny { count } = verdict {
             denials += 1;
@@ -350,10 +576,13 @@ fn the_poll_guard_never_refuses_a_command_that_cannot_read_state() {
             tmp.path(),
             "s",
             "k",
+            Past {
+                is_query: false,
+                poll_key: "k",
+                poll_limit: POLL_DENY_AT,
+            },
             1_000 + 300 * index,
             10_000,
-            false,
-            POLL_DENY_AT,
         );
         assert_eq!(verdict, Verdict::Allow);
         assert_eq!(note, None);
@@ -368,10 +597,13 @@ fn poll_limit_zero_disables_only_the_poll_guard() {
             tmp.path(),
             "s",
             "k",
+            Past {
+                is_query: true,
+                poll_key: "k",
+                poll_limit: 0,
+            },
             1_000 + 300 * index,
             DEFAULT_LIMIT,
-            true,
-            0,
         );
         assert_eq!(verdict, Verdict::Allow);
     }
@@ -379,7 +611,18 @@ fn poll_limit_zero_disables_only_the_poll_guard() {
     // apart, starting from the last state the poll loop left behind.
     let base = 1_000 + 300 * u64::from(POLL_DENY_AT * 2 - 1);
     for step in 1..=u64::from(DEFAULT_LIMIT) + 1 {
-        let (verdict, _) = check_at(tmp.path(), "s", "k", base + step, DEFAULT_LIMIT, true, 0);
+        let (verdict, _) = check_at(
+            tmp.path(),
+            "s",
+            "k",
+            Past {
+                is_query: true,
+                poll_key: "k",
+                poll_limit: 0,
+            },
+            base + step,
+            DEFAULT_LIMIT,
+        );
         if let Verdict::Deny { .. } = verdict {
             return;
         }

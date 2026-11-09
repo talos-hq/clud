@@ -48,6 +48,12 @@ pub(super) const POLL_DENY_AT: u32 = 96;
 pub(super) const POLL_LIMIT_ENV: &str = "CLUD_POLL_CALL_LIMIT";
 /// Identical query calls further apart than this start a new poll count.
 pub(super) const POLL_WINDOW_SECS: u64 = 6 * 60 * 60;
+/// Poll queries one session's ledger remembers. One slot was not enough: an
+/// agent that alternated `sleep 60; gh pr list --head X` with `cat
+/// <task>.output; sleep 55; gh pr list --head X` presented a different exact
+/// command on every other call, so the single slot reset on each flip and 197
+/// identical queries produced no note at all (2026-11-08/09).
+pub(super) const MAX_POLL_KEYS: usize = 8;
 const HASH_DOMAIN: &str = "clud-repeat-guard-v1\0";
 const MAX_AGE: Duration = Duration::from_secs(2 * 24 * 60 * 60);
 const MAX_FILES: usize = 500;
@@ -59,12 +65,25 @@ pub(super) struct Streak {
     pub count: u32,
     pub last: u64,
     /// Gap-independent repeat count for one read-only query (#2631). `0` in
-    /// files written before this counter existed.
+    /// files written before this counter existed. Mirrors the entry the call
+    /// just advanced in `polls`, so older readers still see a count.
     #[serde(default)]
     pub steady: u32,
     /// When the steady count last advanced.
     #[serde(default)]
     pub steady_last: u64,
+    /// Every poll query this session has repeated recently, one entry each.
+    /// Empty in files written before this ledger existed.
+    #[serde(default)]
+    pub polls: Vec<PollEntry>,
+}
+
+/// One poll query's gap-independent repeat count.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct PollEntry {
+    pub key: String,
+    pub count: u32,
+    pub last: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +121,7 @@ pub(super) fn decide(
         last: now,
         steady: 0,
         steady_last: 0,
+        polls: Vec::new(),
     };
     let verdict = if limit > 0 && count > limit {
         Verdict::Deny { count }
@@ -111,20 +131,65 @@ pub(super) fn decide(
     (verdict, streak)
 }
 
-/// The gap-independent repeat count for one read-only query. A different call
-/// resets it; a gap shorter than [`POLL_WINDOW_SECS`] does not, because the
-/// whole point is the patient poll the burst guard deliberately ignores.
-pub(super) fn poll_count(previous: Option<&Streak>, key: &str, now: u64) -> (u32, u64) {
-    let continues = previous.is_some_and(|prev| {
-        let last = prev.steady_last.max(prev.last);
-        prev.key == key && now.saturating_sub(last) <= POLL_WINDOW_SECS
-    });
-    let count = if continues {
-        previous.map_or(1, |prev| prev.steady.max(1).saturating_add(1))
-    } else {
-        1
+/// The gap-independent repeat count for one read-only query, read from the
+/// session's poll ledger. A *different* call no longer resets it — only this
+/// query's own last run matters — because a poll an agent dresses differently
+/// on alternate turns (a leading `sleep`, a different background-task read) is
+/// still the same query, and one interleaved call used to erase the count. A
+/// gap longer than [`POLL_WINDOW_SECS`] starts a new count: the point is the
+/// patient poll the burst guard deliberately ignores.
+///
+/// A legacy streak written before the ledger existed contributes its
+/// `steady`/`steady_last` slot, so an upgrade does not restart a live count.
+pub(super) fn poll_count(streak: Option<&Streak>, key: &str, now: u64) -> (u32, u64) {
+    let Some(streak) = streak else {
+        return (1, now);
     };
-    (count, now)
+    let ledger = streak
+        .polls
+        .iter()
+        .filter(|entry| entry.key == key && now.saturating_sub(entry.last) <= POLL_WINDOW_SECS)
+        .map(|entry| entry.count.max(1))
+        .max();
+    // A file written before the ledger existed still carries one slot, and a
+    // zero there means "counted once, never advised" — the legacy reader
+    // counted it as one, so keep that rather than restarting at zero.
+    let legacy = (streak.key == key
+        && now.saturating_sub(streak.steady_last.max(streak.last)) <= POLL_WINDOW_SECS)
+        .then_some(streak.steady.max(1));
+    match ledger.into_iter().chain(legacy).max() {
+        Some(count) => (count.saturating_add(1), now),
+        None => (1, now),
+    }
+}
+
+/// The ledger after this call: upsert `key`, drop entries outside the window,
+/// and keep the newest [`MAX_POLL_KEYS`].
+pub(super) fn ledger_after(
+    streak: Option<&Streak>,
+    key: &str,
+    count: u32,
+    now: u64,
+) -> Vec<PollEntry> {
+    let mut entries: Vec<PollEntry> = streak
+        .map(|prev| {
+            prev.polls
+                .iter()
+                .filter(|entry| {
+                    entry.key != key && now.saturating_sub(entry.last) <= POLL_WINDOW_SECS
+                })
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default();
+    entries.push(PollEntry {
+        key: key.to_string(),
+        count,
+        last: now,
+    });
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.last));
+    entries.truncate(MAX_POLL_KEYS);
+    entries
 }
 
 /// Words a shell puts in front of a program without changing what runs.
@@ -246,35 +311,122 @@ fn reads_state(words: &[String]) -> bool {
 /// Whether `command` contains a read-only query of external state, split the
 /// way a shell would split it.
 pub(super) fn is_query(command: &str) -> bool {
+    segments(command).iter().any(|text| {
+        let words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
+        reads_state(&words)
+    })
+}
+
+/// Segments that schedule or narrate a wait instead of reading state. A poll
+/// dressed with one of these is the same query: dropping them is what lets an
+/// alternating `sleep N; gh pr list --head X` / `cat <task>.output; sleep N;
+/// gh pr list --head X` loop share one count.
+const SCHEDULING_PROGRAMS: &[&str] = &["sleep", "true", ":", "echo", "printf", "date", "pwd"];
+
+/// Readers of a background task's own output file. The harness delivers that
+/// output when the task ends, so re-reading it on every turn is narration, not
+/// a new query.
+const TASK_OUTPUT_READERS: &[&str] = &["cat", "tail", "head", "less", "wc"];
+
+/// Split a command the way [`is_query`] does, into `;`-separated pieces.
+fn segments(command: &str) -> Vec<String> {
     let mut segment = String::with_capacity(command.len());
-    let mut segments: Vec<String> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
     for ch in command.chars() {
         if ";&|\n(){}".contains(ch) {
             if !segment.trim().is_empty() {
-                segments.push(std::mem::take(&mut segment));
+                out.push(std::mem::take(&mut segment));
             }
         } else {
             segment.push(ch);
         }
     }
     if !segment.trim().is_empty() {
-        segments.push(segment);
+        out.push(segment);
     }
-    segments.iter().any(|text| {
-        let words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
-        reads_state(&words)
-    })
+    out
+}
+
+/// Whether one segment only schedules, narrates or re-reads a background
+/// task's own output.
+fn is_scheduling(words: &[String]) -> bool {
+    let mut words = words.iter();
+    let Some(first) = words.next() else {
+        return true;
+    };
+    let program = crate::block_bad_cmd::block_bad_cmd_shell::program_name(first);
+    if SCHEDULING_PROGRAMS.contains(&program.as_str()) {
+        return true;
+    }
+    TASK_OUTPUT_READERS.contains(&program.as_str())
+        && words.any(|word| word.contains("/tasks/") && word.contains(".output"))
+}
+
+/// One segment, whitespace-collapsed, its `--json` field list sorted, and its
+/// words sorted: flag order and field order are presentation, so either one
+/// reordered must not split one query into two keys.
+fn canonical_segment(text: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    let raw: Vec<&str> = text.split_whitespace().collect();
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == "--json" && index + 1 < raw.len() {
+            let mut fields: Vec<&str> = raw[index + 1].split(',').collect();
+            fields.sort_unstable();
+            words.push("--json".to_string());
+            words.push(fields.join(","));
+            index += 2;
+            continue;
+        }
+        words.push(raw[index].to_string());
+        index += 1;
+    }
+    words.sort_unstable();
+    words.join(" ")
+}
+
+/// The state-reading core of a command: its query segments, with scheduling
+/// noise dropped. Empty when the command is nothing but noise.
+pub(super) fn poll_core(command: &str) -> String {
+    segments(command)
+        .iter()
+        .filter(|segment| {
+            let words: Vec<String> = segment.split_whitespace().map(str::to_string).collect();
+            !is_scheduling(&words)
+        })
+        .map(|segment| canonical_segment(segment))
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<String>>()
+        .join("; ")
+}
+
+/// The poll ledger key: `sha256(domain + "poll" + tool + core)`, so the same
+/// query under a different wait dressing shares one count. Falls back to the
+/// exact [`call_key`] when the command has no readable core.
+pub(super) fn poll_key(tool_name: &str, tool_input: Option<&Value>) -> String {
+    let command = tool_input
+        .and_then(|input| input.get("command"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let core = poll_core(command);
+    if core.is_empty() {
+        return call_key(tool_name, tool_input);
+    }
+    let digest = Sha256::digest(format!("{HASH_DOMAIN}poll\0{tool_name}\0{core}").as_bytes());
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The one advisory line the poll note carries (#2631).
 pub(super) fn poll_message(count: u32) -> String {
     format!(
-        "[clud poll-note] this exact read-only query has now run {count} times in this session, \
+        "[clud poll-note] this same read-only query has now run {count} times in this session, \
          and every repeat re-sends the whole conversation before the same answer comes back. If \
          you are waiting for external state, block once instead of polling: \
          `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120 --timeout 3600` \
-         returns as soon as its output changes. Otherwise read the last answer and decide. This \
-         note is advisory; identical repeats stop being allowed past {POLL_DENY_AT} in a \
+         returns as soon as its output changes. If the answer has not changed, waiting will not \
+         change it: an empty `gh pr list --head <branch>` means the PR does not exist yet, and \
+         creating it is synchronous (`gh pr create`). Otherwise read the last answer and decide. \
+         This note is advisory; identical repeats stop being allowed past {POLL_DENY_AT} in a \
          session."
     )
 }
@@ -472,10 +624,9 @@ pub(super) fn check_at(
     state_dir: &Path,
     session_id: &str,
     key: &str,
+    past: Past<'_>,
     now: u64,
     limit: u32,
-    is_query: bool,
-    poll_limit: u32,
 ) -> (Verdict, Option<u32>) {
     if limit == 0 || session_id.is_empty() {
         return (Verdict::Allow, None);
@@ -486,13 +637,21 @@ pub(super) fn check_at(
         .as_deref()
         .and_then(|bytes| serde_json::from_slice::<Streak>(bytes).ok());
     let (verdict, mut streak) = decide(previous.as_ref(), key, now, limit);
-    let (steady, steady_last) = if is_query {
-        poll_count(previous.as_ref(), key, now)
+    let (steady, steady_last) = if past.is_query {
+        poll_count(previous.as_ref(), past.poll_key, now)
     } else {
         (0, 0)
     };
     streak.steady = steady;
     streak.steady_last = steady_last;
+    streak.polls = if past.is_query {
+        ledger_after(previous.as_ref(), past.poll_key, steady, now)
+    } else {
+        previous
+            .as_ref()
+            .map(|prev| prev.polls.clone())
+            .unwrap_or_default()
+    };
     let Ok(bytes) = serde_json::to_vec(&streak) else {
         return (verdict, None);
     };
@@ -506,6 +665,7 @@ pub(super) fn check_at(
     }
     // The poll guard speaks after the burst guard: a burst deny already stops
     // the call, and its message names the same waiter.
+    let poll_limit = past.poll_limit;
     if verdict == Verdict::Allow && poll_limit > 0 && steady > poll_limit {
         return (Verdict::PollDeny { count: steady }, None);
     }
@@ -514,6 +674,16 @@ pub(super) fn check_at(
 }
 
 /// Hook entry: deny, an advisory note, or allow.
+/// The poll facts a call carries, as one argument so the burst inputs stay
+/// readable: whether the command reads state, the ledger key of its
+/// state-reading core, and the session's poll limit.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Past<'a> {
+    pub is_query: bool,
+    pub poll_key: &'a str,
+    pub poll_limit: u32,
+}
+
 pub(super) fn outcome(
     tool_name: &str,
     tool_input: Option<&Value>,
@@ -535,18 +705,17 @@ pub(super) fn outcome(
         .and_then(Value::as_str)
         .unwrap_or("");
     let query = is_query(command);
-    let poll_limit = effective_poll_limit();
-    match check_at(
-        &state_dir,
-        session_id,
-        &key,
-        now_secs(),
-        limit,
-        query,
-        poll_limit,
-    ) {
+    let poll = poll_key(tool_name, tool_input);
+    let past = Past {
+        is_query: query,
+        poll_key: &poll,
+        poll_limit: effective_poll_limit(),
+    };
+    match check_at(&state_dir, session_id, &key, past, now_secs(), limit) {
         (Verdict::Deny { count }, _) => Outcome::Deny(deny_message(tool_name, count, limit)),
-        (Verdict::PollDeny { count }, _) => Outcome::PollDeny(poll_deny_message(count, poll_limit)),
+        (Verdict::PollDeny { count }, _) => {
+            Outcome::PollDeny(poll_deny_message(count, past.poll_limit))
+        }
         (Verdict::Allow, Some(count)) => Outcome::Note(poll_message(count)),
         (Verdict::Allow, None) => Outcome::Allow,
     }
@@ -556,7 +725,7 @@ pub(super) fn outcome(
 /// any check needs. Names the waiter and the deliberate-repeat override.
 pub(super) fn poll_deny_message(count: u32, limit: u32) -> String {
     format!(
-        "[clud poll-guard] this exact read-only query has now run {count} times in this session \
+        "[clud poll-guard] this same read-only query has now run {count} times in this session \
          (limit {limit}), and every repeat re-sent the whole conversation before the same answer \
          came back. Stop polling and block once instead: \
          `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120 --timeout 3600` \
