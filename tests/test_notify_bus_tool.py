@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import importlib.util
 import json
 import os
@@ -108,6 +109,7 @@ def test_refuses_missing_or_wrong_token(broker, capsys):
     assert "refused: wrong token" in capsys.readouterr().err
 
 
+@pytest.mark.skipif(os.name == "nt", reason="POSIX creation mode contract")
 def test_private_writer_requests_mode_and_replaces_content_atomically(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -157,3 +159,129 @@ def test_no_transport_switch_remains():
         assert gone not in body
     assert '"0.0.0.0"' not in body
     assert 'host="::"' not in body
+
+
+def test_windows_private_writer_fails_closed(tmp_path, monkeypatch):
+    destination = tmp_path / "bus.addr"
+    destination.write_text("old")
+
+    def fail_setup(_path):
+        raise OSError("Win32 security setup failed")
+
+    monkeypatch.setattr(bus, "_open_private_windows", fail_setup, raising=False)
+    monkeypatch.setattr(bus, "os", SimpleNamespace(**{**vars(os), "name": "nt"}))
+    with pytest.raises(OSError, match="Win32 security setup failed"):
+        bus._write_private(destination, "secret")
+    assert destination.read_text() == "old"
+    assert list(tmp_path.iterdir()) == [destination]
+
+
+@pytest.mark.skipif(os.name != "nt", reason="native Windows DACL contract")
+@pytest.mark.parametrize("override", [False, True])
+def test_windows_state_has_protected_owner_only_dacl(tmp_path, monkeypatch, override):
+    from ctypes import wintypes as w
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    security = ctypes.WinDLL("advapi32", use_last_error=True)
+    bind = bus._win_function
+    check = bus._win_check
+    free = bind(kernel, "LocalFree", w.LPVOID, w.LPVOID)
+    convert = bind(
+        security,
+        "ConvertStringSecurityDescriptorToSecurityDescriptorW",
+        w.BOOL,
+        w.LPCWSTR,
+        w.DWORD,
+        ctypes.POINTER(w.LPVOID),
+        ctypes.POINTER(w.DWORD),
+    )
+    set_security = bind(security, "SetFileSecurityW", w.BOOL, w.LPCWSTR, w.DWORD, w.LPVOID)
+    parent_sd = w.LPVOID()
+    check(convert("D:P(A;OICI;GA;;;WD)", 1, ctypes.byref(parent_sd), None))
+    try:
+        # A permissive parent must never leak through, including an explicit override.
+        check(set_security(str(tmp_path), 0x80000004, parent_sd))
+    finally:
+        assert not free(parent_sd)
+    if override:
+        monkeypatch.setenv("CLUD_WATCH_DIR", str(tmp_path))
+    else:
+        monkeypatch.delenv("CLUD_WATCH_DIR", raising=False)
+        monkeypatch.setattr(bus.Path, "home", lambda: tmp_path)
+    destination = bus.addr_path()
+    destination.write_text("inherited old state")
+    for text in ("secret", "replacement secret"):
+        bus._write_private(destination, text)
+        assert destination.read_text() == text
+        _assert_windows_owner_dacl(destination, kernel, security)
+
+
+def _assert_windows_owner_dacl(destination, kernel, security):
+    from ctypes import wintypes as w
+
+    class Acl(ctypes.Structure):
+        _fields_ = [
+            ("revision", w.BYTE),
+            ("reserved", w.BYTE),
+            ("size", w.WORD),
+            ("count", w.WORD),
+            ("reserved2", w.WORD),
+        ]
+
+    class AllowAce(ctypes.Structure):
+        _fields_ = [
+            ("kind", w.BYTE),
+            ("flags", w.BYTE),
+            ("size", w.WORD),
+            ("mask", w.DWORD),
+            ("sid_start", w.DWORD),
+        ]
+
+    bind = bus._win_function
+    check = bus._win_check
+    get_security = bind(
+        security,
+        "GetNamedSecurityInfoW",
+        w.DWORD,
+        w.LPCWSTR,
+        ctypes.c_int,
+        w.DWORD,
+        w.LPVOID,
+        w.LPVOID,
+        ctypes.POINTER(w.LPVOID),
+        w.LPVOID,
+        ctypes.POINTER(w.LPVOID),
+    )
+    get_control = bind(
+        security,
+        "GetSecurityDescriptorControl",
+        w.BOOL,
+        w.LPVOID,
+        ctypes.POINTER(w.WORD),
+        ctypes.POINTER(w.DWORD),
+    )
+    get_ace = bind(security, "GetAce", w.BOOL, w.LPVOID, w.DWORD, ctypes.POINTER(w.LPVOID))
+    equal_sid = bind(security, "EqualSid", w.BOOL, w.LPVOID, w.LPVOID)
+    free = bind(kernel, "LocalFree", w.LPVOID, w.LPVOID)
+    dacl, descriptor = w.LPVOID(), w.LPVOID()
+    error = get_security(
+        str(destination), 1, 4, None, None, ctypes.byref(dacl), None, ctypes.byref(descriptor)
+    )
+    assert error == 0
+    try:
+        control, revision = w.WORD(), w.DWORD()
+        check(get_control(descriptor, ctypes.byref(control), ctypes.byref(revision)))
+        assert control.value & 0x1000  # SE_DACL_PROTECTED
+        assert dacl.value
+        assert ctypes.cast(dacl, ctypes.POINTER(Acl)).contents.count == 1
+        ace = w.LPVOID()
+        check(get_ace(dacl, 0, ctypes.byref(ace)))
+        allow = ctypes.cast(ace, ctypes.POINTER(AllowAce)).contents
+        assert allow.kind == 0  # ACCESS_ALLOWED_ACE_TYPE
+        assert allow.flags == 0  # no inheritance
+        assert allow.mask == 0x1F01FF  # file GENERIC_ALL mapped to FILE_ALL_ACCESS
+        user = bus._windows_user_sid(kernel, security)
+        sid = ctypes.cast(user, ctypes.POINTER(w.LPVOID))[0]
+        assert equal_sid(ace.value + AllowAce.sid_start.offset, sid)
+    finally:
+        assert not free(descriptor)
