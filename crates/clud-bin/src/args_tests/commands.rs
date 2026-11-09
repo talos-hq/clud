@@ -69,12 +69,8 @@ fn test_gc_list_targets_json() {
     assert!(matches!(
         args.command,
         Some(Command::Gc {
-            subcommand: Some(GcSubcommand::List {
-                targets: true,
-                json: true,
-                kind: None,
-            }),
-        })
+            subcommand: Some(GcSubcommand::List(options)),
+        }) if options.targets && options.json && options.kind.is_none()
     ));
 }
 
@@ -83,8 +79,9 @@ fn test_gc_list() {
     let args = parse(&["clud", "gc", "list"]);
     match args.command {
         Some(Command::Gc {
-            subcommand: Some(GcSubcommand::List { json, kind, .. }),
+            subcommand: Some(GcSubcommand::List(options)),
         }) => {
+            let crate::args::GcListArgs { json, kind, .. } = *options;
             assert!(!json);
             assert!(kind.is_none());
         }
@@ -98,8 +95,9 @@ fn test_gc_list_json() {
     let args = parse(&["clud", "gc", "list", "--json"]);
     match args.command {
         Some(Command::Gc {
-            subcommand: Some(GcSubcommand::List { json, kind, .. }),
+            subcommand: Some(GcSubcommand::List(options)),
         }) => {
+            let crate::args::GcListArgs { json, kind, .. } = *options;
             assert!(json);
             assert!(kind.is_none());
         }
@@ -112,8 +110,9 @@ fn test_gc_list_kind_filter() {
     let args = parse(&["clud", "gc", "list", "--kind", "trash"]);
     match args.command {
         Some(Command::Gc {
-            subcommand: Some(GcSubcommand::List { json, kind, .. }),
+            subcommand: Some(GcSubcommand::List(options)),
         }) => {
+            let crate::args::GcListArgs { json, kind, .. } = *options;
             assert!(!json);
             assert_eq!(kind.as_deref(), Some("trash"));
         }
@@ -126,14 +125,14 @@ fn test_gc_prune_kind_filter() {
     let args = parse(&["clud", "gc", "prune", "--kind", "worktree"]);
     match args.command {
         Some(Command::Gc {
-            subcommand:
-                Some(GcSubcommand::Prune {
-                    dry_run,
-                    ref kind_pos,
-                    ref kind,
-                    ..
-                }),
+            subcommand: Some(GcSubcommand::Prune(options)),
         }) => {
+            let crate::args::GcPruneArgs {
+                dry_run,
+                ref kind_pos,
+                ref kind,
+                ..
+            } = *options;
             assert!(!dry_run);
             assert!(kind_pos.is_none());
             assert_eq!(kind.as_deref(), Some("worktree"));
@@ -147,8 +146,9 @@ fn test_gc_purge_without_kind_parses_for_runtime_error() {
     let args = parse(&["clud", "gc", "purge"]);
     match args.command {
         Some(Command::Gc {
-            subcommand: Some(GcSubcommand::Purge { ref kind, .. }),
+            subcommand: Some(GcSubcommand::Purge(options)),
         }) => {
+            let crate::args::GcPurgeArgs { ref kind, .. } = *options;
             assert!(
                 kind.is_none(),
                 "runtime prints the custom missing-kind error"
@@ -171,15 +171,15 @@ fn test_gc_purge_dry_run_yes_kind() {
     ]);
     match args.command {
         Some(Command::Gc {
-            subcommand:
-                Some(GcSubcommand::Purge {
-                    dry_run,
-                    yes,
-                    ref kind_pos,
-                    ref kind,
-                    ..
-                }),
+            subcommand: Some(GcSubcommand::Purge(options)),
         }) => {
+            let crate::args::GcPurgeArgs {
+                dry_run,
+                yes,
+                ref kind_pos,
+                ref kind,
+                ..
+            } = *options;
             assert!(dry_run);
             assert!(yes);
             assert!(kind_pos.is_none());
@@ -198,8 +198,11 @@ fn test_gc_purge_legacy_duration_positional_parses_as_kind() {
     let args = parse(&["clud", "gc", "purge", "7d"]);
     match args.command {
         Some(Command::Gc {
-            subcommand: Some(GcSubcommand::Purge { ref kind_pos, .. }),
-        }) => assert_eq!(kind_pos.as_deref(), Some("7d")),
+            subcommand: Some(GcSubcommand::Purge(options)),
+        }) => {
+            let crate::args::GcPurgeArgs { ref kind_pos, .. } = *options;
+            assert_eq!(kind_pos.as_deref(), Some("7d"))
+        }
         _ => panic!("expected Gc::Purge with positional kind"),
     }
 }
@@ -211,11 +214,11 @@ fn test_gc_purge_positional_all_parses() {
     let args = parse(&["clud", "gc", "purge", "all", "--yes"]);
     match args.command {
         Some(Command::Gc {
-            subcommand:
-                Some(GcSubcommand::Purge {
-                    yes, ref kind_pos, ..
-                }),
+            subcommand: Some(GcSubcommand::Purge(options)),
         }) => {
+            let crate::args::GcPurgeArgs {
+                yes, ref kind_pos, ..
+            } = *options;
             assert!(yes);
             assert_eq!(kind_pos.as_deref(), Some("all"));
         }
@@ -228,8 +231,11 @@ fn test_gc_prune_positional_kind_parses() {
     let args = parse(&["clud", "gc", "prune", "worktree"]);
     match args.command {
         Some(Command::Gc {
-            subcommand: Some(GcSubcommand::Prune { ref kind_pos, .. }),
-        }) => assert_eq!(kind_pos.as_deref(), Some("worktree")),
+            subcommand: Some(GcSubcommand::Prune(options)),
+        }) => {
+            let crate::args::GcPruneArgs { ref kind_pos, .. } = *options;
+            assert_eq!(kind_pos.as_deref(), Some("worktree"))
+        }
         _ => panic!("expected Gc::Prune with positional kind"),
     }
 }
@@ -253,14 +259,14 @@ fn test_gc_all_defaults_to_prune() {
     let args = parse(&["clud", "gc", "all"]);
     match args.command {
         Some(Command::Gc {
-            subcommand:
-                Some(GcSubcommand::All {
-                    purge,
-                    dry_run,
-                    yes,
-                    ..
-                }),
+            subcommand: Some(GcSubcommand::All(options)),
         }) => {
+            let crate::args::GcAllArgs {
+                purge,
+                dry_run,
+                yes,
+                ..
+            } = *options;
             assert!(!purge);
             assert!(!dry_run);
             assert!(!yes);
@@ -274,14 +280,14 @@ fn test_gc_all_purge_yes() {
     let args = parse(&["clud", "gc", "all", "--purge", "--yes"]);
     match args.command {
         Some(Command::Gc {
-            subcommand:
-                Some(GcSubcommand::All {
-                    purge,
-                    dry_run,
-                    yes,
-                    ..
-                }),
+            subcommand: Some(GcSubcommand::All(options)),
         }) => {
+            let crate::args::GcAllArgs {
+                purge,
+                dry_run,
+                yes,
+                ..
+            } = *options;
             assert!(purge);
             assert!(!dry_run);
             assert!(yes);

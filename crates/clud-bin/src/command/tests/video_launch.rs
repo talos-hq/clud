@@ -17,7 +17,8 @@ fn plugin_dir_arg(p: &LaunchPlan) -> Option<&str> {
 fn video_parses_as_its_own_subcommand_not_passthrough() {
     let args = parse(&["clud", "video", "clips", "--update"]);
     match args.command {
-        Some(Command::Video { dir, update, path }) => {
+        Some(Command::Video(options)) => {
+            let crate::args::VideoArgs { dir, update, path } = *options;
             assert!(!path);
             assert_eq!(dir.as_deref(), Some(std::path::Path::new("clips")));
             assert!(update);
@@ -28,16 +29,12 @@ fn video_parses_as_its_own_subcommand_not_passthrough() {
     let bare = parse(&["clud", "video"]);
     assert!(matches!(
         bare.command,
-        Some(Command::Video {
-            dir: None,
-            update: false,
-            path: false
-        })
+        Some(Command::Video(options)) if options.dir.is_none() && !options.update && !options.path
     ));
     let path = parse(&["clud", "video", "--path"]);
     assert!(matches!(
         path.command,
-        Some(Command::Video { path: true, .. })
+        Some(Command::Video(options)) if options.path
     ));
     assert!(path.passthrough.is_empty());
 }

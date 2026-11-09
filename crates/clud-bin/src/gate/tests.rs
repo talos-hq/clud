@@ -40,14 +40,17 @@ fn diagnostic_tool_fixtures_rank_candidates() {
 
 fn fixture() -> (tempfile::TempDir, Vec<Element>) {
     let dir = tempfile::tempdir().unwrap();
-    for name in ["check.py", "sum.py"] {
-        fs::copy(
-            Path::new(env!("CARGO_MANIFEST_DIR"))
-                .join("tests/fixtures/gate/pass")
-                .join(name),
-            dir.path().join(name),
-        )
-        .unwrap();
+    for (name, contents) in [
+        (
+            "check.py",
+            include_str!("../../tests/fixtures/gate/pass/check.py"),
+        ),
+        (
+            "sum.py",
+            include_str!("../../tests/fixtures/gate/pass/sum.py"),
+        ),
+    ] {
+        fs::write(dir.path().join(name), contents).unwrap();
     }
     let python = which::which("python")
         .unwrap()
@@ -144,10 +147,7 @@ fn cli_dispatch_keeps_gate_options_out_of_backend_passthrough() {
     ]);
     assert!(matches!(
         args.command,
-        Some(crate::args::Command::Gate {
-            lane: Lane::Both,
-            no_fast_fail: true,
-            ..
-        })
+        Some(crate::args::Command::Gate(options))
+            if matches!(options.lane, Lane::Both) && options.no_fast_fail
     ));
 }

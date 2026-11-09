@@ -88,11 +88,13 @@ fn assignment_change(assignment: &str) -> Result<clud_settings::authorized::Muta
     if key == "context.hermes.enabled" && !value.is_boolean() {
         return Err("context.hermes.enabled must be true or false".into());
     }
-    Ok(clud_settings::authorized::Mutation::Set {
-        pointer: format!("/{}", key.replace('.', "/")),
-        value: value.to_string(),
-        reason: format!("Set {key} using clud config set"),
-    })
+    Ok(clud_settings::authorized::Mutation::Set(Box::new(
+        clud_settings::authorized::SetArgs {
+            pointer: format!("/{}", key.replace('.', "/")),
+            value: value.to_string(),
+            reason: format!("Set {key} using clud config set"),
+        },
+    )))
 }
 
 pub(crate) fn show_to_writer(
@@ -322,13 +324,13 @@ mod tests {
 
     #[test]
     fn dotted_assignment_uses_the_authorized_settings_mutation() {
-        let clud_settings::authorized::Mutation::Set { pointer, value, .. } =
+        let clud_settings::authorized::Mutation::Set(options) =
             assignment_change("context.hermes.enabled=true").unwrap()
         else {
             panic!("expected set")
         };
-        assert_eq!(pointer, "/context/hermes/enabled");
-        assert_eq!(value, "true");
+        assert_eq!(options.pointer, "/context/hermes/enabled");
+        assert_eq!(options.value, "true");
         for invalid in [
             "use-hermes",
             "context..enabled=true",
@@ -338,12 +340,12 @@ mod tests {
         ] {
             assert!(assignment_change(invalid).is_err(), "{invalid}");
         }
-        let clud_settings::authorized::Mutation::Set { value, .. } =
+        let clud_settings::authorized::Mutation::Set(options) =
             assignment_change("context.hermes.enabled=false").unwrap()
         else {
             panic!("expected set")
         };
-        assert_eq!(value, "false");
+        assert_eq!(options.value, "false");
     }
 
     #[test]

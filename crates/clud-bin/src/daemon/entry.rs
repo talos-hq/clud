@@ -765,30 +765,27 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             Some(run_list(&state_dir, *json, *origin))
         }
         Some(Command::Session {
-            action:
-                crate::args::SessionAction::New {
-                    backend,
-                    cwd,
-                    name,
-                    model,
-                    safe,
-                    json,
-                },
+            action: crate::args::SessionAction::New(options),
         }) => {
             let state_dir = state_dir(args);
-            let cwd = cwd
+            let cwd = options
+                .cwd
                 .clone()
                 .or_else(|| std::env::current_dir().ok())
                 .unwrap_or_default();
             let cwd = std::path::absolute(&cwd).unwrap_or(cwd);
             let request = super::session_new_client::NewSessionRequest {
-                backend: backend.clone(),
+                backend: options.backend.clone(),
                 cwd,
-                name: name.clone(),
-                model: model.clone(),
-                safe: *safe,
+                name: options.name.clone(),
+                model: options.model.clone(),
+                safe: options.safe,
             };
-            Some(super::session_new_client::run(&state_dir, &request, *json))
+            Some(super::session_new_client::run(
+                &state_dir,
+                &request,
+                options.json,
+            ))
         }
         Some(Command::Session {
             action: crate::args::SessionAction::Show { id, json },
@@ -813,16 +810,11 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
                 },
             ))
         }
-        Some(Command::Logs {
-            session_id,
-            follow,
-            lines,
-            last,
-        }) => {
+        Some(Command::Logs(options)) => {
             let state_dir = state_dir(args);
             // `--last` resolves to the most recently created session,
             // including exited ones — logs are valuable post-mortem.
-            let resolved_id: Option<String> = if *last {
+            let resolved_id: Option<String> = if options.last {
                 match most_recent_session_any(&state_dir) {
                     Some(session) => {
                         eprintln!(
@@ -837,13 +829,13 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
                     }
                 }
             } else {
-                session_id.clone()
+                options.session_id.clone()
             };
             Some(run_logs(
                 &state_dir,
                 resolved_id.as_deref(),
-                *follow,
-                *lines,
+                options.follow,
+                options.lines,
                 interrupted,
             ))
         }
@@ -854,12 +846,12 @@ pub fn handle_special_command(args: &Args, interrupted: &AtomicBool) -> Option<i
             super::startup_phases::redirect_stderr_to_log(state_dir);
             Some(run_daemon(state_dir, interrupted))
         }
-        Some(Command::InternalWorker {
-            state_dir,
-            session_id,
-            daemon_pid,
-            spec_file,
-        }) => Some(run_worker(state_dir, session_id, *daemon_pid, spec_file)),
+        Some(Command::InternalWorker(options)) => Some(run_worker(
+            &options.state_dir,
+            &options.session_id,
+            options.daemon_pid,
+            &options.spec_file,
+        )),
         _ => None,
     }
 }
