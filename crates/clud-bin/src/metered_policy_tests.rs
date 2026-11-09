@@ -110,11 +110,6 @@ fn metered_warning_text_is_verbatim() {
 fn contradictions_are_errors_with_actionable_messages() {
     let table: &[(Pairs, PolicyError, &str)] = &[
         (
-            &[(PROVIDER_ENV, "openrouter")],
-            PolicyError::MeteredWithoutOverrides(ModelProvider::OpenRouter),
-            "Set CLUD_ALLOW_METERED=1 and CLUD_METERED_PROVIDER=openrouter",
-        ),
-        (
             &[(PROVIDER_ENV, "openrouter"), (ALLOW_METERED_ENV, "1")],
             PolicyError::AllowWithoutMeteredProvider,
             "without CLUD_METERED_PROVIDER",
@@ -236,48 +231,33 @@ fn only_the_explicit_metered_codex_route_permits_the_api_key() {
     assert!(metered.allows_codex_api_key());
 }
 
+/// DD-209: the policy protects only the Claude and Codex subscriptions. No
+/// resolved provider is refused, and CLUD_PROVIDER may name an inherently
+/// metered provider without the overrides.
 #[test]
-fn every_resolved_metered_provider_needs_consent_for_exactly_it() {
+fn inherently_metered_providers_are_never_refused() {
     let none = resolve(&EnvSnapshot::default()).expect("default");
-    for provider in ModelProvider::ALL.iter().copied() {
-        let result = enforce_resolved(&none, provider, None, false);
-        if CostOwner::for_provider(provider) == CostOwner::Metered {
-            assert_eq!(
-                result,
-                Err(PolicyError::ResolvedMeteredWithoutConsent(provider)),
-                "{provider}"
-            );
-        } else {
-            assert_eq!(result, Ok(()), "{provider}");
-        }
+    assert_eq!(enforce_resolved(&none, false), Ok(()));
+    for provider in ["deepseek", "kimi", "openrouter"] {
+        let policy = resolve(&env(&[(PROVIDER_ENV, provider)])).expect(provider);
+        assert_eq!(policy.provider().as_str(), provider);
+        assert_eq!(enforce_resolved(&policy, false), Ok(()));
     }
-    let kimi = resolve(&env(&[
-        (ALLOW_METERED_ENV, "1"),
-        (METERED_PROVIDER_ENV, "kimi"),
-    ]))
-    .expect("kimi consent");
-    assert_eq!(
-        enforce_resolved(&kimi, ModelProvider::Kimi, None, false),
-        Ok(())
-    );
-    assert_eq!(
-        enforce_resolved(&kimi, ModelProvider::OpenRouter, None, false),
-        Err(PolicyError::ResolvedMeteredWithoutConsent(
-            ModelProvider::OpenRouter
-        ))
-    );
+    for provider in [
+        ModelProvider::DeepSeek,
+        ModelProvider::Kimi,
+        ModelProvider::OpenRouter,
+    ] {
+        assert!(process_allows_metered(provider), "{provider}");
+    }
 }
 
 #[test]
 fn failover_metered_consent_needs_the_environment_too() {
     let none = resolve(&EnvSnapshot::default()).expect("default");
     assert_eq!(
-        enforce_resolved(&none, ModelProvider::Claude, None, true),
+        enforce_resolved(&none, true),
         Err(PolicyError::FailoverMeteredWithoutConsent)
-    );
-    assert_eq!(
-        enforce_resolved(&none, ModelProvider::Claude, None, false),
-        Ok(())
     );
 }
 
@@ -302,38 +282,8 @@ fn a_consent_list_serves_a_unified_session_but_not_a_single_route() {
     assert!(pinned.to_string().contains("disagrees"), "{pinned}");
 }
 
-/// Naming a metered provider on the command line is consent; any other route
-/// to it (saved setting, `--model` inference, fallback) still needs the env.
 #[test]
-fn an_explicit_cli_provider_is_consent_for_exactly_that_provider() {
-    let none = resolve(&EnvSnapshot::default()).expect("default");
-    for provider in ModelProvider::ALL.iter().copied() {
-        assert_eq!(
-            enforce_resolved(&none, provider, Some(provider), false),
-            Ok(()),
-            "{provider}"
-        );
-    }
-    assert_eq!(
-        enforce_resolved(
-            &none,
-            ModelProvider::OpenRouter,
-            Some(ModelProvider::Kimi),
-            false
-        ),
-        Err(PolicyError::ResolvedMeteredWithoutConsent(
-            ModelProvider::OpenRouter
-        ))
-    );
-    assert_eq!(
-        enforce_resolved(
-            &none,
-            ModelProvider::Claude,
-            Some(ModelProvider::OpenRouter),
-            true
-        ),
-        Err(PolicyError::FailoverMeteredWithoutConsent)
-    );
+fn the_codex_api_key_still_needs_consent() {
     assert!(!resolve(&EnvSnapshot::default())
         .expect("default")
         .allows_codex_api_key());

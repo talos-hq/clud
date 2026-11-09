@@ -7757,3 +7757,24 @@ handshake remains a safety net if a descendant resets PATH. Doctor reports
 HOOK-SKEW relay counts from the current hook log and its single rotated backup,
 explicitly scoped to retained history, rather than implying a session or
 lifetime total. No new counter store or hook config rewrite is needed.
+
+## DD-209: the metered gate protects only the Claude and Codex subscriptions
+
+**Context:** #2529, #2533 and DD-199 required `CLUD_ALLOW_METERED=1` plus
+`CLUD_METERED_PROVIDER` for every implicit route to DeepSeek, Kimi or
+OpenRouter. The gate exists to stop clud from quietly moving a Claude or
+Codex *subscription* user onto API billing. Those three providers have no
+subscription mode, so the gate only refused people who had configured them,
+e.g. `provider openrouter is metered ... and is refused` on a plain `clud`
+with a saved OpenRouter setting.
+
+**Decision:** DeepSeek, Kimi and OpenRouter are never refused by the metered
+policy, whatever selected them; the launch prints the loud metered warning.
+The overrides remain required only where a subscription could be billed by
+API instead: `--failover-allow-metered` and the Codex bridge's
+`OPENAI_API_KEY` fallback. Partial or contradictory override variables are
+still errors. Supersedes the implicit-route half of DD-199.
+
+**Why:** an always-metered provider cannot surprise the user with a bill they
+avoided by subscribing; selecting it in any form is the choice.
+

@@ -422,23 +422,21 @@ fn setup_import_hermes_stores_key_and_prints_metered_warning() {
 }
 
 #[test]
-fn setup_import_hermes_without_metered_consent_is_refused() {
+fn setup_import_hermes_needs_no_metered_overrides() {
     let fx = fixture();
     write_hermes(&fx, HERMES_CONFIG);
     let key = fake_key();
-    let before = snapshot(fx.home.parent().unwrap());
     let (exit, output) = run(
         &fx,
         &[("OPENROUTER_API_KEY", key.as_str())],
         &["setup", "--yes", "--import-hermes"],
     );
-    assert_eq!(exit, 2, "{output}");
+    assert_eq!(exit, 0, "{output}");
     assert!(
         output.contains("METERED PROVIDER IN USE: openrouter"),
         "{output}"
     );
-    assert!(output.contains("CLUD_ALLOW_METERED=1"), "{output}");
-    assert_eq!(before, snapshot(fx.home.parent().unwrap()), "{output}");
+    assert!(output.contains("API key stored"), "{output}");
 }
 
 #[test]

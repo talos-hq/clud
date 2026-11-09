@@ -149,7 +149,6 @@ fn assert_refused_without_side_effects(fx: &Fixture, exit: i32, output: &str, ne
 #[test]
 fn contradictory_policy_env_is_refused_before_any_side_effect() {
     let table: &[(&[(&str, &str)], &str)] = &[
-        (&[("CLUD_PROVIDER", "openrouter")], "is metered"),
         (
             &[("CLUD_PROVIDER", "openrouter"), ("CLUD_ALLOW_METERED", "1")],
             "without CLUD_METERED_PROVIDER",
@@ -317,7 +316,7 @@ fn implicit_metered_routes_need_consent() {
 }
 
 #[test]
-fn a_saved_metered_provider_needs_consent() {
+fn a_saved_metered_provider_launches_with_the_warning() {
     let fx = fixture();
     clud::clud_settings::save_global_launch_preferences_at(
         &fx.home,
@@ -329,10 +328,33 @@ fn a_saved_metered_provider_needs_consent() {
     let args = launch_args(&fx);
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let (exit, output) = run(&fx, &[], &args);
-    assert_eq!(exit, 2, "{output}");
-    assert!(output.contains("is metered"), "{output}");
+    assert_eq!(exit, 0, "{output}");
     assert!(
-        !output.contains("\"program\":"),
-        "a child spawned:\n{output}"
+        output.contains(&clud::metered_policy::configured_metered_warning(
+            clud::backend::ModelProvider::OpenRouter
+        )),
+        "{output}"
     );
+}
+
+/// DD-209: the inherently metered providers need no overrides by any route.
+#[test]
+fn clud_provider_deepseek_launches_without_overrides() {
+    for provider in ["deepseek", "kimi", "openrouter"] {
+        let fx = fixture();
+        let (exit, output) = run(
+            &fx,
+            &[("CLUD_PROVIDER", provider)],
+            &["--dry-run", "-p", "hello"],
+        );
+        assert_eq!(exit, 0, "{provider}: {output}");
+        assert!(
+            output.contains(&format!("\"model_provider\": \"{provider}\"")),
+            "{provider}: {output}"
+        );
+        assert!(
+            output.contains("WARNING: METERED PROVIDER IN USE"),
+            "{output}"
+        );
+    }
 }

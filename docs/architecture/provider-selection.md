@@ -610,8 +610,7 @@ OpenRouter, and the Codex bridge's `OPENAI_API_KEY`).
 | `CLUD_PROVIDER=<metered>` + `CLUD_ALLOW_METERED=1` + `CLUD_METERED_PROVIDER=<same>` | metered route, loud warning |
 | `CLUD_ALLOW_METERED=1` + `CLUD_METERED_PROVIDER=<p>[,<q>…]`, no `CLUD_PROVIDER` | subscription default; consent applies when the CLI or a unified gateway selects a listed provider |
 | `--openrouter`, `--deepseek`, `--kimi` or `--provider <metered>` on the command line | that provider, loud warning; naming it is consent ([DD-199](../DESIGN_DECISIONS.md#dd-199-naming-a-metered-provider-on-the-command-line-is-consent)) |
-| a metered provider from a qualified `--model`, saved setting or credential fallback without consent | error |
-| `CLUD_PROVIDER=<metered>` missing either override | error |
+| `CLUD_PROVIDER=<metered>`, a saved setting, a qualified `--model` or the credential fallback | that provider, loud warning; inherently metered providers need no consent ([DD-209](../DESIGN_DECISIONS.md#dd-209-the-metered-gate-protects-only-the-claude-and-codex-subscriptions)) |
 | `CLUD_ALLOW_METERED=1` without `CLUD_METERED_PROVIDER` (or the reverse) | error |
 | overrides with `CLUD_PROVIDER=claude` or `CLUD_METERED_PROVIDER=claude` | error (contradiction) |
 | `CLUD_METERED_PROVIDER` differs from `CLUD_PROVIDER` | error |
@@ -634,13 +633,14 @@ Codex bridge never falls back from a missing ChatGPT login to
 `OPENAI_API_KEY` unless both overrides name `codex`; otherwise the error names
 `clud auth login codex`.
 
-The same consent gates every other way a metered provider can be reached:
-the CLI flags (`--openrouter`, `--deepseek`, `--kimi`, `--provider`), a
-qualified `--model`, a saved provider setting and the DeepSeek-only credential
-fallback all resolve first and are then refused (exit 2) unless the consent
-names that provider. `--failover-allow-metered` additionally needs the
-environment consent; a unified gateway admits a metered key only for a
-consented provider; `clud serve --openrouter` is an explicit selection and needs no consent. For a
+The gate protects only the Claude and Codex subscriptions
+([DD-209](../DESIGN_DECISIONS.md#dd-209-the-metered-gate-protects-only-the-claude-and-codex-subscriptions)).
+DeepSeek, Kimi and OpenRouter have no subscription mode, so every route to
+them (CLI flag, `CLUD_PROVIDER`, a qualified `--model`, a saved setting, the
+DeepSeek-only credential fallback, a unified gateway key) launches with the
+loud warning and no overrides. Consent is still required where a
+subscription session would move onto API billing: `--failover-allow-metered`
+and the Codex bridge's `OPENAI_API_KEY` fallback; `clud serve --openrouter` is an explicit selection and needs no consent. For a
 unified session, `CLUD_METERED_PROVIDER` may list several providers
 (`openrouter,deepseek`), which prints one warning per provider; with
 `CLUD_PROVIDER` set it must name exactly that provider.
