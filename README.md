@@ -1,3 +1,21 @@
+<div align="center">
+
+<a href="https://talosbot.ai"><img src="https://raw.githubusercontent.com/talos-hq/.github/main/profile/assets/banner-clud.jpg" alt="clud — Think. Execute. Deliver." width="100%"></a>
+
+**Claude &amp; Codex CLI with safety 3rd and God Mode always: Claude, Codex and DeepSeek on the Claude Code harness.**
+
+<a href="https://talosbot.ai"><img src="https://img.shields.io/badge/talosbot.ai-C89B63?style=for-the-badge&labelColor=0B0D10" alt="talosbot.ai"></a>
+[![CI](https://github.com/zackees/clud/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/zackees/clud/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
+[![Auto Release](https://github.com/zackees/clud/actions/workflows/auto-release.yml/badge.svg?event=push)](https://github.com/zackees/clud/actions/workflows/auto-release.yml?query=event%3Apush)
+
+</div>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/talos-hq/clud/main/install.sh | sh
+```
+
+<sub>Windows, version pinning and pip/uv installs: see [Installation](#installation).</sub>
+
 # clud
 
 ![hero-clud](https://github.com/user-attachments/assets/4009dfee-e703-446d-b073-80d826708a10)
@@ -35,9 +53,6 @@ clud grind
 
 Plans, writes, reviews and lands a whole issue list as merged PRs, with each
 agent role capped to its job. See [`clud grind`](#clud-grind--burn-down-issues-to-merged-prs).
-
-[![CI](https://github.com/zackees/clud/actions/workflows/ci.yml/badge.svg?branch=main&event=push)](https://github.com/zackees/clud/actions/workflows/ci.yml?query=branch%3Amain+event%3Apush)
-[![Auto Release](https://github.com/zackees/clud/actions/workflows/auto-release.yml/badge.svg?event=push)](https://github.com/zackees/clud/actions/workflows/auto-release.yml?query=event%3Apush)
 
 CI builds each of the six target triples once on Linux and executes the result
 on native Linux/Windows/macOS runners — see
