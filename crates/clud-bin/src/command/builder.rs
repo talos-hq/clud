@@ -1072,7 +1072,7 @@ fn build_launch_plan_for_target_at(
                 push_prompt_interactive(&mut cmd, prompt);
             }
         }
-        Some(Command::Gate { .. }) => {
+        Some(Command::Gate(_)) => {
             unreachable!("gate is handled directly in main")
         }
         Some(Command::Wasm { .. }) => {

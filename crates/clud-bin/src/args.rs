@@ -958,6 +958,16 @@ pub struct KimiDeviceLoginArgs {
     pub refresh_stored: bool,
 }
 
+#[derive(clap::Args, Debug, Clone)]
+pub struct GateArgs {
+    #[arg(value_enum)]
+    pub lane: crate::gate::Lane,
+    #[arg(long, default_value = ".")]
+    pub repo: std::path::PathBuf,
+    #[arg(long)]
+    pub no_fast_fail: bool,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Compare backend latency with isolated, validated samples.
@@ -977,14 +987,7 @@ pub enum Command {
         model: Option<String>,
     },
     /// Run detected lint/test tools and emit one compact JSON result.
-    Gate {
-        #[arg(value_enum)]
-        lane: crate::gate::Lane,
-        #[arg(long, default_value = ".")]
-        repo: std::path::PathBuf,
-        #[arg(long)]
-        no_fast_fail: bool,
-    },
+    Gate(Box<GateArgs>),
     /// Serve Claude or Codex and optional Anthropic-compatible provider models
     /// to local API clients.
     Serve {
