@@ -120,7 +120,11 @@ fn run_personality(personality: Personality, argv: &[OsString]) -> i32 {
     match personality {
         Personality::Installer => {
             let mut installer_argv = argv.to_vec();
-            if !installer_argv.iter().skip(1).any(|arg| arg == "--installer") {
+            if !installer_argv
+                .iter()
+                .skip(1)
+                .any(|arg| arg == "--installer")
+            {
                 installer_argv.insert(1, "--installer".into());
             }
             let args = crate::args::Args::parse_from_raw(
