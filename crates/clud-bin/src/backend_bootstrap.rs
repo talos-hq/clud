@@ -439,7 +439,11 @@ pub fn locate_installed_backend(backend: Backend) -> Option<PathBuf> {
 /// go through here, so "installed" means the same thing on both sides. When
 /// they disagreed, a PATH-only miss escalated to a full reinstall of a
 /// binary that was already on disk.
-fn locate_backend<H>(host: &mut H, backend: Backend, spec: &BackendInstallSpec) -> Option<PathBuf>
+pub(crate) fn locate_backend<H>(
+    host: &mut H,
+    backend: Backend,
+    spec: &BackendInstallSpec,
+) -> Option<PathBuf>
 where
     H: BackendBootstrapHost + ?Sized,
 {

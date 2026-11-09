@@ -33,6 +33,13 @@ clud setup --check
 - Without a terminal and without `--yes`, setup exits 2 at once with a
   message naming `--yes`. It never waits for input it cannot get.
 - `--provider` skips the provider menu.
+- After the provider step, setup checks the frontend that provider launches
+  through: Claude Code for `claude` and `openrouter`, Codex for `codex`
+  (#2755). A missing frontend is installed with the same bootstrap the launch
+  path uses (`backend_bootstrap::resolve_backend_path`): interactive setup
+  asks first, `--yes` installs without asking, `--dry-run` only reports it,
+  and a failed or declined install exits 1 with the manual install command.
+  `--check` also exits 3 when the saved provider's frontend is missing.
 - `--check` changes nothing and prompts for nothing. It exits 0 when a
   provider is saved (and, for OpenRouter, a key is stored or exported) and 3
   when setup still needs to run. `installer/install.sh` uses it to ask

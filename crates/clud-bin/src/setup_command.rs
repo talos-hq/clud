@@ -23,6 +23,7 @@ use crate::backend::ModelProvider;
 use crate::self_install::setup as provider_setup;
 use crate::shim_install;
 
+mod frontend;
 mod hermes;
 
 /// Resolve an opt-in personality reference without importing credentials or reading its contents.
@@ -58,6 +59,18 @@ pub fn check() -> i32 {
     if needs_setup(provider, openrouter_key_available()) {
         println!("clud setup: not set up yet; run `clud setup`");
         EXIT_NEEDS_SETUP
+    } else if let Some(missing) = provider.filter(|provider| {
+        !frontend::frontend_installed(
+            *provider,
+            &mut crate::backend_bootstrap::ProductionBackendBootstrapHost,
+        )
+    }) {
+        println!(
+            "clud setup: {} launches need {}, which is not installed; run `clud setup`",
+            missing.as_str(),
+            frontend::frontend_for(missing).executable_name()
+        );
+        EXIT_NEEDS_SETUP
     } else {
         println!("clud setup: set up");
         0
@@ -90,6 +103,7 @@ pub fn run(options: &Options) -> i32 {
         options,
         interactive,
         &Hermes { detection },
+        &mut crate::backend_bootstrap::ProductionBackendBootstrapHost,
         &mut stdout,
     );
     let _ = stdout.flush();
@@ -101,12 +115,13 @@ struct Hermes {
     detection: hermes::Detection,
 }
 
-fn run_at(
+fn run_at<H: crate::backend_bootstrap::BackendBootstrapHost>(
     home: &Path,
     source: Option<&Path>,
     options: &Options,
     interactive: bool,
     hermes_state: &Hermes,
+    host: &mut H,
     out: &mut dyn Write,
 ) -> i32 {
     if let Some(provider) = options.provider {
@@ -138,14 +153,27 @@ fn run_at(
     if code != 0 {
         return code;
     }
-    let code = if imported {
+    let provider = if imported {
         let current = crate::clud_settings::load_launch_preferences_read_only_at(home)
             .ok()
             .and_then(|snapshot| snapshot.global.model_provider);
-        save_default(home, ModelProvider::OpenRouter, current, false, out)
+        match save_default(home, ModelProvider::OpenRouter, current, false, out) {
+            0 => ModelProvider::OpenRouter,
+            code => return code,
+        }
     } else {
-        configure_provider(home, options, prompt, out)
+        match configure_provider(home, options, prompt, out) {
+            Ok(provider) => provider,
+            Err(code) => return code,
+        }
     };
+    let mode = match (options.dry_run, prompt) {
+        (true, _) => frontend::Mode::DryRun,
+        (false, true) => frontend::Mode::Prompt,
+        (false, false) => frontend::Mode::Yes,
+    };
+    let mut stdin = std::io::stdin().lock();
+    let code = frontend::ensure_frontend(provider, mode, &mut stdin, host, out);
     if code != 0 {
         return code;
     }
@@ -251,27 +279,42 @@ pub fn run_provider_step_interactive() -> i32 {
         return 1;
     };
     let mut stdout = std::io::stdout().lock();
-    let code = configure_provider(&home, &Options::default(), true, &mut stdout);
+    let code = match configure_provider(&home, &Options::default(), true, &mut stdout) {
+        Ok(provider) => {
+            let mut stdin = std::io::stdin().lock();
+            let mut host = crate::backend_bootstrap::ProductionBackendBootstrapHost;
+            frontend::ensure_frontend(
+                provider,
+                frontend::Mode::Prompt,
+                &mut stdin,
+                &mut host,
+                &mut stdout,
+            )
+        }
+        Err(code) => code,
+    };
     let _ = stdout.flush();
     code
 }
 
-fn configure_provider(home: &Path, options: &Options, prompt: bool, out: &mut dyn Write) -> i32 {
+fn configure_provider(
+    home: &Path,
+    options: &Options,
+    prompt: bool,
+    out: &mut dyn Write,
+) -> Result<ModelProvider, i32> {
     let current = crate::clud_settings::load_launch_preferences_read_only_at(home)
         .ok()
         .and_then(|snapshot| snapshot.global.model_provider);
     let provider = match (options.provider, prompt) {
         (Some(provider), _) => provider,
-        (None, true) => match provider_setup::choose_provider() {
-            Ok(provider) => provider,
-            Err(code) => return code,
-        },
+        (None, true) => provider_setup::choose_provider()?,
         (None, false) => scripted_provider(current, openrouter_key_available()),
     };
     if provider == ModelProvider::OpenRouter {
         let code = configure_openrouter(home, options.dry_run, prompt, out);
         if code != 0 {
-            return code;
+            return Err(code);
         }
     } else {
         let _ = writeln!(
@@ -280,7 +323,10 @@ fn configure_provider(home: &Path, options: &Options, prompt: bool, out: &mut dy
             provider.as_str()
         );
     }
-    save_default(home, provider, current, options.dry_run, out)
+    match save_default(home, provider, current, options.dry_run, out) {
+        0 => Ok(provider),
+        code => Err(code),
+    }
 }
 
 /// The provider a scripted setup (`--yes`, `--dry-run`) picks without
@@ -463,7 +509,8 @@ mod tests {
         let none = Hermes {
             detection: hermes::Detection::None,
         };
-        let code = run_at(home, Some(source), options, tty, &none, &mut out);
+        let mut host = frontend::tests_support::Present;
+        let code = run_at(home, Some(source), options, tty, &none, &mut host, &mut out);
         (code, String::from_utf8(out).unwrap())
     }
 
