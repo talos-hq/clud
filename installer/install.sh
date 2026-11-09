@@ -7,8 +7,8 @@
 # Flags:
 #   --dry-run          print what would be fetched and where it would go; download nothing
 #   --version <tag>    install this release tag instead of the latest release
-#   --write-profile    add the install directory to your shell's startup file without asking
-#   --no-modify-path   never edit a shell startup file; only print the PATH line
+#   --write-profile    activate the install directory in your shell's startup files without asking
+#   --no-modify-path   never edit a shell startup file; only print how to activate clud
 #   --no-setup         do not offer to run `clud setup` after installing
 #   -h, --help         show this help
 #
@@ -22,10 +22,13 @@
 # and runs the installed binary's `clud setup` by its full path, so it works
 # before the install directory is on PATH.
 #
-# When the install directory is not on PATH, the installer picks the startup
-# file your login shell ($SHELL) reads (zsh: .zshrc, bash: .bash_profile on
-# macOS or .bashrc on Linux, fish: config.fish, otherwise .profile) and asks on
-# the terminal whether to add it there. With no terminal it only prints the line.
+# Installing and PATH activation belong to the verified binary itself
+# (`clud --installer --install-current`): when the install directory is not on
+# PATH it shows the exact startup-file edits for your login shell (zsh:
+# ~/.zprofile and ~/.zshrc, which is what macOS needs), asks on the terminal,
+# writes a marker-delimited block, checks a fresh shell finds clud, and tells
+# you to source the file or open a new terminal. With no terminal it installs
+# without touching any startup file and prints the activation command.
 #
 # The binary is verified against the release's SHA256SUMS before it is
 # installed; a mismatch or a missing entry aborts. Windows is not handled
@@ -43,8 +46,8 @@ usage() {
     say "usage: install.sh [--dry-run] [--version <tag>] [--write-profile | --no-modify-path]"
     say "  --dry-run        print what would be fetched and where it would go; download nothing"
     say "  --version <tag>  install this release tag instead of the latest release"
-    say "  --write-profile  add the install directory to your shell's startup file without asking"
-    say "  --no-modify-path never edit a shell startup file; only print the PATH line"
+    say "  --write-profile  activate the install directory in your shell's startup files without asking"
+    say "  --no-modify-path never edit a shell startup file; only print how to activate clud"
     say "  --no-setup       do not offer to run 'clud setup' after installing"
     say "  CLUD_INSTALL_DIR overrides the install directory (default: \$HOME/.local/bin)"
 }
@@ -131,10 +134,7 @@ fi
 [ "$actual" = "$expected" ] ||
     die "checksum mismatch for $asset: SHA256SUMS says $expected, download is $actual; refusing to install"
 
-mkdir -p "$dir"
 chmod 755 "$tmp/$asset"
-mv -f "$tmp/$asset" "$dest"
-say "Installed clud $version to $dest (sha256 verified)"
 
 # `curl ... | sh` makes the script itself stdin, so questions go to the
 # terminal. CLUD_INSTALL_TTY overrides the device; empty means none. The probe
@@ -142,60 +142,37 @@ say "Installed clud $version to $dest (sha256 verified)"
 tty="${CLUD_INSTALL_TTY-/dev/tty}"
 has_tty() { [ -n "$tty" ] && (: <"$tty") 2>/dev/null; }
 
-# The startup file the user's login shell reads, and the line that puts $dir
-# on PATH there. macOS's default shell is zsh, which never reads ~/.profile.
-shell_name="$(basename "${SHELL:-sh}")"
-case "$shell_name" in
-    zsh)
-        rc="${ZDOTDIR:-$HOME}/.zshrc"
-        line="export PATH=\"$dir:\$PATH\""
-        ;;
-    bash)
-        if [ "$os" = Darwin ]; then rc="$HOME/.bash_profile"; else rc="$HOME/.bashrc"; fi
-        line="export PATH=\"$dir:\$PATH\""
-        ;;
-    fish)
-        rc="${XDG_CONFIG_HOME:-$HOME/.config}/fish/config.fish"
-        line="fish_add_path \"$dir\""
-        ;;
-    *)
-        rc="$HOME/.profile"
-        line="export PATH=\"$dir:\$PATH\""
-        ;;
-esac
-
-# stdin is the piped script, so the question goes to the terminal. With no
-# terminal (CI, a pipe from another program) the answer is "no".
-ask_add_to_path() {
-    has_tty || return 1
-    printf '%s is not on your PATH. Add it to %s? [Y/n] ' "$dir" "$rc" >&2
-    answer=""
-    read -r answer <"$tty" || return 1
-    case "$answer" in
-        ""|y|Y|yes|YES|Yes) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
+# Hand the install and PATH activation to the verified binary. Activation is
+# only planned when the directory is missing from PATH, never without a
+# terminal unless --write-profile asked for it. --installer-json keeps the
+# provider step for the setup offer below and reports the outcome on stdout.
+modify_path=1
 case ":${PATH}:" in
-    *":$dir:"*) ;;
-    *)
-        if grep -qsF "$line" "$rc"; then
-            say "$dir is already added in $rc but this shell has not loaded it yet."
-            say "Run 'source $rc' or open a new terminal to use clud."
-        elif [ "$write_profile" = yes ] ||
-            { [ "$write_profile" = ask ] && ask_add_to_path; }; then
-            mkdir -p "$(dirname "$rc")"
-            printf '\n# Added by the clud installer\n%s\n' "$line" >> "$rc"
-            say "Added $dir to PATH in $rc."
-            say "Run 'source $rc' or open a new terminal for it to take effect."
-        else
-            say "$dir is not on PATH. Add this line to $rc:"
-            say "  $line"
-            say "Then run 'source $rc' or open a new terminal."
-        fi
-        ;;
+    *":$dir:"*) modify_path=0 ;;
 esac
+[ "$write_profile" = no ] && modify_path=0
+interactive=0
+if [ "$write_profile" != yes ] && has_tty; then interactive=1; fi
+# Without a terminal nothing may ask, so nothing is activated either.
+if [ "$interactive" = 0 ] && [ "$write_profile" != yes ]; then modify_path=0; fi
+set -- --installer --install-current --installer-json
+[ "$interactive" = 1 ] || set -- "$@" --yes
+[ "$modify_path" = 1 ] || set -- "$@" --no-modify-path
+export CLUD_INSTALL_DIR="$dir"
+status=0
+if [ "$interactive" = 1 ]; then
+    "$tmp/$asset" "$@" <"$tty" >"$tmp/outcome.json" || status=$?
+else
+    "$tmp/$asset" "$@" </dev/null >"$tmp/outcome.json" || status=$?
+fi
+if ! grep -q '"binary_committed":true' "$tmp/outcome.json" 2>/dev/null; then
+    [ "$status" = 0 ] || die "the clud installer did not finish (exit $status); nothing was installed"
+    say "clud was not installed."
+    exit 0
+fi
+[ "$status" = 0 ] ||
+    say "clud is installed, but shell activation did not finish (exit $status); see the message above."
+say "Installed clud $version to $dest (sha256 verified)"
 
 # Green when printing to a colour terminal (NO_COLOR opts out).
 green() {
