@@ -221,13 +221,9 @@ pub fn resolve(env: &EnvSnapshot) -> Result<EnvPolicy, PolicyError> {
         Ok(consented) => (consented, None),
         // #2746: an incomplete pair can only matter to the Codex API-key route;
         // anywhere else it is a leftover and must not refuse the launch.
-        Err(error) if is_leftover(&error, selected, &listed) => (
-            Vec::new(),
-            Some(format!(
-                "[clud] note: ignoring CLUD_ALLOW_METERED / CLUD_METERED_PROVIDER ({error}); \
-                 only Codex's API-key route needs them"
-            )),
-        ),
+        Err(error) if is_leftover(&error, selected, &listed) => {
+            (Vec::new(), Some(leftover_note(env)))
+        }
         Err(error) => return Err(error),
     };
     let metered = match (selected, consented.as_slice()) {
@@ -243,6 +239,23 @@ pub fn resolve(env: &EnvSnapshot) -> Result<EnvPolicy, PolicyError> {
         consented,
         ignored_overrides,
     })
+}
+
+/// The one-line note for ignored leftover overrides (#2757): what is set, and
+/// that it does nothing here. No advice to complete the pair.
+fn leftover_note(env: &EnvSnapshot) -> String {
+    let set: Vec<String> = [
+        (ALLOW_METERED_ENV, &env.allow_metered),
+        (METERED_PROVIDER_ENV, &env.metered_provider),
+    ]
+    .into_iter()
+    .filter_map(|(name, value)| value.as_ref().map(|value| format!("{name}={value}")))
+    .collect();
+    format!(
+        "[clud] note: {} has no effect (only Codex's API-key route uses the metered \
+         overrides); unset it to silence this",
+        set.join(" ")
+    )
 }
 
 /// Whether a refused override pair is a harmless leftover: it names no

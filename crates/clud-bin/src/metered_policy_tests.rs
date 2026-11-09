@@ -213,7 +213,16 @@ fn leftover_overrides_never_refuse_an_always_metered_launch() {
     for pairs in rows {
         let policy = resolve(&env(pairs)).unwrap_or_else(|e| panic!("{pairs:?} refused: {e}"));
         let note = policy.ignored_overrides.as_deref().expect("a note");
-        assert!(note.contains("ignoring"), "{pairs:?}: {note}");
+        assert!(note.contains("has no effect"), "{pairs:?}: {note}");
+        // #2757: the note must not repeat the advice to set the overrides.
+        assert!(
+            !note.contains("Set CLUD_ALLOW_METERED"),
+            "{pairs:?}: {note}"
+        );
+        assert!(
+            !note.contains("metered access needs both"),
+            "{pairs:?}: {note}"
+        );
         assert!(policy.consented.is_empty(), "{pairs:?}");
         assert!(!policy.allows_codex_api_key(), "{pairs:?}");
     }
@@ -309,7 +318,10 @@ fn a_consent_list_serves_a_unified_session_but_not_a_single_route() {
     // CLUD_PROVIDER needs exactly its own consent; a wider list is a leftover.
     assert!(pinned.consented.is_empty());
     let note = pinned.ignored_overrides.expect("a note");
-    assert!(note.contains("disagrees"), "{note}");
+    assert!(
+        note.contains("CLUD_METERED_PROVIDER=openrouter,deepseek"),
+        "{note}"
+    );
 }
 
 #[test]
