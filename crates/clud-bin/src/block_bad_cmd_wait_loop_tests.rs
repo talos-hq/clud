@@ -98,6 +98,58 @@ fn other_waiting_constructs_are_refused_and_name_the_replacement() {
     }
 }
 
+/// 2026-11-09: `sleep 120` was already refused, so a workflow sub-agent
+/// routed around the rule with the cheapest command it could find: 1,388 bare
+/// `true` calls in 17 minutes, each one a full turn reporting that it was still
+/// waiting (65 M billed input tokens for a merge nobody was advancing).
+#[test]
+fn no_op_commands_are_refused_and_name_the_replacement() {
+    for command in [
+        "true",
+        ":",
+        "true # waiting",
+        "echo waiting",
+        "echo still waiting",
+        "echo Waiting...",
+        "sleep 0",
+        "sleep 0s",
+        "env FOO=1 true",
+        "timeout 5 true",
+    ] {
+        let reason = denial(command, ShellDialect::Posix);
+        assert_names_replacement(command, &reason);
+        assert!(
+            reason.contains("asking again returns the same answer"),
+            "{command}: a no-op refusal must say why re-asking cannot help: {reason}"
+        );
+    }
+}
+
+#[test]
+fn real_commands_are_not_mistaken_for_no_ops() {
+    for command in [
+        // A no-op as one part of a command that does real work.
+        "git fetch -q && true",
+        "bosn ci run --wait || true",
+        "if true; then git status; fi",
+        // `echo` that reports something the agent needs.
+        "echo ready",
+        "echo waiting-for-ci",
+        "echo waiting on run",
+        // A short sleep is still a wait (DD-168), and a compound command is
+        // not a lone no-op.
+        "sleep 1",
+        "sleep 5",
+        "true && sleep 5",
+        // Data, not commands.
+        "git commit -m 'waiting'",
+        // A PowerShell no-op the posix classifier must not claim.
+        "Write-Output waiting",
+    ] {
+        assert!(allowed(command), "{command} should be allowed");
+    }
+}
+
 #[test]
 fn literal_list_loops_and_one_shot_commands_stay_allowed() {
     for command in [
