@@ -22,7 +22,7 @@ export const meta = {
 //   goals: [{ id, title, brief }], ci: false, lane?: 'job-id',
 //   models?: { planner, editor, reviewer, integrator, chaperone },   // omitted = session model; chaperone defaults to opus
 //   scripts?: { lint?: './lint', test?: './test' },     // omitted = planner picks verify
-//   queueWatchSeconds?: 540, queueFixups?: 2,           // chaperone watch deadline and automatic fixups after a queue ejection (#2467)
+//   queueWatchSeconds?: 540, queueFixups?: 2,           // chaperone watch deadline (60..540, foreground) and automatic fixups after a queue ejection (#2467)
 //   fixupPool?: 2,                                      // chaperone fixup worktrees that may exist and build at once (DD-205)
 //   maxAgents?: 4, maxFixRounds?: 10, agentErrors?: 3,   // agentErrors: tool-misuse allowance, apart from fix rounds (#1331)
 //   gateAttempts?: 3, gateBackoffMs?: 1000, gateEpoch?: 0, gateEpochs?: {goalId: 0},
@@ -871,7 +871,13 @@ const integrateAndHandOff = async ({ p: planned, review: rv }, g) => {
 // merge into the feature branch), follow the queue. On an exception it fixes up
 // itself in a slot of a bounded worktree pool, then watches the new head. The
 // next goal never waits for any of this; a dependent waits on landed[goal].
-const QUEUE_WATCH_S = gateInteger('queueWatchSeconds', 540, 60, 3600)
+// A Workflow subagent never receives a background completion notification, so
+// the chaperone runs every waiter in the foreground under the 600 s Bash cap;
+// a longer deadline cannot fit and is rejected here (#2732).
+const QUEUE_WATCH_S = gateInteger('queueWatchSeconds', 540, 60, 540)
+const FOREGROUND_WAIT = `Run each waiter in the foreground as one Bash call with timeout 600000; never use run_in_background: ` +
+  `you get no notification here, and ending your turn while a waiter runs abandons the PR. ` +
+  `When the checks pass, enqueue before you return. `
 const MAX_QUEUE_FIXUPS = gateInteger('queueFixups', 2, 0, 5)
 const POOL_SIZE = gateInteger('fixupPool', 2, 1, 8)
 const MAX_QUEUED_WATCHES = 3
@@ -904,7 +910,7 @@ const landSteps = (e) => {
 }
 const watch = (e, tag) => agent(
   `${e.handoff}\nFollow your WATCH procedure.\n${headLine(e)}${landSteps(e)}\n` +
-  `Run each waiter in the background and wait for its notification. ` +
+  FOREGROUND_WAIT +
   `Fix rounds used: ${e.fixes} of ${MAX_FIX}. Queue fixups used: ${e.fixups} of ${MAX_QUEUE_FIXUPS}. Return your verdict by the exit codes.`,
   opts('chaperone', `chaperone:${e.g.id}#${tag}`, 'Chaperone', CHAPERONE)).then(r => collect(r, 'chaperone', e.g.id))
 
