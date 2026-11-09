@@ -279,18 +279,10 @@ pub fn run_provider_step_interactive() -> i32 {
         return 1;
     };
     let mut stdout = std::io::stdout().lock();
+    // No frontend step here: the installer's first interactive launch offers
+    // the frontend install itself, and the installer UI owns this terminal.
     let code = match configure_provider(&home, &Options::default(), true, &mut stdout) {
-        Ok(provider) => {
-            let mut stdin = std::io::stdin().lock();
-            let mut host = crate::backend_bootstrap::ProductionBackendBootstrapHost;
-            frontend::ensure_frontend(
-                provider,
-                frontend::Mode::Prompt,
-                &mut stdin,
-                &mut host,
-                &mut stdout,
-            )
-        }
+        Ok(_) => 0,
         Err(code) => code,
     };
     let _ = stdout.flush();
