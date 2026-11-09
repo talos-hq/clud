@@ -331,7 +331,8 @@ const els = {};
 for (const id of ["platform-select", "recommended", "recommended-name", "detected-text",
   "arch-override", "copy-one-liner", "one-liner"]) els[id] = el(id);
 els["platform-select"].options = rows.map((r) => ({ value: r.url, textContent: r.filename,
-  dataset: { os: r.os, arch: r.arch, filename: r.filename } }));
+  dataset: { os: r.os, arch: r.arch, filename: r.filename,
+    downloadUrl: r.downloadUrl, downloadName: r.downloadName } }));
 const doc = { getElementById: (id) => els[id] };
 const nav = { platform: facts.platform, userAgent: facts.userAgent, maxTouchPoints: 0 };
 if (facts.uaArch) {
@@ -848,3 +849,37 @@ def test_install_sh_prints_the_next_step_in_green_on_a_colour_terminal(
     coloured = "\033[32mNext step: run 'clud setup'\033[0m" in done.stdout
     assert coloured is green
     assert "Next step: run 'clud setup'" in done.stdout
+
+
+def test_download_names_and_same_origin_bytes() -> None:
+    parsed = Page()
+    parsed.feed(render_page(assets_catalog()))
+    for option in parsed.options:
+        if not option.get("value"):
+            continue
+        name = "clud.exe" if option["data-os"] == "windows" else "clud"
+        assert option["data-download-name"] == name
+        assert option["data-download-url"].startswith("/clud/downloads/")
+    page = render_page(assets_catalog())
+    for name in ["clud", "clud.exe", "clud-setup", "clud-setup.exe"]:
+        assert f'download="{name}"' in page
+
+
+@pytest.mark.parametrize(
+    ("facts", "os_name", "arch", "filename"),
+    [
+        ({"platform": "Win32", "userAgent": "Windows NT 10.0; Win64; x64"},
+         "windows", "x86_64", "clud.exe"),
+        ({"platform": "MacIntel", "userAgent": MAC_SAFARI}, "darwin", "aarch64", "clud"),
+    ],
+)
+def test_recommendation_uses_same_origin_and_clean_filename(facts, os_name, arch, filename) -> None:
+    rows = page_rows()
+    for row in rows:
+        row["downloadUrl"] = site.download_path(row)
+        row["downloadName"] = "clud.exe" if row["os"] == "windows" else "clud"
+    script = FAKE_DOM.replace("status: els[", "download: els.recommended.download, status: els[")
+    got = run_node(script, json.dumps(rows), json.dumps(facts))
+    row = next(row for row in rows if row["os"] == os_name and row["arch"] == arch)
+    assert got["before"]["href"] == row["downloadUrl"]
+    assert got["before"]["download"] == filename

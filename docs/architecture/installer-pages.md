@@ -88,6 +88,20 @@ system font stacks, no external fetches), dark, responsive down to 390 px, with
 visible focus rings and `prefers-reduced-motion` honoured. With
 JavaScript off, the plain list of all native downloads still works.
 
+The site build republishes selected native assets under same-origin
+`/clud/downloads/<os>/<arch>/` paths after rechecking their catalog SHA-256.
+Both download variants use those same bytes: `download="clud"` (Windows:
+`clud.exe`) for normal use, and `download="clud-setup"` (`clud-setup.exe`)
+for installer entry. Same-origin hosting is required because browsers ignore
+`download` filenames on cross-origin GitHub release links. The catalog retains
+its upstream release URLs and versioned asset names. Model-only publication
+allows up to 128 MB for each binary while retaining its 8 MB document limit.
+
+`multicall.rs` recognizes `clud-installer`, `clud-install`, and `clud-setup`
+case-insensitively, with optional `.exe` and numeric browser duplicate suffixes
+such as ` (1)`. These invoke the existing `--installer` path before startup;
+plain `clud` keeps its normal behavior. Setup run instructions use that name.
+
 ### `install.sh`
 
 `installer/install.sh` is served at `https://talos-hq.github.io/clud/install.sh`

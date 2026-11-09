@@ -143,7 +143,8 @@
       button.removeAttribute("href");
       return;
     }
-    button.href = row.url;
+    button.href = row.downloadUrl || row.url;
+    button.download = row.downloadName || (row.os === "windows" ? "clud.exe" : "clud");
     doc.getElementById("recommended-name").textContent = row.filename;
     button.hidden = false;
   }
@@ -154,6 +155,7 @@
       var option = select.options[i];
       if (!option.value) continue;
       rows.push({ os: option.dataset.os, arch: option.dataset.arch, url: option.value,
+        downloadUrl: option.dataset.downloadUrl, downloadName: option.dataset.downloadName,
         filename: option.dataset.filename, label: option.textContent });
     }
     return rows;

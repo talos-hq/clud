@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import html
 import json
 from pathlib import Path
@@ -137,6 +138,27 @@ def select_native_downloads(catalog: dict) -> list[dict[str, str]]:  # noqa: C90
     return sorted(chosen.values(), key=lambda row: (order[row["os"]], row["arch"]))
 
 
+def download_path(row: dict[str, str]) -> str:
+    """Same-origin bytes let browsers honor the download filename."""
+    return f"/clud/downloads/{row['os']}/{row['arch']}/{row['filename']}"
+
+
+def publish_downloads(destination: Path, catalog: dict, fetch_bytes) -> None:
+    for row in select_native_downloads(catalog):
+        asset = next(
+            item["asset"]
+            for release in catalog["releases"]
+            for item in release["platforms"]
+            if item.get("asset", {}).get("urls") == [row["url"]]
+        )
+        payload = fetch_bytes(row["url"])
+        if hashlib.sha256(payload).hexdigest() != asset["sha256"]:
+            raise ValueError(f"download checksum changed: {row['filename']}")
+        path = destination / download_path(row).removeprefix("/clud/")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(payload)
+
+
 def render_page(catalog: dict) -> str:
     latest = html.escape(catalog["channels"]["latest-stable"])
     downloads = select_native_downloads(catalog)
@@ -150,23 +172,29 @@ def render_page(catalog: dict) -> str:
             platform += " (static musl)" if row["flavor"] == "static-musl" else " (glibc)"
         url = html.escape(row["url"], quote=True)
         filename = html.escape(row["filename"])
+        normal_name = "clud.exe" if row["os"] == "windows" else "clud"
+        setup_name = normal_name.replace("clud", "clud-setup")
+        local_url = html.escape(download_path(row), quote=True)
         rows.append(
             f'<li>{html.escape(platform)}: <a class="native-download" '
             f'data-os="{row["os"]}" data-arch="{row["arch"]}" '
-            f'data-flavor="{row["flavor"]}" href="{url}">{filename}</a></li>'
+            f'data-flavor="{row["flavor"]}" href="{local_url}" '
+            f'download="{normal_name}">{filename}</a> '
+            f'<a href="{local_url}" download="{setup_name}">Setup</a></li>'
         )
         options.append(
             f'<option value="{url}" data-os="{row["os"]}" data-arch="{row["arch"]}" '
+            f'data-download-url="{local_url}" data-download-name="{normal_name}" '
             f'data-filename="{filename}">{html.escape(platform)}: {filename}</option>'
         )
         if row["os"] == "windows":
-            command = f'& "$HOME\\Downloads\\{row["filename"]}" --installer'
+            command = f'& "$HOME\\Downloads\\{normal_name}" --installer'
             instructions.append(
                 f"<li>{html.escape(platform)}: open PowerShell and run "
                 f"<code>{html.escape(command)}</code>.</li>"
             )
         else:
-            path = f'"$HOME/Downloads/{row["filename"]}"'
+            path = f'"$HOME/Downloads/{normal_name}"'
             command = f"chmod +x {path} && {path} --installer"
             instructions.append(
                 f"<li>{html.escape(platform)}: open a terminal and run "
@@ -190,7 +218,7 @@ def render_page(catalog: dict) -> str:
             "<p>If macOS blocks the downloaded executable, try the terminal command first. "
             "If you trust the download, open System Settings &gt; Privacy &amp; Security, "
             "choose Open Anyway, then confirm Open. "
-            '<a href="https://support.apple.com/en-us/102445">Apple’s instructions</a>. '
+            '<a href="https://support.apple.com/en-us/102445">Apple instructions</a>. '
             "This page does not promise Finder double-click launch.</p>"
         )
     one_liner = html.escape(ONE_LINER)
@@ -226,7 +254,9 @@ what it would do, or <code>--version &lt;tag&gt;</code> to pin a release. Then r
 <section class="card" aria-labelledby="run-title"><h2 id="run-title">Run the download</h2>
 {launch_section}
 {mac_help}
-<p class="muted">Run the downloaded program with <code>--installer</code> to choose a release,
+<p class="muted">Setup links save the same binary as <code>clud-setup</code>
+(<code>clud-setup.exe</code> on Windows); run that file to open the installer directly.
+Run the normal downloaded program with <code>--installer</code> to choose a release,
 or <code>--installer --install-current</code> to install these same bytes. It shows the
 destination and asks before changing files. A bare interactive first run offers
 installation only when no <code>clud</code> executable is found on PATH.</p>
@@ -257,6 +287,7 @@ def build_site(
         fetch_bytes,
         verified_catalog=previous_catalog,
     )
+    publish_downloads(destination, catalog, fetch_bytes)
     (destination / "index.html").write_text(root_page(catalog), encoding="utf-8")
     (destination / ".nojekyll").write_text("", encoding="utf-8")
     (destination / "install" / "index.html").write_text(render_page(catalog), encoding="utf-8")

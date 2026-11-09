@@ -211,3 +211,31 @@ def test_bundled_openrouter_models_are_valid() -> None:
     assert snapshot_families() == {
         "sol": "gpt-6.1-sol", "terra": "gpt-6.1-terra", "luna": "gpt-6-luna",
     }
+
+
+def test_model_stage_preserves_same_origin_downloads(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(publish, "_previous_document", lambda: None)
+    monkeypatch.setattr(publish, "observed_model_ids", lambda: set())
+    relative = "downloads/windows/x86_64/clud-2.9.0-x86_64-pc-windows-msvc.exe"
+    page = (
+        f'<a href="/clud/{relative}" download="clud.exe">Download</a>'
+        f'<a href="/clud/{relative}" download="clud-setup.exe">Setup</a>'
+    ).encode()
+    original = {f"{publish.PAGES}/{name}": b"existing" for name in publish.published_paths()}
+    original[f"{publish.PAGES}/index.html"] = page
+    original[f"{publish.PAGES}/{relative}"] = b"verified executable"
+    monkeypatch.setattr(publish, "fetch", lambda url, **_kwargs: original[url])
+    assert publish.stage_site(
+        tmp_path, trigger="manual", now=datetime(2026, 10, 3, 21, tzinfo=timezone.utc)
+    ) == "publish"
+    assert (tmp_path / relative).read_bytes() == b"verified executable"
+
+
+def test_binary_fetch_can_exceed_document_limit(monkeypatch) -> None:
+    from io import BytesIO
+
+    body = b"x" * (publish.MAX_RESPONSE + 1)
+    monkeypatch.setattr(publish.urllib.request, "urlopen", lambda *_a, **_kw: BytesIO(body))
+    with pytest.raises(ValueError, match="response too large"):
+        publish.fetch("https://example.com/document")
+    assert publish.fetch("https://example.com/binary", max_response=128_000_000) == body

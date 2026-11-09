@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -26,12 +27,12 @@ MAX_RESPONSE = 8_000_000
 POLICY_PATH = Path(__file__).with_name("selection-policy.json")
 
 
-def fetch(url: str) -> bytes:
+def fetch(url: str, *, max_response: int = MAX_RESPONSE) -> bytes:
     headers = {"User-Agent": "clud-model-publisher/1"}
     request = urllib.request.Request(url, headers=headers)
     with urllib.request.urlopen(request, timeout=15) as response:
-        body = response.read(MAX_RESPONSE + 1)
-    if len(body) > MAX_RESPONSE:
+        body = response.read(max_response + 1)
+    if len(body) > max_response:
         raise ValueError(f"response too large: {url}")
     return body
 
@@ -107,7 +108,9 @@ def stage_site(destination: Path, *, trigger: str, now: datetime) -> str:
     checked_at = now.astimezone(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
     blocked_ids = policy["blocked_chatgpt_backend_models"]
-    if not isinstance(blocked_ids, list) or not all(isinstance(value, str) for value in blocked_ids):
+    if not isinstance(blocked_ids, list) or not all(
+        isinstance(value, str) for value in blocked_ids
+    ):
         raise ValueError("invalid blocked ChatGPT backend model policy")
     document = merge_manifest(
         previous, observed_model_ids(), checked_at=checked_at, trigger=trigger,
@@ -122,6 +125,14 @@ def stage_site(destination: Path, *, trigger: str, now: datetime) -> str:
         target = destination / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(fetch(f"{PAGES}/{relative}"))
+    page = (destination / "index.html").read_text(encoding="utf-8")
+    for href in sorted(set(re.findall(r'href="(/clud/downloads/[^"<>]+)"', page))):
+        relative = href.removeprefix("/clud/")
+        if ".." in Path(relative).parts:
+            raise ValueError("unsafe installer download path")
+        target = destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(fetch(f"{PAGES}/{relative}", max_response=128_000_000))
     (destination / ".nojekyll").write_text("", encoding="utf-8")
     model_path = destination / "models" / "manifest.json"
     model_path.parent.mkdir(parents=True, exist_ok=True)

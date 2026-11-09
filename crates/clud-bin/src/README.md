@@ -1085,3 +1085,6 @@ This covers shim telemetry, launch records, bridge diagnostics, daemon errors,
 the tool index, rm handoff diagnostics and GC selection-rule explanations;
 identifiers and filesystem fields remain exact. Settings metadata and reap
 identity/counter records contain no eligible text and remain unchanged.
+
+Installer download aliases in `multicall.rs` follow the
+[download naming contract](../../../docs/architecture/installer-pages.md#download-page-detection).
