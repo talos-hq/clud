@@ -83,7 +83,7 @@ pub fn grind_launch_error(args: &Args, target: ResolvedLaunchTarget) -> Option<&
 /// `--plugin-dir`, which no other harness has, and needs an interactive
 /// session for the skill's propose-then-approve flow.
 pub fn video_launch_error(args: &Args, target: ResolvedLaunchTarget) -> Option<&'static str> {
-    if !matches!(args.command, Some(Command::Video { .. })) {
+    if !matches!(args.command, Some(Command::Video(_))) {
         return None;
     }
     if !matches!(target.effective_harness, Backend::Claude) {
@@ -1078,7 +1078,7 @@ fn build_launch_plan_for_target_at(
         Some(Command::Wasm { .. }) => {
             unreachable!("wasm execution is handled directly in main")
         }
-        Some(Command::Workflow { .. }) => {
+        Some(Command::Workflow(_)) => {
             unreachable!("workflow execution is handled directly in main")
         }
         Some(Command::DoPrompt { .. }) => {
@@ -1107,7 +1107,7 @@ fn build_launch_plan_for_target_at(
             task_summary = Some(format!("grind {url}"));
             push_prompt_interactive(&mut cmd, build_grind_prompt(url));
         }
-        Some(Command::Video { .. }) => {
+        Some(Command::Video(_)) => {
             // Session-scoped plugin: never a global skill install (DD-163).
             let home = crate::home::user_home().unwrap_or_default();
             task_summary = Some("video".to_string());
@@ -1125,7 +1125,7 @@ fn build_launch_plan_for_target_at(
         Some(Command::Ab(_))
         | Some(Command::Remote { .. })
         | Some(Command::Connect { .. })
-        | Some(Command::Serve { .. })
+        | Some(Command::Serve(_))
         | Some(Command::Secret(_))
         | Some(Command::SecretsMcp)
         | Some(Command::SecretsDaemon)
@@ -1136,7 +1136,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Doctor { .. })
         | Some(Command::PrCheck)
         | Some(Command::Setup { .. })
-        | Some(Command::Ci { .. })
+        | Some(Command::Ci(_))
         | Some(Command::CodexAuth { .. })
         | Some(Command::DeepseekAuth { .. })
         | Some(Command::Attach { .. })
@@ -1145,7 +1145,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::List { .. })
         | Some(Command::Claim { .. })
         | Some(Command::Top { .. })
-        | Some(Command::Logs { .. })
+        | Some(Command::Logs(_))
         | Some(Command::Log { .. })
         | Some(Command::Gc { .. })
         | Some(Command::Config { .. })
@@ -1160,20 +1160,20 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Daemon { .. })
         | Some(Command::Inject { .. })
         | Some(Command::InternalStartCmd)
-        | Some(Command::InternalOpenAiChatTranslate { .. })
-        | Some(Command::InternalOpenAiCompletionsTranslate { .. })
-        | Some(Command::InternalGeminiClientTranslate { .. })
-        | Some(Command::InternalClaudeGeminiTranslate { .. })
+        | Some(Command::InternalOpenAiChatTranslate(_))
+        | Some(Command::InternalOpenAiCompletionsTranslate(_))
+        | Some(Command::InternalGeminiClientTranslate(_))
+        | Some(Command::InternalClaudeGeminiTranslate(_))
         | Some(Command::InternalApplyPayloadRules { .. })
-        | Some(Command::InternalOpenAiResponsesTranslate { .. })
+        | Some(Command::InternalOpenAiResponsesTranslate(_))
         | Some(Command::InternalKimiDeviceLogin { .. })
         | Some(Command::InternalMetaDeviceLogin { .. })
-        | Some(Command::InternalXaiDeviceLogin { .. })
+        | Some(Command::InternalXaiDeviceLogin(_))
         | Some(Command::InternalDaemon { .. })
-        | Some(Command::Statusline { .. })
+        | Some(Command::Statusline(_))
         | Some(Command::Session { .. })
-        | Some(Command::SessionHook { .. })
-        | Some(Command::InternalWorker { .. }) => {}
+        | Some(Command::SessionHook(_))
+        | Some(Command::InternalWorker(_)) => {}
         Some(Command::Run) | None => {
             if let Some(ref prompt) = args.prompt {
                 push_prompt(&mut cmd, backend, prompt.clone());

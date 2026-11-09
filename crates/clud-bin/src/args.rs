@@ -968,6 +968,446 @@ pub struct GateArgs {
     pub no_fast_fail: bool,
 }
 
+#[derive(clap::Args, Debug, Clone)]
+pub struct ServeArgs {
+    /// Enable the Claude upstream.
+    #[arg(long, required_unless_present_any = ["codex", "deepseek", "kimi", "openrouter"])]
+    pub claude: bool,
+    /// Enable Codex using clud's managed login or OPENAI_API_KEY.
+    #[arg(long)]
+    pub codex: bool,
+    /// Add the configured OpenRouter upstream.
+    #[arg(long)]
+    pub openrouter: bool,
+    /// Add the configured DeepSeek upstream (vault key or DEEPSEEK_API_KEY).
+    #[arg(long)]
+    pub deepseek: bool,
+    /// Add the configured Kimi upstream (vault key or KIMI_API_KEY).
+    #[arg(long)]
+    pub kimi: bool,
+    /// Local port for API clients; zero chooses an available port.
+    #[arg(long, default_value_t = 8317)]
+    pub port: u16,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct CiArgs {
+    /// Workflow job id, e.g. `test-linux-x64-unit`; omit for the PR plan.
+    pub job: Option<String>,
+    /// Also print log lines matching this regex (e.g. a test module).
+    #[arg(long)]
+    pub filter: Option<String>,
+    /// Workflow file, when not `.github/workflows/ci.yml`.
+    #[arg(long)]
+    pub workflow: Option<String>,
+    /// Machine-readable output.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct VideoArgs {
+    /// Directory holding the source videos (default: current directory).
+    pub dir: Option<std::path::PathBuf>,
+    /// Reinstall the pinned video-use checkout and its Python deps, then exit.
+    #[arg(long)]
+    pub update: bool,
+    /// Print the pinned video-use checkout path (installing it first if
+    /// missing), then exit. The explicit-only `/video-use` skill uses it.
+    #[arg(long, conflicts_with = "update")]
+    pub path: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct WorkflowArgs {
+    /// Path to the workflow script (`.js`).
+    pub script: String,
+    /// JSON value exposed to the script as the global `args`.
+    #[arg(long = "args")]
+    pub args_json: Option<String>,
+    /// Reuse cached results of agent() calls whose inputs are unchanged
+    /// (named `--reuse` because `--resume` belongs to the harness).
+    #[arg(long = "reuse")]
+    pub resume: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct LogsArgs {
+    pub session_id: Option<String>,
+    /// Keep watching the file and print new output as it arrives. Exits
+    /// once the session has terminated (after printing a status line).
+    #[arg(long = "follow", short = 'f')]
+    pub follow: bool,
+    /// Print only the last N lines from the file. Default: all.
+    #[arg(long = "lines", short = 'n')]
+    pub lines: Option<usize>,
+    /// Operate on the most recently created session (live or exited).
+    #[arg(long = "last", short = 'l', conflicts_with = "session_id")]
+    pub last: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct StatuslineArgs {
+    #[arg(long = "session-pid")]
+    pub session_pid: u32,
+    #[arg(long = "state-dir")]
+    pub state_dir: PathBuf,
+    /// The user's own status-line command, base64url, run first.
+    #[arg(long = "chain-b64")]
+    pub chain_b64: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct SessionHookArgs {
+    #[arg(long = "event")]
+    pub event: String,
+    /// The launch's route: a provider name, or `unified`.
+    #[arg(long = "route")]
+    pub route: String,
+    #[arg(long = "state-dir")]
+    pub state_dir: PathBuf,
+    /// Portable recovery context to inject at `SessionStart`.
+    #[arg(long = "recovery-file")]
+    pub recovery_file: Option<PathBuf>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct InternalOpenAiChatTranslateArgs {
+    /// Translate an Anthropic Messages response, not an OpenAI request.
+    #[arg(long)]
+    pub response: bool,
+    /// Read the response as SSE and emit one chat.completion.chunk per line.
+    #[arg(long, requires = "response")]
+    pub stream: bool,
+    /// Model to report when the response body carries none.
+    #[arg(long = "for-model")]
+    pub for_model: Option<String>,
+    /// Emit the exact HTTP body the route writes, not one JSON per line:
+    /// a chat.completion body, or `data: <chunk>` frames plus `[DONE]`.
+    #[arg(long, requires = "response")]
+    pub http: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct InternalGeminiClientTranslateArgs {
+    /// Model to serve the request with; without it the request's own model wins.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Translate an Anthropic Messages response into a Gemini response.
+    #[arg(long)]
+    pub response: bool,
+    /// Read the response as SSE and emit one Gemini response chunk per line.
+    #[arg(long)]
+    pub stream: bool,
+    /// Emit the exact HTTP body a route writes, not one JSON per line.
+    #[arg(long, requires = "response")]
+    pub http: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct InternalClaudeGeminiTranslateArgs {
+    /// Target Gemini model id.
+    #[arg(long)]
+    pub model: Option<String>,
+    /// Translate a Gemini response, not an Anthropic request.
+    #[arg(long)]
+    pub response: bool,
+    /// Read the response as SSE and emit one Anthropic event per line.
+    #[arg(long, requires = "response")]
+    pub stream: bool,
+    /// Emit the exact HTTP body a route writes (a Messages body, or
+    /// `event: <kind>` frames), not one JSON object per line.
+    #[arg(long, requires = "response")]
+    pub http: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct InternalOpenAiCompletionsTranslateArgs {
+    /// Translate an Anthropic Messages response, not an OpenAI request.
+    #[arg(long)]
+    pub response: bool,
+    /// Read the response as SSE and emit one chunk per line.
+    #[arg(long, requires = "response")]
+    pub stream: bool,
+    /// Model to report when the response body carries none.
+    #[arg(long = "for-model")]
+    pub for_model: Option<String>,
+    /// Emit the exact HTTP body the route writes, not one JSON per line.
+    #[arg(long, requires = "response")]
+    pub http: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct InternalOpenAiResponsesTranslateArgs {
+    /// Translate an Anthropic Messages response, not an OpenAI request.
+    #[arg(long)]
+    pub response: bool,
+    /// Read the response as SSE and emit one `response.*` event per line.
+    #[arg(long, requires = "response")]
+    pub stream: bool,
+    /// Model to report when the response body carries none.
+    #[arg(long = "for-model")]
+    pub for_model: Option<String>,
+    /// Emit the exact HTTP body the route writes, not one JSON per line.
+    #[arg(long, requires = "response")]
+    pub http: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct InternalXaiDeviceLoginArgs {
+    /// Discovery document URL (defaults to xAI's).
+    #[arg(long = "discovery-url")]
+    pub discovery_url: Option<String>,
+    /// Device authorization endpoint, skipping discovery.
+    #[arg(long = "device-endpoint", requires = "token_endpoint")]
+    pub device_endpoint: Option<String>,
+    /// Token endpoint, skipping discovery.
+    #[arg(long = "token-endpoint", requires = "device_endpoint")]
+    pub token_endpoint: Option<String>,
+    /// Minimum poll interval in milliseconds.
+    #[arg(long = "interval-ms")]
+    pub interval_ms: Option<u64>,
+    /// Bound on the whole polling wait, in milliseconds.
+    #[arg(long = "max-poll-ms")]
+    pub max_poll_ms: Option<u64>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct InternalWorkerArgs {
+    #[arg(long = "state-dir")]
+    pub state_dir: PathBuf,
+    #[arg(long = "session-id")]
+    pub session_id: String,
+    #[arg(long = "daemon-pid")]
+    pub daemon_pid: u32,
+    #[arg(long = "spec-file")]
+    pub spec_file: PathBuf,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct AuthLoginArgs {
+    #[arg(value_enum)]
+    pub provider: AuthProvider,
+    /// Required only for Codex subscription authentication.
+    #[arg(long = "acknowledge-experimental")]
+    pub acknowledge_experimental: bool,
+    /// Do not open the Codex authorization URL in a browser.
+    #[arg(long = "no-browser")]
+    pub no_browser: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct TestRunArgs {
+    /// Bucket this run belongs to: unit | integration | e2e | smoke.
+    #[arg(long = "bucket", default_value = "unit")]
+    pub bucket: String,
+    /// Optional test filter/target, recorded alongside the duration so a
+    /// future query can localize "which one is slow".
+    #[arg(long = "target")]
+    pub target: Option<String>,
+    /// The command to run, after `--`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct TestCaptureArgs {
+    /// Directory verified by the host-specific privacy implementation.
+    #[arg(long)]
+    pub output_dir: std::path::PathBuf,
+    /// Explicit time limit for the child and its output writers (default: none).
+    #[arg(long)]
+    pub timeout_secs: Option<u64>,
+    /// Command to execute, after `--`.
+    #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+    pub command: Vec<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct ToolLogArgs {
+    /// Reference to the invocation. Same forms as `tool info`.
+    pub reference: Option<String>,
+    /// Look up by the tool's own OS PID instead of session-local id.
+    #[arg(long = "pid")]
+    pub pid: Option<u32>,
+    /// Which stream to read: `stdout`, `stderr`, or `combined` (default).
+    #[arg(long = "stream", default_value = "combined")]
+    pub stream: String,
+    /// Only entries newer than `now - <duration>` (e.g. `5m`, `1h`).
+    #[arg(long = "since")]
+    pub since: Option<String>,
+    /// Only entries older than `now - <duration>`.
+    #[arg(long = "until")]
+    pub until: Option<String>,
+    /// Absolute time range as two integer epoch-ms values.
+    #[arg(long = "between", number_of_values = 2)]
+    pub between: Option<Vec<String>>,
+    /// Substring match on the decoded line text.
+    #[arg(long = "grep")]
+    pub grep: Option<String>,
+    /// Show only the first N matching entries.
+    #[arg(long = "head")]
+    pub head: Option<usize>,
+    /// Show only the last N matching entries.
+    #[arg(long = "tail")]
+    pub tail: Option<usize>,
+    /// Emit the raw JSONL stream instead of decoded text.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct ToolLedgerArgs {
+    /// Restrict to one tool name.
+    #[arg(long = "tool")]
+    pub tool: Option<String>,
+    /// Session scope: `current` (default), `previous`, or `all`.
+    #[arg(long = "session", default_value = "current")]
+    pub session: String,
+    /// Emit a JSON array instead of the human-readable table.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct ToolInfoArgs {
+    /// Reference to the invocation. Accepts:
+    /// * a bare session-local integer (`3`)
+    /// * a long-form `<session-pid>-<tool-id>` (`47180-3`)
+    /// * `@<tool-name>` or `@<tool-name>:N` for N-th-most-recent
+    ///
+    /// Omit to default to the most recently started invocation.
+    pub reference: Option<String>,
+    /// Look up by the tool's own OS PID instead of the session-local
+    /// integer. Bare integers always mean tool-id, not PID — use this
+    /// flag to disambiguate.
+    #[arg(long = "pid")]
+    pub pid: Option<u32>,
+    /// Number of trailing stdout/stderr lines to show per stream.
+    #[arg(long = "lines", default_value_t = 20)]
+    pub lines: usize,
+    /// Emit a JSON object instead of the human-readable view.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct ExternTrustArgs {
+    /// The checkout's directory name under the repo's extern directory.
+    pub name: Option<String>,
+    /// Print the recorded allow entries (optionally only for `name`)
+    /// and exit without changing anything.
+    #[arg(long)]
+    pub list: bool,
+    /// Remove the allow entry for `name` instead of adding one.
+    #[arg(long)]
+    pub revoke: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct SessionNewArgs {
+    /// Harness backend: `claude` or `codex`.
+    #[arg(long = "backend", default_value = "claude")]
+    pub backend: String,
+    /// Working directory; defaults to the current directory.
+    #[arg(long = "cwd")]
+    pub cwd: Option<std::path::PathBuf>,
+    /// Display name.
+    #[arg(long = "name")]
+    pub name: Option<String>,
+    /// Model to pin.
+    #[arg(long = "model")]
+    pub model: Option<String>,
+    /// Run the session without the permission bypass.
+    #[arg(long = "safe")]
+    pub safe: bool,
+    /// Print the created record as JSON.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct GcListArgs {
+    /// Issue #135: emit a JSON array instead of the human-readable table.
+    #[arg(long = "json")]
+    pub json: bool,
+    /// Report daemon-cached Rust target sizes across repository worktrees.
+    #[arg(long, conflicts_with = "kind")]
+    pub targets: bool,
+    /// Restrict to a single managed kind (e.g. `worktree`, `trash`).
+    #[arg(long = "kind")]
+    pub kind: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct GcPruneArgs {
+    /// Preview the removal plan without touching anything.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    /// Only affect entries created longer ago than this duration
+    /// (e.g. `2d`, `48h`). Overrides the per-kind default prune window.
+    #[arg(long = "older-than", value_name = "DURATION")]
+    pub older_than: Option<String>,
+    /// Managed kind to prune (e.g. `worktree`, `uv-cache`, `trash`),
+    /// or `all` for every managed kind (issue #506).
+    #[arg(value_name = "KIND", conflicts_with = "kind")]
+    pub kind_pos: Option<String>,
+    /// Compatibility alias for the positional `KIND`.
+    #[arg(long = "kind", value_name = "KIND")]
+    pub kind: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct GcPurgeArgs {
+    /// Preview the removal plan without touching anything.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    /// Skip the interactive confirmation prompt.
+    #[arg(long = "yes", short = 'y')]
+    pub yes: bool,
+    /// Only affect entries created longer ago than this duration
+    /// (e.g. `2d`, `48h`). Without it, purge removes every entry.
+    #[arg(long = "older-than", value_name = "DURATION")]
+    pub older_than: Option<String>,
+    /// Managed kind to purge (e.g. `worktree`, `uv-cache`, `trash`),
+    /// or `all` for every managed kind (issue #506).
+    #[arg(value_name = "KIND", conflicts_with = "kind")]
+    pub kind_pos: Option<String>,
+    /// Compatibility alias for the positional `KIND`.
+    #[arg(long = "kind", value_name = "KIND")]
+    pub kind: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct GcAllArgs {
+    /// Purge every managed kind instead of pruning stale entries.
+    #[arg(long = "purge")]
+    pub purge: bool,
+    /// Preview the removal plan without touching anything.
+    #[arg(long = "dry-run")]
+    pub dry_run: bool,
+    /// Required with `--purge`.
+    #[arg(long = "yes", short = 'y')]
+    pub yes: bool,
+    /// Only affect entries created longer ago than this duration
+    /// (e.g. `2d`, `48h`).
+    #[arg(long = "older-than", value_name = "DURATION")]
+    pub older_than: Option<String>,
+}
+
+#[derive(clap::Args, Debug, Clone)]
+pub struct GcKeepArgs {
+    /// Path to keep. Defaults to the current directory.
+    #[arg(value_name = "PATH")]
+    pub path: Option<std::path::PathBuf>,
+    /// Release a previously kept path instead.
+    #[arg(long = "remove")]
+    pub remove: bool,
+    /// Print the kept paths.
+    #[arg(long = "list", conflicts_with_all = ["path", "remove"])]
+    pub list: bool,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Compare backend latency with isolated, validated samples.
@@ -990,26 +1430,7 @@ pub enum Command {
     Gate(Box<GateArgs>),
     /// Serve Claude or Codex and optional Anthropic-compatible provider models
     /// to local API clients.
-    Serve {
-        /// Enable the Claude upstream.
-        #[arg(long, required_unless_present_any = ["codex", "deepseek", "kimi", "openrouter"])]
-        claude: bool,
-        /// Enable Codex using clud's managed login or OPENAI_API_KEY.
-        #[arg(long)]
-        codex: bool,
-        /// Add the configured OpenRouter upstream.
-        #[arg(long)]
-        openrouter: bool,
-        /// Add the configured DeepSeek upstream (vault key or DEEPSEEK_API_KEY).
-        #[arg(long)]
-        deepseek: bool,
-        /// Add the configured Kimi upstream (vault key or KIMI_API_KEY).
-        #[arg(long)]
-        kimi: bool,
-        /// Local port for API clients; zero chooses an available port.
-        #[arg(long, default_value_t = 8317)]
-        port: u16,
-    },
+    Serve(Box<ServeArgs>),
     /// Acquire a credential in a masked window and deliver it directly to a sink.
     Secret(crate::secret_prompt::Options),
     /// lokr's MCP server for `--allow-secrets` sessions.
@@ -1062,19 +1483,7 @@ pub enum Command {
     Inject(Box<InjectArgs>),
     /// Run a CI job locally under bosn and show only the verdict and the
     /// failing steps' diagnostics (#1839).
-    Ci {
-        /// Workflow job id, e.g. `test-linux-x64-unit`; omit for the PR plan.
-        job: Option<String>,
-        /// Also print log lines matching this regex (e.g. a test module).
-        #[arg(long)]
-        filter: Option<String>,
-        /// Workflow file, when not `.github/workflows/ci.yml`.
-        #[arg(long)]
-        workflow: Option<String>,
-        /// Machine-readable output.
-        #[arg(long)]
-        json: bool,
-    },
+    Ci(Box<CiArgs>),
     /// Manage provider credentials. Claude authentication remains owned by
     /// Claude Code and is reported as externally managed.
     Auth {
@@ -1127,17 +1536,7 @@ pub enum Command {
     /// Edit videos with browser-use/video-use (#1851). Loads the pinned
     /// video-use skill as a plugin for this one Claude session only; ordinary
     /// `clud` sessions never see it.
-    Video {
-        /// Directory holding the source videos (default: current directory).
-        dir: Option<std::path::PathBuf>,
-        /// Reinstall the pinned video-use checkout and its Python deps, then exit.
-        #[arg(long)]
-        update: bool,
-        /// Print the pinned video-use checkout path (installing it first if
-        /// missing), then exit. The explicit-only `/video-use` skill uses it.
-        #[arg(long, conflicts_with = "update")]
-        path: bool,
-    },
+    Video(Box<VideoArgs>),
     /// Install clud's bundled skills, agent types and workflows now, the same
     /// files a launch installs. `--home` targets another home directory; the
     /// real-harness tests (#1323) use it to populate an isolated config.
@@ -1176,17 +1575,7 @@ pub enum Command {
     /// Run an Anthropic-format workflow script (`export const meta` +
     /// `agent()`/`parallel()`/`pipeline()`/`phase()`); every `agent()` call
     /// is a headless `clud -p` child.
-    Workflow {
-        /// Path to the workflow script (`.js`).
-        script: String,
-        /// JSON value exposed to the script as the global `args`.
-        #[arg(long = "args")]
-        args_json: Option<String>,
-        /// Reuse cached results of agent() calls whose inputs are unchanged
-        /// (named `--reuse` because `--resume` belongs to the harness).
-        #[arg(long = "reuse")]
-        resume: bool,
-    },
+    Workflow(Box<WorkflowArgs>),
     Wasm {
         module: String,
         #[arg(long = "invoke", default_value = "run")]
@@ -1228,19 +1617,7 @@ pub enum Command {
     /// `--last` resolves to the most-recently-created session (live or
     /// exited), mirroring `clud attach --last`. Read-only: never takes
     /// exclusive ownership of the session and never evicts attached clients.
-    Logs {
-        session_id: Option<String>,
-        /// Keep watching the file and print new output as it arrives. Exits
-        /// once the session has terminated (after printing a status line).
-        #[arg(long = "follow", short = 'f')]
-        follow: bool,
-        /// Print only the last N lines from the file. Default: all.
-        #[arg(long = "lines", short = 'n')]
-        lines: Option<usize>,
-        /// Operate on the most recently created session (live or exited).
-        #[arg(long = "last", short = 'l', conflicts_with = "session_id")]
-        last: bool,
-    },
+    Logs(Box<LogsArgs>),
     /// Issue #110: tracked-entry garbage collection (redb-backed
     /// registry at `~/.clud/data.redb`).
     ///
@@ -1362,15 +1739,7 @@ pub enum Command {
     /// Internal (#1189): print clud's toast inside Claude Code's status line.
     /// Claude Code runs this as the injected `statusLine` command.
     #[command(name = "statusline", hide = true)]
-    Statusline {
-        #[arg(long = "session-pid")]
-        session_pid: u32,
-        #[arg(long = "state-dir")]
-        state_dir: PathBuf,
-        /// The user's own status-line command, base64url, run first.
-        #[arg(long = "chain-b64")]
-        chain_b64: Option<String>,
-    },
+    Statusline(Box<StatuslineArgs>),
     /// Inspect the current agent session (#2122).
     Session {
         #[command(subcommand)]
@@ -1380,18 +1749,7 @@ pub enum Command {
     /// session index current. Claude Code runs this; it reads the hook
     /// payload on stdin and never fails the session.
     #[command(name = "session-hook", hide = true)]
-    SessionHook {
-        #[arg(long = "event")]
-        event: String,
-        /// The launch's route: a provider name, or `unified`.
-        #[arg(long = "route")]
-        route: String,
-        #[arg(long = "state-dir")]
-        state_dir: PathBuf,
-        /// Portable recovery context to inject at `SessionStart`.
-        #[arg(long = "recovery-file")]
-        recovery_file: Option<PathBuf>,
-    },
+    SessionHook(Box<SessionHookArgs>),
     /// Open the explicitly requested persistent Command Prompt.
     #[command(name = "__start-cmd", hide = true)]
     InternalStartCmd,
@@ -1401,36 +1759,9 @@ pub enum Command {
     /// instead (Anthropic Messages response in, OpenAI completion out).
     /// Never used by a launched session.
     #[command(name = "__openai-chat-translate", hide = true)]
-    InternalOpenAiChatTranslate {
-        /// Translate an Anthropic Messages response, not an OpenAI request.
-        #[arg(long)]
-        response: bool,
-        /// Read the response as SSE and emit one chat.completion.chunk per line.
-        #[arg(long, requires = "response")]
-        stream: bool,
-        /// Model to report when the response body carries none.
-        #[arg(long = "for-model")]
-        for_model: Option<String>,
-        /// Emit the exact HTTP body the route writes, not one JSON per line:
-        /// a chat.completion body, or `data: <chunk>` frames plus `[DONE]`.
-        #[arg(long, requires = "response")]
-        http: bool,
-    },
+    InternalOpenAiChatTranslate(Box<InternalOpenAiChatTranslateArgs>),
     #[command(name = "__gemini-client-translate", hide = true)]
-    InternalGeminiClientTranslate {
-        /// Model to serve the request with; without it the request's own model wins.
-        #[arg(long)]
-        model: Option<String>,
-        /// Translate an Anthropic Messages response into a Gemini response.
-        #[arg(long)]
-        response: bool,
-        /// Read the response as SSE and emit one Gemini response chunk per line.
-        #[arg(long)]
-        stream: bool,
-        /// Emit the exact HTTP body a route writes, not one JSON per line.
-        #[arg(long, requires = "response")]
-        http: bool,
-    },
+    InternalGeminiClientTranslate(Box<InternalGeminiClientTranslateArgs>),
     /// Test seam for the Claude <-> Gemini translator: read one Anthropic
     /// Messages request body on stdin, write the translated Gemini
     /// `generateContent` request body to stdout. `--model` names the target
@@ -1439,21 +1770,7 @@ pub enum Command {
     /// `generateContent` response in, the Anthropic Messages response out).
     /// Never used by a launched session.
     #[command(name = "__claude-gemini-translate", hide = true)]
-    InternalClaudeGeminiTranslate {
-        /// Target Gemini model id.
-        #[arg(long)]
-        model: Option<String>,
-        /// Translate a Gemini response, not an Anthropic request.
-        #[arg(long)]
-        response: bool,
-        /// Read the response as SSE and emit one Anthropic event per line.
-        #[arg(long, requires = "response")]
-        stream: bool,
-        /// Emit the exact HTTP body a route writes (a Messages body, or
-        /// `event: <kind>` frames), not one JSON object per line.
-        #[arg(long, requires = "response")]
-        http: bool,
-    },
+    InternalClaudeGeminiTranslate(Box<InternalClaudeGeminiTranslateArgs>),
     /// Test seam for the JSON-path payload rules: read `{"rules": ..., "payload": ...}`
     /// on stdin (or the rules from `--rules` and the payload on stdin), write the
     /// rewritten payload and what each rule kind did to stdout. Never used by a
@@ -1465,60 +1782,18 @@ pub enum Command {
     /// request; with it, the reverse: an upstream Messages body into a
     /// `text_completion` body or chunk stream.
     #[command(name = "__openai-completions-translate", hide = true)]
-    InternalOpenAiCompletionsTranslate {
-        /// Translate an Anthropic Messages response, not an OpenAI request.
-        #[arg(long)]
-        response: bool,
-        /// Read the response as SSE and emit one chunk per line.
-        #[arg(long, requires = "response")]
-        stream: bool,
-        /// Model to report when the response body carries none.
-        #[arg(long = "for-model")]
-        for_model: Option<String>,
-        /// Emit the exact HTTP body the route writes, not one JSON per line.
-        #[arg(long, requires = "response")]
-        http: bool,
-    },
+    InternalOpenAiCompletionsTranslate(Box<InternalOpenAiCompletionsTranslateArgs>),
     /// Hidden test seam for the Responses ingress. Without `--response` it
     /// translates a Responses request into a Messages request; with it, the
     /// reverse: an upstream Messages body into a Responses `response` object or
     /// event stream.
     #[command(name = "__openai-responses-translate", hide = true)]
-    InternalOpenAiResponsesTranslate {
-        /// Translate an Anthropic Messages response, not an OpenAI request.
-        #[arg(long)]
-        response: bool,
-        /// Read the response as SSE and emit one `response.*` event per line.
-        #[arg(long, requires = "response")]
-        stream: bool,
-        /// Model to report when the response body carries none.
-        #[arg(long = "for-model")]
-        for_model: Option<String>,
-        /// Emit the exact HTTP body the route writes, not one JSON per line.
-        #[arg(long, requires = "response")]
-        http: bool,
-    },
+    InternalOpenAiResponsesTranslate(Box<InternalOpenAiResponsesTranslateArgs>),
     /// Hidden test seam for xAI's RFC 8628 device login: run discovery, request
     /// a device code, poll until authorized, and print progress as JSON lines.
     /// Never used by a launched session.
     #[command(name = "__xai-device-login", hide = true)]
-    InternalXaiDeviceLogin {
-        /// Discovery document URL (defaults to xAI's).
-        #[arg(long = "discovery-url")]
-        discovery_url: Option<String>,
-        /// Device authorization endpoint, skipping discovery.
-        #[arg(long = "device-endpoint", requires = "token_endpoint")]
-        device_endpoint: Option<String>,
-        /// Token endpoint, skipping discovery.
-        #[arg(long = "token-endpoint", requires = "device_endpoint")]
-        token_endpoint: Option<String>,
-        /// Minimum poll interval in milliseconds.
-        #[arg(long = "interval-ms")]
-        interval_ms: Option<u64>,
-        /// Bound on the whole polling wait, in milliseconds.
-        #[arg(long = "max-poll-ms")]
-        max_poll_ms: Option<u64>,
-    },
+    InternalXaiDeviceLogin(Box<InternalXaiDeviceLoginArgs>),
     /// Hidden test seam for Kimi Code's RFC 8628 device login: request a device
     /// code, poll until authorized, and print progress as JSON lines. With
     /// `--refresh-stored` it renews the login already in the OS vault instead.
@@ -1538,16 +1813,7 @@ pub enum Command {
         state_dir: PathBuf,
     },
     #[command(name = "__worker", hide = true)]
-    InternalWorker {
-        #[arg(long = "state-dir")]
-        state_dir: PathBuf,
-        #[arg(long = "session-id")]
-        session_id: String,
-        #[arg(long = "daemon-pid")]
-        daemon_pid: u32,
-        #[arg(long = "spec-file")]
-        spec_file: PathBuf,
-    },
+    InternalWorker(Box<InternalWorkerArgs>),
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1603,16 +1869,7 @@ impl AuthProvider {
 #[derive(Subcommand, Debug, Clone)]
 pub enum AuthSubcommand {
     /// Sign in to a provider managed by clud.
-    Login {
-        #[arg(value_enum)]
-        provider: AuthProvider,
-        /// Required only for Codex subscription authentication.
-        #[arg(long = "acknowledge-experimental")]
-        acknowledge_experimental: bool,
-        /// Do not open the Codex authorization URL in a browser.
-        #[arg(long = "no-browser")]
-        no_browser: bool,
-    },
+    Login(Box<AuthLoginArgs>),
     /// Show secret-free status for all providers or one provider.
     Status {
         #[arg(value_enum)]
@@ -1748,31 +2005,10 @@ pub enum ConfigSubcommand {
 #[derive(Subcommand, Debug, Clone)]
 pub enum TestSubcommand {
     /// Run a test command, recording its duration and the pre-run CPU load.
-    Run {
-        /// Bucket this run belongs to: unit | integration | e2e | smoke.
-        #[arg(long = "bucket", default_value = "unit")]
-        bucket: String,
-        /// Optional test filter/target, recorded alongside the duration so a
-        /// future query can localize "which one is slow".
-        #[arg(long = "target")]
-        target: Option<String>,
-        /// The command to run, after `--`.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        command: Vec<String>,
-    },
+    Run(Box<TestRunArgs>),
     /// Capture test output for the bounded report tool.
     #[command(hide = true)]
-    Capture {
-        /// Directory verified by the host-specific privacy implementation.
-        #[arg(long)]
-        output_dir: std::path::PathBuf,
-        /// Explicit time limit for the child and its output writers (default: none).
-        #[arg(long)]
-        timeout_secs: Option<u64>,
-        /// Command to execute, after `--`.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        command: Vec<String>,
-    },
+    Capture(Box<TestCaptureArgs>),
     /// Report per-bucket runtime statistics.
     Stats {
         /// Limit the report to one bucket.
@@ -1860,72 +2096,13 @@ pub enum ToolSubcommand {
     },
     /// Query the full JSONL log of one invocation with optional filters
     /// — slice 4 of #427.
-    Log {
-        /// Reference to the invocation. Same forms as `tool info`.
-        reference: Option<String>,
-        /// Look up by the tool's own OS PID instead of session-local id.
-        #[arg(long = "pid")]
-        pid: Option<u32>,
-        /// Which stream to read: `stdout`, `stderr`, or `combined` (default).
-        #[arg(long = "stream", default_value = "combined")]
-        stream: String,
-        /// Only entries newer than `now - <duration>` (e.g. `5m`, `1h`).
-        #[arg(long = "since")]
-        since: Option<String>,
-        /// Only entries older than `now - <duration>`.
-        #[arg(long = "until")]
-        until: Option<String>,
-        /// Absolute time range as two integer epoch-ms values.
-        #[arg(long = "between", number_of_values = 2)]
-        between: Option<Vec<String>>,
-        /// Substring match on the decoded line text.
-        #[arg(long = "grep")]
-        grep: Option<String>,
-        /// Show only the first N matching entries.
-        #[arg(long = "head")]
-        head: Option<usize>,
-        /// Show only the last N matching entries.
-        #[arg(long = "tail")]
-        tail: Option<usize>,
-        /// Emit the raw JSONL stream instead of decoded text.
-        #[arg(long = "json")]
-        json: bool,
-    },
+    Log(Box<ToolLogArgs>),
     /// History of tool invocations matching optional filters — slice 4
     /// of #427.
-    Ledger {
-        /// Restrict to one tool name.
-        #[arg(long = "tool")]
-        tool: Option<String>,
-        /// Session scope: `current` (default), `previous`, or `all`.
-        #[arg(long = "session", default_value = "current")]
-        session: String,
-        /// Emit a JSON array instead of the human-readable table.
-        #[arg(long = "json")]
-        json: bool,
-    },
+    Ledger(Box<ToolLedgerArgs>),
     /// Show current state + last N lines of stdout/stderr for one
     /// invocation — slice 3 of #427.
-    Info {
-        /// Reference to the invocation. Accepts:
-        /// * a bare session-local integer (`3`)
-        /// * a long-form `<session-pid>-<tool-id>` (`47180-3`)
-        /// * `@<tool-name>` or `@<tool-name>:N` for N-th-most-recent
-        ///
-        /// Omit to default to the most recently started invocation.
-        reference: Option<String>,
-        /// Look up by the tool's own OS PID instead of the session-local
-        /// integer. Bare integers always mean tool-id, not PID — use this
-        /// flag to disambiguate.
-        #[arg(long = "pid")]
-        pid: Option<u32>,
-        /// Number of trailing stdout/stderr lines to show per stream.
-        #[arg(long = "lines", default_value_t = 20)]
-        lines: usize,
-        /// Emit a JSON object instead of the human-readable view.
-        #[arg(long = "json")]
-        json: bool,
-    },
+    Info(Box<ToolInfoArgs>),
 }
 
 /// Subcommands under `clud extern` (zackees/clud#967 Phase 4).
@@ -1937,17 +2114,7 @@ pub enum ExternSubcommand {
     /// `.clud/settings.local.json`, keyed by the checkout's directory name
     /// and its origin remote URL, so a re-clone from a different remote does
     /// not inherit the trust.
-    Trust {
-        /// The checkout's directory name under the repo's extern directory.
-        name: Option<String>,
-        /// Print the recorded allow entries (optionally only for `name`)
-        /// and exit without changing anything.
-        #[arg(long)]
-        list: bool,
-        /// Remove the allow entry for `name` instead of adding one.
-        #[arg(long)]
-        revoke: bool,
-    },
+    Trust(Box<ExternTrustArgs>),
 }
 
 /// Subcommands under `clud session` (#2122).
@@ -1962,26 +2129,7 @@ pub enum SessionAction {
     },
     /// Create a durable API session from the CLI (recorded as `origin: cli`)
     /// and print its id.
-    New {
-        /// Harness backend: `claude` or `codex`.
-        #[arg(long = "backend", default_value = "claude")]
-        backend: String,
-        /// Working directory; defaults to the current directory.
-        #[arg(long = "cwd")]
-        cwd: Option<std::path::PathBuf>,
-        /// Display name.
-        #[arg(long = "name")]
-        name: Option<String>,
-        /// Model to pin.
-        #[arg(long = "model")]
-        model: Option<String>,
-        /// Run the session without the permission bypass.
-        #[arg(long = "safe")]
-        safe: bool,
-        /// Print the created record as JSON.
-        #[arg(long = "json")]
-        json: bool,
-    },
+    New(Box<SessionNewArgs>),
     /// Print one API session's state, origin, backend and model.
     Show {
         /// API session id (`sess-...`).
@@ -1996,87 +2144,20 @@ pub enum SessionAction {
 #[derive(Subcommand, Debug, Clone)]
 pub enum GcSubcommand {
     /// Print tracked entries, newest first.
-    List {
-        /// Issue #135: emit a JSON array instead of the human-readable table.
-        #[arg(long = "json")]
-        json: bool,
-        /// Report daemon-cached Rust target sizes across repository worktrees.
-        #[arg(long, conflicts_with = "kind")]
-        targets: bool,
-        /// Restrict to a single managed kind (e.g. `worktree`, `trash`).
-        #[arg(long = "kind")]
-        kind: Option<String>,
-    },
+    List(Box<GcListArgs>),
     /// Drop stale/unreferenced entries for one managed kind, or `all`.
-    Prune {
-        /// Preview the removal plan without touching anything.
-        #[arg(long = "dry-run")]
-        dry_run: bool,
-        /// Only affect entries created longer ago than this duration
-        /// (e.g. `2d`, `48h`). Overrides the per-kind default prune window.
-        #[arg(long = "older-than", value_name = "DURATION")]
-        older_than: Option<String>,
-        /// Managed kind to prune (e.g. `worktree`, `uv-cache`, `trash`),
-        /// or `all` for every managed kind (issue #506).
-        #[arg(value_name = "KIND", conflicts_with = "kind")]
-        kind_pos: Option<String>,
-        /// Compatibility alias for the positional `KIND`.
-        #[arg(long = "kind", value_name = "KIND")]
-        kind: Option<String>,
-    },
+    Prune(Box<GcPruneArgs>),
     /// Remove all entries for one managed kind, or `all`. Destructive;
     /// requires `--yes`.
-    Purge {
-        /// Preview the removal plan without touching anything.
-        #[arg(long = "dry-run")]
-        dry_run: bool,
-        /// Skip the interactive confirmation prompt.
-        #[arg(long = "yes", short = 'y')]
-        yes: bool,
-        /// Only affect entries created longer ago than this duration
-        /// (e.g. `2d`, `48h`). Without it, purge removes every entry.
-        #[arg(long = "older-than", value_name = "DURATION")]
-        older_than: Option<String>,
-        /// Managed kind to purge (e.g. `worktree`, `uv-cache`, `trash`),
-        /// or `all` for every managed kind (issue #506).
-        #[arg(value_name = "KIND", conflicts_with = "kind")]
-        kind_pos: Option<String>,
-        /// Compatibility alias for the positional `KIND`.
-        #[arg(long = "kind", value_name = "KIND")]
-        kind: Option<String>,
-    },
+    Purge(Box<GcPurgeArgs>),
     /// Operate across every managed kind. Defaults to safe prune.
-    All {
-        /// Purge every managed kind instead of pruning stale entries.
-        #[arg(long = "purge")]
-        purge: bool,
-        /// Preview the removal plan without touching anything.
-        #[arg(long = "dry-run")]
-        dry_run: bool,
-        /// Required with `--purge`.
-        #[arg(long = "yes", short = 'y')]
-        yes: bool,
-        /// Only affect entries created longer ago than this duration
-        /// (e.g. `2d`, `48h`).
-        #[arg(long = "older-than", value_name = "DURATION")]
-        older_than: Option<String>,
-    },
+    All(Box<GcAllArgs>),
     /// Walk `.claude/worktrees/` in the current repo and insert any
     /// previously-untracked worktree directories.
     Reconcile,
     /// Issue #2101: pin a worktree (default: the current directory) so the
     /// daemon never reclaims it. Bare `--list` prints the kept paths.
-    Keep {
-        /// Path to keep. Defaults to the current directory.
-        #[arg(value_name = "PATH")]
-        path: Option<std::path::PathBuf>,
-        /// Release a previously kept path instead.
-        #[arg(long = "remove")]
-        remove: bool,
-        /// Print the kept paths.
-        #[arg(long = "list", conflicts_with_all = ["path", "remove"])]
-        list: bool,
-    },
+    Keep(Box<GcKeepArgs>),
 }
 
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[

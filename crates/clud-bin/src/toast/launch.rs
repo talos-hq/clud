@@ -204,11 +204,12 @@ mod tests {
         .collect();
         let args = crate::args::Args::parse_from_raw(raw);
         match args.command {
-            Some(crate::args::Command::Statusline {
-                session_pid,
-                state_dir,
-                chain_b64,
-            }) => {
+            Some(crate::args::Command::Statusline(options)) => {
+                let crate::args::StatuslineArgs {
+                    session_pid,
+                    state_dir,
+                    chain_b64,
+                } = *options;
                 assert_eq!(session_pid, 77);
                 assert_eq!(state_dir, PathBuf::from("/tmp/state"));
                 assert_eq!(chain_b64.as_deref(), Some("ZWNobyBoaQ"));

@@ -18,7 +18,8 @@ pub fn run(subcommand: Option<&crate::args::ExternSubcommand>) -> i32 {
             eprintln!("clud extern: missing subcommand. Try `clud extern trust --help`.");
             2
         }
-        Some(crate::args::ExternSubcommand::Trust { name, list, revoke }) => {
+        Some(crate::args::ExternSubcommand::Trust(options)) => {
+            let crate::args::ExternTrustArgs { name, list, revoke } = options.as_ref();
             run_trust(name.as_deref(), *list, *revoke)
         }
     }

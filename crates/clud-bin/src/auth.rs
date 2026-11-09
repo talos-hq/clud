@@ -86,16 +86,19 @@ fn replacement_with_json(action: &str, provider: &str, json: bool) -> String {
 
 pub fn run(subcommand: Option<&AuthSubcommand>, interrupted: &AtomicBool) -> i32 {
     match subcommand {
-        Some(AuthSubcommand::Login {
-            provider,
-            acknowledge_experimental,
-            no_browser,
-        }) => login(
-            *provider,
-            *acknowledge_experimental,
-            *no_browser,
-            interrupted,
-        ),
+        Some(AuthSubcommand::Login(options)) => {
+            let crate::args::AuthLoginArgs {
+                provider,
+                acknowledge_experimental,
+                no_browser,
+            } = options.as_ref();
+            login(
+                *provider,
+                *acknowledge_experimental,
+                *no_browser,
+                interrupted,
+            )
+        }
         Some(AuthSubcommand::Status { provider, json }) => status(*provider, *json),
         Some(AuthSubcommand::Logout { provider, json }) => logout(*provider, *json),
         None => {

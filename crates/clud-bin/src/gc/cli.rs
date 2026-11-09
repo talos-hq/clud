@@ -125,54 +125,66 @@ enum GcAction {
 
 fn normalize(sub: GcSubcommand) -> GcAction {
     match sub {
-        GcSubcommand::List {
-            json,
-            kind,
-            targets,
-        } => GcAction::List {
-            json,
-            targets,
-            // `--kind all` on list means "no filter".
-            kind: kind.filter(|k| k != ALL_KIND),
-        },
-        GcSubcommand::Prune {
-            dry_run,
-            older_than,
-            kind_pos,
-            kind,
-            ..
-        } => GcAction::Prune {
-            dry_run,
-            older_than,
-            kind: kind_pos.or(kind),
-        },
-        GcSubcommand::Purge {
-            dry_run,
-            yes,
-            older_than,
-            kind_pos,
-            kind,
-            ..
-        } => GcAction::Purge {
-            dry_run,
-            yes,
-            older_than,
-            kind: kind_pos.or(kind),
-        },
-        GcSubcommand::All {
-            purge,
-            dry_run,
-            yes,
-            older_than,
-            ..
-        } => GcAction::All {
-            purge,
-            dry_run,
-            yes,
-            older_than,
-        },
+        GcSubcommand::List(options) => {
+            let crate::args::GcListArgs {
+                json,
+                kind,
+                targets,
+            } = *options;
+            GcAction::List {
+                json,
+                targets,
+                // `--kind all` on list means "no filter".
+                kind: kind.filter(|k| k != ALL_KIND),
+            }
+        }
+        GcSubcommand::Prune(options) => {
+            let crate::args::GcPruneArgs {
+                dry_run,
+                older_than,
+                kind_pos,
+                kind,
+                ..
+            } = *options;
+            GcAction::Prune {
+                dry_run,
+                older_than,
+                kind: kind_pos.or(kind),
+            }
+        }
+        GcSubcommand::Purge(options) => {
+            let crate::args::GcPurgeArgs {
+                dry_run,
+                yes,
+                older_than,
+                kind_pos,
+                kind,
+                ..
+            } = *options;
+            GcAction::Purge {
+                dry_run,
+                yes,
+                older_than,
+                kind: kind_pos.or(kind),
+            }
+        }
+        GcSubcommand::All(options) => {
+            let crate::args::GcAllArgs {
+                purge,
+                dry_run,
+                yes,
+                older_than,
+                ..
+            } = *options;
+            GcAction::All {
+                purge,
+                dry_run,
+                yes,
+                older_than,
+            }
+        }
         GcSubcommand::Reconcile => GcAction::Reconcile,
-        GcSubcommand::Keep { .. } => unreachable!("gc keep is dispatched before normalize"),
+        GcSubcommand::Keep(_) => unreachable!("gc keep is dispatched before normalize"),
     }
 }
 
@@ -182,7 +194,8 @@ pub fn run(args: &Args, sub: Option<GcSubcommand>) -> i32 {
     let Some(sub) = sub else {
         return print_help_and_exit_zero();
     };
-    if let GcSubcommand::Keep { path, remove, list } = &sub {
+    if let GcSubcommand::Keep(options) = &sub {
+        let crate::args::GcKeepArgs { path, remove, list } = options.as_ref();
         let path = match (path, list) {
             (_, true) => None,
             (Some(p), _) => Some(p.clone()),
@@ -1124,21 +1137,21 @@ mod tests {
 
     #[test]
     fn normalize_prefers_positional_kind_and_falls_back_to_flag() {
-        let positional = normalize(GcSubcommand::Purge {
+        let positional = normalize(GcSubcommand::Purge(Box::new(crate::args::GcPurgeArgs {
             dry_run: false,
             yes: true,
             older_than: None,
             kind_pos: Some("trash".into()),
             kind: None,
-        });
+        })));
         assert_eq!(positional, purge(Some("trash"), false, true));
 
-        let flag = normalize(GcSubcommand::Prune {
+        let flag = normalize(GcSubcommand::Prune(Box::new(crate::args::GcPruneArgs {
             dry_run: true,
             older_than: None,
             kind_pos: None,
             kind: Some("worktree".into()),
-        });
+        })));
         assert_eq!(
             flag,
             GcAction::Prune {
@@ -1157,12 +1170,12 @@ mod tests {
     #[test]
     fn normalize_threads_older_than_through_every_subcommand() {
         assert_eq!(
-            normalize(GcSubcommand::Prune {
+            normalize(GcSubcommand::Prune(Box::new(crate::args::GcPruneArgs {
                 dry_run: false,
                 older_than: Some("2d".into()),
                 kind_pos: Some("worktree".into()),
                 kind: None,
-            }),
+            }))),
             GcAction::Prune {
                 dry_run: false,
                 older_than: Some("2d".into()),
@@ -1171,13 +1184,13 @@ mod tests {
         );
 
         assert_eq!(
-            normalize(GcSubcommand::Purge {
+            normalize(GcSubcommand::Purge(Box::new(crate::args::GcPurgeArgs {
                 dry_run: false,
                 yes: true,
                 older_than: Some("48h".into()),
                 kind_pos: Some("trash".into()),
                 kind: None,
-            }),
+            }))),
             GcAction::Purge {
                 dry_run: false,
                 yes: true,
@@ -1187,12 +1200,12 @@ mod tests {
         );
 
         assert_eq!(
-            normalize(GcSubcommand::All {
+            normalize(GcSubcommand::All(Box::new(crate::args::GcAllArgs {
                 purge: true,
                 dry_run: false,
                 yes: true,
                 older_than: Some("7d".into()),
-            }),
+            }))),
             GcAction::All {
                 purge: true,
                 dry_run: false,
@@ -1267,11 +1280,11 @@ mod tests {
 
     #[test]
     fn normalize_list_kind_all_means_no_filter() {
-        let action = normalize(GcSubcommand::List {
+        let action = normalize(GcSubcommand::List(Box::new(crate::args::GcListArgs {
             targets: false,
             json: false,
             kind: Some(ALL_KIND.into()),
-        });
+        })));
         assert_eq!(
             action,
             GcAction::List {

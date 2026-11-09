@@ -13,11 +13,11 @@ fn world() -> (tempfile::TempDir, PathBuf, Value) {
 }
 
 fn setting(pointer: &str, value: &str) -> Mutation {
-    Mutation::Set {
+    Mutation::Set(Box::new(SetArgs {
         pointer: pointer.into(),
         value: value.into(),
         reason: "Review this particular change".into(),
-    }
+    }))
 }
 
 #[test]

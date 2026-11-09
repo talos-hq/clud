@@ -15,20 +15,23 @@ const MAX_DOCUMENT: usize = 1024 * 1024;
 const MAX_VALUE: usize = 64 * 1024;
 const APPROVAL_LIFETIME: Duration = Duration::from_secs(600);
 
+#[derive(Clone, clap::Args)]
+pub struct SetArgs {
+    /// JSON pointer, for example /web_term/enabled.
+    pub pointer: String,
+    /// JSON value, for example false or a quoted string.
+    #[arg(allow_hyphen_values = true)]
+    pub value: String,
+    /// Explain this specific requested change to the user.
+    #[arg(long)]
+    pub reason: String,
+}
+
 /// Values are proposals, never proof that the user has approved them.
 #[derive(Clone, Subcommand)]
 pub enum Mutation {
     /// Set one JSON pointer after native user approval; preserves deletion roots.
-    Set {
-        /// JSON pointer, for example /web_term/enabled.
-        pointer: String,
-        /// JSON value, for example false or a quoted string.
-        #[arg(allow_hyphen_values = true)]
-        value: String,
-        /// Explain this specific requested change to the user.
-        #[arg(long)]
-        reason: String,
-    },
+    Set(Box<SetArgs>),
     /// Replace deletion roots after separate, explicit native user approval.
     Roots {
         /// JSON array of objects containing an absolute path and non-empty reason.
@@ -285,11 +288,12 @@ fn build_update(
     mutation: &Mutation,
 ) -> Result<(Value, String, bool), Failure> {
     let (pointer, raw, reason, roots) = match mutation {
-        Mutation::Set {
-            pointer,
-            value,
-            reason,
-        } => (pointer.as_str(), value, reason, false),
+        Mutation::Set(options) => (
+            options.pointer.as_str(),
+            &options.value,
+            &options.reason,
+            false,
+        ),
         Mutation::Roots { value, reason } => ("/safe_rm/extra_roots", value, reason, true),
     };
     if raw.len() > MAX_VALUE

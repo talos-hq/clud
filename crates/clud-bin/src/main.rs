@@ -127,9 +127,10 @@ fn run(mut args: args::Args) {
 /// checkout and exits; `--update` reinstalls the pinned
 /// video-use checkout and exits; otherwise the session runs in `DIR`.
 fn enter_video_command(args: &args::Args) {
-    let Some(args::Command::Video { dir, update, path }) = &args.command else {
+    let Some(args::Command::Video(options)) = &args.command else {
         return;
     };
+    let crate::args::VideoArgs { dir, update, path } = options.as_ref();
     if *path {
         std::process::exit(clud::video::run_path());
     }
@@ -149,7 +150,7 @@ fn enter_video_command(args: &args::Args) {
 /// installs anything or reads the vault. The key is placed in this process's
 /// environment only now, immediately before the harness child inherits it.
 fn prepare_video_launch(args: &args::Args) {
-    if !matches!(args.command, Some(args::Command::Video { .. })) {
+    if !matches!(args.command, Some(args::Command::Video(_))) {
         return;
     }
     let interactive = io::stdin().is_terminal() && io::stderr().is_terminal();
@@ -378,28 +379,21 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
         // #1189: Claude Code runs `clud statusline` as its statusLine command
         // every couple of seconds. Like `clud tool`, it must not touch the daemon,
         // the runtime cache, or any launch machinery.
-        args::Command::Statusline {
-            session_pid,
-            state_dir,
-            chain_b64,
-        } => toast::statusline::run(&toast::statusline::RunArgs {
-            session_pid: *session_pid,
-            state_dir: state_dir.clone(),
-            chain_b64: chain_b64.clone(),
+        args::Command::Statusline(options) => toast::statusline::run(&toast::statusline::RunArgs {
+            session_pid: options.session_pid,
+            state_dir: options.state_dir.clone(),
+            chain_b64: options.chain_b64.clone(),
         }),
         // #922: Claude Code runs `clud session-hook` at session start, compact and
         // end. Like `statusline`, it must not touch the daemon or launch machinery.
-        args::Command::SessionHook {
-            event,
-            route,
-            state_dir,
-            recovery_file,
-        } => clud::session_history::hook::run(&clud::session_history::hook::HookArgs {
-            event: event.clone(),
-            route: route.clone(),
-            state_dir: state_dir.clone(),
-            recovery_file: recovery_file.clone(),
-        }),
+        args::Command::SessionHook(options) => {
+            clud::session_history::hook::run(&clud::session_history::hook::HookArgs {
+                event: options.event.clone(),
+                route: options.route.clone(),
+                state_dir: options.state_dir.clone(),
+                recovery_file: options.recovery_file.clone(),
+            })
+        }
         // Fast tool path. Detect `clud tool ...` before
         // normal clud startup so hook/tool invocations do not connect to the
         // daemon, touch runtime-cache, start title keepers, or register as
@@ -411,45 +405,43 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
         args::Command::InternalStartCmd => clud::platform::start_terminal::run(),
         // Hidden test seam for the OpenAI Chat Completions ingress translator:
         // stdin in, Messages request body out. No session, backend, or daemon.
-        args::Command::InternalOpenAiChatTranslate {
-            response,
-            stream,
-            for_model,
-            http,
-        } => run_openai_chat_translate_seam(*response, *stream, for_model.as_deref(), *http),
-        args::Command::InternalOpenAiCompletionsTranslate {
-            response,
-            stream,
-            for_model,
-            http,
-        } => clud::completions_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
-        args::Command::InternalApplyPayloadRules(_) => run_payload_rules_seam(cmd?),
-        args::Command::InternalOpenAiResponsesTranslate {
-            response,
-            stream,
-            for_model,
-            http,
-        } => clud::responses_ingress::run_seam(*response, *stream, for_model.as_deref(), *http),
-        args::Command::InternalGeminiClientTranslate { .. } => {
-            run_gemini_client_translate_seam(cmd)
+        args::Command::InternalOpenAiChatTranslate(options) => run_openai_chat_translate_seam(
+            options.response,
+            options.stream,
+            options.for_model.as_deref(),
+            options.http,
+        ),
+        args::Command::InternalOpenAiCompletionsTranslate(options) => {
+            clud::completions_ingress::run_seam(
+                options.response,
+                options.stream,
+                options.for_model.as_deref(),
+                options.http,
+            )
         }
+        args::Command::InternalApplyPayloadRules(_) => run_payload_rules_seam(cmd?),
+        args::Command::InternalOpenAiResponsesTranslate(options) => {
+            clud::responses_ingress::run_seam(
+                options.response,
+                options.stream,
+                options.for_model.as_deref(),
+                options.http,
+            )
+        }
+        args::Command::InternalGeminiClientTranslate(_) => run_gemini_client_translate_seam(cmd),
         // Hidden test seam for the Claude <-> Gemini translator: stdin in, the
         // translated body out. `--response` runs the ingress direction. No
         // session, backend or daemon.
-        args::Command::InternalClaudeGeminiTranslate { .. } => run_claude_gemini_seam(cmd),
-        args::Command::InternalXaiDeviceLogin {
-            discovery_url,
-            device_endpoint,
-            token_endpoint,
-            interval_ms,
-            max_poll_ms,
-        } => clud::xai_auth::run_seam(&clud::xai_auth::SeamArgs {
-            discovery_url: discovery_url.as_deref(),
-            device_endpoint: device_endpoint.as_deref(),
-            token_endpoint: token_endpoint.as_deref(),
-            interval_ms: *interval_ms,
-            max_poll_ms: *max_poll_ms,
-        }),
+        args::Command::InternalClaudeGeminiTranslate(_) => run_claude_gemini_seam(cmd),
+        args::Command::InternalXaiDeviceLogin(options) => {
+            clud::xai_auth::run_seam(&clud::xai_auth::SeamArgs {
+                discovery_url: options.discovery_url.as_deref(),
+                device_endpoint: options.device_endpoint.as_deref(),
+                token_endpoint: options.token_endpoint.as_deref(),
+                interval_ms: options.interval_ms,
+                max_poll_ms: options.max_poll_ms,
+            })
+        }
         // Hidden test seam for Kimi Code's device-authorization login: no
         // session, backend, or daemon, and it never prints a token.
         args::Command::InternalKimiDeviceLogin(options) => run_kimi_device_login_seam(
@@ -484,15 +476,15 @@ fn dispatch_fast_path_command(cmd: Option<&args::Command>) -> Option<i32> {
 /// The Gemini-shaped client seam: stdin in, a Gemini request or response out.
 /// Split out of the dispatch match so that table stays under the length budget.
 fn run_gemini_client_translate_seam(cmd: Option<&args::Command>) -> i32 {
-    let Some(args::Command::InternalGeminiClientTranslate {
+    let Some(args::Command::InternalGeminiClientTranslate(options)) = cmd else {
+        return 1;
+    };
+    let crate::args::InternalGeminiClientTranslateArgs {
         model,
         response,
         stream,
         http,
-    }) = cmd
-    else {
-        return 1;
-    };
+    } = options.as_ref();
     if *response {
         clud::gemini_client_ingress::run_translate_response_stdin(*stream, model.as_deref(), *http)
     } else {
@@ -503,15 +495,15 @@ fn run_gemini_client_translate_seam(cmd: Option<&args::Command>) -> i32 {
 /// Runs the hidden Claude <-> Gemini translate seam. Kept out of
 /// `dispatch_fast_path_command` so that dispatcher stays under the line cap.
 fn run_claude_gemini_seam(cmd: Option<&args::Command>) -> i32 {
-    let Some(args::Command::InternalClaudeGeminiTranslate {
+    let Some(args::Command::InternalClaudeGeminiTranslate(options)) = cmd else {
+        return 1;
+    };
+    let crate::args::InternalClaudeGeminiTranslateArgs {
         model,
         response,
         stream,
         http,
-    }) = cmd
-    else {
-        return 1;
-    };
+    } = options.as_ref();
     if *response {
         clud::gemini_ingress::run_translate_response_stdin(*stream, model.as_deref(), *http)
     } else {
@@ -571,14 +563,14 @@ fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
         args::Command::Connect { host, model } => {
             clud::remote_connect::connect::run(host, model.as_deref().or(args.model.as_deref()))
         }
-        args::Command::Serve {
-            claude,
-            codex,
-            openrouter,
-            deepseek,
-            kimi,
-            port,
-        } => clud::serve_gateway::run(*port, *claude, *codex, *openrouter, *deepseek, *kimi),
+        args::Command::Serve(options) => clud::serve_gateway::run(
+            options.port,
+            options.claude,
+            options.codex,
+            options.openrouter,
+            options.deepseek,
+            options.kimi,
+        ),
         args::Command::CodexUpdate => {
             if !args.passthrough.is_empty() {
                 eprintln!("codex-update accepts no passthrough arguments");
@@ -586,16 +578,11 @@ fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
             }
             backend_bootstrap::run_trusted_codex_update()
         }
-        args::Command::Ci {
-            job,
-            filter,
-            workflow,
-            json,
-        } => clud::ci_local::run(&clud::ci_local::CiOptions {
-            job: job.clone(),
-            filter: filter.clone(),
-            workflow: workflow.clone(),
-            json: *json,
+        args::Command::Ci(options) => clud::ci_local::run(&clud::ci_local::CiOptions {
+            job: options.job.clone(),
+            filter: options.filter.clone(),
+            workflow: options.workflow.clone(),
+            json: options.json,
         }),
         args::Command::Secret(options) => clud::secret_prompt::run(options),
         args::Command::SecretsMcp => clud::secrets_catalog::serve(),
@@ -824,16 +811,14 @@ fn dispatch_local_tool_command(args: &args::Args) -> Option<i32> {
         // contained; never launches a backend. `run` returns the wrapped command's
         // exit code unchanged so prefixing it onto an existing invocation is safe.
         args::Command::Test { subcommand } => match subcommand {
-            args::TestSubcommand::Run {
-                bucket,
-                target,
-                command,
-            } => test_runtime::cli::run(bucket, target.clone(), command),
-            args::TestSubcommand::Capture {
-                output_dir,
-                timeout_secs,
-                command,
-            } => test_runtime::capture::run_cli(output_dir, *timeout_secs, command),
+            args::TestSubcommand::Run(options) => {
+                test_runtime::cli::run(&options.bucket, options.target.clone(), &options.command)
+            }
+            args::TestSubcommand::Capture(options) => test_runtime::capture::run_cli(
+                &options.output_dir,
+                options.timeout_secs,
+                &options.command,
+            ),
             args::TestSubcommand::Stats { bucket, json } => {
                 test_runtime::cli::stats(bucket.as_deref(), *json)
             }
@@ -1543,12 +1528,12 @@ fn read_piped_prompt(args: &args::Args) -> Option<String> {
 /// `wasm`/`loop`/`grind` commands, an inline API key, and the provider
 /// credential preflight.
 fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::ResolvedLaunchTarget) {
-    if let Some(args::Command::Workflow {
-        script,
-        args_json,
-        resume,
-    }) = &args.command
-    {
+    if let Some(args::Command::Workflow(options)) = &args.command {
+        let crate::args::WorkflowArgs {
+            script,
+            args_json,
+            resume,
+        } = options.as_ref();
         std::process::exit(clud::workflow::cli::run(
             std::path::Path::new(script),
             args_json.as_deref(),
