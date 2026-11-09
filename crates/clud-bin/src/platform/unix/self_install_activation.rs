@@ -627,6 +627,15 @@ mod tests {
         }
     }
 
+    /// macOS puts temp dirs under `/var`, a symlink to `/private/var`, and the
+    /// installer rightly refuses startup files below a symlinked ancestor. A
+    /// real `/Users/<name>` home has none, so resolve the temp home first.
+    fn temp_home() -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().canonicalize().unwrap();
+        (dir, path)
+    }
+
     fn dest(home: &Path) -> PathBuf {
         home.join(".local/bin/clud")
     }
@@ -637,14 +646,17 @@ mod tests {
 
     #[test]
     fn macos_default_zsh_activates_zprofile_and_zshrc() {
-        let home = tempfile::tempdir().unwrap();
-        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/zsh")).unwrap();
+        let (_dir, home) = temp_home();
+        let plan = plan_in(&dest(home.as_path()), &mac_env(home.as_path(), "/bin/zsh")).unwrap();
         assert_eq!(
             edit_paths(&plan),
-            [home.path().join(".zprofile"), home.path().join(".zshrc")]
+            [
+                home.as_path().join(".zprofile"),
+                home.as_path().join(".zshrc")
+            ]
         );
         assert!(plan.manual_instruction.is_none());
-        let bin = home.path().join(".local/bin");
+        let bin = home.as_path().join(".local/bin");
         assert!(plan
             .snippet
             .contains(&format!("PATH={}:\"$PATH\"", bin.display())));
@@ -656,93 +668,96 @@ mod tests {
 
     #[test]
     fn macos_reload_hint_names_the_login_file_to_source() {
-        let home = tempfile::tempdir().unwrap();
-        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/zsh")).unwrap();
+        let (_dir, home) = temp_home();
+        let plan = plan_in(&dest(home.as_path()), &mac_env(home.as_path(), "/bin/zsh")).unwrap();
         let hint = reload_hint(&plan);
         assert!(hint.contains("Open a new terminal"), "{hint}");
         assert!(
             hint.contains(&format!(
                 "source {}",
-                home.path().join(".zprofile").display()
+                home.as_path().join(".zprofile").display()
             )),
             "{hint}"
         );
-        let manual = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/tcsh")).unwrap();
+        let manual = plan_in(&dest(home.as_path()), &mac_env(home.as_path(), "/bin/tcsh")).unwrap();
         assert_eq!(reload_hint(&manual), "Open a new terminal to use clud.");
     }
 
     #[test]
     fn macos_zsh_honors_zdotdir() {
-        let home = tempfile::tempdir().unwrap();
-        let zdot = home.path().join(".config/zsh");
-        let mut env = mac_env(home.path(), "/bin/zsh");
+        let (_dir, home) = temp_home();
+        let zdot = home.as_path().join(".config/zsh");
+        let mut env = mac_env(home.as_path(), "/bin/zsh");
         env.zdotdir = Some(zdot.clone());
-        let plan = plan_in(&dest(home.path()), &env).unwrap();
+        let plan = plan_in(&dest(home.as_path()), &env).unwrap();
         assert_eq!(
             edit_paths(&plan),
             [zdot.join(".zprofile"), zdot.join(".zshrc")]
         );
         env.zdotdir = Some(PathBuf::from("relative"));
-        assert!(plan_in(&dest(home.path()), &env).is_err());
+        assert!(plan_in(&dest(home.as_path()), &env).is_err());
     }
 
     #[test]
     fn macos_bash_reuses_existing_profile_instead_of_shadowing_it() {
-        let home = tempfile::tempdir().unwrap();
-        std::fs::write(home.path().join(".profile"), "export EDITOR=vim\n").unwrap();
-        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/bash")).unwrap();
+        let (_dir, home) = temp_home();
+        std::fs::write(home.as_path().join(".profile"), "export EDITOR=vim\n").unwrap();
+        let plan = plan_in(&dest(home.as_path()), &mac_env(home.as_path(), "/bin/bash")).unwrap();
         assert_eq!(
             edit_paths(&plan),
-            [home.path().join(".profile"), home.path().join(".bashrc")]
+            [
+                home.as_path().join(".profile"),
+                home.as_path().join(".bashrc")
+            ]
         );
-        assert!(!home.path().join(".bash_profile").exists());
+        assert!(!home.as_path().join(".bash_profile").exists());
         let profile = String::from_utf8(plan.edits[0].next.clone()).unwrap();
         assert!(profile.starts_with("export EDITOR=vim\n"));
     }
 
     #[test]
     fn macos_bash_fresh_home_uses_bash_profile() {
-        let home = tempfile::tempdir().unwrap();
-        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/bash")).unwrap();
+        let (_dir, home) = temp_home();
+        let plan = plan_in(&dest(home.as_path()), &mac_env(home.as_path(), "/bin/bash")).unwrap();
         assert_eq!(
             edit_paths(&plan),
             [
-                home.path().join(".bash_profile"),
-                home.path().join(".bashrc")
+                home.as_path().join(".bash_profile"),
+                home.as_path().join(".bashrc")
             ]
         );
     }
 
     #[test]
     fn macos_fish_writes_its_own_conf_d_file() {
-        let home = tempfile::tempdir().unwrap();
+        let (_dir, home) = temp_home();
         let plan = plan_in(
-            &dest(home.path()),
-            &mac_env(home.path(), "/opt/homebrew/bin/fish"),
+            &dest(home.as_path()),
+            &mac_env(home.as_path(), "/opt/homebrew/bin/fish"),
         )
         .unwrap();
         assert_eq!(
             edit_paths(&plan),
-            [home.path().join(".config/fish/conf.d/clud-path.fish")]
+            [home.as_path().join(".config/fish/conf.d/clud-path.fish")]
         );
         assert!(plan.snippet.contains("fish_add_path --path --move --"));
     }
 
     #[test]
     fn unmanaged_shell_gets_manual_instruction_and_no_edits() {
-        let home = tempfile::tempdir().unwrap();
-        let plan = plan_in(&dest(home.path()), &mac_env(home.path(), "/bin/tcsh")).unwrap();
+        let (_dir, home) = temp_home();
+        let plan = plan_in(&dest(home.as_path()), &mac_env(home.as_path(), "/bin/tcsh")).unwrap();
         assert!(plan.edits.is_empty());
         assert!(plan.manual_instruction.unwrap().contains("export PATH="));
     }
 
     #[test]
     fn relative_home_or_shell_is_refused() {
-        let home = tempfile::tempdir().unwrap();
+        let (_dir, home) = temp_home();
         let mut env = mac_env(Path::new("relative"), "/bin/zsh");
-        assert!(plan_in(&dest(home.path()), &env).is_err());
-        env = mac_env(home.path(), "zsh");
-        assert!(plan_in(&dest(home.path()), &env).is_err());
+        assert!(plan_in(&dest(home.as_path()), &env).is_err());
+        env = mac_env(home.as_path(), "zsh");
+        assert!(plan_in(&dest(home.as_path()), &env).is_err());
     }
 
     #[test]
