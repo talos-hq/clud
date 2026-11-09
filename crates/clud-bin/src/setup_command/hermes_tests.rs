@@ -102,7 +102,7 @@ struct Run {
     stored: usize,
 }
 
-fn run_offer(found: Option<Found>, mode: Mode, answer: &str, metered_ok: bool) -> Run {
+fn run_offer(found: Option<Found>, mode: Mode, answer: &str) -> Run {
     let detection = found.map_or(Detection::None, Detection::Found);
     let mut out = Vec::new();
     let mut stored = 0;
@@ -115,7 +115,6 @@ fn run_offer(found: Option<Found>, mode: Mode, answer: &str, metered_ok: bool) -
         mode,
         &mut answer.as_bytes(),
         &mut out,
-        metered_ok,
         &mut store,
     );
     Run {
@@ -141,7 +140,6 @@ fn interactive_prompt_defaults_to_no() {
             Some(sample(true)),
             Mode::Interactive { import: false },
             answer,
-            true,
         );
         assert_eq!(run.outcome, Outcome::Skipped, "{answer:?}");
         assert_eq!(run.stored, 0);
@@ -152,7 +150,6 @@ fn interactive_prompt_defaults_to_no() {
         Some(sample(true)),
         Mode::Interactive { import: false },
         "y\n",
-        true,
     );
     assert_eq!(yes.outcome, Outcome::Imported);
     assert_eq!(yes.stored, 1);
@@ -162,42 +159,39 @@ fn interactive_prompt_defaults_to_no() {
 #[test]
 fn yes_never_imports_without_the_flag_and_dry_run_never_stores() {
     for mode in [Mode::NonInteractive { import: false }, Mode::DryRun] {
-        let run = run_offer(Some(sample(true)), mode, "y\n", true);
+        let run = run_offer(Some(sample(true)), mode, "y\n");
         assert_eq!(run.outcome, Outcome::Skipped, "{mode:?}");
         assert_eq!(run.stored, 0, "{mode:?}");
         assert!(!run.out.contains(PROMPT.trim_end()), "{mode:?} prompted");
     }
 }
 
+/// OpenRouter needs no metered consent (DD-209); only a missing key refuses.
 #[test]
-fn import_requires_a_key_and_metered_consent() {
+fn import_requires_a_key_but_no_metered_consent() {
     let no_key = run_offer(
         Some(sample(false)),
         Mode::NonInteractive { import: true },
         "",
-        true,
     );
     assert_eq!(no_key.outcome, Outcome::Failed(2));
     assert_eq!(no_key.stored, 0);
-    let unmetered = run_offer(
+    let keyed = run_offer(
         Some(sample(true)),
         Mode::NonInteractive { import: true },
         "",
-        false,
     );
-    assert_eq!(unmetered.outcome, Outcome::Failed(2));
-    assert_eq!(unmetered.stored, 0);
-    assert!(unmetered
-        .out
-        .contains("METERED PROVIDER IN USE: openrouter"));
+    assert_eq!(keyed.stored, 1);
+    assert!(keyed.out.contains("METERED PROVIDER IN USE: openrouter"));
+    assert!(!keyed.out.contains("CLUD_ALLOW_METERED"), "{}", keyed.out);
 }
 
 #[test]
 fn no_config_is_silent_unless_import_was_requested() {
-    let quiet = run_offer(None, Mode::Interactive { import: false }, "y\n", true);
+    let quiet = run_offer(None, Mode::Interactive { import: false }, "y\n");
     assert_eq!(quiet.outcome, Outcome::Skipped);
     assert!(quiet.out.is_empty(), "{}", quiet.out);
-    let asked = run_offer(None, Mode::NonInteractive { import: true }, "", true);
+    let asked = run_offer(None, Mode::NonInteractive { import: true }, "");
     assert_eq!(asked.outcome, Outcome::Failed(2));
 }
 
