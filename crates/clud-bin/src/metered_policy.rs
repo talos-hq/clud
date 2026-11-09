@@ -63,6 +63,9 @@ pub struct EnvPolicy {
     /// `CLUD_PROVIDER`, `CLUD_METERED_PROVIDER` may list several
     /// (comma-separated) for a unified gateway session.
     pub consented: Vec<ModelProvider>,
+    /// Set when incomplete or mismatched overrides were ignored because they
+    /// could not touch a subscription (#2746): a one-line note for stderr.
+    pub ignored_overrides: Option<String>,
 }
 
 impl EnvPolicy {
@@ -95,7 +98,6 @@ pub enum PolicyError {
         var: &'static str,
         value: String,
     },
-    MeteredSubscriptionDefault(ModelProvider),
     MeteredWithoutAllow(ModelProvider),
     AllowWithoutMeteredProvider,
     MeteredProviderMismatch {
@@ -120,13 +122,6 @@ impl std::fmt::Display for PolicyError {
                 f,
                 "{var}={value} is not a known provider; use claude (alias native), codex, \
                  deepseek, kimi or openrouter"
-            ),
-            Self::MeteredSubscriptionDefault(provider) => write!(
-                f,
-                "CLUD_SUBSCRIPTION_PROVIDER={provider} names a metered provider; the subscription \
-                 default can only be claude (alias native) or codex. To use {provider}, set \
-                 CLUD_PROVIDER={provider} with CLUD_ALLOW_METERED=1 and \
-                 CLUD_METERED_PROVIDER={provider}"
             ),
             Self::MeteredWithoutAllow(provider) => write!(
                 f,
@@ -188,11 +183,9 @@ fn is_metered(provider: ModelProvider) -> bool {
 pub fn resolve(env: &EnvSnapshot) -> Result<EnvPolicy, PolicyError> {
     let (subscription_default, subscription_default_applied) = match &env.subscription_provider {
         Some(value) => {
-            let provider = parse_provider(SUBSCRIPTION_PROVIDER_ENV, value)?;
-            if is_metered(provider) {
-                return Err(PolicyError::MeteredSubscriptionDefault(provider));
-            }
-            (provider, false)
+            // An always-metered provider here is simply the default provider,
+            // like a saved setting (#2747, DD-209).
+            (parse_provider(SUBSCRIPTION_PROVIDER_ENV, value)?, false)
         }
         None => (ModelProvider::Claude, true),
     };
@@ -224,7 +217,19 @@ pub fn resolve(env: &EnvSnapshot) -> Result<EnvPolicy, PolicyError> {
             ModelProvider::Claude,
         ));
     }
-    let consented = check_overrides(selected, allow, &listed)?;
+    let (consented, ignored_overrides) = match check_overrides(selected, allow, &listed) {
+        Ok(consented) => (consented, None),
+        // #2746: an incomplete pair can only matter to the Codex API-key route;
+        // anywhere else it is a leftover and must not refuse the launch.
+        Err(error) if is_leftover(&error, selected, &listed) => (
+            Vec::new(),
+            Some(format!(
+                "[clud] note: ignoring CLUD_ALLOW_METERED / CLUD_METERED_PROVIDER ({error}); \
+                 only Codex's API-key route needs them"
+            )),
+        ),
+        Err(error) => return Err(error),
+    };
     let metered = match (selected, consented.as_slice()) {
         (Some(provider), [only]) if *only == provider => Some(provider),
         (None, [only]) => Some(*only),
@@ -236,7 +241,26 @@ pub fn resolve(env: &EnvSnapshot) -> Result<EnvPolicy, PolicyError> {
         selected,
         metered,
         consented,
+        ignored_overrides,
     })
+}
+
+/// Whether a refused override pair is a harmless leftover: it names no
+/// subscription provider and the launch is not Codex's (#2746).
+fn is_leftover(
+    error: &PolicyError,
+    selected: Option<ModelProvider>,
+    listed: &[ModelProvider],
+) -> bool {
+    let incomplete = matches!(
+        error,
+        PolicyError::MeteredWithoutAllow(_)
+            | PolicyError::AllowWithoutMeteredProvider
+            | PolicyError::MeteredProviderMismatch { .. }
+    );
+    incomplete
+        && selected.is_none_or(is_metered)
+        && listed.iter().all(|provider| is_metered(*provider))
 }
 
 fn check_overrides(
@@ -291,7 +315,8 @@ fn check_overrides(
 
 /// Reconcile the environment with a provider chosen on the command line
 /// (a flag, `--provider`, or a qualified `--model`). A CLI choice may not
-/// contradict `CLUD_PROVIDER`.
+/// contradict `CLUD_PROVIDER`: a Claude or Codex launch is never moved onto
+/// another provider, and the reverse (maintainer directive on #2748).
 pub fn reconcile_cli(policy: &EnvPolicy, cli: Option<ModelProvider>) -> Result<(), PolicyError> {
     let Some(cli) = cli else {
         return Ok(());
