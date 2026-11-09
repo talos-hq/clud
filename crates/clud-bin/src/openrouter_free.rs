@@ -119,9 +119,7 @@ pub fn price_notice(wire_id: &str, catalog: &Catalog, source: &str) -> Option<St
     };
     let origin = match source {
         "cli" => "named on the command line".to_string(),
-        "provider_setting" => {
-            "saved default from an earlier --model; pass --model to change it".to_string()
-        }
+        "provider_setting" => "saved default; change it with --model or clud setup".to_string(),
         other => other.replace('_', " "),
     };
     Some(format!(
@@ -613,7 +611,13 @@ mod notice_tests {
         )
         .expect("catalogued");
         assert!(paid.contains("$0.50/$2.20"), "{paid}");
-        assert!(paid.contains("saved default"), "{paid}");
+        // #2753: setup, the menu, a Hermes import or --model may have saved
+        // it, so the text names no single cause.
+        assert!(
+            paid.contains("(saved default; change it with --model or clud setup)"),
+            "{paid}"
+        );
+        assert!(!paid.contains("earlier --model"), "{paid}");
         let free = price_notice("nvidia/nemotron-3-ultra-550b-a55b:free", &catalog, "cli")
             .expect("catalogued");
         assert!(
