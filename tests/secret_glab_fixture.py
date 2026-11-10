@@ -26,7 +26,6 @@ def environment(root: Path, source: Path) -> dict[str, str]:
         "GIT_CONFIG_GLOBAL": str(root / "gitconfig"), "GIT_CONFIG_NOSYSTEM": "1",
         "NO_PROXY": "127.0.0.1,localhost", "no_proxy": "127.0.0.1,localhost",
         "CLUD_INTEGRATION_TESTS": "1", "CLUD_TEST_SECRET_PROMPT_FILE": str(source),
-        "CLUD_TEST_SECRET_PROMPT_GUI": "1",
     })
     return env
 

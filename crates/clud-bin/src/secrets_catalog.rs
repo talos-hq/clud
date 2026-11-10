@@ -1,7 +1,6 @@
 //! `--allow-secrets`: registers lokr's MCP server with a Claude session, so the
 //! agent can see which credentials exist. No route returns a value.
 
-use std::ffi::OsString;
 use std::path::Path;
 
 /// Appended to the system prompt of an `--allow-secrets` launch.
@@ -29,49 +28,14 @@ fn config_arg(exe: &Path) -> String {
     format!("--mcp-config={config}")
 }
 
-fn options(exe: OsString, store: &Path) -> lokr::ServerOptions {
-    lokr::ServerOptions {
-        daemon_command: vec![exe.clone(), "secrets-daemon".into()],
-        ask_command: vec![
-            exe,
-            "secret".into(),
-            "--label".into(),
-            "Enter the credential {name}".into(),
-            "--to-file".into(),
-            store.join("{name}").into_os_string(),
-        ],
-    }
-}
-
-/// Runs the MCP server on stdio.
+/// Runs lokr's MCP server on inherited stdio.
 pub fn serve() -> i32 {
-    let (Ok(exe), Some(home)) = (std::env::current_exe(), crate::home::user_home()) else {
-        eprintln!("clud secrets-mcp: cannot locate clud or the home directory");
-        return 1;
-    };
-    let store = home.join(".lokr").join("store");
-    if let Err(error) = std::fs::create_dir_all(&store) {
-        eprintln!("clud secrets-mcp: {error}");
-        return 1;
-    }
-    match lokr::serve_stdio(&options(exe.into_os_string(), &store)) {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("clud secrets-mcp: {error}");
-            1
-        }
-    }
+    crate::secret_prompt::catalog("mcp")
 }
 
-/// Runs the background scanner.
+/// Runs lokr's background scanner.
 pub fn daemon() -> i32 {
-    match lokr::run_daemon() {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("clud secrets-daemon: {error}");
-            1
-        }
-    }
+    crate::secret_prompt::catalog("daemon")
 }
 
 #[cfg(test)]
@@ -85,15 +49,6 @@ mod tests {
         let config: serde_json::Value = serde_json::from_str(json).unwrap();
         assert_eq!(config["mcpServers"]["lokr"]["command"], "/opt/clud");
         assert_eq!(config["mcpServers"]["lokr"]["args"][0], "secrets-mcp");
-    }
-
-    #[test]
-    fn prompt_writes_to_the_named_store_file() {
-        let built = options("clud".into(), Path::new("/h/.lokr/store"));
-        assert_eq!(built.daemon_command[1], "secrets-daemon");
-        assert!(built
-            .ask_command
-            .contains(&Path::new("/h/.lokr/store").join("{name}").into_os_string()));
     }
 
     #[test]

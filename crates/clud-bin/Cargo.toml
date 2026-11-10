@@ -9,7 +9,6 @@ homepage.workspace = true
 description = "Fast CLI for running Claude Code and Codex in YOLO mode"
 
 [dependencies]
-lokr = { git = "https://github.com/zackees/lokr", rev = "e1ae55f6ed7c2e5b04f2c0ea5f428ecf12438d2f" }
 arboard = "3"
 base64 = "0.22"
 clap = { version = "4", features = ["derive"] }

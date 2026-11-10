@@ -1,6 +1,6 @@
 ---
 name: clud-secret
-description: Acquire a password, token or SSH private key for an authorized operation using clud's masked native prompt and direct secret sinks. Use when a task needs credentials; never request or display their values in chat.
+description: Acquire a password, token or SSH private key for an authorized operation using lokr's masked prompt and catalog and direct secret sinks. Use when a task needs credentials; never request or display their values in chat.
 triggers:
   - When an authorized operation requires acquiring a password, token or SSH private key
 ---
@@ -13,27 +13,35 @@ another program, and use `mcp__lokr__request_secret` when the key is absent.
 See <https://github.com/talos-hq/clud/blob/main/docs/architecture/secret-catalog.md>.
 
 Use `clud secret` to acquire credentials without seeing them. Identify the
-host and purpose in `--label`, and choose the sink appropriate to the
-already-authorized operation:
+specific credential and service/host in required `--title`, explain why it is
+needed and where to find it in required `--message` (alias of `--label`), and
+choose the sink appropriate to the already-authorized operation:
 
 ```bash
-clud secret --label 'GitLab token for gitlab.example.com' --to-command glab auth login --hostname gitlab.example.com --stdin
-clud secret --label 'SSH private key' --multiline --to-command ssh-add -
-clud secret --label 'OpenRouter API key' --vault openrouter
-clud secret --label 'Telegram BotFather token' --pattern '[0-9]+:[A-Za-z0-9_-]{35}' --to-file /chosen/private/telegram-token
-clud secret --label 'SSH private key for this host' --multiline --to-file /chosen/private/key
+clud secret --title 'GitLab token for gitlab.example.com' --message 'Authenticate glab; create a token in GitLab user settings > Access Tokens' --to-command glab auth login --hostname gitlab.example.com --stdin
+clud secret --title 'SSH private key for the deployment host' --message 'Load the deployment identity into ssh-agent; copy the key from your secret manager' --multiline --to-command ssh-add -
+clud secret --title 'OpenRouter API key for clud' --message 'Enable model requests; create a key at openrouter.ai/settings/keys' --vault openrouter
+clud secret --title 'Telegram BotFather token for the notification bot' --message 'Enable bot notifications; copy the token from BotFather in Telegram' --hint 'digits:35 token characters' --pattern '[0-9]+:[A-Za-z0-9_-]{35}' --to-file /chosen/private/telegram-token
+clud secret --title 'SSH private key for the deployment host' --message 'Save the deployment identity; copy the private key from your secret manager' --multiline --to-file /chosen/private/key
 ```
 
+Preview the request with `--dry-run` before acquiring a credential. For tests,
+use a fake lokr or fixtures, set `LOKR_TEST_MODE=1` and
+`CLUD_TEST_NO_SECRET_UI=1`, and remove `DISPLAY`,
+`WAYLAND_DISPLAY` and `WAYLAND_SOCKET`; never open real dialogs.
+
 Use `--pattern <regex>` when the expected shape is known. It must match the
-entire value; a mismatch prompts again, up to three attempts, then fails
-without storing anything. Invalid regexes are rejected before prompting.
+entire value; lokr allows at most three submissions in the same prompt
+before failing without storing anything. Invalid regexes are rejected before prompting.
 Place prompt options before `--to-command`, which consumes the remaining args.
 
 The command reports `stored`, `failed`, or `cancelled` (exit 3). It suppresses
 sink stdout and stderr because commands may echo their input. Verify success
 with a command that reports authentication status without exposing the
-credential. On cancellation, stop the authentication attempt. If no desktop
-prompt is available, report that limitation; do not ask for the value in chat.
+credential. On cancellation, stop the authentication attempt. A single-line
+request uses lokr, which can use a masked controlling TTY with context and warning.
+If neither desktop nor TTY is available, report that limitation; do not ask for
+the value in chat. One invocation opens at most one prompt.
 
 `clud-askpass` implements GIT_ASKPASS, SSH_ASKPASS and SUDO_ASKPASS. Configure
 those variables only for the intended git/ssh/sudo operation. Do not invoke
@@ -47,3 +55,10 @@ unrelated external operation.
 
 If implementing a credential-flow change, preserve focused RED -> GREEN
 regression evidence for secrecy and the sink's behavior.
+
+[forge-ci/lokr](https://github.com/forge-ci/lokr) is the secrets catalog.
+Name the secret and its service/host in each request so lokr can find it later.
+`clud secret` delegates to `lokr request`: lokr is both the prompt and catalog.
+Install forge-ci/lokr on PATH or alongside clud. Missing lokr fails with an
+install hint; clud never falls back to another prompt. File, `--to-keyring SERVICE USER`, and command sinks
+belong to lokr; `--vault` uses lokr command stdin to clud’s internal vault writer.

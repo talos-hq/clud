@@ -2256,8 +2256,12 @@ fn shell_example_token(token: &str) -> String {
 
 /// Whether `cmd` or any nested subcommand declares `--name`.
 fn subtree_has_long(cmd: &clap::Command, name: &str) -> bool {
-    cmd.get_arguments().any(|arg| arg.get_long() == Some(name))
-        || cmd.get_subcommands().any(|sub| subtree_has_long(sub, name))
+    cmd.get_arguments().any(|arg| {
+        arg.get_long() == Some(name)
+            || arg
+                .get_all_aliases()
+                .is_some_and(|aliases| aliases.contains(&name))
+    }) || cmd.get_subcommands().any(|sub| subtree_has_long(sub, name))
 }
 
 /// A root-only flag written after the subcommand (`clud do --model x …`),
@@ -2995,7 +2999,16 @@ mod arg_parser_stack_tests {
                     vec!["clud", "__apply-payload-rules"],
                     vec!["clud", "__meta-device-login", "--status"],
                     vec!["clud", "__kimi-device-login", "--refresh-stored"],
-                    vec!["clud", "secret", "--to-file", "credential.txt"],
+                    vec![
+                        "clud",
+                        "secret",
+                        "--title",
+                        "GitHub fixture token",
+                        "--message",
+                        "Authenticate the fixture using GitHub developer settings",
+                        "--to-file",
+                        "credential.txt",
+                    ],
                     vec!["clud", "auth", "status", "--json"],
                     vec!["clud", "tool", "log", "--grep", "needle"],
                     vec![

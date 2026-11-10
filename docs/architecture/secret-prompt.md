@@ -1,13 +1,19 @@
 # Secure credential prompt (#1708)
 
-`clud secret` opens a native masked credential window for an authorized
+`clud secret` delegates to lokr’s masked credential prompt for an authorized
 operation. It supports passwords/tokens and `--multiline` private-key input.
-The prompt shows the requested host/purpose (`--label`) and destination.
+The prompt requires a specific credential and service/host in `--title`, plus
+`--label` (also accepted as `--message`) explaining why it is needed and where
+to find it. Empty or generic descriptions such as "password", "secret" or the
+old defaults are rejected before acquisition. Optional `--hint` describes the
+expected format. The window prominently displays the title, message, hint,
+destination, and "This is NOT your computer or login password."
 
 Choose exactly one sink:
 
-- `--to-file PATH`: the existing private atomic writer creates owner-only
+- `--to-file PATH`: lokr’s private atomic writer creates owner-only
   files (0600 on Unix, protected owner DACL on Windows).
+- `--to-keyring SERVICE USER`: lokr’s native OS keyring sink.
 - `--vault deepseek|kimi|openrouter`: the provider's existing native vault
   record, with its stable service/account identifiers.
 - `--to-command PROGRAM ARGS...`: send the exact value to command stdin,
@@ -17,14 +23,16 @@ Choose exactly one sink:
 For example:
 
 ```bash
-clud secret --label 'GitLab token for gitlab.example.com' --to-command glab auth login --hostname gitlab.example.com --stdin
-clud secret --label 'SSH private key' --multiline --to-command ssh-add -
+clud secret --title 'GitLab token for gitlab.example.com' --message 'Authenticate glab; create a token in GitLab user settings > Access Tokens' --to-command glab auth login --hostname gitlab.example.com --stdin
+clud secret --title 'SSH private key for the deployment host' --message 'Load the deployment identity into ssh-agent; copy the key from your secret manager' --multiline --to-command ssh-add -
 ```
 
+Use `--dry-run` to preview the title, message, hint, warning and destination
+without opening any prompt, reading any credential, or touching a sink.
+
 Optional `--pattern <regex>` requires a full-value match before any sink is
-called. A mismatch shows a one-line format notice and prompts again, up to
-three attempts total; exhaustion fails without storing anything. Invalid
-regexes produce a typed argument-validation error before prompting. Without
+called. lokr allows at most three submissions within the same prompt before failing without storage.
+Invalid regexes produce a typed argument-validation error before prompting. Without
 the flag, acquisition behavior is unchanged. Put it before `--to-command`.
 
 The normal CLI and `clud-secret` alias print only `stored` (exit 0),
@@ -42,62 +50,40 @@ ancestors through a bounded shell-wrapper chain. This is an accidental-exposure
 guard, not a boundary against a malicious local process impersonating a caller.
 Never run askpass directly from a captured agent shell.
 
-The native window uses eframe/egui with password widgets for single and
-multiline input, built into the existing multicall executable. UI persistence
-is disabled. Secret buffers are zeroized when released, and have no Debug or
-serialization surface. No credential value is accepted on the command line.
-A missing desktop or unavailable graphics context fails clearly; this command
-does not fall back to echoing input in a terminal or asking through chat.
+The prompt and catalog belong to [forge-ci/lokr](https://github.com/forge-ci/lokr).
+clud resolves a co-distributed `lokr` executable alongside itself, then PATH.
+If none is available it prints `failed` with an install hint; it never opens
+zenity, systemd-ask-password or a separate clud credential UI.
+Install with `soldr cargo install --git https://github.com/forge-ci/lokr lokr`.
 
-On Linux, when the native window cannot load (#2197, e.g. KDE Wayland), a
-single-line prompt falls back to the first of `zenity --entry --hide-text`,
-`kdialog --password`, `ksshaskpass`, `pinentry` (Assuan `GETPIN`) that is on
-PATH with a display present (`platform/unix/secret_helper.rs`). The value
-returns on the helper's stdout to the same sink and is never logged. Multiline
-input has no fallback. Dismissing a helper is `cancelled`. Known GTK/Qt toolkit warnings on stderr do not
-demote a silent exit 1 from cancel to unusable; a timeout ends the chain.
+`--title`, `--hint`, `--pattern`, `--multiline`, `--to-file`, `--to-keyring` and `--to-command`
+map directly to `lokr request`; `--label`/`--message` map to `--message`.
+`--vault` maps to `--to-command <clud> secret --internal-vault-stdin ... --vault PROVIDER`.
+The hidden writer reads bounded, zeroized stdin and stores under clud's existing
+provider service/account identifiers. Secret bytes never enter argv or logs.
+lokr owns private file delivery, command stdin delivery and request cataloging.
+clud discards lokr output and maps exit 0/3/other to stored/cancelled/failed.
 
-Known limitation: the helper's stdout is read through `running-process`
-with `capture: true`, which retains the output in its history and queues and
-frees them without wiping. clud clears those buffers right after reading and
-wipes its own copies, but the crate's freed heap may still hold the secret
-until it is reused. Tracked at
-[zackees/running-process#1357](https://github.com/zackees/running-process/issues/1357)
-(no-history or zeroizing capture); std::process is not an acceptable
-workaround.
-
-On Linux, the desktop runtime needs libxkbcommon; X11 additionally needs
-libxkbcommon-x11. clud checks these before entering winit, whose X11 keyboard
-loader otherwise panics on a missing library. A Wayland session does not
-require the X11 library, including when XWayland also sets `DISPLAY`.
-Linux CI installs the runtime and Xvfb so the native window probe executes.
-Windows uses wgpu's Direct3D 12 backend, which can use the system WARP software
-adapter. Its FXC shader compiler requires no additional compiler DLL. macOS
-and Linux retain the OpenGL renderer.
+Caller-checked askpass also acquires through lokr, using a temporary private
+file removed after reading for its required stdout protocol.
 
 The automatically discoverable `clud-secret` bundled skill documents sink
 selection and status-only verification. Prompting does not itself authorize
 logging into an unrelated service. Credentials already pasted into chat should
 be rotated.
 
-Debug builds with `CLUD_INTEGRATION_TESTS=1` support a file-backed prompt and
-cancellation/timeout fixtures. Release builds ignore these seams. Tests use
-fake credentials, check output suppression even when a sink echoes input,
-preserve multiline file contents, exercise cancellation and blocked stdin,
-and inspect masked widget output without opening a desktop window. A separate
-native-window probe renders and delivers a fake multiline value on graphical
-runners, using xvfb-run on Linux when available. A second Linux probe runs a
-headless Weston compositor with software OpenGL, removes `DISPLAY`, and opens
-the window through Wayland. It waits on compositor startup output with a
-deadline and always terminates the compositor. Headless skips do not establish
-native window coverage.
-The native CI setup sets `CLUD_TEST_REQUIRE_SECRET_GUI=1`: there a missing display,
-runtime or graphics context fails the probe rather than skipping coverage.
+Tests never open credential windows. Run with
+`env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET LOKR_TEST_MODE=1`.
+Debug integration tests use `CLUD_TEST_LOKR_BINARY` for a fake executable, or
+legacy file/cancellation fixtures; missing fixtures fail closed.
+`CLUD_TEST_NO_SECRET_UI=1` and pytest disable production resolution. The fake
+records argv and stdin, returns controlled exits and emits sentinel output to
+verify that clud only reports status. Use `--dry-run` for manual previews.
 
 The named GitLab consumer acceptance uses the real `glab auth login --stdin`
 and `glab auth status` commands with a synthetic token and a loopback GitLab API.
-The native prompt supplies the token directly to the login process. The status
-command must make another authenticated request using the saved credential.
+The fake acquisition fixture supplies the token directly to the login process.
+The status command must make another authenticated request using the saved credential.
 Both command outputs are captured and checked for the sentinel; the prompt's
 agent-facing output remains `stored`. The fixture disables update checks,
 clears inherited GitLab authentication/host overrides, and uses an isolated
@@ -111,3 +97,7 @@ temporary directory. `CLUD_TEST_GLAB_BINARY` points the test to that executable.
 Mandatory native coverage fails if it is missing. This dependency belongs to
 CI; clud still ships one multicall executable and requires no GitLab CLI for
 its other secret sinks.
+
+[forge-ci/lokr](https://github.com/forge-ci/lokr) is the secrets catalog.
+Name the secret and its service/host in each request so lokr can find it later.
+`lokr request` owns the prompt and catalog; clud preserves its vault identifiers.

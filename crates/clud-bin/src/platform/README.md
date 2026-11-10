@@ -36,9 +36,9 @@ permissions or a protected owner-only DACL. `mod.rs` selects the host tree.
 winit, avoiding a loader panic on minimal desktops. It follows winit's
 Wayland-first selection; the other hosts retain typed graphics initialization.
 Windows selects the Direct3D 12 renderer with the system FXC compiler; Unix
-selects OpenGL. The Linux helper fallback in `unix/secret_helper.rs` uses
-a masked zenity entry so its label is visible; other helper paths carry the
-label as prompt text or a pinentry description.
+selects OpenGL. These graphics adapters remain for settings windows.
+Credential acquisition delegates exclusively to lokr; see
+[secret-prompt.md](../../../../docs/architecture/secret-prompt.md).
 
 `start_terminal` supplies the generated Bash adapter and hidden launch helper
 for explicit Windows Command Prompt windows; Unix supplies an empty adapter.

@@ -16,7 +16,8 @@ On the Claude backend, `command/builder.rs` adds two things to the launch:
 - `--append-system-prompt`, carrying `secrets_catalog::DIRECTIVE`, which names the
   routes and tells the agent to check before concluding that a key is missing.
 
-The server starts the hidden `clud secrets-daemon` subcommand. It rescans every 60
+`clud secrets-mcp` runs the resolved `lokr mcp` executable with inherited stdio.
+The lokr server starts its own daemon. It rescans every 60
 seconds on a background thread, writes names and locations to
 `~/.lokr/catalog.json` (mode 0600), and exits after 10 minutes without an MCP
 heartbeat.
@@ -27,7 +28,7 @@ heartbeat.
 |---|---|
 | `mcp__lokr__secret_status` | Whether a named key exists, and where |
 | `mcp__lokr__list_secrets` | Every known credential, by name and location |
-| `mcp__lokr__request_secret` | Opens the masked `clud secret` window, writes to `~/.lokr/store/<name>`, and returns only `stored`, `failed` or `cancelled` |
+| `mcp__lokr__request_secret` | Requires title/message and an explicit file, keyring or command sink; uses `lokr request` and returns only `stored`, `failed` or `cancelled` |
 
 No route returns a value, and there must never be a `get_secret` route. The scan
 reads values only to skip empty ones. `request_secret` hands the value straight
@@ -58,9 +59,14 @@ from the prompt to its sink; see [secret-prompt.md](secret-prompt.md).
   access under the same account can still read these locations.
 - The flag is silently ignored on the Codex backend.
 - `request_secret`'s prompt window has not been exercised end to end.
-- lokr is pinned by git commit in `crates/clud-bin/Cargo.toml` until it has a real
-  crates.io release.
+- The installed lokr executable supplies the MCP schema, scanner and prompt.
+  If it is missing, the integration fails with an install hint.
 
-The scanner and MCP server live in the [lokr](https://github.com/zackees/lokr)
-library; its `DESIGN.md` owns their internals. clud's integration is
+The scanner and MCP server live in the [lokr](https://github.com/forge-ci/lokr)
+project; its `DESIGN.md` owns their internals. clud's integration is
 `crates/clud-bin/src/secrets_catalog.rs`.
+
+[forge-ci/lokr](https://github.com/forge-ci/lokr) is the secrets catalog.
+Requests must name the secret and service/host so the catalog can find it later.
+The clud integration delegates to the installed `lokr mcp`, `lokr daemon`, and
+`lokr request` commands; lokr owns the prompt, catalog and MCP schema.
