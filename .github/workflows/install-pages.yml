@@ -45,6 +45,9 @@ jobs:
           python -m pip install pytest running-process
           python -m pytest -q tests/test_installer_catalog.py tests/test_installer_verify_site.py tests/test_installer_download_page.py
       - name: Generate every installable published version
+        env:
+          # Authenticated API metadata only (installer/catalog.py fetch); asset bytes stay anonymous.
+          GH_TOKEN: ${{ github.token }}
         run: python -m installer.site site
       - name: Preserve published model document
         run: python -m models.preserve site

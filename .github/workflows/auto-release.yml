@@ -473,6 +473,8 @@ jobs:
       - name: Generate from anonymous published bytes while keeping prior stable
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+          # Authenticated API metadata only (installer/catalog.py fetch); asset bytes stay anonymous.
+          GH_TOKEN: ${{ github.token }}
         run: |
           python -m installer.candidate_catalog "$RELEASE_TAG" installer-candidate-manifest.json
           python -m pip install 'git+https://github.com/zackees/manifest.json@main'
@@ -656,6 +658,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Generate catalog and site from published release assets
+        env:
+          # Authenticated API metadata only (installer/catalog.py fetch); asset bytes stay anonymous.
+          GH_TOKEN: ${{ github.token }}
         run: python -m installer.site site
       - name: Preserve published model document
         run: python -m models.preserve site
@@ -775,6 +780,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python -m ci.public_release rollback release-state/candidate-public-state.json
       - name: Rebuild previous canonical installer Pages and preserve models
+        env:
+          # Authenticated API metadata only (installer/catalog.py fetch); asset bytes stay anonymous.
+          GH_TOKEN: ${{ github.token }}
         run: |
           python -m installer.site site
           python -m models.preserve site

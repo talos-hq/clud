@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import struct
 from pathlib import Path
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from zipfile import ZipFile
 
@@ -380,11 +382,31 @@ def candidate_catalog_from_release(
     }
 
 
+GITHUB_API_HOST = "api.github.com"
+
+
+def github_token() -> str | None:
+    """The workflow's token, if any: GH_TOKEN, then GITHUB_TOKEN."""
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return None
+
+
 def fetch(url: str) -> bytes:
     request = Request(
         url,
         headers={"Accept": "application/vnd.github+json", "User-Agent": "clud-catalog"},
     )
+    token = github_token()
+    # Anonymous REST calls share a 60/hour limit per runner IP, and a 403 there
+    # failed 2.8.63's post-promotion check and rolled the release back. Only
+    # the metadata API gets the token; release asset bytes stay anonymous so
+    # the checks still prove what the public downloads. Unredirected: the
+    # token never follows a redirect to another host.
+    if token and urlsplit(url).hostname == GITHUB_API_HOST:
+        request.add_unredirected_header("Authorization", f"Bearer {token}")
     with urlopen(request, timeout=60) as response:
         return response.read()
 
@@ -405,7 +427,8 @@ def published_releases(fetch_bytes=fetch) -> list[dict]:
     page = 1
     while True:
         batch = json.loads(fetch_bytes(f"{REPO_API}?per_page=100&page={page}"))
-        releases.extend(batch)
+        # An authenticated listing can include drafts the public never sees.
+        releases.extend(release for release in batch if not release.get("draft"))
         if len(batch) < 100:
             return releases
         page += 1

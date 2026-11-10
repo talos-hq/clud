@@ -749,6 +749,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Build complete site from actual published releases
+        env:
+          # Authenticated API metadata only (installer/catalog.py fetch); asset bytes stay anonymous.
+          GH_TOKEN: ${{ github.token }}
         run: python -m installer.site site
       - name: Validate catalog structure and semantics
         run: |
