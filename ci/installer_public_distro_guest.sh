@@ -16,7 +16,7 @@ case "$distro" in
     shell=/bin/bash
     ;;
   archlinux)
-    pacman -Sy --noconfirm fish shadow curl jq ca-certificates
+    pacman -Syu --noconfirm fish shadow curl jq ca-certificates
     shell=/usr/bin/fish
     ;;
   fedora)

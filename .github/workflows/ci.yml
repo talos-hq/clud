@@ -51,6 +51,10 @@ on:
         description: Exact commit SHA to validate
         required: true
         type: string
+      recovery_run_id:
+        description: Original immutable release run (Auto Release recovery on main only)
+        required: false
+        type: string
 
 # Deliberately NO `profile` input anywhere in this file. Release builds are
 # reachable only from auto-release.yml; _build-target.yml enforces that.
@@ -139,6 +143,10 @@ jobs:
         env:
           SOURCE_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.candidate_sha || github.sha }}
           EVENT_SHA: ${{ github.sha }}
+          RECOVERY_RUN_ID: ${{ inputs.recovery_run_id }}
+          CALLER_WORKFLOW: ${{ github.workflow }}
+          CALLER_EVENT: ${{ github.event_name }}
+          CALLER_REF: ${{ github.ref }}
           # A release call arrives as the caller's tag push; a candidate SHA
           # makes it a dispatch for provenance and mode resolution.
           EVENT_NAME: ${{ inputs.candidate_sha && 'workflow_dispatch' || github.event_name }}
@@ -148,7 +156,16 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$SOURCE_REF" ]] || { echo '::error::checkout SHA mismatch'; exit 1; }
           if [[ "$EVENT_NAME" == workflow_dispatch ]]; then
             git merge-base --is-ancestor "$SOURCE_REF" "$EVENT_SHA" || { echo '::error::candidate is not on selected branch'; exit 1; }
-            git diff --quiet "$SOURCE_REF" "$EVENT_SHA" -- .github/workflows .github/actions ci || { echo '::error::workflow or CI helpers changed since candidate SHA'; exit 1; }
+            if [[ -n "$RECOVERY_RUN_ID" ]]; then
+              [[ "$RECOVERY_RUN_ID" =~ ^[0-9]+$ && "$CALLER_WORKFLOW" == 'Auto Release' && "$CALLER_EVENT" == workflow_dispatch && "$CALLER_REF" == refs/heads/main ]] || { echo '::error::invalid release recovery caller'; exit 1; }
+              # Auto Release preflight validates the original tag build and
+              # unchanged public asset IDs/digests before calling this job.
+              # Only reviewed harness repairs may differ; application inputs
+              # remain identical, and full CI still executes SOURCE_REF anew.
+              git diff --quiet "$SOURCE_REF" "$EVENT_SHA" -- . ':(exclude)ci/**' ':(exclude).github/workflows/**' ':(exclude).github/actions/**' ':(exclude)tests/**' ':(exclude)docs/**' || { echo '::error::production inputs changed since release tag'; exit 1; }
+            else
+              git diff --quiet "$SOURCE_REF" "$EVENT_SHA" -- .github/workflows .github/actions ci || { echo '::error::workflow or CI helpers changed since candidate SHA'; exit 1; }
+            fi
             echo 'PROVENANCE_VERIFIED=true' >> "$GITHUB_ENV"
           fi
           echo "ref=$SOURCE_REF" >> "$GITHUB_OUTPUT"

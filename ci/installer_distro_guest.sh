@@ -14,7 +14,7 @@ case "$distro" in
     shell=/bin/bash
     ;;
   archlinux)
-    pacman -Sy --noconfirm fish shadow
+    pacman -Syu --noconfirm fish shadow
     shell=/usr/bin/fish
     ;;
   fedora)

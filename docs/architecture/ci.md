@@ -75,6 +75,27 @@ execution: release-profile artifacts are built after it. The
 target/label policy lives in `ci/ci_matrix.py`; the workflow has no preceding
 matrix-planning runner job.
 
+A failed public candidate can be resumed with Auto Release's `tag` and
+`resume_run_id` dispatch inputs from `main`. `ci/release_resume.py` requires
+an unchanged tag and a completed failed original release run whose full CI,
+eight builds, native wheel smoke tests, signatures and anonymous byte proof
+all succeeded. Its saved release ID, asset IDs, sizes and digests must still
+match the public prerelease, and the prior stable release and Pages digest
+must be unchanged. Production inputs may not differ from the immutable tag;
+only reviewed CI, test and documentation repairs are allowed.
+
+Recovery repeats full CI on the exact original tag inside the recovery run.
+The callable CI provenance guard permits the reviewed harness difference only
+for Auto Release recovery dispatched from `main`; ordinary dispatches retain
+the strict matching-helper rule. Original proof establishes artifact provenance
+and never waives fresh CI. Recovery downloads the original immutable build
+artifacts, reconstructs and anonymously checks the six native bytes, repeats
+the complete public candidate matrix, then uses the existing PyPI, promotion,
+Pages, released-acceptance and rollback gates. It neither rebuilds nor uploads
+release assets or candidate catalogs. Arch guests use `pacman -Syu` so their
+pinned base image is fully upgraded before installing tools; partial upgrades
+can mix incompatible OpenSSL ABIs from the rolling repository.
+
 ## Local validation before remote CI
 
 GitHub Actions is the CI of record. Run focused tests or lint locally when
