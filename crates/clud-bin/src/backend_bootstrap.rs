@@ -439,7 +439,11 @@ pub fn locate_installed_backend(backend: Backend) -> Option<PathBuf> {
 /// go through here, so "installed" means the same thing on both sides. When
 /// they disagreed, a PATH-only miss escalated to a full reinstall of a
 /// binary that was already on disk.
-fn locate_backend<H>(host: &mut H, backend: Backend, spec: &BackendInstallSpec) -> Option<PathBuf>
+pub(crate) fn locate_backend<H>(
+    host: &mut H,
+    backend: Backend,
+    spec: &BackendInstallSpec,
+) -> Option<PathBuf>
 where
     H: BackendBootstrapHost + ?Sized,
 {
@@ -714,15 +718,18 @@ fn run_posix_installer(
     command: &'static str,
     env: Option<Vec<(String, String)>>,
 ) -> Result<(), String> {
-    run_interactive_command_with_env(
-        CommandSpec::Argv(vec![
-            "sh".to_string(),
-            "-c".to_string(),
-            command.to_string(),
-        ]),
-        None,
-        env,
-    )
+    run_interactive_command_with_env(CommandSpec::Argv(posix_installer_argv(command)), None, env)
+}
+
+/// `curl … | bash` under pipefail, so a failed download (no curl, no
+/// network) fails the installer instead of reporting bash's empty-input
+/// success (#2762).
+fn posix_installer_argv(command: &str) -> Vec<String> {
+    vec![
+        "bash".to_string(),
+        "-c".to_string(),
+        format!("set -o pipefail; {command}"),
+    ]
 }
 
 /// The home volume of a live USB is too small for Claude Code; rerun the
@@ -1119,6 +1126,16 @@ fn drain_until(
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+
+    /// #2762: the pipeline status must be curl's when curl fails.
+    #[test]
+    fn posix_installer_runs_under_pipefail() {
+        let argv = posix_installer_argv(CLAUDE_POSIX_INSTALL_COMMAND);
+        assert_eq!(argv[0], "bash");
+        assert_eq!(argv[1], "-c");
+        assert!(argv[2].starts_with("set -o pipefail; "), "{argv:?}");
+        assert!(argv[2].ends_with(CLAUDE_POSIX_INSTALL_COMMAND));
+    }
     use std::io;
 
     #[test]

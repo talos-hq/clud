@@ -26,7 +26,20 @@ struct Fixture {
     vault: PathBuf,
 }
 
+/// A fixture whose frontends (Claude Code, Codex) sit at their native
+/// install location, so `setup --yes` never runs a real installer (#2755).
 fn fixture() -> Fixture {
+    let fx = bare_fixture();
+    let bin = fx.home.join(".local").join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    for name in ["claude", "codex", "claude.exe", "codex.exe"] {
+        fs::write(bin.join(name), b"fake frontend").unwrap();
+    }
+    fx
+}
+
+/// A fixture with no frontend installed.
+fn bare_fixture() -> Fixture {
     let root = tempfile::tempdir().unwrap();
     let home = root.path().join("home");
     let vault = root.path().join("vault");
@@ -468,4 +481,32 @@ fn setup_without_hermes_config_prints_nothing_about_hermes() {
     let (exit, output) = run(&fx, &[], &["setup", "--dry-run", "--provider", "claude"]);
     assert_eq!(exit, 0, "{output}");
     assert!(!mentions_hermes(&output), "{output}");
+}
+
+/// #2755: setup reports a missing frontend instead of finishing silently and
+/// leaving the first launch to fail with "claude not found on PATH".
+#[test]
+fn setup_dry_run_reports_a_missing_frontend() {
+    let fx = bare_fixture();
+    let empty = fx.home.join("empty-path");
+    fs::create_dir_all(&empty).unwrap();
+    let path = empty.to_string_lossy().into_owned();
+    let (exit, output) = run(
+        &fx,
+        &[("PATH", path.as_str())],
+        &["setup", "--dry-run", "--provider", "claude"],
+    );
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        output.contains("frontend: claude is not installed; would install Claude Code"),
+        "{output}"
+    );
+}
+
+#[test]
+fn setup_yes_reports_an_installed_frontend() {
+    let fx = fixture();
+    let (exit, output) = run(&fx, &[], &["setup", "--yes", "--provider", "claude"]);
+    assert_eq!(exit, 0, "{output}");
+    assert!(output.contains("frontend: claude found"), "{output}");
 }
