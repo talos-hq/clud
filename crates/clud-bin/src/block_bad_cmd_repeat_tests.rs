@@ -357,6 +357,54 @@ fn a_legacy_streak_seeds_the_ledger() {
     assert_eq!(streak.polls[0].count, 96);
 }
 
+/// The single-slot migration must not leak into a *fresh* poll key: a file
+/// that changed (or appeared) starts a new count, or the freshness stamp in
+/// the key would never re-arm and the poll guard would refuse a live read.
+#[test]
+fn a_fresh_poll_key_never_inherits_the_count_of_another() {
+    let tmp = tempfile::tempdir().unwrap();
+    let now = 5_000_u64;
+    let exact = "exact";
+    let mut past = Past {
+        is_query: true,
+        poll_key: "file:v1",
+        poll_limit: POLL_DENY_AT,
+    };
+    // Drive the first key up to the refusal point.
+    for step in 0..(POLL_DENY_AT + 1) {
+        let (verdict, _) = check_at(
+            tmp.path(),
+            "s",
+            exact,
+            past,
+            now + u64::from(step),
+            DEFAULT_LIMIT,
+        );
+        if step < POLL_DENY_AT {
+            assert_eq!(verdict, Verdict::Allow, "step {step}");
+        }
+    }
+    let (verdict, _) = check_at(tmp.path(), "s", exact, past, now + 100, DEFAULT_LIMIT);
+    assert!(matches!(verdict, Verdict::PollDeny { .. }), "{verdict:?}");
+    // The file changed: a new key, and the same exact command is allowed again.
+    past.poll_key = "file:v2";
+    let (verdict, note) = check_at(tmp.path(), "s", exact, past, now + 101, DEFAULT_LIMIT);
+    assert_eq!(verdict, Verdict::Allow);
+    assert_eq!(note, None);
+    let streak: Streak =
+        serde_json::from_slice(&std::fs::read(session_file(tmp.path(), "s")).unwrap()).unwrap();
+    let fresh = streak
+        .polls
+        .iter()
+        .find(|entry| entry.key == "file:v2")
+        .unwrap();
+    assert_eq!(fresh.count, 1, "a new file fingerprint starts at one");
+    // The old key keeps its own count, still refused.
+    past.poll_key = "file:v1";
+    let (verdict, _) = check_at(tmp.path(), "s", exact, past, now + 102, DEFAULT_LIMIT);
+    assert!(matches!(verdict, Verdict::PollDeny { .. }), "{verdict:?}");
+}
+
 // ---- #2233: one query, many dressings -------------------------------
 
 /// The three command shapes one session actually emitted 193 times while it
@@ -756,4 +804,156 @@ fn the_measured_ci_poll_is_refused_past_its_limit() {
         (POLL_DENY_AT as usize + 1..=POLL_DENY_AT as usize + 4).collect::<Vec<usize>>(),
         "{refusals:?}"
     );
+}
+
+// ---- #2233: a local file is state too -------------------------------
+//
+// 2026-11-10 probe: `ls <pool>/NEXT_MESSAGE.md 2>/dev/null; grep
+// manager_session_id <pool>/state.json` ran 169 times in one session with 163
+// byte-identical answers, and 156 sessions re-read one `.worker-pool/state.json`
+// through a second `head` slice. Neither counted as a query.
+
+fn file_poll_key(command: &str) -> String {
+    poll_key("Bash", Some(&json!({ "command": command })))
+}
+
+#[test]
+fn one_local_file_polled_through_its_dressings_shares_one_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state.json");
+    std::fs::write(&state, r#"{"manager_session_id":"abc","workers":2}"#).unwrap();
+    let path = state.display();
+    let keys: Vec<String> = [
+        format!("cat {path} 2>&1 | head -60"),
+        format!("cat {path} 2>&1 | head -c 4000"),
+        format!("cat {path} 2>&1 | head -80"),
+        format!("ls {path} 2>/dev/null; grep manager_session_id {path}"),
+        format!("jq -c '{{m:.manager_session_id}}' {path}"),
+    ]
+    .iter()
+    .map(|command| file_poll_key(command))
+    .collect();
+    for key in &keys[1..] {
+        assert_eq!(&keys[0], key, "{keys:?}");
+    }
+    // A different file is a different poll.
+    let other = dir.path().join("im-state.json");
+    std::fs::write(&other, "{}").unwrap();
+    assert_ne!(
+        keys[0],
+        file_poll_key(&format!("cat {} | head -20", other.display()))
+    );
+    // Every one of them is a read-only query, so the steady counter runs.
+    assert!(poll_query(&format!("cat {path} 2>&1 | head -60")));
+    assert!(local_file_poll(&format!("cat {path} 2>&1 | head -60")).is_some());
+}
+
+#[test]
+fn a_changed_file_starts_a_fresh_poll_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state.json");
+    std::fs::write(&state, "{\"tick\":1}").unwrap();
+    let command = format!("cat {}", state.display());
+    let before = file_poll_key(&command);
+    std::fs::write(&state, "{\"tick\":2,\"workers\":9}").unwrap();
+    let after = file_poll_key(&command);
+    assert_ne!(before, after, "an edited file must re-arm the poll count");
+    // A file that appears after being polled for also re-arms.
+    let absent = dir.path().join("NEXT_MESSAGE.md");
+    let waiting = format!("ls {}", absent.display());
+    let missing = file_poll_key(&waiting);
+    std::fs::write(&absent, "next").unwrap();
+    assert_ne!(missing, file_poll_key(&waiting));
+}
+
+#[test]
+fn a_writer_is_never_a_file_poll() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("state.json");
+    let target = dir.path().join("copy.json");
+    std::fs::write(&source, "{}").unwrap();
+    for command in [
+        format!("cat {} > {}", source.display(), target.display()),
+        format!("sed -i s/a/b/ {}", source.display()),
+        format!("sort -o {} {}", target.display(), source.display()),
+    ] {
+        assert!(local_file_poll(&command).is_none(), "{command}");
+        assert!(!is_query(&command), "{command}");
+    }
+    // Throwing output away still leaves a read.
+    assert!(local_file_poll(&format!("cat {} 2>/dev/null", source.display())).is_some());
+    assert!(local_file_poll(&format!("cat {} 2>&1", source.display())).is_some());
+}
+
+#[test]
+fn unresolvable_and_mixed_commands_are_not_file_polls() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state.json");
+    std::fs::write(&state, "{}").unwrap();
+    for command in [
+        // A bare relative name: the hook has no shell cwd, so it stays exact.
+        "cat state.json 2>&1 | head -60".to_string(),
+        // A file read next to a remote query is counted by that query, not as
+        // a file poll of this path.
+        format!("cat {}; gh pr view 1 --json state", state.display()),
+        // Neither is a read next to a deletion.
+        format!("cat {} && rm {}", state.display(), state.display()),
+        // Nor a program that is not a reader.
+        format!("python3 -c 'print(1)' {}", state.display()),
+    ] {
+        assert!(local_file_poll(&command).is_none(), "{command}");
+    }
+    // A file read alone IS a poll, even without a verb the shell guard knows.
+    let poll = format!("cat {}", state.display());
+    assert!(poll_query(&poll));
+    assert!(local_file_poll(&poll).is_some());
+    // `~` expands against HOME the way the shell would.
+    let expanded = resolvable_path("~/dev/obs-rust/.worker-pool/state.json").unwrap();
+    assert!(expanded.is_absolute());
+    assert!(expanded.ends_with("obs-rust/.worker-pool/state.json"));
+    assert!(resolvable_path("-n").is_none());
+    assert!(resolvable_path("state.json").is_none());
+}
+
+#[test]
+fn a_file_poll_earns_the_poll_note_and_then_the_refusal() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state.json");
+    std::fs::write(&state, r#"{"workers":0}"#).unwrap();
+    let command = format!("cat {} 2>&1 | head -60", state.display());
+    let exact = call_key("Bash", Some(&json!({ "command": command })));
+    let poll = file_poll_key(&command);
+    // The same file under a second dressing continues the same count.
+    let dressed = format!("cat {} 2>&1 | head -c 3000", state.display());
+    let poll_dressed = file_poll_key(&dressed);
+    assert_eq!(poll, poll_dressed, "the second dressing shares the count");
+    let mut notes = Vec::new();
+    let mut denied = 0;
+    for index in 0..(POLL_DENY_AT + 3) {
+        let poll = if index % 2 == 0 {
+            poll.as_str()
+        } else {
+            poll_dressed.as_str()
+        };
+        let (verdict, note) = check_at(
+            dir.path(),
+            "s",
+            &exact,
+            Past {
+                is_query: true,
+                poll_key: poll,
+                poll_limit: POLL_DENY_AT,
+            },
+            1_000 + 30 * u64::from(index),
+            DEFAULT_LIMIT,
+        );
+        if matches!(verdict, Verdict::PollDeny { .. }) {
+            denied += 1;
+        }
+        if let Some(count) = note {
+            notes.push(count);
+        }
+    }
+    assert_eq!(notes, vec![POLL_NOTE_AT, POLL_NOTE_AGAIN_AT]);
+    assert_eq!(denied, 3, "every call past the limit is refused");
 }

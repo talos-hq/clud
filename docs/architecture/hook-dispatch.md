@@ -470,6 +470,36 @@ E2E through the shipped scanner binary, cycling the five measured dressings:
 and a different time window (`--since 1h`) keeps its own count. The 783-call
 loop would therefore have stopped at 97.
 
+**A local file is state too (2026-11-10).** The next probe's top repeated-payload
+families had no remote query in them at all. One coordinator loop ran
+`ls <pool>/NEXT_MESSAGE.md 2>/dev/null; grep manager_session_id <pool>/state.json`
+**169 times** (163 byte-identical answers, ~114 MB of the fleet's 1.7 GB day),
+and 156 sessions read one `.worker-pool/state.json` a second time through a
+different `head` slice (230 + 104 + 80 calls under one file, all below any
+guard's threshold). Both were invisible: the read-hop guard counts shell *read*
+verbs, so a `grep`/`jq`/`ls` poll of a state file never counted as a read, and
+the poll ledger knew only remote verbs (`gh`, `git`, `curl`, `ssh`,
+`systemctl`, `docker`, `uv run <read-verb>`), so `cat <file>` never counted as
+a query either.
+
+A command whose **every** segment is a plain file read is now a read-only query
+of that file: the program must be in `LOCAL_READ_PROGRAMS` (`cat`, `head`,
+`tail`, `jq`, `grep`, `rg`, `sed`, `awk`, `ls`, `stat`, `wc`, `file`, …), every
+path it names must be absolute or `~/`-relative (the hook has no shell cwd, so a
+bare `state.json` is left to the exact-call guard), the command must not write
+(`sed -i`, `sort -o`, any `> file` other than `2>&1` / `>/dev/null`), and one
+non-reading segment — a `gh` query, an `rm` — hands the call back to the
+exact-command key. Bare pipeline stages (`| head -60`, `| grep -v`) are
+presentation, not reads.
+
+Its poll key is the sorted path list **with each file's current `(len, mtime)`
+fingerprint** instead of the command text, which is what makes counting safe: a
+file that changed is a different key, so `edit → re-read` re-arms, and a file
+that has not changed cannot answer differently. A file that does not exist yet
+keys on `-` and re-arms the moment it appears — the `ls; grep` loop above
+therefore shares one count across all of its dressings and stops at 97, and the
+6th repeat gets the note naming the bundled waiter.
+
 Those two notes are advisory, and the measured session above ignored both: 127
 more identical polls in the next 24 h. So the ladder ends. Repeat
 `POLL_DENY_AT + 1 = 97` of the *same read-only query* in one session is refused
