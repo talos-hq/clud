@@ -154,11 +154,11 @@ def test_workflow_resume_still_runs_full_ci_and_public_acceptance():
 )
 def test_resume_refuses_changes_to_production_inputs(path):
     with pytest.raises(ValueError, match="production inputs"):
-        release_resume.require_harness_only(["ci/installer_public_distro_guest.sh", path])
+        release_resume.require_recovery_changes(["ci/installer_public_distro_guest.sh", path])
 
 
 def test_resume_allows_only_acceptance_harness_repairs():
-    release_resume.require_harness_only(
+    release_resume.require_recovery_changes(
         [
             "ci/installer_public_distro_guest.sh",
             ".github/workflows/auto-release.yml",
@@ -207,6 +207,10 @@ def provenance_repo(tmp_path):
     (tmp_path / "ci").mkdir()
     (tmp_path / "ci/helper.py").write_text("original")
     (tmp_path / "app.rs").write_text("original")
+    assets = tmp_path / "crates/clud-bin/assets"
+    assets.mkdir(parents=True)
+    for name in ("openrouter-catalog.json", "server-settings.json"):
+        (assets / name).write_text("original model data")
     git("add", ".")
     git("commit", "-m", "source")
     source = git("rev-parse", "HEAD")
@@ -214,6 +218,11 @@ def provenance_repo(tmp_path):
     git("add", ".")
     git("commit", "-m", "harness repair")
     harness = git("rev-parse", "HEAD")
+    for name in ("openrouter-catalog.json", "server-settings.json"):
+        (assets / name).write_text("independent model data refresh")
+    git("add", ".")
+    git("commit", "-m", "model data refresh")
+    model_data = git("rev-parse", "HEAD")
     (tmp_path / "app.rs").write_text("production changed")
     git("add", ".")
     git("commit", "-m", "production change")
@@ -235,7 +244,7 @@ def provenance_repo(tmp_path):
         GITHUB_ENV=str(tmp_path / "github-env"),
         GITHUB_OUTPUT=str(tmp_path / "github-output"),
     )
-    return tmp_path, env, script, production
+    return tmp_path, env, script, {"production": production, "model-data": model_data}
 
 
 @pytest.mark.skipif(os.name != "posix", reason="CI provenance executes on an Ubuntu runner")
@@ -249,11 +258,12 @@ def provenance_repo(tmp_path):
         ("CALLER_EVENT", "pull_request", False),
         ("CALLER_REF", "refs/heads/feature", False),
         ("EVENT_SHA", "production", False),
+        ("EVENT_SHA", "model-data", True),
     ],
 )
 def test_actual_ci_provenance_guard(provenance_repo, field, value, success):
-    path, env, script, production = provenance_repo
-    env[field] = production if value == "production" else value
+    path, env, script, commits = provenance_repo
+    env[field] = commits.get(value, value)
     result = RunningProcess.run(
         ["bash", "-c", script], cwd=path, env=env, stdout=PIPE, stderr=PIPE, text=True
     )
@@ -285,3 +295,27 @@ def test_github_harness_comparison_fails_closed(monkeypatch, change):
     else:
         with pytest.raises(ValueError, match=r"harness|production"):
             release_resume.validate_harness(SHA, "b" * 40)
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "crates/clud-bin/assets/openrouter-catalog.json",
+        "crates/clud-bin/assets/server-settings.json",
+    ],
+)
+def test_original_release_can_recover_after_independent_model_data_refresh(path):
+    release_resume.require_recovery_changes(["ci/release_resume.py", path])
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "crates/clud-bin/assets/openrouter-catalog.json.bak",
+        "crates/clud-bin/assets/server-settings.json/escape",
+        "crates/clud-bin/assets/other.json",
+    ],
+)
+def test_model_data_exception_is_not_a_directory_or_prefix_escape(path):
+    with pytest.raises(ValueError, match="production inputs"):
+        release_resume.require_recovery_changes([path])

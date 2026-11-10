@@ -7814,3 +7814,22 @@ rollback gates. It never rebuilds or replaces public assets or candidate catalog
 **Why:** A repaired acceptance environment can validate the exact published
 candidate without retagging, bypassing checks or claiming that a rebuilt file
 has the same identity. Ordinary release and CI dispatch provenance stay strict.
+
+
+## DD-212: immutable release recovery tolerates independent model-data refreshes
+
+**Context:** Automated catalog and model-context refreshes can merge while a
+release's acceptance repair is in the queue. Rejecting those unrelated data
+changes would block recovery of otherwise unchanged, already-public bytes.
+
+**Decision:** The recovery allowlist also names exactly
+`crates/clud-bin/assets/openrouter-catalog.json` and
+`crates/clud-bin/assets/server-settings.json`. Other assets, prefix neighbors,
+production code and build inputs remain rejected. Both provenance guards retain
+the main-only recovery caller restriction and fresh full CI on the original
+tag; all original release and asset identity checks remain mandatory.
+
+**Why:** Recovery never rebuilds the application or reads these files from the
+repaired harness for publication. The original tag's data is tested anew and
+its existing artifacts are reused, so unrelated current model data cannot
+change a shipped byte. Bot refreshes can proceed without being reverted.
