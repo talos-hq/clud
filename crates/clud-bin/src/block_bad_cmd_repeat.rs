@@ -161,24 +161,30 @@ fn ledger_for_count(streak: Option<&Streak>, poll_key: &str, exact_key: &str) ->
     let Some(prev) = streak else {
         return Vec::new();
     };
-    let mut polls = prev.polls.clone();
+    let mut ledger = prev.polls.clone();
     if prev.key != exact_key || prev.steady == 0 {
-        return polls;
+        return ledger;
     }
-    match polls.iter_mut().find(|entry| entry.key == poll_key) {
-        Some(entry) => {
-            if prev.steady > entry.count {
-                entry.count = prev.steady;
-                entry.last = entry.last.max(prev.steady_last);
-            }
+    // The single slot mirrors the entry the call just advanced, so it may raise
+    // that entry's count. It may seed the ledger only when the ledger is
+    // otherwise *empty* — a session file written before the ledger existed.
+    // A key the ledger does not know is a new poll (a file that changed or
+    // appeared); inheriting the slot into it would defeat the freshness stamp
+    // and refuse a live read forever.
+    let seed = ledger.is_empty();
+    if let Some(entry) = ledger.iter_mut().find(|entry| entry.key == poll_key) {
+        if prev.steady > entry.count {
+            entry.count = prev.steady;
+            entry.last = entry.last.max(prev.steady_last);
         }
-        None => polls.push(PollEntry {
+    } else if seed {
+        ledger.push(PollEntry {
             key: poll_key.to_string(),
             count: prev.steady,
             last: prev.steady_last.max(prev.last),
-        }),
+        });
     }
-    polls
+    ledger
 }
 
 /// The ledger after this call: upsert `key`, drop entries outside the window,
@@ -524,6 +530,214 @@ pub(super) fn poll_core(command: &str) -> String {
         .join("; ")
 }
 
+// ---- #2233: a local file is state too ---------------------------------
+//
+// The 2026-11-10 probe's top two repeated-payload families were local file
+// polls, not remote queries: one coordinator loop ran
+// `ls <pool>/NEXT_MESSAGE.md 2>/dev/null; grep manager_session_id <pool>/state.json`
+// 169 times (163 byte-identical answers), and 156 sessions re-read one
+// `.worker-pool/state.json` a second time through a different `head` slice.
+// None of it counted as a query: `reads_state` knew only `gh`/`git`/`curl`/
+// `ssh`/`systemctl`, so `cat <file>` fell through to the burst guard, which
+// resets after [`IDLE_RESET_SECS`] and never spoke.
+
+/// Verbs that print a file's own bytes. A segment that runs one of these on a
+/// resolved path reads local state, exactly as `gh pr view` reads remote state.
+const LOCAL_READ_PROGRAMS: &[&str] = &[
+    "cat",
+    "bat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "nl",
+    "jq",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "sed",
+    "awk",
+    "cut",
+    "sort",
+    "uniq",
+    "tr",
+    "wc",
+    "stat",
+    "ls",
+    "file",
+    "du",
+    "sha256sum",
+];
+
+/// Flags that make a reader write: an in-place edit is not a poll, and neither
+/// is `sort -o`.
+const IN_PLACE_FLAGS: &[&str] = &["-i", "-o", "--in-place", "--inplace"];
+
+/// Whether a redirect target throws the bytes away instead of writing a file:
+/// `/dev/null` and an fd duplicate (`&1`, `&2`) both leave a read-only command.
+fn diverts(target: &str) -> bool {
+    let target = target.trim_matches(&['\'', '"'][..]);
+    target.is_empty()
+        || target == "1"
+        || target == "2"
+        || target == "&1"
+        || target == "&2"
+        || target.starts_with("/dev/null")
+}
+
+/// The redirect target inside one word, when the word is a redirect operator:
+/// the prefix may only be a filedescriptor (`2>`), and an empty target means
+/// the operand is the next word.
+fn redirect_target(word: &str) -> Option<&str> {
+    let word = word.trim_matches(&['\'', '"'][..]);
+    let index = word.find('>')?;
+    if !word[..index]
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == '&')
+    {
+        return None;
+    }
+    Some(word[index..].trim_start_matches('>'))
+}
+
+/// Whether a segment writes rather than reads (`sed -i`, `sort -o`,
+/// `cat a > b`).
+fn mutates(words: &[String]) -> bool {
+    for (index, word) in words.iter().enumerate() {
+        let bare = word.trim_matches(&['\'', '"'][..]);
+        if IN_PLACE_FLAGS.contains(&bare) {
+            return true;
+        }
+        let Some(target) = redirect_target(bare) else {
+            continue;
+        };
+        if target.is_empty() {
+            // The operator stands alone: its operand is the next word.
+            if !words.get(index + 1).is_some_and(|next| diverts(next)) {
+                return true;
+            }
+        } else if !diverts(target) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The words that name a file, with redirect operators and their operands
+/// skipped: `cat /a 2>/dev/null` reads `/a`, not `/dev/null`.
+fn operands(words: &[String]) -> Vec<&String> {
+    let mut out = Vec::new();
+    let mut skip_next = false;
+    for word in words {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        let bare = word.trim_matches(&['\'', '"'][..]);
+        match redirect_target(bare) {
+            Some(target) => skip_next = target.is_empty(),
+            None => out.push(word),
+        }
+    }
+    out
+}
+
+/// The path a word names, when it is one this helper can resolve without a
+/// shell cwd: absolute or `~/`-relative. A bare `state.json` is left alone —
+/// the hook has no idea which `state.json` the agent meant.
+fn resolvable_path(word: &str) -> Option<PathBuf> {
+    let word = word.trim_matches(&['\'', '"'][..]);
+    if word.is_empty() || word.starts_with('-') {
+        return None;
+    }
+    if let Some(rest) = word.strip_prefix("~/") {
+        let home = std::env::var_os("HOME")?;
+        return Some(PathBuf::from(home).join(rest));
+    }
+    word.starts_with('/').then(|| PathBuf::from(word))
+}
+
+/// The command with the two token shapes the shell splitter would mangle
+/// neutralised: an fd duplicate (`2>&1`, `1>&2`) contains the `&` it splits
+/// commands on, and a `jq` program (`{m:.workers}`) contains the braces it
+/// splits blocks on. Both are presentation, never a different poll.
+fn local_scan_text(command: &str) -> String {
+    command
+        .replace("2>&1", " ")
+        .replace("1>&2", " ")
+        .replace(['{', '}'], " ")
+}
+
+/// An identity for a command that only reads local files: every path it names,
+/// sorted, each with its current `(len, mtime)` fingerprint. `None` when any
+/// segment is not a plain file read (a writer, a bare reader with no path, a
+/// remote query, a path this hook cannot resolve), so those keep the
+/// exact-command behaviour.
+///
+/// The fingerprint is what makes this safe to count: a file that changed is a
+/// different key, so the edit-then-re-read loop re-arms instead of being
+/// refused, and a file that has not changed cannot answer differently.
+fn local_file_poll(command: &str) -> Option<String> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for text in segments(&local_scan_text(command)) {
+        let words = strip_timeout(
+            &text
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<String>>(),
+        );
+        if words.is_empty() || is_scheduling(&words) || is_context(&words) {
+            continue;
+        }
+        let named: Vec<PathBuf> = operands(&words)
+            .iter()
+            .skip(1)
+            .filter_map(|word| resolvable_path(word))
+            .collect();
+        if named.is_empty() {
+            // A bare `head -60` / `grep -v X` is a pipeline stage, not a read.
+            if is_presentation(&words) {
+                continue;
+            }
+            return None;
+        }
+        let program = crate::block_bad_cmd::block_bad_cmd_shell::program_name(&words[0]);
+        if !LOCAL_READ_PROGRAMS.contains(&program.as_str()) || mutates(&words) {
+            return None;
+        }
+        paths.extend(named);
+    }
+    if paths.is_empty() {
+        return None;
+    }
+    paths.sort();
+    paths.dedup();
+    let mut text = String::new();
+    for path in &paths {
+        text.push_str(&path.display().to_string());
+        match std::fs::metadata(path) {
+            Ok(meta) => {
+                let (secs, nanos) = meta
+                    .modified()
+                    .ok()
+                    .and_then(|stamp| stamp.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map_or((0, 0), |age| (age.as_secs(), age.subsec_nanos()));
+                text.push_str(&format!(":{}:{secs}.{nanos}\n", meta.len()));
+            }
+            // A poll of a file that is not there yet re-arms when it appears.
+            Err(_) => text.push_str(":-\n"),
+        }
+    }
+    Some(text)
+}
+
+/// Whether one command is a read-only poll the steady counter should track:
+/// a remote query in any segment, or a command that only reads local files.
+pub(super) fn poll_query(command: &str) -> bool {
+    is_query(command) || local_file_poll(command).is_some()
+}
+
 /// The poll ledger key: `sha256(domain + "poll" + tool + core)`, so the same
 /// query under a different wait dressing shares one count. Falls back to the
 /// exact [`call_key`] when the command has no readable core.
@@ -532,6 +746,11 @@ pub(super) fn poll_key(tool_name: &str, tool_input: Option<&Value>) -> String {
         .and_then(|input| input.get("command"))
         .and_then(Value::as_str)
         .unwrap_or("");
+    if let Some(files) = local_file_poll(command) {
+        let digest =
+            Sha256::digest(format!("{HASH_DOMAIN}filepoll\0{tool_name}\0{files}").as_bytes());
+        return digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    }
     let core = poll_core(command);
     if core.is_empty() {
         return call_key(tool_name, tool_input);
@@ -833,7 +1052,7 @@ pub(super) fn outcome(
         .and_then(|input| input.get("command"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    let query = is_query(command);
+    let query = poll_query(command);
     let poll = poll_key(tool_name, tool_input);
     let past = Past {
         is_query: query,
