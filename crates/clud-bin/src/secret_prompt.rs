@@ -104,6 +104,18 @@ fn parse_context(value: &str) -> Result<String, String> {
         "now",
         "value",
         "needed",
+        "to",
+        "continue",
+        "below",
+        "prompt",
+        "supply",
+        "authenticate",
+        "access",
+        "this",
+        "operation",
+        "it",
+        "is",
+        "account",
     ];
     if words.is_empty() || words.iter().all(|word| generic.contains(&word.as_str())) {
         return Err("Supply a specific credential and service/host in --title, and explain why it is needed and where to find it in --label (or --message); generic credential prompts are unsafe.".into());
@@ -398,6 +410,9 @@ mod tests {
             "Enter the requested credential",
             "clud credential request",
             "Please enter your password.",
+            "Enter your password to continue",
+            "Enter the requested credential below",
+            "Password prompt",
         ] {
             for flag in ["--title", "--label"] {
                 let other = if flag == "--title" {

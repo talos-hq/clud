@@ -2256,8 +2256,12 @@ fn shell_example_token(token: &str) -> String {
 
 /// Whether `cmd` or any nested subcommand declares `--name`.
 fn subtree_has_long(cmd: &clap::Command, name: &str) -> bool {
-    cmd.get_arguments().any(|arg| arg.get_long() == Some(name))
-        || cmd.get_subcommands().any(|sub| subtree_has_long(sub, name))
+    cmd.get_arguments().any(|arg| {
+        arg.get_long() == Some(name)
+            || arg
+                .get_all_aliases()
+                .is_some_and(|aliases| aliases.contains(&name))
+    }) || cmd.get_subcommands().any(|sub| subtree_has_long(sub, name))
 }
 
 /// A root-only flag written after the subcommand (`clud do --model x …`),

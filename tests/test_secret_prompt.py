@@ -288,7 +288,7 @@ def test_secret_fixture_authenticates_real_glab(tmp_path: Path) -> None:
     from tests.secret_glab_fixture import HOST, TOKEN, environment, gitlab_api
     from tests.test_hello import CLUD
 
-    required = os.environ.get("CLUD_TEST_REQUIRE_SECRET_GUI") == "1"
+    required = os.environ.get("CLUD_TEST_REQUIRE_SECRET_CONSUMER") == "1"
     glab = os.environ.get("CLUD_TEST_GLAB_BINARY")
     if not glab or not Path(glab).is_file():
         assert not required, "native secret acceptance requires the pinned real GitLab CLI"

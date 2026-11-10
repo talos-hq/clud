@@ -155,7 +155,8 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        echo 'CLUD_TEST_REQUIRE_SECRET_GUI=1' >> "$GITHUB_ENV"
+        echo 'CLUD_TEST_NO_SECRET_UI=1' >> "$GITHUB_ENV"
+        echo 'CLUD_TEST_REQUIRE_SECRET_CONSUMER=1' >> "$GITHUB_ENV"
         if [ -x .venv/Scripts/python.exe ]; then
           echo "VENV_PY=$(pwd)/.venv/Scripts/python.exe" >> "$GITHUB_ENV"
         elif [ -x .venv/bin/python ]; then

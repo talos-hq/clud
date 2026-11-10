@@ -2150,3 +2150,30 @@ fn correctly_placed_or_escaped_flags_pass() {
         assert_eq!(misplaced_global_flag(&strings(argv)), None, "{argv:?}");
     }
 }
+
+#[test]
+fn secret_message_alias_is_owned_by_the_subcommand() {
+    for message_flag in ["--message", "--label"] {
+        let argv = [
+            "clud",
+            "secret",
+            "--dry-run",
+            "--title",
+            "GitHub OAuth for fixture.example",
+            message_flag,
+            "Enable login; find Client ID in GitHub developer settings",
+            "--to-file",
+            "unused",
+        ];
+        assert_eq!(misplaced_global_flag(&strings(&argv)), None);
+        let args = parse(&argv);
+        let Some(Command::Secret(options)) = args.command else {
+            panic!("secret command")
+        };
+        assert_eq!(
+            options.label,
+            "Enable login; find Client ID in GitHub developer settings"
+        );
+        assert!(options.dry_run);
+    }
+}
