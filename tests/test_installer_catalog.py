@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import json
 import struct
 from io import BytesIO
 from zipfile import ZipFile
 
 import pytest
 
+from installer import catalog
 from installer.catalog import (
     TARGETS,
     candidate_catalog_from_release,
@@ -463,3 +465,80 @@ def test_site_refuses_changed_native_bytes(tmp_path) -> None:
     with pytest.raises(ValueError, match="download checksum changed"):
         publish_downloads(tmp_path, catalog, lambda _: b"changed")
     assert not (tmp_path / "downloads").exists()
+
+
+# ------------------------------------------- authenticated GitHub API (2.8.63)
+
+
+class _Response:
+    def __init__(self, body: bytes) -> None:
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return self.body
+
+
+def _capture_fetch(monkeypatch, url: str, env: dict[str, str]):
+    seen = []
+    for name in ("GH_TOKEN", "GITHUB_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setattr(
+        catalog, "urlopen", lambda request, timeout: seen.append(request) or _Response(b"[]")
+    )
+    assert catalog.fetch(url) == b"[]"
+    return seen[0]
+
+
+def test_fetch_sends_the_token_only_to_the_github_api(monkeypatch) -> None:
+    request = _capture_fetch(monkeypatch, f"{catalog.REPO_API}?page=1", {"GH_TOKEN": "t0k"})
+    assert request.unredirected_hdrs["Authorization"] == "Bearer t0k"
+    # Unredirected: never forwarded if the API redirects to another host.
+    assert "Authorization" not in request.headers
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://github.com/talos-hq/clud/releases/download/2.8.63/clud-2.8.63-x86_64-unknown-linux-musl",
+        "https://objects.githubusercontent.com/release-asset",
+        "https://talos-hq.github.io/clud/install/manifest.json",
+        "https://api.github.com.evil.example/repos/talos-hq/clud/releases",
+    ],
+)
+def test_fetch_keeps_asset_and_foreign_downloads_anonymous(monkeypatch, url) -> None:
+    request = _capture_fetch(monkeypatch, url, {"GH_TOKEN": "t0k"})
+    assert "Authorization" not in request.unredirected_hdrs
+    assert "Authorization" not in request.headers
+
+
+def test_fetch_is_anonymous_without_a_token(monkeypatch) -> None:
+    request = _capture_fetch(monkeypatch, catalog.REPO_API, {"GH_TOKEN": "  "})
+    assert "Authorization" not in request.unredirected_hdrs
+
+
+def test_fetch_falls_back_to_github_token(monkeypatch) -> None:
+    request = _capture_fetch(monkeypatch, catalog.REPO_API, {"GITHUB_TOKEN": "gh"})
+    assert request.unredirected_hdrs["Authorization"] == "Bearer gh"
+
+
+def test_published_releases_drops_drafts_an_authenticated_listing_shows() -> None:
+    page_one = [{"tag_name": f"1.0.{n}", "draft": False} for n in range(99)]
+    page_one.append({"tag_name": "9.9.9", "draft": True})
+    pages = {1: page_one, 2: [{"tag_name": "0.1.0"}, {"tag_name": "0.0.9", "draft": True}]}
+
+    def fake_fetch(url: str) -> bytes:
+        return json.dumps(pages[int(url.rsplit("page=", 1)[1])]).encode()
+
+    tags = [release["tag_name"] for release in catalog.published_releases(fake_fetch)]
+    assert "9.9.9" not in tags
+    assert "0.0.9" not in tags
+    assert tags[-1] == "0.1.0"
+    assert len(tags) == 100
