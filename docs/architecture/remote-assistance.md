@@ -1,5 +1,10 @@
 # Remote assistance with clud.bot
 
+`clud clud.bot` is an exact shortcut for `clud remote connect clud.bot`,
+including the same accepted flags and argument validation. It dispatches directly
+to the remote-connect implementation with the host fixed to `clud.bot`.
+`clud clud.bot --help` displays command help without opening a session.
+
 `clud remote connect clud.bot` creates a foreground operator session, prints a
 secret keyword and the browser status URL, and waits for operator acceptance.
 The user shares the keyword with their operator over an existing trusted channel.

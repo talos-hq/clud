@@ -1422,6 +1422,9 @@ pub enum Command {
         #[command(subcommand)]
         action: crate::remote_connect::Action,
     },
+    /// Connect to clud.bot for consent-gated remote assistance.
+    #[command(name = "clud.bot")]
+    CludBot,
     /// Choose full control or a model proxy, then connect to an operator.
     Connect {
         /// Operator server hostname or HTTPS origin.
@@ -2168,6 +2171,7 @@ pub enum GcSubcommand {
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "ab",
     "remote",
+    "clud.bot",
     "connect",
     "gate",
     "serve",
@@ -3194,4 +3198,51 @@ pub fn looks_like_api_key(token: &str) -> bool {
         && token[3..]
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+#[cfg(test)]
+mod clud_bot_alias_tests {
+    use super::*;
+
+    #[test]
+    fn clud_bot_split_known_unknown_keeps_help_and_flags() {
+        let raw = ["clud", "clud.bot", "--help", "--verbose"].map(str::to_owned);
+        let (known, unknown) = split_known_unknown(&raw).unwrap();
+        assert_eq!(known, raw);
+        assert!(unknown.is_empty());
+    }
+
+    #[test]
+    fn clud_bot_parses_like_remote_connect_with_shared_flags() {
+        for extra in [vec![], vec!["--dry-run"], vec!["--", "--backend-flag"]] {
+            let mut alias = vec!["clud", "--safe", "--verbose", "clud.bot"];
+            alias.extend(&extra);
+            let mut remote = vec![
+                "clud",
+                "--safe",
+                "--verbose",
+                "remote",
+                "connect",
+                "clud.bot",
+            ];
+            remote.extend(&extra);
+            let alias = Args::parse_from_raw(alias.into_iter().map(str::to_owned).collect());
+            let remote = Args::parse_from_raw(remote.into_iter().map(str::to_owned).collect());
+            assert!(matches!(alias.command, Some(Command::CludBot)));
+            assert!(matches!(remote.command, Some(Command::Remote {
+                action: crate::remote_connect::Action::Connect { ref host },
+            }) if host == "clud.bot"));
+            assert_eq!(alias.safe, remote.safe);
+            assert_eq!(alias.verbose, remote.verbose);
+            assert_eq!(alias.dry_run, remote.dry_run);
+            assert_eq!(alias.passthrough, remote.passthrough);
+        }
+    }
+
+    #[test]
+    fn clud_bot_help_is_not_passthrough() {
+        let error = Args::try_parse_from(["clud", "clud.bot", "--help"]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayHelp);
+        assert!(error.to_string().contains("clud.bot"));
+    }
 }

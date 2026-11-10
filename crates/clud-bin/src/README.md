@@ -918,6 +918,8 @@ Diagnostics and misc:
 
 Quick lookup, which file owns a given subcommand:
 
+- `clud clud.bot` / `clud remote connect clud.bot` -> `remote_connect::run`; see [remote assistance](../../../docs/architecture/remote-assistance.md).
+
 - `clud doctor` -> `doctor::run`.
 - `clud setup` -> `setup_command::run` ([setup-command.md](../../../docs/architecture/setup-command.md)).
 - `clud loop ...` -> `command::build_launch_plan_for_target` (resolved
