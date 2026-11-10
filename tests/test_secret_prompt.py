@@ -15,6 +15,7 @@ def test_secret_prompt_exposes_explicit_sinks() -> None:
         "--hint",
         "--dry-run",
         "--to-file",
+        "--to-keyring",
         "--to-command",
         "--vault",
         "--multiline",
@@ -445,3 +446,156 @@ def test_secret_dry_run_shows_context_without_acquiring_or_writing(tmp_path: Pat
     assert "Expected format: Iv1. prefix" in result.stdout
     assert "This is NOT your computer or login password." in result.stdout
     assert not (tmp_path / "unused").exists()
+
+
+def test_secret_delegates_to_fake_lokr(tmp_path: Path) -> None:
+    import json
+    import os
+    import sys
+
+    import pytest
+
+    if os.name == "nt":
+        pytest.skip("executable script fixture requires Unix")
+    fake = tmp_path / "lokr"
+    record = tmp_path / "argv.json"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['LOKR_ARGV']).write_text(json.dumps(sys.argv[1:]))\n"
+        "pathlib.Path(os.environ['LOKR_STDIN']).write_text(sys.stdin.read())\n"
+        "print('NEVER_RELAY_CHILD_OUTPUT')\n"
+        "sys.exit(int(os.environ['LOKR_EXIT']))\n"
+    )
+    fake.chmod(0o700)
+    for code, status in [(0, "stored"), (3, "cancelled"), (1, "failed"), (7, "failed")]:
+        result = _run(
+            "secret", "--title", "GitHub deployment token",
+            "--label", "Configure GitHub deployment; find it in developer settings",
+            "--hint", "GitHub token", "--multiline", "--pattern", "ghp_[a-z]+",
+            "--to-command", "consumer", "--stdin",
+            input_data="AGENT_PIPE_MUST_NOT_REACH_LOKR",
+            env_overrides={
+                "CLUD_INTEGRATION_TESTS": "1", "CLUD_TEST_LOKR_BINARY": str(fake),
+                "LOKR_ARGV": str(record), "LOKR_STDIN": str(tmp_path / "stdin"),
+                "LOKR_EXIT": str(code), "LOKR_TEST_MODE": "1",
+            },
+        )
+        assert result.returncode == (code if code in (0, 3) else 1), result.stderr
+        assert result.stdout.strip() == status
+        assert "NEVER_RELAY" not in result.stdout + result.stderr
+        args = json.loads(record.read_text())
+        assert args[:5] == ["request", "--title", "GitHub deployment token", "--message",
+                            "Configure GitHub deployment; find it in developer settings"]
+        assert args[-3:] == ["--to-command", "consumer", "--stdin"]
+        assert "--multiline" in args
+        assert "--hint" in args
+        assert "--pattern" in args
+        assert (tmp_path / "stdin").read_bytes() == b""
+
+
+def test_secret_lokr_vault_sink_uses_only_stdin(tmp_path: Path) -> None:
+    import json
+    import os
+    import sys
+
+    import pytest
+
+    if os.name == "nt":
+        pytest.skip("executable script fixture requires Unix")
+    fake = tmp_path / "lokr"
+    record = tmp_path / "argv.json"
+    vault = tmp_path / "vault"
+    vault.mkdir()
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        "from running_process import RunningProcess\n"
+        "args = sys.argv[1:]\n"
+        "pathlib.Path(os.environ['LOKR_ARGV']).write_text(json.dumps(args))\n"
+        "assert sys.stdin.read() == ''\n"
+        "cmd = args[args.index('--to-command') + 1:]\n"
+        "result = RunningProcess.run(cmd, input='FAKE_LOKR_VAULT_VALUE', "
+        "text=True, capture_output=True, timeout=10)\n"
+        "sys.exit(result.returncode)\n"
+    )
+    fake.chmod(0o700)
+    from tests import process
+    from tests.test_hello import CLUD, _isolated_clud_env
+
+    alias = tmp_path / "clud-secret"
+    alias.hardlink_to(Path(CLUD))
+    home = tmp_path / "home"
+    home.mkdir()
+    env = _isolated_clud_env(Path(CLUD), home, tmp_path / "state")
+    env.update({
+        "CLUD_INTEGRATION_TESTS": "1", "CLUD_TEST_LOKR_BINARY": str(fake),
+        "LOKR_ARGV": str(record), "LOKR_TEST_MODE": "1",
+        "CLUD_TEST_SECRET_STORE_DIR": str(vault),
+    })
+    flags = ["--title", "OpenRouter API token",
+             "--message", "Configure OpenRouter; find the token in OpenRouter settings",
+             "--vault", "openrouter"]
+    for command in [[CLUD, "secret"], [str(alias)]]:
+        result = process.run([*command, *flags], env=env, capture_output=True,
+                             text=True, timeout=20)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "stored"
+        assert "FAKE_LOKR_VAULT_VALUE" not in result.stdout + result.stderr + record.read_text()
+        args = json.loads(record.read_text())
+        assert "--internal-vault-stdin" in args
+        assert args[-2:] == ["--vault", "openrouter"]
+        stored = list(vault.iterdir())
+        assert len(stored) == 1
+        assert stored[0].read_text() == "FAKE_LOKR_VAULT_VALUE"
+    refused = process.run([str(alias), *flags, "--internal-vault-stdin", "--dry-run"],
+                          env=env, input="MUST_NOT_STORE", capture_output=True,
+                          text=True, timeout=10)
+    assert refused.returncode == 2
+    assert stored[0].read_text() == "FAKE_LOKR_VAULT_VALUE"
+
+
+def test_secret_lokr_file_and_keyring_flag_mapping(tmp_path: Path) -> None:
+    import json
+    import os
+    import sys
+
+    import pytest
+
+    if os.name == "nt":
+        pytest.skip("executable script fixture requires Unix")
+    fake = tmp_path / "lokr"
+    record = tmp_path / "argv.json"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['LOKR_ARGV']).write_text(json.dumps(sys.argv[1:]))\n"
+    )
+    fake.chmod(0o700)
+    for sink in [("--to-file", str(tmp_path / "private file")),
+                 ("--to-keyring", "fixture service", "fixture user")]:
+        result = _run(
+            "secret", "--title", "GitHub deployment token",
+            "--message", "Configure GitHub; find it in developer settings", *sink,
+            env_overrides={
+                "CLUD_INTEGRATION_TESTS": "1", "CLUD_TEST_LOKR_BINARY": str(fake),
+                "LOKR_ARGV": str(record), "LOKR_TEST_MODE": "1",
+            },
+        )
+        assert result.returncode == 0, result.stderr
+        assert json.loads(record.read_text())[-len(sink):] == list(sink)
+    assert not (tmp_path / "private file").exists()
+
+
+def test_secret_missing_lokr_fails_closed(tmp_path: Path) -> None:
+    result = _run(
+        "secret", "--title", "GitHub deployment token",
+        "--message", "Configure GitHub; find it in developer settings",
+        "--to-file", str(tmp_path / "destination"),
+        env_overrides={"CLUD_INTEGRATION_TESTS": "1",
+                       "CLUD_TEST_LOKR_BINARY": str(tmp_path / "missing-lokr")},
+    )
+    assert result.returncode == 1
+    assert result.stdout.strip() == "failed"
+    assert "Install forge-ci/lokr" in result.stderr
+    assert not (tmp_path / "destination").exists()

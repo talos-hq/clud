@@ -49,7 +49,6 @@ pub mod runner_execution;
 pub mod runtime_cache;
 pub mod safe_mktemp;
 pub mod script_exec;
-pub mod secret_helper;
 pub mod secret_prompt;
 pub mod self_install;
 pub mod self_install_activation;

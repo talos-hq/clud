@@ -8,13 +8,18 @@ use zeroize::Zeroizing;
 
 #[path = "secret_prompt/gui.rs"]
 mod gui;
+#[path = "secret_prompt/lokr.rs"]
+mod lokr;
 #[path = "secret_prompt/sink.rs"]
 mod sink;
 
 /// Public options shared by `clud secret` and its multicall alias.
 #[derive(Debug, Clone, Parser)]
-#[command(group(ArgGroup::new("sink").required(true).args(["to_file", "vault", "to_command"])))]
+#[command(group(ArgGroup::new("sink").required(true).args(["to_file", "vault", "to_command", "to_keyring"])))]
 pub struct Options {
+    /// Internal stdin-only vault sink used by lokr.
+    #[arg(long, hide = true, requires = "vault", conflicts_with = "dry_run")]
+    internal_vault_stdin: bool,
     /// Name the specific credential and service/host (for example GitHub OAuth Client ID for example.com).
     #[arg(long, value_parser = parse_context)]
     pub title: String,
@@ -30,12 +35,15 @@ pub struct Options {
     /// Accept a masked multiline value, such as a private key.
     #[arg(long)]
     pub multiline: bool,
-    /// Require the entire value to match this regex; fail without reopening the prompt.
+    /// Require the entire value to match this regex; lokr limits submissions to three.
     #[arg(long, value_name = "REGEX", value_parser = parse_pattern)]
     pub pattern: Option<regex::Regex>,
     /// Write to an owner-only file (0600 on Unix, protected DACL on Windows).
     #[arg(long, value_name = "PATH")]
     pub to_file: Option<PathBuf>,
+    /// Store in lokr’s native keyring under SERVICE and USER.
+    #[arg(long, num_args = 2, value_names = ["SERVICE", "USER"])]
+    pub to_keyring: Vec<String>,
     /// Store a provider credential in clud's native vault.
     #[arg(long, value_enum)]
     pub vault: Option<Vault>,
@@ -147,6 +155,9 @@ fn parse_pattern(pattern: &str) -> Result<regex::Regex, regex::Error> {
 
 /// Self-contained dispatch: no harness, daemon, transcript or model call.
 pub fn run(options: &Options) -> i32 {
+    if options.internal_vault_stdin {
+        return report(sink::vault_from_stdin(options));
+    }
     if options.dry_run {
         println!(
             "{}\n{}",
@@ -154,6 +165,9 @@ pub fn run(options: &Options) -> i32 {
             gui::destination_label(options)
         );
         return 0;
+    }
+    if !test_mode() || std::env::var_os("CLUD_TEST_LOKR_BINARY").is_some() {
+        return report(lokr::request(options));
     }
     let result = acquire_with(options, acquire).and_then(|secret| sink::deliver(options, &secret));
     report(result)
@@ -175,7 +189,7 @@ fn report(result: Result<(), Failure>) -> i32 {
                 "{}",
                 match error {
                     Failure::Unavailable =>
-                        "No graphical or interactive TTY secret prompt is available; use a desktop or an interactive terminal. Tests require a fake fixture.",
+                        "lokr is unavailable or could not prompt. Install forge-ci/lokr and put lokr on PATH (soldr cargo install --git https://github.com/forge-ci/lokr lokr). Tests require a fake lokr or fixture.",
                     Failure::Pattern => "The credential does not match the expected format. Request a new prompt explicitly.",
                     Failure::Invalid =>
                         "The credential is empty, too large or invalid for this input mode.",
@@ -265,7 +279,8 @@ pub fn run_askpass(argv: &[std::ffi::OsString]) -> i32 {
         return 2;
     }
     let options = Options {
-        title: "clud authentication".to_string(),
+        internal_vault_stdin: false,
+        title: "Git/SSH/sudo authentication credential".to_string(),
         label: argv.get(1).map_or_else(
             || "Enter the requested credential".to_string(),
             |value| value.to_string_lossy().into_owned(),
@@ -275,6 +290,7 @@ pub fn run_askpass(argv: &[std::ffi::OsString]) -> i32 {
         multiline: false,
         pattern: None,
         to_file: None,
+        to_keyring: Vec::new(),
         vault: None,
         to_command: Vec::new(),
     };

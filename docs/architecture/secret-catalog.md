@@ -27,7 +27,7 @@ heartbeat.
 |---|---|
 | `mcp__lokr__secret_status` | Whether a named key exists, and where |
 | `mcp__lokr__list_secrets` | Every known credential, by name and location |
-| `mcp__lokr__request_secret` | Opens the masked `clud secret` window, writes to `~/.lokr/store/<name>`, and returns only `stored`, `failed` or `cancelled` |
+| `mcp__lokr__request_secret` | Requires title/message and an explicit file, keyring or command sink; delegates through `clud secret` to `lokr request` and returns only `stored`, `failed` or `cancelled` |
 
 No route returns a value, and there must never be a `get_secret` route. The scan
 reads values only to skip empty ones. `request_secret` hands the value straight
@@ -67,5 +67,4 @@ library; its `DESIGN.md` owns their internals. clud's integration is
 
 [forge-ci/lokr](https://github.com/forge-ci/lokr) is the secrets catalog.
 Requests must name the secret and service/host so the catalog can find it later.
-The clud integration continues to use its own prompt; it does not depend on the
-parallel `lokr request` command.
+The clud integration delegates to `lokr request`; lokr owns the prompt and catalog.

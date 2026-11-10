@@ -1,6 +1,6 @@
 ---
 name: clud-secret
-description: Acquire a password, token or SSH private key for an authorized operation using clud's masked native prompt and direct secret sinks. Use when a task needs credentials; never request or display their values in chat.
+description: Acquire a password, token or SSH private key for an authorized operation using lokr's masked prompt and catalog and direct secret sinks. Use when a task needs credentials; never request or display their values in chat.
 triggers:
   - When an authorized operation requires acquiring a password, token or SSH private key
 ---
@@ -26,19 +26,20 @@ clud secret --title 'SSH private key for the deployment host' --message 'Save th
 ```
 
 Preview the request with `--dry-run` before acquiring a credential. For tests,
-use fixtures, set `CLUD_TEST_NO_SECRET_UI=1`, and remove `DISPLAY`,
+use a fake lokr or fixtures, set `LOKR_TEST_MODE=1` and
+`CLUD_TEST_NO_SECRET_UI=1`, and remove `DISPLAY`,
 `WAYLAND_DISPLAY` and `WAYLAND_SOCKET`; never open real dialogs.
 
 Use `--pattern <regex>` when the expected shape is known. It must match the
-entire value; a mismatch fails without storing anything or opening another
-prompt. Invalid regexes are rejected before prompting.
+entire value; lokr allows at most three submissions in the same prompt
+before failing without storing anything. Invalid regexes are rejected before prompting.
 Place prompt options before `--to-command`, which consumes the remaining args.
 
 The command reports `stored`, `failed`, or `cancelled` (exit 3). It suppresses
 sink stdout and stderr because commands may echo their input. Verify success
 with a command that reports authentication status without exposing the
 credential. On cancellation, stop the authentication attempt. A single-line
-request can use a masked interactive TTY with the same context and warning.
+request uses lokr, which can use a masked controlling TTY with context and warning.
 If neither desktop nor TTY is available, report that limitation; do not ask for
 the value in chat. One invocation opens at most one prompt.
 
@@ -57,5 +58,7 @@ regression evidence for secrecy and the sink's behavior.
 
 [forge-ci/lokr](https://github.com/forge-ci/lokr) is the secrets catalog.
 Name the secret and its service/host in each request so lokr can find it later.
-The parallel `lokr request` CLI is not required by this flow; clud continues to
-use its own prompt and sinks.
+`clud secret` delegates to `lokr request`: lokr is both the prompt and catalog.
+Install forge-ci/lokr on PATH or alongside clud. Missing lokr fails with an
+install hint; clud never falls back to another prompt. File, `--to-keyring SERVICE USER`, and command sinks
+belong to lokr; `--vault` uses lokr command stdin to clud’s internal vault writer.

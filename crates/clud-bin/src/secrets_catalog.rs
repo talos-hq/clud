@@ -29,34 +29,21 @@ fn config_arg(exe: &Path) -> String {
     format!("--mcp-config={config}")
 }
 
-fn options(exe: OsString, store: &Path) -> lokr::ServerOptions {
+fn options(exe: OsString) -> lokr::ServerOptions {
     lokr::ServerOptions {
         daemon_command: vec![exe.clone(), "secrets-daemon".into()],
-        ask_command: vec![
-            exe,
-            "secret".into(),
-            "--title".into(),
-            "{name} for the lokr catalog".into(),
-            "--message".into(),
-            "Store {name} for the authorized operation. Copy it from the named service’s credential settings or your secret manager.".into(),
-            "--to-file".into(),
-            store.join("{name}").into_os_string(),
-        ],
+        // lokr validates structured context/sinks and appends their CLI flags.
+        ask_command: vec![exe, "secret".into()],
     }
 }
 
 /// Runs the MCP server on stdio.
 pub fn serve() -> i32 {
-    let (Ok(exe), Some(home)) = (std::env::current_exe(), crate::home::user_home()) else {
-        eprintln!("clud secrets-mcp: cannot locate clud or the home directory");
+    let Ok(exe) = std::env::current_exe() else {
+        eprintln!("clud secrets-mcp: cannot locate clud");
         return 1;
     };
-    let store = home.join(".lokr").join("store");
-    if let Err(error) = std::fs::create_dir_all(&store) {
-        eprintln!("clud secrets-mcp: {error}");
-        return 1;
-    }
-    match lokr::serve_stdio(&options(exe.into_os_string(), &store)) {
+    match lokr::serve_stdio(&options(exe.into_os_string())) {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("clud secrets-mcp: {error}");
@@ -90,12 +77,13 @@ mod tests {
     }
 
     #[test]
-    fn prompt_writes_to_the_named_store_file() {
-        let built = options("clud".into(), Path::new("/h/.lokr/store"));
+    fn prompt_accepts_lokr_structured_request_flags() {
+        let built = options("clud".into());
         assert_eq!(built.daemon_command[1], "secrets-daemon");
-        assert!(built
-            .ask_command
-            .contains(&Path::new("/h/.lokr/store").join("{name}").into_os_string()));
+        assert_eq!(
+            built.ask_command,
+            vec![OsString::from("clud"), "secret".into()]
+        );
     }
 
     #[test]

@@ -165,3 +165,16 @@ mod tests {
         }
     }
 }
+
+/// Only stdin carries secret bytes; never report parser/store errors containing input.
+pub(super) fn vault_from_stdin(options: &Options) -> Result<(), Failure> {
+    use std::io::Read;
+    let provider = options.vault.ok_or(Failure::Sink)?;
+    let mut value = zeroize::Zeroizing::new(String::new());
+    std::io::stdin()
+        .take(1024 * 1024 + 1)
+        .read_to_string(&mut value)
+        .map_err(|_| Failure::Invalid)?;
+    let value = super::validate_secret(value, options.multiline)?;
+    store_in_vault(provider, &value)
+}
