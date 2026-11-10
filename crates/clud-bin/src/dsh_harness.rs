@@ -116,7 +116,8 @@ pub fn install(home: &Path) -> Result<PathBuf, String> {
     let staging = root.join(format!("{DSH_VERSION}.staging-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&staging);
     let result = install_into(&npm.to_string_lossy(), &staging, windows).and_then(|()| {
-        std::fs::rename(&staging, &prefix)
+        // The version probe's private Node/addon can still be unmapping on Windows.
+        crate::self_install::transaction::rename_when_released(&staging, &prefix)
             .map_err(|e| format!("cannot move the install into {}: {e}", prefix.display()))
     });
     if result.is_err() {

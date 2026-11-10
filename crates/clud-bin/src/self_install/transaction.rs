@@ -726,7 +726,7 @@ const RELEASE_WAIT: Duration = Duration::from_secs(5);
 /// ERROR_ACCESS_DENIED (5) for a delete-pending name. Both clear on their own,
 /// so wait up to [`RELEASE_WAIT`]; every other error, and every error off
 /// Windows, returns at once.
-fn rename_when_released(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn rename_when_released(from: &Path, to: &Path) -> io::Result<()> {
     let deadline = Instant::now() + RELEASE_WAIT;
     loop {
         match fs::rename(from, to) {
