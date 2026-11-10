@@ -444,6 +444,32 @@ stripped, and `--json` field lists and word order are canonicalized. A poll
 dressed differently on alternate turns therefore still shares one count, while
 a different branch, PR or query keeps its own.
 
+**Presentation is not part of the query (2026-11-10).** The next measured loop
+had no `gh` in it at all: one session polled `uv run --project ci errors
+--since 15m` **783 times** under 80 presentations — `| grep -v "ERR  429" |
+tail -10`, `| cut -c1-160 | tail -n 13`, `timeout 170 …`, and a wrapping `cd`,
+dropping `2>&1` on some turns — for 626 MB of that day's 1.7 GB fleet exposure,
+and under the previous rule it produced no note and no refusal (`uv` was not
+recognized as a state reader at all). Two additions fix the class:
+
+- a project runner is a query when its *verb* reads: `uv run [--project X]
+  <verb>` where `<verb>` is in `RUNNER_READ` (`errors`, `logs`, `status`,
+  `list`, `show`, `diff`, `get`, `tail`, `ps`, `inspect`, `describe`, `wait`,
+  …). A runner executes anything, so the verb list is deliberately read-only
+  verbs only — `uv run --project ci test` and `uv run pytest` are not counted.
+  A `timeout [-k D] <duration>` wrapper is now stepped over the same way.
+- pipeline stages that only *present* another command's output (`grep`, `rg`,
+  `tail`, `head`, `sed`, `cut`, `wc`, `sort`, `uniq`, `tr`, `column`, `fmt`,
+  `jq`, `awk`, `less`) and a bare `cd` are stripped from the poll core, so the
+  same query under a different tail length shares one count. The stripping is
+  conditional: a lone `grep -r <pattern>` **is** the query, so two different
+  searches never merge.
+
+E2E through the shipped scanner binary, cycling the five measured dressings:
+`poll-note` at call **6** and **24**, `[clud poll-guard]` first at call **97**,
+and a different time window (`--since 1h`) keeps its own count. The 783-call
+loop would therefore have stopped at 97.
+
 Those two notes are advisory, and the measured session above ignored both: 127
 more identical polls in the next 24 h. So the ladder ends. Repeat
 `POLL_DENY_AT + 1 = 97` of the *same read-only query* in one session is refused
