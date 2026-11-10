@@ -1,4 +1,5 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    bundle_lokr()?;
     println!("cargo:rerun-if-changed=../../proto/clud_v1.proto");
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -63,5 +64,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "#[allow(clippy::large_enum_variant)]",
     );
     config.compile_fds(file_descriptors)?;
+    Ok(())
+}
+
+/// Release preparation supplies verified native bytes; development builds stay network-free.
+fn bundle_lokr() -> Result<(), Box<dyn std::error::Error>> {
+    bundle_image("", "lokr.bin", true)?;
+    bundle_image("FALLBACK_", "lokr-fallback.bin", false)
+}
+
+fn bundle_image(
+    prefix: &str,
+    filename: &str,
+    required: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let binary_key = format!("CLUD_LOKR_{prefix}BINARY");
+    let version_key = format!("CLUD_LOKR_{prefix}VERSION");
+    let digest_key = format!("CLUD_LOKR_{prefix}SHA256");
+    for key in [&binary_key, &version_key, &digest_key] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+    let destination = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join(filename);
+    let (version, digest) = if let Some(path) = std::env::var_os(&binary_key) {
+        let version = std::env::var(&version_key)?;
+        let digest = std::env::var(&digest_key)?;
+        if version.starts_with("0.0.")
+            || digest.len() != 64
+            || !digest.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err("functional, checksum-pinned lokr release is required".into());
+        }
+        println!(
+            "cargo:rerun-if-changed={}",
+            std::path::Path::new(&path).display()
+        );
+        std::fs::copy(path, &destination)?;
+        (version, digest)
+    } else {
+        if required && std::env::var("PROFILE").as_deref() == Ok("release") {
+            return Err("release builds require pinned lokr bytes; build through ci.xbuild".into());
+        }
+        std::fs::write(&destination, [])?;
+        (String::new(), String::new())
+    };
+    println!(
+        "cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}PATH={}",
+        destination.display()
+    );
+    println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}VERSION={version}");
+    println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}SHA256={digest}");
     Ok(())
 }

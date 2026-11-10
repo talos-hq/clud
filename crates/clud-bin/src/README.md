@@ -32,6 +32,8 @@ Credential prompt ownership (`secret_prompt.rs`, `secret_prompt/gui.rs`, and
 
 `secrets_catalog.rs` wires lokr into `--allow-secrets` launches; see
 [secret-catalog.md](../../../docs/architecture/secret-catalog.md).
+`managed_lokr.rs` owns the embedded prompt/catalog executable's private offline
+installation, integrity checks and resolution; see the credential prompt topic.
 
 `secret_redaction/` owns session-only reversible request tokenization, stream
 restoration, count-only status and the pure one-way hook-log redactor

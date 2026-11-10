@@ -801,6 +801,11 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
+    if args.command in {"compile", "wheel", "standalone", "candidate"}:
+        from ci.lokr_bundle import prepare_build
+
+        prepare_build(args.target)
+
     if args.strategy == "soldr":
         prepare_toolchain_locally(args.target)
     problem = cross_toolchain_preflight(args.target)

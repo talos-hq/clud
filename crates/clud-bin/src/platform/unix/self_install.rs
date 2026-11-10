@@ -90,6 +90,19 @@ pub fn file_identity(meta: &fs::Metadata) -> FileIdentity {
 }
 
 /// Creates the install directory chain with private (0700) permissions.
+/// GNU desktop lokr uses a system loader or Nix-ld; musl-only hosts use the fallback.
+pub fn lokr_gnu_loader_available() -> bool {
+    if !super::host::LINUX {
+        return false;
+    }
+    let loader = if super::host::AARCH64 {
+        "/lib/ld-linux-aarch64.so.1"
+    } else {
+        "/lib64/ld-linux-x86-64.so.2"
+    };
+    Path::new(loader).is_file()
+}
+
 pub fn create_install_dir(parent: &Path) -> Result<(), String> {
     create_private_dirs(parent)
 }
@@ -108,12 +121,20 @@ pub(crate) fn create_private_dirs(parent: &Path) -> Result<(), String> {
         }
     }
     for directory in missing.iter().rev() {
-        fs::DirBuilder::new()
-            .mode(0o700)
-            .create(directory)
-            .map_err(|error| {
-                format!("create private directory {}: {error}", directory.display())
-            })?;
+        let result = fs::DirBuilder::new().mode(0o700).create(directory);
+        if let Err(error) = result {
+            // Another first-use process may create the private parent first.
+            // Accept only a safe real directory, never a link or foreign path.
+            let safe_winner = error.kind() == std::io::ErrorKind::AlreadyExists
+                && fs::symlink_metadata(directory)
+                    .is_ok_and(|metadata| metadata.is_dir() && user_controlled_dir(&metadata));
+            if !safe_winner {
+                return Err(format!(
+                    "create private directory {}: {error}",
+                    directory.display()
+                ));
+            }
+        }
     }
     Ok(())
 }

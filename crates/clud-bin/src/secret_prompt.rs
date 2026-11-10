@@ -161,9 +161,10 @@ pub fn run(options: &Options) -> i32 {
     }
     if options.dry_run {
         println!(
-            "{}\n{}",
+            "{}\n{}\nPrompt engine: {}",
             options.prompt_text(),
-            gui::destination_label(options)
+            gui::destination_label(options),
+            crate::managed_lokr::preview()
         );
         return 0;
     }
@@ -190,7 +191,7 @@ fn report(result: Result<(), Failure>) -> i32 {
                 "{}",
                 match error {
                     Failure::Unavailable =>
-                        "lokr is unavailable or could not prompt. Install forge-ci/lokr and put lokr on PATH (soldr cargo install --git https://github.com/forge-ci/lokr lokr). Tests require a fake lokr or fixture.",
+                        "lokr is unavailable or could not prompt. Reinstall the published clud native installer for its verified companion. Install forge-ci/lokr >=0.1.0 from https://github.com/forge-ci/lokr/releases for development PATH lookup; crates.io 0.0.1 is not functional. Tests require a fake lokr or fixture.",
                     Failure::Pattern => "The credential does not match the expected format. Request a new prompt explicitly.",
                     Failure::Invalid =>
                         "The credential is empty, too large or invalid for this input mode.",

@@ -238,7 +238,9 @@ mod tests {
         let root = private_root();
         let result = crate::test_runtime::capture::capture_with_limit(
             root.path(),
-            Some(Duration::from_millis(100)),
+            // Allow shell startup on a loaded build host; this still expires
+            // well before the child's ten-second sleep, after its output cap.
+            Some(Duration::from_secs(2)),
             &[
                 "sh".into(),
                 "-c".into(),
