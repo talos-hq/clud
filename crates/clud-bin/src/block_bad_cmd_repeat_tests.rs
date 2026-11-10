@@ -899,7 +899,7 @@ fn unresolvable_and_mixed_commands_are_not_file_polls() {
         // Neither is a read next to a deletion.
         format!("cat {} && rm {}", state.display(), state.display()),
         // Nor a program that is not a reader.
-        format!("python3 -c 'print(1)' {}", state.display()),
+        format!("python -c 'print(1)' {}", state.display()),
     ] {
         assert!(local_file_poll(&command).is_none(), "{command}");
     }
