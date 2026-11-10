@@ -370,7 +370,7 @@ jobs:
     name: Publish to PyPI
     needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, candidate-acceptance-gate, verify-prior-public]
     if: >-
-      always() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
+      always() && !cancelled() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
       needs.candidate-acceptance-gate.result == 'success' && needs.verify-prior-public.result == 'success' &&
       (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success'))
     runs-on: ubuntu-latest
@@ -401,7 +401,7 @@ jobs:
     name: Publish final bytes as public prerelease
     needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, build-static-musl, verify-static-musl-arm64]
     if: >-
-      always() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
+      always() && !cancelled() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
       needs.snapshot-public.result == 'success' &&
       (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success' &&
       needs.build-static-musl.result == 'success' && needs.verify-static-musl-arm64.result == 'success'))
@@ -536,6 +536,10 @@ jobs:
   publish-candidate-catalog:
     name: Attach versioned public candidate catalog
     needs: [preflight, publish-release]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-release.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -563,6 +567,11 @@ jobs:
   verify-candidate-public:
     name: Verify anonymous final bytes and prerelease asset identity
     needs: [preflight, snapshot-public, publish-candidate-catalog]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.snapshot-public.result == 'success' &&
+      needs.publish-candidate-catalog.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -626,6 +635,10 @@ jobs:
   verify-candidate-installer:
     name: Verify public prerelease on every native host and guest
     needs: [preflight, verify-candidate-public]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.verify-candidate-public.result == 'success'
     permissions:
       contents: read
     uses: ./.github/workflows/installer-check.yml
@@ -648,6 +661,10 @@ jobs:
   verify-prior-public:
     name: Prove failed candidate cannot move previous stable
     needs: [preflight, candidate-acceptance-gate]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.candidate-acceptance-gate.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -667,6 +684,11 @@ jobs:
   promote-release:
     name: Promote the same public asset IDs to stable
     needs: [preflight, publish-pypi, verify-prior-public]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.publish-pypi.result == 'success' &&
+      needs.verify-prior-public.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -688,6 +710,10 @@ jobs:
   publish-homebrew:
     name: Update the Homebrew tap formula
     needs: [preflight, released-acceptance-gate]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.released-acceptance-gate.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -739,6 +765,10 @@ jobs:
   build-install-site:
     name: Build and validate installer Pages
     needs: [preflight, promote-release]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.promote-release.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     outputs:
@@ -779,6 +809,9 @@ jobs:
   deploy-install-site:
     name: Deploy installer Pages
     needs: build-install-site
+    if: >-
+      always() && !cancelled() &&
+      needs.build-install-site.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       pages: write
@@ -816,6 +849,10 @@ jobs:
   verify-promoted-public:
     name: Prove promoted release is canonical latest stable
     needs: [preflight, deploy-install-site]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.deploy-install-site.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -835,6 +872,10 @@ jobs:
   verify-published-installer:
     name: Verify promoted public bytes on all host platforms and guests
     needs: [preflight, verify-promoted-public]
+    if: >-
+      always() && !cancelled() &&
+      needs.preflight.result == 'success' &&
+      needs.verify-promoted-public.result == 'success'
     permissions:
       contents: read
     uses: ./.github/workflows/installer-check.yml

@@ -97,7 +97,13 @@ and never waives fresh CI. Recovery downloads the original immutable build
 artifacts, reconstructs and anonymously checks the six native bytes, repeats
 the complete public candidate matrix, then uses the existing PyPI, promotion,
 Pages, released-acceptance and rollback gates. It neither rebuilds nor uploads
-release assets or candidate catalogs. Arch guests use `pacman -Syu` so their
+release assets or candidate catalogs. Every publication job and called public
+acceptance job uses an explicit `always()` status condition, refuses cancellation,
+and requires each direct prerequisite to succeed. GitHub otherwise propagates
+an intentional builder skip through the dependency chain even after artifact
+restoration succeeds; a generic `success()` condition is insufficient. The
+regression checks in `tests/test_release_recovery_dag.py` exercise this case and
+reject failed, skipped or canceled proof prerequisites. Arch guests use `pacman -Syu` so their
 pinned base image is fully upgraded before installing tools; partial upgrades
 can mix incompatible OpenSSL ABIs from the rolling repository.
 
