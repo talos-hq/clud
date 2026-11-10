@@ -749,7 +749,9 @@ fn posix_installer_failure(error: String) -> String {
         "curl is not installed (the installer downloads with curl); install curl, then rerun"
             .to_string()
     } else if let Some(code) = curl_download_failure(&error) {
-        format!("could not download the installer (curl exit {code}); check the network, then rerun")
+        format!(
+            "could not download the installer (curl exit {code}); check the network, then rerun"
+        )
     } else {
         error
     }
@@ -1167,7 +1169,10 @@ mod tests {
         for code in [5, 6, 7, 22, 28, 35, 56] {
             let error = format!("command exited with {code}");
             assert!(!retries_in_temp_home(&error), "{code}");
-            assert!(posix_installer_failure(error).contains("could not download"), "{code}");
+            assert!(
+                posix_installer_failure(error).contains("could not download"),
+                "{code}"
+            );
         }
     }
 
