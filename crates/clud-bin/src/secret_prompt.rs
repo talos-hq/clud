@@ -175,7 +175,7 @@ fn report(result: Result<(), Failure>) -> i32 {
                 "{}",
                 match error {
                     Failure::Unavailable =>
-                        "No graphical secret prompt is available; use a desktop with its native graphics libraries installed.",
+                        "No graphical or interactive TTY secret prompt is available; use a desktop or an interactive terminal. Tests require a fake fixture.",
                     Failure::Pattern => "The credential does not match the expected format. Request a new prompt explicitly.",
                     Failure::Invalid =>
                         "The credential is empty, too large or invalid for this input mode.",
@@ -576,7 +576,14 @@ mod tests {
 
     #[test]
     fn a_sink_is_required_and_mutually_exclusive() {
-        assert!(Options::try_parse_from(["secret"]).is_err());
+        assert!(Options::try_parse_from([
+            "secret",
+            "--title",
+            "GitHub token for fixture.example",
+            "--message",
+            "Authenticate the fixture; find tokens in GitHub developer settings",
+        ])
+        .is_err());
         assert!(Options::try_parse_from([
             "secret",
             "--title",
