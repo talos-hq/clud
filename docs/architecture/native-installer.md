@@ -17,8 +17,9 @@ for this mode. The result explicitly reports **activation required** and does
 not claim verified fresh name-based lookup. Exit 0 means the requested binary
 installation completed; it does not mean the invoking terminal was activated.
 
-Published builds also install their bundled lokr into a private versioned
-directory, without network access or changes to the user's PATH. This happens
+Published builds also install their pinned lokr into a private versioned
+directory without changes to the user's PATH. Native installers extract offline;
+release wheels download and verify the exact pinned asset on first use. This happens
 before clud's executable commit; a dependency integrity failure leaves the old
 clud intact. The consent plan identifies the prompt engine. See
 [secret-prompt.md](secret-prompt.md) for artifact pinning and runtime selection.

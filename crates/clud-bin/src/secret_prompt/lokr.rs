@@ -12,9 +12,9 @@ fn resolve() -> Result<PathBuf, Failure> {
     if super::real_ui_disabled() {
         return Err(Failure::Unavailable);
     }
-    // Published builds carry an offline, checksum-pinned functional lokr.
+    // Native builds embed lokr; wheels fetch the same checksum-pinned release.
     // Prefer it over unrelated or obsolete PATH installations (including 0.0.1).
-    if crate::managed_lokr::has_bundle() {
+    if crate::managed_lokr::has_distribution() {
         return crate::managed_lokr::ensure_installed().map_err(|_| Failure::Unavailable);
     }
     // Prefer a co-distributed executable, then the user's installed tool on PATH.

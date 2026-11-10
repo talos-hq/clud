@@ -9,9 +9,10 @@ release-list models (current/latest version summaries and yellow/green ASCII
 arrows) to the shared `selector.rs` terminal driver. The automatic
 menu defaults to **Not now**; the explicit menu defaults to **Install this
 version**. `transaction.rs` builds the read-only plan, verifies the selected
-source, and commits one public executable. It also installs the embedded,
+source, and commits one public executable. It also installs the verified,
 checksum-pinned lokr into a private versioned directory before committing clud;
-this works offline and does not install the crates.io placeholder. Distribution
+native installers work offline, while release wheels download verified bytes
+on first use. Neither installs the crates.io placeholder. Distribution
 and resolution live in `managed_lokr.rs`, with build preparation in
 `ci/lokr_bundle.py`; see [secret-prompt.md](../../../../docs/architecture/secret-prompt.md).
 `activation.rs` builds the read-only

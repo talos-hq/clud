@@ -67,7 +67,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Release preparation supplies verified native bytes; development builds stay network-free.
+/// Native installers embed verified bytes; release wheels carry a pinned download identity.
 fn bundle_lokr() -> Result<(), Box<dyn std::error::Error>> {
     bundle_image("", "lokr.bin", true)?;
     bundle_image("FALLBACK_", "lokr-fallback.bin", false)
@@ -78,34 +78,49 @@ fn bundle_image(
     filename: &str,
     required: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let binary_key = format!("CLUD_LOKR_{prefix}BINARY");
-    let version_key = format!("CLUD_LOKR_{prefix}VERSION");
-    let digest_key = format!("CLUD_LOKR_{prefix}SHA256");
-    for key in [&binary_key, &version_key, &digest_key] {
-        println!("cargo:rerun-if-env-changed={key}");
+    let key = |field: &str| format!("CLUD_LOKR_{prefix}{field}");
+    for field in ["BINARY", "VERSION", "SHA256", "URL", "SIZE", "FETCH_ONLY"] {
+        println!("cargo:rerun-if-env-changed={}", key(field));
     }
     let destination = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join(filename);
-    let (version, digest) = if let Some(path) = std::env::var_os(&binary_key) {
-        let version = std::env::var(&version_key)?;
-        let digest = std::env::var(&digest_key)?;
+    let binary = std::env::var_os(key("BINARY"));
+    let fetch_only = std::env::var(key("FETCH_ONLY")).as_deref() == Ok("1");
+    let (version, digest, url, size) = if binary.is_some() || fetch_only {
+        let version = std::env::var(key("VERSION"))?;
+        let digest = std::env::var(key("SHA256"))?;
         if version.starts_with("0.0.")
             || digest.len() != 64
             || !digest.bytes().all(|b| b.is_ascii_hexdigit())
         {
             return Err("functional, checksum-pinned lokr release is required".into());
         }
-        println!(
-            "cargo:rerun-if-changed={}",
-            std::path::Path::new(&path).display()
-        );
-        std::fs::copy(path, &destination)?;
-        (version, digest)
+        let url = std::env::var(key("URL")).unwrap_or_default();
+        let size = if let Some(path) = binary {
+            if fetch_only {
+                return Err("lokr bytes and fetch-only mode are mutually exclusive".into());
+            }
+            println!(
+                "cargo:rerun-if-changed={}",
+                std::path::Path::new(&path).display()
+            );
+            std::fs::copy(path, &destination)?
+        } else {
+            let size: u64 = std::env::var(key("SIZE"))?.parse()?;
+            if url.is_empty() || size == 0 || size > 256 * 1024 * 1024 {
+                return Err("fetch-only lokr requires a pinned URL and bounded size".into());
+            }
+            std::fs::write(&destination, [])?;
+            size
+        };
+        (version, digest, url, size)
     } else {
         if required && std::env::var("PROFILE").as_deref() == Ok("release") {
-            return Err("release builds require pinned lokr bytes; build through ci.xbuild".into());
+            return Err(
+                "release builds require pinned lokr distribution; build through ci.xbuild".into(),
+            );
         }
         std::fs::write(&destination, [])?;
-        (String::new(), String::new())
+        (String::new(), String::new(), String::new(), 0)
     };
     println!(
         "cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}PATH={}",
@@ -113,5 +128,7 @@ fn bundle_image(
     );
     println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}VERSION={version}");
     println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}SHA256={digest}");
+    println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}URL={url}");
+    println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}SIZE={size}");
     Ok(())
 }

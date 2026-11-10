@@ -59,8 +59,9 @@ regression evidence for secrecy and the sink's behavior.
 [forge-ci/lokr](https://github.com/forge-ci/lokr) is the secrets catalog.
 Name the secret and its service/host in each request so lokr can find it later.
 `clud secret` delegates to `lokr request`: lokr is both the prompt and catalog.
-Published clud installers provide a checksum-pinned functional lokr privately;
-`--dry-run` identifies its version and location without launching it. Do not
+Native installers bundle functional lokr; release wheels download and verify
+the same pinned helper on first use, then reuse its private cache.
+`--dry-run` identifies its version and location without downloading or launching it. Do not
 install crates.io lokr 0.0.1: it is not the functional prompt. Development builds
 may use a functional release on PATH. Missing or modified managed lokr fails
 with an install hint; clud never falls back to another prompt. File, `--to-keyring SERVICE USER`, and command sinks
