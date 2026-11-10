@@ -564,28 +564,43 @@ clud tool run code/outline.py -- path/to/file
 
 ### Unchanged-re-read guard (#2233)
 
-A `Read` that repeats a call already made in this session — same path, same
-`offset`/`limit` — returns bytes the model already holds, and every later
-request in the session pays for them again. The hook keys the call on its
-canonical `tool_input` (so a different range is a different read) and
-fingerprints the file as `(len, mtime)`:
+A `Read` of lines this session already read, from a file that has not changed
+since, returns bytes the model already holds, and every later request in the
+session pays for them again. The ledger keeps, per `(session, path,
+fingerprint)`, the **line intervals already brought into the conversation**
+(`offset` is 1-based, `limit` counts lines, a missing `limit` runs to EOF,
+adjacent or overlapping intervals merge):
 
-- **Unchanged fingerprint** (byte-identical copy already read): denied, with
-  a message naming the bounded alternatives — one range via `offset`+`limit`,
-  or `clud tool run code/outline.py` to map an unfamiliar file first.
+- **Interval already covered** (the whole file was read, or the same window
+  with a different `limit`, or a narrower window inside a wider one): refused,
+  with a message naming the lines and the bounded alternatives — one range via
+  `offset`+`limit`, or `clud tool run code/outline.py` to map an unfamiliar
+  file first.
+- **Interval with new ground** (it starts before, or runs past, what was read):
+  allowed and recorded. Over-claiming the *end* of an interval can only cover
+  lines past end-of-file, so the guard never claims to have shown text it did
+  not.
 - **Changed fingerprint** (any edit, checkout or rewrite): allowed and
-  re-recorded, so read-after-edit verification is never refused.
+  re-recorded from scratch, so read-after-edit verification is never refused.
+- **Refusals are budgeted** (two per file per fingerprint): past the budget a
+  covered read passes again, because compaction really can drop earlier
+  content and a permanent wall would have no per-call escape.
 - **Files under 8 KiB** are never refused: a small re-read costs less than
   the friction of refusing it.
 
 State is one small JSON ledger per session under
-`<state dir>/reread-guard/`, capped at 256 entries and pruned like the repeat
+`<state dir>/reread-guard/`, capped at 256 files and pruned like the repeat
 guard's. **Fails open** on a missing session id, an unreadable state dir, or a
 file that cannot be `stat`ed. `CLUD_REREAD_GUARD=0` turns it off.
 
-Evidence (24 h probe, 2026-10-31): 308 of 1,035 `Read` calls repeated a
-call already made in the same session, re-supplying 1,029,780 bytes, led by
-one 2,142-line file read 23 times.
+Evidence: 24 h probe 2026-10-31 — 308 of 1,035 `Read` calls repeated a call
+already made in the same session, 1,029,780 bytes, led by one 2,142-line file
+read 23 times. The exact-`offset`/`limit` key that shipped first only saw
+byte-identical repeats; 24 h probe 2026-11-10 measured 73 further reads that
+were **fully covered by an earlier window and never refused** (700 kB), and
+the live ledgers held 67 files with several entries of one unchanged
+fingerprint — one 551 kB `README.md` read twice, `schemas.py` 8 times through
+almost-identical windows.
 
 ### Persisted-output read bound (#2233)
 
