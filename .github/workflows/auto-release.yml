@@ -11,6 +11,10 @@ on:
         description: "Tag to publish (e.g. 2.0.10 or v2.0.10). Leave empty to use the current workspace version."
         required: false
         type: string
+      resume_run_id:
+        description: "Resume an immutable public prerelease from a failed Auto Release run after acceptance-harness repair (main only)."
+        required: false
+        type: string
 
 # Serialize release publication with both Pages publishers.
 concurrency:
@@ -31,6 +35,7 @@ jobs:
       candidate_sha: ${{ steps.meta.outputs.candidate_sha }}
       release_tag: ${{ steps.meta.outputs.release_tag }}
       version: ${{ steps.meta.outputs.version }}
+      artifact_run: ${{ steps.meta.outputs.artifact_run }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -45,6 +50,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RAW_TAG: ${{ inputs.tag }}
+          RESUME_RUN_ID: ${{ inputs.resume_run_id }}
         run: |
           python - <<'PY'
           import json
@@ -83,7 +89,20 @@ jobs:
               capture_output=True,
               text=True,
           )
-          if existing_tag.returncode == 0 and existing_tag.stdout.strip() != candidate_sha:
+          resume_run_id = os.environ.get("RESUME_RUN_ID", "").strip()
+          artifact_run = os.environ["GITHUB_RUN_ID"]
+          if resume_run_id:
+              from ci import release_resume
+              if existing_tag.returncode != 0:
+                  sys.exit("Recovery requires the unchanged original tag")
+              tagged_sha = existing_tag.stdout.strip()
+              release_resume.validate_run(resume_run_id, raw_tag, tagged_sha)
+              release_resume.validate_harness(tagged_sha, candidate_sha)
+              candidate_sha = tagged_sha
+              checkout_ref = tagged_sha
+              artifact_run = resume_run_id
+
+          if existing_tag.returncode == 0 and existing_tag.stdout.strip() != candidate_sha and not resume_run_id:
               sys.exit(f"Tag {raw_tag!r} points to a different candidate SHA")
 
           normalized = raw_tag[1:] if raw_tag.startswith("v") else raw_tag
@@ -108,6 +127,8 @@ jobs:
               if result.returncode == 0 and result.stdout.strip():
                   data = json.loads(result.stdout)
                   if data.get("published_at"):
+                      if resume_run_id and candidate == raw_tag and data.get("prerelease") is True and not data.get("draft"):
+                          continue
                       sys.exit(
                           f"Release {candidate} is already published at "
                           f"{data['published_at']} -- refusing to re-publish."
@@ -119,6 +140,7 @@ jobs:
               fh.write(f"candidate_sha={candidate_sha}\n")
               fh.write(f"release_tag={raw_tag}\n")
               fh.write(f"version={version}\n")
+              fh.write(f"artifact_run={artifact_run}\n")
 
           print(
               f"Resolved release tag={raw_tag} version={version} "
@@ -126,11 +148,29 @@ jobs:
           )
           PY
 
+      - name: Download original immutable public state for recovery
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: candidate-public-state
+          path: original-release-state
+          run-id: ${{ steps.meta.outputs.artifact_run }}
+          github-token: ${{ github.token }}
+      - name: Refuse changed assets or prior stable state during recovery
+        if: inputs.resume_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.meta.outputs.release_tag }}
+        run: python -m ci.release_resume "$RELEASE_TAG" original-release-state/candidate-public-state.json
+
   # A release recomputes its own proof (#2202): the complete full-tier CI
   # workflow runs on the exact tagged SHA inside this run. No attestation,
   # reuse decision or earlier run is consulted, so a tag never waits on a
   # manual pre-dispatch. ci.yml's `CI OK` fails unless every selected job
   # passed, which fails this job and blocks every builder and publisher.
+  # Recovery also recomputes full CI on that exact immutable tag, using only
+  # an approved main-branch harness repair. Original build and asset proofs
+  # establish byte provenance; they never waive this fresh full CI execution.
   full-ci-gate:
     name: Exact SHA full CI
     needs: preflight
@@ -140,6 +180,7 @@ jobs:
     secrets: inherit
     with:
       candidate_sha: ${{ needs.preflight.outputs.candidate_sha }}
+      recovery_run_id: ${{ inputs.resume_run_id }}
     # The union ci.yml's jobs request; a called workflow cannot exceed it.
     permissions:
       contents: read
@@ -153,6 +194,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
     outputs:
       prior_tag: ${{ steps.snapshot.outputs.prior_tag }}
       prior_id: ${{ steps.snapshot.outputs.prior_id }}
@@ -160,7 +202,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.preflight.outputs.candidate_sha }}
+      - name: Restore the original prior stable snapshot
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: prior-public-state
+          path: .
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
       - name: Refuse an existing tag and record previous public stable state
+        if: inputs.resume_run_id == ''
         id: snapshot
         env:
           GH_TOKEN: ${{ github.token }}
@@ -197,6 +248,7 @@ jobs:
   build:
     name: Build wheels
     needs: [preflight, full-ci-gate, release-matrix]
+    if: ${{ !inputs.resume_run_id }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.release-matrix.outputs.build) }}
@@ -277,6 +329,7 @@ jobs:
   build-static-musl:
     name: Build static musl clud
     needs: [preflight, full-ci-gate, release-matrix]
+    if: ${{ !inputs.resume_run_id }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.release-matrix.outputs.static_musl) }}
@@ -316,14 +369,21 @@ jobs:
   publish-pypi:
     name: Publish to PyPI
     needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, candidate-acceptance-gate, verify-prior-public]
+    if: >-
+      always() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
+      needs.candidate-acceptance-gate.result == 'success' && needs.verify-prior-public.result == 'success' &&
+      (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success'))
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
       id-token: write
+      actions: read
     steps:
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
           path: dist
           merge-multiple: true
 
@@ -340,9 +400,15 @@ jobs:
   publish-release:
     name: Publish final bytes as public prerelease
     needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, build-static-musl, verify-static-musl-arm64]
+    if: >-
+      always() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
+      needs.snapshot-public.result == 'success' &&
+      (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success' &&
+      needs.build-static-musl.result == 'success' && needs.verify-static-musl-arm64.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
@@ -351,12 +417,16 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
           path: dist
           merge-multiple: true
 
       - uses: actions/download-artifact@v4
         with:
           pattern: standalone-musl-*
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
           path: standalone
           merge-multiple: true
 
@@ -370,6 +440,8 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           pattern: debuginfo-*
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
           path: debuginfo
           merge-multiple: true
 
@@ -418,7 +490,8 @@ jobs:
           mv "$checksum_file" dist/SHA256SUMS
           cat dist/SHA256SUMS
 
-      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+      - if: ${{ !inputs.resume_run_id }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           name: clud ${{ needs.preflight.outputs.version }}
@@ -471,6 +544,7 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.candidate_sha }}
       - name: Generate from anonymous published bytes while keeping prior stable
+        if: ${{ !inputs.resume_run_id }}
         env:
           RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
           # Authenticated API metadata only (installer/catalog.py fetch); asset bytes stay anonymous.
@@ -480,6 +554,7 @@ jobs:
           python -m pip install 'git+https://github.com/zackees/manifest.json@main'
           manifest-validate installer-candidate-manifest.json
       - name: Attach immutable candidate catalog to the same release
+        if: ${{ !inputs.resume_run_id }}
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
@@ -491,10 +566,11 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.preflight.outputs.candidate_sha }}
+          ref: ${{ inputs.resume_run_id && github.sha || needs.preflight.outputs.candidate_sha }}
       - uses: actions/download-artifact@v4
         with:
           name: prior-public-state
@@ -502,11 +578,15 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: standalone-musl-*
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
           path: standalone
           merge-multiple: true
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
           path: dist
           merge-multiple: true
       - name: Reconstruct exact six final native files
@@ -521,6 +601,22 @@ jobs:
           python -m ci.public_release verify-prerelease \
             "$RELEASE_TAG" standalone release-state/prior-public-state.json \
             release-state/candidate-public-state.json
+      - name: Download original asset identity for recovery comparison
+        if: inputs.resume_run_id != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: candidate-public-state
+          path: original-release-state
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
+      - name: Bind the fresh anonymous proof to the original asset IDs
+        if: inputs.resume_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.release_tag }}
+        run: >-
+          python -m ci.release_resume "$RELEASE_TAG" original-release-state/candidate-public-state.json
+          --current-snapshot release-state/candidate-public-state.json
       - uses: actions/upload-artifact@v4
         with:
           name: candidate-public-state

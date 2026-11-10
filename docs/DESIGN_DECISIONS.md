@@ -7793,3 +7793,24 @@ Pages publication preserves those files alongside the installer page.
 **Why:** One executable and one installer implementation remain authoritative;
 no second setup build or unverified proxy is needed. The catalog keeps the
 original release URLs for CLI consumers.
+
+
+## DD-211: release recovery preserves public bytes and repeats exact-source gates
+
+**Context:** A public prerelease can pass every build and native wheel smoke
+check, then fail acceptance because its test environment changed. Arch's
+rolling repositories exposed this when a pinned image partially upgraded
+OpenSSL. Rebuilding or moving its already-public tag would change provenance.
+
+**Decision:** Auto Release accepts a main-only recovery dispatch naming the
+original failed run. It requires the unchanged source tag, complete original
+build/smoke proofs, identical public release and asset identities, and unchanged
+prior stable state. Only CI, test and documentation inputs may have changed.
+Recovery executes full CI anew on the exact tag with the reviewed harness,
+reuses original immutable artifacts, repeats anonymous byte verification and
+both public acceptance matrices, and retains the existing publication and
+rollback gates. It never rebuilds or replaces public assets or candidate catalogs.
+
+**Why:** A repaired acceptance environment can validate the exact published
+candidate without retagging, bypassing checks or claiming that a rebuilt file
+has the same identity. Ordinary release and CI dispatch provenance stay strict.
