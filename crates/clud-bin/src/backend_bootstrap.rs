@@ -697,11 +697,12 @@ fn run_backend_installer(spec: &BackendInstallSpec) -> Result<(), String> {
     match spec.installer {
         InstallerPlan::TrustedCodex => trusted_codex_update(),
         InstallerPlan::PosixShell { command } => match run_posix_installer(command, None) {
-            Err(first) if spec.backend == Backend::Claude => install_claude_in_temp_home(command)
-                .map_err(|second| {
+            Err(first) if spec.backend == Backend::Claude && retries_in_temp_home(&first) => {
+                install_claude_in_temp_home(command).map_err(|second| {
                     format!("{first}; retrying with a temporary install home also failed: {second}")
-                }),
-            other => other,
+                })
+            }
+            other => other.map_err(posix_installer_failure),
         },
         InstallerPlan::WindowsPowerShell {
             command,
@@ -719,6 +720,26 @@ fn run_posix_installer(
     env: Option<Vec<(String, String)>>,
 ) -> Result<(), String> {
     run_interactive_command_with_env(CommandSpec::Argv(posix_installer_argv(command)), None, env)
+}
+
+/// Exit 127: the shell could not find a command (curl), not a full home.
+const COMMAND_NOT_FOUND: &str = "command exited with 127";
+
+/// Whether a POSIX installer failure may be a small or unwritable home, the
+/// only case the temp-home retry fixes. A missing downloader is not (#2766).
+fn retries_in_temp_home(error: &str) -> bool {
+    error != COMMAND_NOT_FOUND
+}
+
+/// The installer failure as the user should read it: name a missing
+/// downloader instead of a bare exit status (#2766).
+fn posix_installer_failure(error: String) -> String {
+    if error == COMMAND_NOT_FOUND {
+        "curl is not installed (the installer downloads with curl); install curl, then rerun"
+            .to_string()
+    } else {
+        error
+    }
 }
 
 /// `curl … | bash` under pipefail, so a failed download (no curl, no
@@ -1126,6 +1147,20 @@ fn drain_until(
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+
+    /// #2766: a missing downloader is not a full home; it never retries in a
+    /// temp home and names what is missing.
+    #[test]
+    fn a_missing_downloader_never_retries_in_a_temp_home() {
+        let missing = "command exited with 127".to_string();
+        assert!(!retries_in_temp_home(&missing));
+        assert!(retries_in_temp_home("command exited with 1"));
+        assert!(posix_installer_failure(missing).contains("curl is not installed"));
+        assert_eq!(
+            posix_installer_failure("command exited with 1".to_string()),
+            "command exited with 1"
+        );
+    }
 
     /// #2762: the pipeline status must be curl's when curl fails.
     #[test]
