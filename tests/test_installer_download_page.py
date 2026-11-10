@@ -607,6 +607,20 @@ def test_install_sh_dry_run_names_the_asset_and_fetches_nothing(
 
 
 @posix_only
+def test_install_sh_v_prefixed_tag_names_the_unprefixed_asset(tmp_path) -> None:
+    """#2786: a v-prefixed tag keeps its v in the URL path, never in the asset name."""
+    done, calls = run_install(tmp_path, ["--dry-run", "--version", "v2.8.65"])
+    assert done.returncode == 0, done.stderr
+    out = done.stdout + done.stderr
+    assert (
+        "https://github.com/talos-hq/clud/releases/download/v2.8.65/"
+        "clud-2.8.65-x86_64-unknown-linux-musl"
+    ) in out
+    assert "clud-v2.8.65" not in out
+    assert calls == []
+
+
+@posix_only
 def test_install_sh_dry_run_resolves_latest_with_a_head_request_only(tmp_path) -> None:
     done, calls = run_install(tmp_path, ["--dry-run"])
     assert done.returncode == 0, done.stderr

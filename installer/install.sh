@@ -100,7 +100,8 @@ if [ -z "$version" ]; then
         die "could not resolve the latest release tag from $latest"
 fi
 
-asset="clud-$version-$arch-$suffix"
+# Asset names never carry the tag's "v" (v2.8.65 ships clud-2.8.65-*, #2786).
+asset="clud-${version#v}-$arch-$suffix"
 base="https://github.com/$REPO/releases/download/$version"
 dir="${CLUD_INSTALL_DIR:-$HOME/.local/bin}"
 dest="$dir/clud"
