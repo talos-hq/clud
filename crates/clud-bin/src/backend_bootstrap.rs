@@ -728,7 +728,18 @@ const COMMAND_NOT_FOUND: &str = "command exited with 127";
 /// Whether a POSIX installer failure may be a small or unwritable home, the
 /// only case the temp-home retry fixes. A missing downloader is not (#2766).
 fn retries_in_temp_home(error: &str) -> bool {
-    error != COMMAND_NOT_FOUND
+    error != COMMAND_NOT_FOUND && curl_download_failure(error).is_none()
+}
+
+/// curl's network exit codes (resolve, connect, HTTP error, timeout, TLS,
+/// receive). Under pipefail they surface as the installer's status (#2768).
+const CURL_DOWNLOAD_FAILURES: [i32; 7] = [5, 6, 7, 22, 28, 35, 56];
+
+fn curl_download_failure(error: &str) -> Option<i32> {
+    error
+        .strip_prefix("command exited with ")
+        .and_then(|code| code.parse::<i32>().ok())
+        .filter(|code| CURL_DOWNLOAD_FAILURES.contains(code))
 }
 
 /// The installer failure as the user should read it: name a missing
@@ -737,6 +748,8 @@ fn posix_installer_failure(error: String) -> String {
     if error == COMMAND_NOT_FOUND {
         "curl is not installed (the installer downloads with curl); install curl, then rerun"
             .to_string()
+    } else if let Some(code) = curl_download_failure(&error) {
+        format!("could not download the installer (curl exit {code}); check the network, then rerun")
     } else {
         error
     }
@@ -1147,6 +1160,16 @@ fn drain_until(
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+
+    /// #2768: a failed download is not a full home either.
+    #[test]
+    fn a_failed_download_never_retries_in_a_temp_home() {
+        for code in [5, 6, 7, 22, 28, 35, 56] {
+            let error = format!("command exited with {code}");
+            assert!(!retries_in_temp_home(&error), "{code}");
+            assert!(posix_installer_failure(error).contains("could not download"), "{code}");
+        }
+    }
 
     /// #2766: a missing downloader is not a full home; it never retries in a
     /// temp home and names what is missing.
