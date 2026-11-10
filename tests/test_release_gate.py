@@ -5,7 +5,50 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 WORKFLOWS = Path(__file__).resolve().parent.parent / ".github" / "workflows"
+
+
+@pytest.mark.parametrize(
+    ("upload_job", "deploy_job"),
+    [("build-install-site", "deploy-install-site"), ("rollback-public", "rollback-public")],
+)
+def test_pages_deployment_selects_one_artifact_after_a_rerun(
+    upload_job: str, deploy_job: str
+) -> None:
+    text = (WORKFLOWS / "auto-release.yml").read_text(encoding="utf-8")
+    jobs = dict(re.findall(r"(?ms)^  ([a-z][a-z0-9-]*):\n(.*?)(?=^  [a-z][a-z0-9-]*:\n|\Z)", text))
+    upload = jobs[upload_job].split("uses: actions/upload-pages-artifact@v3\n", 1)[1]
+    deploy = jobs[deploy_job].split("uses: actions/deploy-pages@v4\n", 1)[1]
+    upload_inputs = upload.split("\n      - ", 1)[0]
+    deploy_inputs = deploy.split("\n      - ", 1)[0]
+    upload_name = re.search(r"(?m)^          name: (.+)$", upload_inputs)
+    deploy_name = re.search(r"(?m)^          artifact_name: (.+)$", deploy_inputs)
+    # These are the actions' defaults when the workflow omits the inputs.
+    producer = upload_name.group(1) if upload_name else "github-pages"
+    consumer = deploy_name.group(1) if deploy_name else "github-pages"
+    if "needs.build-install-site.outputs.pages_artifact" in consumer:
+        output = re.search(r"(?m)^      pages_artifact: (.+)$", jobs[upload_job])
+        assert output is not None
+        consumer = output.group(1)
+    artifacts: list[str] = []
+    for attempt in (1, 2, 3):
+        artifacts.append(producer.replace("${{ github.run_attempt }}", str(attempt)))
+        selected = consumer.replace("${{ github.run_attempt }}", str(attempt))
+        assert artifacts.count(selected) == 1, (
+            f"{deploy_job} attempt {attempt} must find exactly one Pages artifact: {artifacts}"
+        )
+
+
+def test_pages_deployment_retry_reuses_the_successful_build_artifact() -> None:
+    text = (WORKFLOWS / "auto-release.yml").read_text(encoding="utf-8")
+    build = text.split("  build-install-site:\n", 1)[1].split("\n  deploy-install-site:", 1)[0]
+    deploy = text.split("  deploy-install-site:\n", 1)[1].split("\n  verify-promoted-public:", 1)[0]
+    # A failed-only rerun does not rerun a successful build. The consumer must
+    # retain that producer's name instead of using its own, newer run_attempt.
+    assert "pages_artifact: github-pages-${{ github.run_attempt }}" in build
+    assert "artifact_name: ${{ needs.build-install-site.outputs.pages_artifact }}" in deploy
 
 
 def test_ci_is_callable_with_a_candidate_that_resolves_the_full_tier() -> None:

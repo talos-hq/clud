@@ -647,6 +647,7 @@ jobs:
     timeout-minutes: 30
     outputs:
       public_digest: ${{ steps.digest.outputs.value }}
+      pages_artifact: github-pages-${{ github.run_attempt }}
     permissions:
       contents: read
       pages: write
@@ -675,6 +676,8 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
+          # deploy-pages selects by name across every attempt of this run.
+          name: github-pages-${{ github.run_attempt }}
           path: site
 
   deploy-install-site:
@@ -691,6 +694,8 @@ jobs:
       - uses: actions/checkout@v4
       - id: deployment
         uses: actions/deploy-pages@v4
+        with:
+          artifact_name: ${{ needs.build-install-site.outputs.pages_artifact }}
       - name: Confirm public Pages are visible
         run: |
           mkdir -p public-site/install
@@ -792,11 +797,11 @@ jobs:
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
-          name: github-pages-rollback
+          name: github-pages-rollback-${{ github.run_attempt }}
           path: site
       - uses: actions/deploy-pages@v4
         with:
-          artifact_name: github-pages-rollback
+          artifact_name: github-pages-rollback-${{ github.run_attempt }}
       - name: Prove public prior pointer is restored
         env:
           GH_TOKEN: ${{ github.token }}
