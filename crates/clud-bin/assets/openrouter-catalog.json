@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-09T13:18:31Z",
+  "generated_at": "2026-11-10T12:55:54Z",
   "source": "https://openrouter.ai/api/v1/models",
   "pricing_estimate": {
     "label": "lowest-priced eligible models by weighted token-mix estimate; not a quality ranking",
@@ -383,6 +383,64 @@
       "input_price_per_token": 5e-06,
       "output_price_per_token": 2.5e-05,
       "cached_input_price_per_token": 1.25e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "high",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "anthropic/claude-fable-5.2",
+      "name": "Anthropic: Claude Fable 5.2",
+      "provider": "anthropic",
+      "context_length": 1000000,
+      "input_price_per_token": 8e-06,
+      "output_price_per_token": 4e-05,
+      "cached_input_price_per_token": 2e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "high",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "anthropic/claude-fable-5.2:batch",
+      "name": "Anthropic: Claude Fable 5.2 (batch)",
+      "provider": "anthropic",
+      "context_length": 1000000,
+      "input_price_per_token": 4e-06,
+      "output_price_per_token": 2e-05,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1769,9 +1827,9 @@
       "name": "DeepSeek: DeepSeek V4 Pro 0423",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 8.94012e-07,
-      "output_price_per_token": 1.788024e-06,
-      "cached_input_price_per_token": 7.4501e-08,
+      "input_price_per_token": 9.5526e-07,
+      "output_price_per_token": 1.91052e-06,
+      "cached_input_price_per_token": 7.9605e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1824,9 +1882,9 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 5.1e-08,
-      "output_price_per_token": 5.67e-07,
-      "cached_input_price_per_token": 1.8e-08,
+      "input_price_per_token": 6e-09,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 5e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1908,9 +1966,9 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash (batch)",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 1.1e-08,
-      "output_price_per_token": 2e-07,
-      "cached_input_price_per_token": 2e-09,
+      "input_price_per_token": 1.12e-07,
+      "output_price_per_token": 3.36e-07,
+      "cached_input_price_per_token": 3.36e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -2998,9 +3056,9 @@
       "name": "Google: Gemma 4 26B A4B",
       "provider": "google",
       "context_length": 262144,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 3e-07,
-      "cached_input_price_per_token": 5e-08,
+      "input_price_per_token": 8e-08,
+      "output_price_per_token": 1e-07,
+      "cached_input_price_per_token": 4.6e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3597,9 +3655,9 @@
       "name": "Meta: Llama 3.3 70B Instruct",
       "provider": "meta-llama",
       "context_length": 131072,
-      "input_price_per_token": 5.9e-07,
-      "output_price_per_token": 7.9e-07,
-      "cached_input_price_per_token": 2.95e-07,
+      "input_price_per_token": 7.1e-07,
+      "output_price_per_token": 7.1e-07,
+      "cached_input_price_per_token": 7.1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3685,6 +3743,36 @@
       "ineligibility_reasons": [
         "requires tools and tool_choice support"
       ]
+    },
+    {
+      "id": "meta/muse-ember",
+      "name": "Meta: Muse Ember",
+      "provider": "meta",
+      "context_length": 1048576,
+      "input_price_per_token": 1e-07,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 4e-09,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal"
+        ],
+        "default_effort": "max",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "meta/muse-glimmer-30b",
@@ -3973,33 +4061,10 @@
       ]
     },
     {
-      "id": "minimax/minimax-m1",
-      "name": "MiniMax: MiniMax M1",
-      "provider": "minimax",
-      "context_length": 1000000,
-      "input_price_per_token": 5.5e-07,
-      "output_price_per_token": 2.2e-06,
-      "cached_input_price_per_token": 5.5e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "minimax/minimax-m2.5",
       "name": "MiniMax: MiniMax M2.5",
       "provider": "minimax",
-      "context_length": 204800,
+      "context_length": 200000,
       "input_price_per_token": 3e-07,
       "output_price_per_token": 1.2e-06,
       "cached_input_price_per_token": 6e-08,
@@ -4022,7 +4087,7 @@
       "id": "minimax/minimax-m2.7",
       "name": "MiniMax: MiniMax M2.7",
       "provider": "minimax",
-      "context_length": 204800,
+      "context_length": 196608,
       "input_price_per_token": 2.1e-07,
       "output_price_per_token": 8.4e-07,
       "cached_input_price_per_token": 4.2e-08,
@@ -4862,9 +4927,9 @@
       "name": "MoonshotAI: Kimi K3 (batch)",
       "provider": "moonshotai",
       "context_length": 1048576,
-      "input_price_per_token": 9.17e-07,
-      "output_price_per_token": 6e-06,
-      "cached_input_price_per_token": 2.26e-07,
+      "input_price_per_token": 2.28e-06,
+      "output_price_per_token": 1.14e-05,
+      "cached_input_price_per_token": 2.28e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -5036,6 +5101,32 @@
         "default_effort": "high",
         "default_enabled": null,
         "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "nex-agi/nex-n2.6",
+      "name": "Nex AGI: Nex-N2.6",
+      "provider": "nex-agi",
+      "context_length": 262144,
+      "input_price_per_token": 1.2e-07,
+      "output_price_per_token": 4e-07,
+      "cached_input_price_per_token": 2.4e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "medium"
+        ],
+        "default_effort": "high",
+        "default_enabled": null,
+        "mandatory": true
       },
       "supports_vision": true,
       "eligible_for_coding": true,
@@ -5270,7 +5361,7 @@
       "provider": "nvidia",
       "context_length": 1048576,
       "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 5e-07,
+      "output_price_per_token": 4.7e-07,
       "cached_input_price_per_token": 2e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -7801,9 +7892,9 @@
       "name": "OpenAI: gpt-oss-20b",
       "provider": "openai",
       "context_length": 131072,
-      "input_price_per_token": 1.8e-08,
-      "output_price_per_token": 9e-08,
-      "cached_input_price_per_token": 9e-09,
+      "input_price_per_token": 3e-08,
+      "output_price_per_token": 1.3e-07,
+      "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -8547,9 +8638,9 @@
       "name": "Qwen: Qwen3 14B",
       "provider": "qwen",
       "context_length": 40960,
-      "input_price_per_token": 1.2e-07,
-      "output_price_per_token": 2.4e-07,
-      "cached_input_price_per_token": 1.2e-07,
+      "input_price_per_token": 1e-07,
+      "output_price_per_token": 2.2e-07,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9286,7 +9377,7 @@
       "id": "qwen/qwen3.8-27b",
       "name": "Qwen: Qwen3.8 27B",
       "provider": "qwen",
-      "context_length": 1024000,
+      "context_length": 1048575,
       "input_price_per_token": 1.5e-07,
       "output_price_per_token": 1.875e-06,
       "cached_input_price_per_token": 3.75e-08,
@@ -9369,6 +9460,35 @@
       "input_price_per_token": 2e-06,
       "output_price_per_token": 6e-06,
       "cached_input_price_per_token": 2.5e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal"
+        ],
+        "default_effort": "xhigh",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "qwen/qwen3.8-max-0902:batch",
+      "name": "Qwen: Qwen3.8 Max (0902) (batch)",
+      "provider": "qwen",
+      "context_length": 262144,
+      "input_price_per_token": 1.15e-06,
+      "output_price_per_token": 3.45e-06,
+      "cached_input_price_per_token": 1.15e-06,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9603,7 +9723,7 @@
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
-      "supports_reasoning": false,
+      "supports_reasoning": true,
       "supports_reasoning_effort": false,
       "reasoning": {
         "supported_efforts": null,
@@ -9824,36 +9944,6 @@
       ]
     },
     {
-      "id": "stealth/crouton-alpha",
-      "name": "Crouton Alpha",
-      "provider": "stealth",
-      "context_length": 1048576,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": true,
-      "reasoning": {
-        "supported_efforts": [
-          "max",
-          "xhigh",
-          "high",
-          "medium",
-          "low",
-          "minimal"
-        ],
-        "default_effort": "max",
-        "default_enabled": null,
-        "mandatory": true
-      },
-      "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "stepfun/step-3.5-flash",
       "name": "StepFun: Step 3.5 Flash",
       "provider": "stepfun",
@@ -9907,7 +9997,7 @@
       "id": "stepfun/step-5-preview",
       "name": "StepFun: Step 5 Preview",
       "provider": "stepfun",
-      "context_length": 1048576,
+      "context_length": 1000000,
       "input_price_per_token": 1e-06,
       "output_price_per_token": 2.7e-06,
       "cached_input_price_per_token": 1e-07,
@@ -10245,6 +10335,37 @@
       "supports_vision": true,
       "eligible_for_coding": true,
       "ineligibility_reasons": []
+    },
+    {
+      "id": "thinkingmachines/inkling-2-small:free",
+      "name": "Thinking Machines: Inkling 2 Small (free)",
+      "provider": "thinkingmachines",
+      "context_length": 1048576,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": false,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "high",
+          "medium",
+          "low",
+          "minimal"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
     },
     {
       "id": "thinkingmachines/inkling-small",
@@ -10788,7 +10909,7 @@
       "id": "xiaomi/mimo-v2.5-pro",
       "name": "Xiaomi: MiMo-V2.5-Pro",
       "provider": "xiaomi",
-      "context_length": 1050000,
+      "context_length": 1024000,
       "input_price_per_token": 4.8e-07,
       "output_price_per_token": 1.8e-06,
       "cached_input_price_per_token": 9.6e-08,
@@ -11134,9 +11255,9 @@
       "name": "Z.ai: GLM 5.2",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 6e-09,
+      "input_price_per_token": 1e-08,
       "output_price_per_token": 6.8e-06,
-      "cached_input_price_per_token": 5e-09,
+      "cached_input_price_per_token": 9e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11161,9 +11282,9 @@
       "name": "Z.ai: GLM 5.2 (batch)",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 6.23e-07,
-      "output_price_per_token": 1.271e-06,
-      "cached_input_price_per_token": 2.1e-07,
+      "input_price_per_token": 5.27e-07,
+      "output_price_per_token": 1.075e-06,
+      "cached_input_price_per_token": 1.78e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11215,8 +11336,8 @@
       "name": "Z.ai: GLM 5.3 Flash",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 3.35e-08,
-      "output_price_per_token": 8.3e-08,
+      "input_price_per_token": 1.5e-07,
+      "output_price_per_token": 5e-07,
       "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -11242,9 +11363,9 @@
       "name": "Z.ai: GLM 5.3 Flash (batch)",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 5e-08,
-      "output_price_per_token": 1.8e-07,
-      "cached_input_price_per_token": 1e-08,
+      "input_price_per_token": 3e-08,
+      "output_price_per_token": 6.1e-08,
+      "cached_input_price_per_token": 1.3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11400,9 +11521,9 @@
       "name": "Anthropic: Claude Fable Latest",
       "provider": "anthropic",
       "context_length": 1000000,
-      "input_price_per_token": 1e-05,
-      "output_price_per_token": 5e-05,
-      "cached_input_price_per_token": 2.5e-07,
+      "input_price_per_token": 8e-06,
+      "output_price_per_token": 4e-05,
+      "cached_input_price_per_token": 2e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11881,8 +12002,8 @@
       "name": "Z.ai: GLM Flash Latest",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 3.35e-08,
-      "output_price_per_token": 8.3e-08,
+      "input_price_per_token": 3.99e-08,
+      "output_price_per_token": 7.84e-08,
       "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -11977,10 +12098,6 @@
       "weighted_usd_per_million_tokens": 0.0
     },
     {
-      "id": "stealth/crouton-alpha",
-      "weighted_usd_per_million_tokens": 0.0
-    },
-    {
       "id": "xingchen-agi/xing4.0-29b-a4b:free",
       "weighted_usd_per_million_tokens": 0.0
     },
@@ -12001,16 +12118,20 @@
       "weighted_usd_per_million_tokens": 0.0292
     },
     {
-      "id": "openai/gpt-oss-20b",
-      "weighted_usd_per_million_tokens": 0.0315
+      "id": "z-ai/glm-5.3-flash:batch",
+      "weighted_usd_per_million_tokens": 0.0345
     },
     {
       "id": "openai/gpt-oss-20b:batch",
       "weighted_usd_per_million_tokens": 0.0416
     },
     {
-      "id": "z-ai/glm-5.3-flash",
-      "weighted_usd_per_million_tokens": 0.04305
+      "id": "~z-ai/glm-flash-latest",
+      "weighted_usd_per_million_tokens": 0.04661
+    },
+    {
+      "id": "qwen/qwen3.7-flash",
+      "weighted_usd_per_million_tokens": 0.0476
     }
   ]
 }
