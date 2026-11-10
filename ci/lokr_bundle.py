@@ -1,4 +1,4 @@
-"""Prepare checksum-pinned lokr bytes for an offline, single-file clud installer."""
+"""Prepare pinned lokr bytes for native installers or download identities for wheels."""
 
 import hashlib
 import json
@@ -65,8 +65,18 @@ def prepare(
     cache: Path,
     *,
     download: Callable[[str], bytes] = download_release,
+    embed: bool = True,
 ) -> dict[str, str]:
     version, item = artifact(manifest, target)
+    prepared = env | {
+        "CLUD_LOKR_VERSION": version,
+        "CLUD_LOKR_SHA256": item["sha256"],
+        "CLUD_LOKR_URL": item["url"],
+        "CLUD_LOKR_SIZE": str(item["size_bytes"]),
+    }
+    if not embed:
+        prepared.pop("CLUD_LOKR_BINARY", None)
+        return prepared | {"CLUD_LOKR_FETCH_ONLY": "1"}
     cached = cache / f"{item['sha256']}-{item['filename']}"
     if cached.is_file():
         payload = cached.read_bytes()
@@ -86,11 +96,8 @@ def prepare(
         or hashlib.sha256(destination.read_bytes()).hexdigest() != item["sha256"]
     ):
         atomic_write(destination, payload)
-    return env | {
-        "CLUD_LOKR_BINARY": str(destination.resolve()),
-        "CLUD_LOKR_VERSION": version,
-        "CLUD_LOKR_SHA256": item["sha256"],
-    }
+    prepared.pop("CLUD_LOKR_FETCH_ONLY", None)
+    return prepared | {"CLUD_LOKR_BINARY": str(destination.resolve())}
 
 
 def atomic_write(destination: Path, payload: bytes) -> None:
@@ -102,16 +109,19 @@ def atomic_write(destination: Path, payload: bytes) -> None:
     os.replace(temporary, destination)
 
 
-def prepare_build(target: str) -> None:
+def prepare_build(target: str, *, embed: bool = True) -> None:
     manifest = json.loads(SPEC.read_text(encoding="utf-8"))
     cache = ROOT / "target/lokr-bundle"
-    for field in ("BINARY", "VERSION", "SHA256"):
-        os.environ.pop(f"CLUD_LOKR_FALLBACK_{field}", None)
+    for prefix in ("", "FALLBACK_"):
+        for field in ("BINARY", "VERSION", "SHA256", "URL", "SIZE", "FETCH_ONLY"):
+            os.environ.pop(f"CLUD_LOKR_{prefix}{field}", None)
     # Static clud supports both glibc/Nix-ld desktops and musl-only hosts.
     primary = target.removesuffix("-musl") + "-gnu" if target.endswith("-linux-musl") else target
-    env = prepare(dict(os.environ), primary, manifest, cache, download=download_release)
+    env = prepare(
+        dict(os.environ), primary, manifest, cache, download=download_release, embed=embed
+    )
     if primary != target:
-        fallback = prepare({}, target, manifest, cache, download=download_release)
+        fallback = prepare({}, target, manifest, cache, download=download_release, embed=embed)
         env.update(
             {
                 key.replace("CLUD_LOKR_", "CLUD_LOKR_FALLBACK_"): value

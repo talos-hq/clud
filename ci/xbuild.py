@@ -804,7 +804,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.command in {"compile", "wheel", "standalone", "candidate"}:
         from ci.lokr_bundle import prepare_build
 
-        prepare_build(args.target)
+        # Native installers stay self-contained. Release wheels carry only the
+        # verified download identity to remain below the existing PyPI size cap.
+        embed = args.profile != "release" or args.command in {"standalone", "candidate"}
+        prepare_build(args.target, embed=embed)
 
     if args.strategy == "soldr":
         prepare_toolchain_locally(args.target)

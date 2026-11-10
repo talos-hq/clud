@@ -59,7 +59,7 @@ from the prompt to its sink; see [secret-prompt.md](secret-prompt.md).
   access under the same account can still read these locations.
 - The flag is silently ignored on the Codex backend.
 - `request_secret`'s prompt window has not been exercised end to end.
-- clud's bundled, privately installed lokr supplies the MCP schema, scanner and
+- clud's pinned, privately installed lokr supplies the MCP schema, scanner and
   prompt. Distribution and digest verification are owned by
   [secret-prompt.md](secret-prompt.md); no crates.io placeholder is used.
 

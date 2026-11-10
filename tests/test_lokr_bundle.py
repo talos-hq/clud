@@ -30,10 +30,31 @@ def test_build_entry_prepares_lokr_before_compiling(monkeypatch) -> None:
 
     calls = []
     monkeypatch.setattr(xbuild, "cross_toolchain_preflight", lambda _: None)
-    monkeypatch.setattr(lokr_bundle, "prepare_build", lambda target: calls.append(target))
+    monkeypatch.setattr(
+        lokr_bundle, "prepare_build", lambda target, *, embed: calls.append((target, embed))
+    )
     monkeypatch.setattr(xbuild, "cmd_compile", lambda _: calls.append("compile") or 0)
     assert xbuild.main(["compile", "--target", "x86_64-unknown-linux-gnu"]) == 0
-    assert calls == ["x86_64-unknown-linux-gnu", "compile"]
+    assert calls == [("x86_64-unknown-linux-gnu", True), "compile"]
+
+
+@pytest.mark.parametrize(
+    ("command", "embed"),
+    [("compile", False), ("wheel", False), ("standalone", True), ("candidate", True)],
+)
+def test_release_distribution_policy(command: str, embed: bool, monkeypatch) -> None:
+    from ci import xbuild
+
+    calls = []
+    monkeypatch.setattr(xbuild, "cross_toolchain_preflight", lambda _: None)
+    monkeypatch.setattr(xbuild, f"cmd_{command}", lambda _: 0)
+    monkeypatch.setattr(
+        lokr_bundle, "prepare_build", lambda target, *, embed: calls.append((target, embed))
+    )
+    assert (
+        xbuild.main([command, "--target", "x86_64-unknown-linux-gnu", "--profile", "release"]) == 0
+    )
+    assert calls == [("x86_64-unknown-linux-gnu", embed)]
 
 
 def spec(payload: bytes) -> dict:
@@ -69,6 +90,29 @@ def test_pinned_binary_is_verified_and_reused_without_network(tmp_path: Path) ->
     ]
     lokr_bundle.prepare({}, "x86_64-unknown-linux-gnu", manifest, tmp_path, download=download)
     assert len(calls) == 1
+
+
+def test_release_wheels_prepare_only_verified_download_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    manifest = spec(b"fixture")
+    pin = tmp_path / "pin.json"
+    pin.write_text(json.dumps(manifest))
+    monkeypatch.setattr(lokr_bundle, "SPEC", pin)
+    monkeypatch.setattr(lokr_bundle, "ROOT", tmp_path)
+    monkeypatch.setattr(
+        lokr_bundle, "download_release", lambda _: pytest.fail("release wheels must stay small")
+    )
+    for prefix in ("", "FALLBACK_"):
+        for field in ("BINARY", "VERSION", "SHA256", "URL", "SIZE", "FETCH_ONLY"):
+            monkeypatch.setenv(f"CLUD_LOKR_{prefix}{field}", "stale native bundle")
+    lokr_bundle.prepare_build("x86_64-unknown-linux-gnu", embed=False)
+    assert "CLUD_LOKR_BINARY" not in os.environ
+    assert os.environ["CLUD_LOKR_FETCH_ONLY"] == "1"
+    assert os.environ["CLUD_LOKR_VERSION"] == "0.1.0"
+    assert os.environ["CLUD_LOKR_SIZE"] == str(len(b"fixture"))
+    assert os.environ["CLUD_LOKR_URL"] == manifest["artifacts"]["x86_64-unknown-linux-gnu"]["url"]
+    assert not (tmp_path / "target/lokr-bundle").exists()
 
 
 def test_digest_failure_never_publishes_binary(tmp_path: Path) -> None:
@@ -122,7 +166,7 @@ def test_static_clud_contains_desktop_gnu_and_musl_fallback(tmp_path: Path, monk
     monkeypatch.setattr(
         lokr_bundle, "download_release", lambda url: musl if url.endswith("musl") else gnu
     )
-    for field in ("BINARY", "VERSION", "SHA256"):
+    for field in ("BINARY", "VERSION", "SHA256", "URL", "SIZE", "FETCH_ONLY"):
         monkeypatch.setenv(f"CLUD_LOKR_{field}", "")
         monkeypatch.setenv(f"CLUD_LOKR_FALLBACK_{field}", "")
     lokr_bundle.prepare_build("x86_64-unknown-linux-musl")

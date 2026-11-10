@@ -61,7 +61,7 @@ impl Fingerprint {
 }
 
 pub fn plan(intent: InstallIntent, modify_path: bool) -> Result<InstallPlan, String> {
-    crate::managed_lokr::require_bundle()?;
+    crate::managed_lokr::require_distribution()?;
     let destination = approved_destination()?;
     inspect_destination(&destination, false)?;
     let backup = destination.with_extension("clud-backup");
@@ -271,7 +271,8 @@ pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
     let stage = stage.into_temp_path();
     verify_version(&stage_path, &plan.version)?;
     // Install the verified companion before committing clud, so dependency failure
-    // leaves the user's existing clud executable intact. This step is offline.
+    // leaves the user's existing clud executable intact. Native bytes are offline;
+    // wheel builds fetch the same checksum-pinned helper before this commit.
     crate::managed_lokr::ensure_installed()?;
     commit(&plan.destination, &stage, &plan.version, &stage_digest)?;
     Ok(())
