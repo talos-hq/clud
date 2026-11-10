@@ -1,0 +1,47 @@
+{
+  "version": "0.1.0",
+  "tag": "v0.1.0",
+  "source_commit": "98fe82cca8103d2cf3a20dbcec97df0668d7450c",
+  "artifacts": {
+    "x86_64-unknown-linux-musl": {
+      "filename": "lokr-x86_64-unknown-linux-musl",
+      "sha256": "9df70908f8ada454bc0ce7cf02d1cba169df996ed12f56d49d9833c2ea77f069",
+      "size_bytes": 15627688
+    },
+    "aarch64-unknown-linux-musl": {
+      "filename": "lokr-aarch64-unknown-linux-musl",
+      "sha256": "f6c3d0c0f014ae1c3fbc31f638c25cc8e90ae6b750d5ceae4b51cf476331e3d6",
+      "size_bytes": 12931848
+    },
+    "x86_64-unknown-linux-gnu": {
+      "filename": "lokr-x86_64-unknown-linux-gnu",
+      "sha256": "33b879fe67fc64492ad0fe89ee10eb8420c6ad3fa0a129458751da7e330fb88c",
+      "size_bytes": 15459616
+    },
+    "aarch64-unknown-linux-gnu": {
+      "filename": "lokr-aarch64-unknown-linux-gnu",
+      "sha256": "a7dff04f1a46c9fda27d86b0d010824d9d60035c3fd5da701e81cf163634421f",
+      "size_bytes": 13706400
+    },
+    "x86_64-apple-darwin": {
+      "filename": "lokr-x86_64-apple-darwin",
+      "sha256": "274a9070fdb71c470620f0824ed62afbcf380d6f22841115517cdb5ad01441f2",
+      "size_bytes": 10417848
+    },
+    "aarch64-apple-darwin": {
+      "filename": "lokr-aarch64-apple-darwin",
+      "sha256": "03a31bd06e8ed88b0470441810f24d2050c165a191ec5a6556a9174a1451f33c",
+      "size_bytes": 9938656
+    },
+    "x86_64-pc-windows-msvc": {
+      "filename": "lokr-x86_64-pc-windows-msvc.exe",
+      "sha256": "edcf91f8be4151d782e7fcb3899c4843630b052f37c631b21408eada9ef0077f",
+      "size_bytes": 12204032
+    },
+    "aarch64-pc-windows-msvc": {
+      "filename": "lokr-aarch64-pc-windows-msvc.exe",
+      "sha256": "c826dfe0d9ae677b440b6d1c4cec3c402d943cfc1c002bce701acf445895e6a9",
+      "size_bytes": 10610176
+    }
+  }
+}

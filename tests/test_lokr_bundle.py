@@ -10,6 +10,21 @@ import pytest
 from ci import lokr_bundle
 
 
+def test_published_pin_covers_every_clud_release_target() -> None:
+    from ci.ci_matrix import TARGETS
+
+    manifest = json.loads(lokr_bundle.SPEC.read_text(encoding="utf-8"))
+    targets = {target.triple for target in TARGETS}
+    targets.update(
+        target.removesuffix("-gnu") + "-musl"
+        for target in tuple(targets)
+        if target.endswith("-linux-gnu")
+    )
+    assert set(manifest["artifacts"]) == targets
+    for target in targets:
+        lokr_bundle.artifact(manifest, target)
+
+
 def test_build_entry_prepares_lokr_before_compiling(monkeypatch) -> None:
     from ci import xbuild
 

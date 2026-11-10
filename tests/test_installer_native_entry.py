@@ -164,6 +164,44 @@ def run_first_install(argv: list[str], env: dict[str, str], destination: Path):
         pytest.fail(f"install exceeded {INSTALL_STALL_BUDGET_SECONDS} s; {parent} held {files}")
 
 
+def installed_lokr_path(env: dict[str, str], destination: Path) -> Path:
+    """Use the selected bundle's preview, allowing older cached lokr versions."""
+    sink = destination.parent / "preview-must-not-exist"
+    preview = run_process(
+        [
+            str(destination),
+            "secret",
+            "--title",
+            "GitHub deployment token for example.com",
+            "--message",
+            "Configure deployment; find the token in GitHub developer settings",
+            "--dry-run",
+            "--to-file",
+            str(sink),
+        ],
+        env=env,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert preview.returncode == 0, preview.stderr.decode(errors="replace")
+    engine = next(
+        (
+            line
+            for line in preview.stdout.decode().splitlines()
+            if line.startswith("Prompt engine: ")
+        ),
+        "",
+    )
+    assert engine.startswith("Prompt engine: bundled lokr "), engine
+    companion = Path(engine.partition(" at ")[2])
+    home = Path(env["USERPROFILE"] if sys.platform == "win32" else env["HOME"])
+    assert companion.parent.parent == home / ".clud/libexec/lokr"
+    assert companion.is_file()
+    assert not sink.exists()
+    return companion
+
+
 def assert_crlf(output: bytes) -> None:
     for index, byte in enumerate(output):
         if byte == 10:
@@ -388,35 +426,45 @@ def test_explicit_current_installs_verified_copy_offline(installer_target) -> No
     assert destination.read_bytes() == clud_binary().read_bytes()
     assert not list(destination.parent.glob(".clud-install-*"))
     assert not destination.with_suffix(".clud-backup").exists()
-    managed_lokr = list((destination.parents[2] / ".clud/libexec/lokr").glob("*/lokr*"))
-    assert len(managed_lokr) == 1, "native installation must provide its secure prompt offline"
-    assert managed_lokr[0].is_file()
-    preview = run_process(
-        [
-            str(destination),
-            "secret",
-            "--title",
-            "GitHub deployment token for example.com",
-            "--message",
-            "Configure deployment; find the token in GitHub developer settings",
-            "--dry-run",
-            "--to-file",
-            str(destination.parent / "must-not-exist"),
-        ],
-        env=env,
-        capture_output=True,
-        timeout=30,
-        check=False,
-    )
-    assert preview.returncode == 0, preview.stderr.decode(errors="replace")
-    assert b"bundled lokr" in preview.stdout
-    assert not (destination.parent / "must-not-exist").exists()
+    installed_lokr_path(env, destination)
     if sys.platform != "win32":
         for profile in (
             destination.parents[2] / ".bash_profile",
             destination.parents[2] / ".bashrc",
         ):
             assert profile.read_text().count("# >>> clud installer PATH >>>") == 1
+
+
+@pytest.mark.skipif(
+    os.environ.get("GITHUB_ACTIONS") != "true",
+    reason="executes the published lokr dry run on native candidate hosts",
+)
+def test_installed_lokr_release_accepts_headless_probe(installer_target) -> None:
+    env, destination = installer_target
+    env = env | {"LOKR_TEST_MODE": "1"}
+    for name in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET"):
+        env.pop(name, None)
+    installed = run_process(
+        [str(clud_binary()), "--installer", "--install-current", "--yes", "--no-modify-path"],
+        env=env,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert installed.returncode == 0, installed.stderr.decode(errors="replace")
+    companion = installed_lokr_path(env, destination)
+    probe = run_process(
+        [str(companion), "--dry-run"],
+        env=env,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert probe.returncode == 0, probe.stderr.decode(errors="replace")
+    report = json.loads(probe.stdout)
+    assert report["status"] == "ok"
+    assert report["interactive"] is False
+    assert companion.parent.name.startswith(f"{report['version']}-")
 
 
 def test_interrupted_commit_restores_backup_before_reinstall(installer_target) -> None:
