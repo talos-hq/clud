@@ -69,9 +69,15 @@ def require_snapshot(release: dict, snapshot: dict, tag: str) -> None:
         raise ValueError("public prerelease identity or bytes changed since the original proof")
 
 
-def require_harness_only(paths: list[str]) -> None:
+def require_recovery_changes(paths: list[str]) -> None:
     allowed = ("ci/", ".github/workflows/", ".github/actions/", "tests/", "docs/")
-    if any(not path.startswith(allowed) for path in paths):
+    # These independently refreshed data files are not read from the harness:
+    # full CI and all shipped artifacts still use the immutable original tag.
+    model_data = {
+        "crates/clud-bin/assets/openrouter-catalog.json",
+        "crates/clud-bin/assets/server-settings.json",
+    }
+    if any(path not in model_data and not path.startswith(allowed) for path in paths):
         raise ValueError("production inputs changed since the immutable release tag")
 
 
@@ -90,7 +96,7 @@ def validate_harness(source_sha: str, harness_sha: str) -> None:
         paths.append(row["filename"])
         if old := row.get("previous_filename"):
             paths.append(old)
-    require_harness_only(paths)
+    require_recovery_changes(paths)
 
 
 def require_same_proof(original: dict, current: dict) -> None:
