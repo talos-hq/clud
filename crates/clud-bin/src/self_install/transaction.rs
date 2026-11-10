@@ -61,6 +61,7 @@ impl Fingerprint {
 }
 
 pub fn plan(intent: InstallIntent, modify_path: bool) -> Result<InstallPlan, String> {
+    crate::managed_lokr::require_bundle()?;
     let destination = approved_destination()?;
     inspect_destination(&destination, false)?;
     let backup = destination.with_extension("clud-backup");
@@ -141,13 +142,14 @@ pub fn plan(intent: InstallIntent, modify_path: bool) -> Result<InstallPlan, Str
 impl InstallPlan {
     pub fn description(&self) -> String {
         format!(
-            "Selected version: {}\nSource: {}\nSHA-256: {}\nDestination: {}\nReplacement: {}\nPATH/profile proposal: {}",
+            "Selected version: {}\nSource: {}\nSHA-256: {}\nDestination: {}\nReplacement: {}\nPATH/profile proposal: {}\nPrompt engine: {} (private versioned install)",
             self.version,
             self.source_label,
             self.source_sha256,
             self.destination.display(),
             self.replacement.as_deref().unwrap_or("none; create new executable"),
-            self.path_proposal
+            self.path_proposal,
+            crate::managed_lokr::preview()
         )
     }
 }
@@ -268,6 +270,9 @@ pub fn execute(mut plan: InstallPlan) -> Result<(), String> {
     make_executable(&stage_path)?;
     let stage = stage.into_temp_path();
     verify_version(&stage_path, &plan.version)?;
+    // Install the verified companion before committing clud, so dependency failure
+    // leaves the user's existing clud executable intact. This step is offline.
+    crate::managed_lokr::ensure_installed()?;
     commit(&plan.destination, &stage, &plan.version, &stage_digest)?;
     Ok(())
 }
@@ -376,7 +381,7 @@ fn current_arch() -> Arch {
     }
 }
 
-fn validate_native_header(
+pub(crate) fn validate_native_header(
     file: &mut File,
     os: Os,
     arch: Arch,
@@ -442,6 +447,10 @@ fn validate_native_header(
     file.seek(SeekFrom::Start(0))
         .map_err(|error| error.to_string())?;
     Ok(())
+}
+
+pub(crate) fn validate_host_executable(file: &mut File) -> Result<(), String> {
+    validate_native_header(file, current_os(), current_arch(), Flavor::Native)
 }
 
 fn run_version(path: &Path) -> Result<String, String> {

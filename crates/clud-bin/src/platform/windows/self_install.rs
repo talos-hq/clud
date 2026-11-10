@@ -34,6 +34,10 @@ pub fn file_identity(_meta: &fs::Metadata) -> FileIdentity {
     FileIdentity
 }
 
+pub fn lokr_gnu_loader_available() -> bool {
+    false
+}
+
 pub fn create_install_dir(parent: &Path) -> Result<(), String> {
     fs::create_dir_all(parent).map_err(|error| format!("create user bin: {error}"))
 }

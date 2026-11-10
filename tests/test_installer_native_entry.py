@@ -388,6 +388,29 @@ def test_explicit_current_installs_verified_copy_offline(installer_target) -> No
     assert destination.read_bytes() == clud_binary().read_bytes()
     assert not list(destination.parent.glob(".clud-install-*"))
     assert not destination.with_suffix(".clud-backup").exists()
+    managed_lokr = list((destination.parents[2] / ".clud/libexec/lokr").glob("*/lokr*"))
+    assert len(managed_lokr) == 1, "native installation must provide its secure prompt offline"
+    assert managed_lokr[0].is_file()
+    preview = run_process(
+        [
+            str(destination),
+            "secret",
+            "--title",
+            "GitHub deployment token for example.com",
+            "--message",
+            "Configure deployment; find the token in GitHub developer settings",
+            "--dry-run",
+            "--to-file",
+            str(destination.parent / "must-not-exist"),
+        ],
+        env=env,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    assert preview.returncode == 0, preview.stderr.decode(errors="replace")
+    assert b"bundled lokr" in preview.stdout
+    assert not (destination.parent / "must-not-exist").exists()
     if sys.platform != "win32":
         for profile in (
             destination.parents[2] / ".bash_profile",

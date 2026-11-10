@@ -51,10 +51,22 @@ guard, not a boundary against a malicious local process impersonating a caller.
 Never run askpass directly from a captured agent shell.
 
 The prompt and catalog belong to [forge-ci/lokr](https://github.com/forge-ci/lokr).
-clud resolves a co-distributed `lokr` executable alongside itself, then PATH.
-If none is available it prints `failed` with an install hint; it never opens
-zenity, systemd-ask-password or a separate clud credential UI.
-Install with `soldr cargo install --git https://github.com/forge-ci/lokr lokr`.
+Published clud executables embed a functional native lokr release, pinned by
+version, exact size and SHA-256 in `crates/clud-bin/assets/lokr-release.json`.
+The native installer extracts it offline under
+`~/.clud/libexec/lokr/<version>-<digest>/` before committing clud. Direct binary
+and wheel users get the same private extraction on first actual prompt/catalog
+use. Resolution prefers that verified managed copy over sibling/PATH programs;
+the non-functional crates.io lokr 0.0.1 is never the production dependency.
+Static Linux clud includes GNU lokr for desktop dynamic loading and Nix-ld, plus
+a musl fallback for hosts without the GNU loader. Windows/macOS carry their
+matching native executable. `--dry-run` reports the selected engine/path but
+never extracts it, starts it or writes the secret sink.
+
+Development builds remain network-free and may use a functional sibling/PATH
+lokr; their native installer refuses to claim success without a bundle.
+Missing or modified managed bytes fail closed with an install hint. clud never
+opens zenity, systemd-ask-password or a separate credential UI.
 
 `--title`, `--hint`, `--pattern`, `--multiline`, `--to-file`, `--to-keyring` and `--to-command`
 map directly to `lokr request`; `--label`/`--message` map to `--message`.

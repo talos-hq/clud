@@ -125,6 +125,7 @@ mod loop_console;
 pub mod loop_plan_mode;
 pub mod loop_restart;
 pub mod loop_spec;
+mod managed_lokr;
 pub mod meta_auth;
 pub mod metered_policy;
 pub mod multicall;
