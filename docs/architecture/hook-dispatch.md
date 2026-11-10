@@ -428,12 +428,84 @@ one `hookSpecificOutput.additionalContext` line naming the bundled waiter:
 `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120
 --timeout 3600`, which blocks and prints only the delta.
 
+**One query, many dressings (#2233).** Counting by exact call was not enough
+either. Measured over 2026-11-08/09, one session issued the same
+`gh pr list --head fix/2002-false-green-matrix …` query 193 times while waiting
+on a PR that did not exist yet, and produced **zero** notes and **zero**
+refusals. It alternated two dressings — `sleep 60; gh pr list …` and
+`cat …/tasks/<id>.output; sleep 55; gh pr list …` where `cat` read a *different*
+background task file on every turn — so each call had a different exact
+signature, and the single `steady` slot was reset by whichever call came in
+between. The ledger now keeps one entry per poll query (up to eight, oldest
+outside the 6 h window dropped), and the poll key is the query's
+*state-reading core*: leading `sleep` / `true` / `:` / `echo` / `printf` /
+`date` / `pwd` segments and reads of a background task's own `.output` are
+stripped, and `--json` field lists and word order are canonicalized. A poll
+dressed differently on alternate turns therefore still shares one count, while
+a different branch, PR or query keeps its own.
+
+**Presentation is not part of the query (2026-11-10).** The next measured loop
+had no `gh` in it at all: one session polled `uv run --project ci errors
+--since 15m` **783 times** under 80 presentations — `| grep -v "ERR  429" |
+tail -10`, `| cut -c1-160 | tail -n 13`, `timeout 170 …`, and a wrapping `cd`,
+dropping `2>&1` on some turns — for 626 MB of that day's 1.7 GB fleet exposure,
+and under the previous rule it produced no note and no refusal (`uv` was not
+recognized as a state reader at all). Two additions fix the class:
+
+- a project runner is a query when its *verb* reads: `uv run [--project X]
+  <verb>` where `<verb>` is in `RUNNER_READ` (`errors`, `logs`, `status`,
+  `list`, `show`, `diff`, `get`, `tail`, `ps`, `inspect`, `describe`, `wait`,
+  …). A runner executes anything, so the verb list is deliberately read-only
+  verbs only — `uv run --project ci test` and `uv run pytest` are not counted.
+  A `timeout [-k D] <duration>` wrapper is now stepped over the same way.
+- pipeline stages that only *present* another command's output (`grep`, `rg`,
+  `tail`, `head`, `sed`, `cut`, `wc`, `sort`, `uniq`, `tr`, `column`, `fmt`,
+  `jq`, `awk`, `less`) and a bare `cd` are stripped from the poll core, so the
+  same query under a different tail length shares one count. The stripping is
+  conditional: a lone `grep -r <pattern>` **is** the query, so two different
+  searches never merge.
+
+E2E through the shipped scanner binary, cycling the five measured dressings:
+`poll-note` at call **6** and **24**, `[clud poll-guard]` first at call **97**,
+and a different time window (`--since 1h`) keeps its own count. The 783-call
+loop would therefore have stopped at 97.
+
+**A local file is state too (2026-11-10).** The next probe's top repeated-payload
+families had no remote query in them at all. One coordinator loop ran
+`ls <pool>/NEXT_MESSAGE.md 2>/dev/null; grep manager_session_id <pool>/state.json`
+**169 times** (163 byte-identical answers, ~114 MB of the fleet's 1.7 GB day),
+and 156 sessions read one `.worker-pool/state.json` a second time through a
+different `head` slice (230 + 104 + 80 calls under one file, all below any
+guard's threshold). Both were invisible: the read-hop guard counts shell *read*
+verbs, so a `grep`/`jq`/`ls` poll of a state file never counted as a read, and
+the poll ledger knew only remote verbs (`gh`, `git`, `curl`, `ssh`,
+`systemctl`, `docker`, `uv run <read-verb>`), so `cat <file>` never counted as
+a query either.
+
+A command whose **every** segment is a plain file read is now a read-only query
+of that file: the program must be in `LOCAL_READ_PROGRAMS` (`cat`, `head`,
+`tail`, `jq`, `grep`, `rg`, `sed`, `awk`, `ls`, `stat`, `wc`, `file`, …), every
+path it names must be absolute or `~/`-relative (the hook has no shell cwd, so a
+bare `state.json` is left to the exact-call guard), the command must not write
+(`sed -i`, `sort -o`, any `> file` other than `2>&1` / `>/dev/null`), and one
+non-reading segment — a `gh` query, an `rm` — hands the call back to the
+exact-command key. Bare pipeline stages (`| head -60`, `| grep -v`) are
+presentation, not reads.
+
+Its poll key is the sorted path list **with each file's current `(len, mtime)`
+fingerprint** instead of the command text, which is what makes counting safe: a
+file that changed is a different key, so `edit → re-read` re-arms, and a file
+that has not changed cannot answer differently. A file that does not exist yet
+keys on `-` and re-arms the moment it appears — the `ls; grep` loop above
+therefore shares one count across all of its dressings and stops at 97, and the
+6th repeat gets the note naming the bundled waiter.
+
 Those two notes are advisory, and the measured session above ignored both: 127
 more identical polls in the next 24 h. So the ladder ends. Repeat
 `POLL_DENY_AT + 1 = 97` of the *same read-only query* in one session is refused
 with `[clud poll-guard]`, the same waiter command, and the deliberate-repeat
-escape `CLUD_ALLOW_REPEAT=1` (any different call resets the count, and the
-refusal is per exact call signature). Nothing that is not a read-only query is
+escape `CLUD_ALLOW_REPEAT=1` (a count belongs to its query, and the refusal is
+per query, not per exact call signature). Nothing that is not a read-only query is
 ever counted, so builds, tests and writes keep the burst guard's own 200-call
 limit; `CLUD_REPEAT_CALL_LIMIT=0` still disables the whole module.
 `CLUD_POLL_CALL_LIMIT=<n>` or `hooks.poll_call_limit` moves the poll limit alone
