@@ -478,7 +478,9 @@ jobs:
 
   public-host:
     name: Public ${{ inputs.mode }} native install on ${{ matrix.runner }}
-    if: inputs.release_tag != ''
+    if: >-
+      always() && !cancelled() &&
+      (inputs.release_tag != '')
     strategy:
       fail-fast: false
       matrix:
@@ -524,7 +526,9 @@ jobs:
 
   public-nixos:
     name: Public ${{ inputs.mode }} NixOS VM ${{ matrix.target }} nix-ld=${{ matrix.nix_ld }}
-    if: inputs.release_tag != ''
+    if: >-
+      always() && !cancelled() &&
+      (inputs.release_tag != '')
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -594,7 +598,9 @@ jobs:
 
   public-distros:
     name: Public ${{ inputs.mode }} on ${{ matrix.distro }} ${{ matrix.arch }}
-    if: inputs.release_tag != ''
+    if: >-
+      always() && !cancelled() &&
+      (inputs.release_tag != '')
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -690,7 +696,9 @@ jobs:
 
   catalog-unit:
     name: Native catalog and release wiring unit tests
-    if: inputs.release_tag != '' || (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci-full') || contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: >-
+      always() && !cancelled() &&
+      (inputs.release_tag != '' || (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci-full') || contains(github.event.pull_request.labels.*.name, 'ci:full'))))
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -718,7 +726,9 @@ jobs:
 
   resolver-unit:
     name: Native Rust self-installer unit tests
-    if: inputs.release_tag != '' || (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci-full') || contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: >-
+      always() && !cancelled() &&
+      (inputs.release_tag != '' || (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci-full') || contains(github.event.pull_request.labels.*.name, 'ci:full'))))
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -737,7 +747,9 @@ jobs:
 
   catalog-site:
     name: Published release to catalog and Pages
-    if: inputs.release_tag != '' || (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci-full') || contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: >-
+      always() && !cancelled() &&
+      (inputs.release_tag != '' || (github.event_name == 'pull_request' && (contains(github.event.pull_request.labels.*.name, 'ci-full') || contains(github.event.pull_request.labels.*.name, 'ci:full'))))
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
