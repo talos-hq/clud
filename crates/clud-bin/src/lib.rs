@@ -122,6 +122,7 @@ pub mod loop_artifacts;
 pub mod loop_check;
 pub mod loop_config;
 mod loop_console;
+pub mod loop_interval;
 pub mod loop_plan_mode;
 pub mod loop_restart;
 pub mod loop_spec;

@@ -656,6 +656,7 @@ fn build_launch_plan_for_target_at(
         .flatten();
     let mut iterations = 1u32;
     let mut repeat_schedule: Option<RepeatSchedule> = None;
+    let mut loop_interval_secs: Option<u64> = None;
     let mut task_summary: Option<String> = None;
     let model_selection = args.resolved_model_selection.clone().or_else(|| {
         provider_catalog::resolve(
@@ -999,6 +1000,15 @@ fn build_launch_plan_for_target_at(
                 });
             repeat_schedule =
                 repeat_interval_secs.map(|interval_secs| RepeatSchedule { interval_secs });
+            loop_interval_secs = options
+                .interval
+                .as_deref()
+                .map(crate::loop_interval::parse_interval)
+                .transpose()
+                .unwrap_or_else(|err| {
+                    eprintln!("error: invalid loop interval: {err}");
+                    std::process::exit(1);
+                });
             let use_done_markers =
                 options.done.is_some() || (!options.no_done && repeat_schedule.is_none());
             let marker_paths = if use_done_markers {
@@ -1023,7 +1033,13 @@ fn build_launch_plan_for_target_at(
                 } else {
                     String::new()
                 };
-                let final_prompt = format!("{prompt_text}{done_contract}{message_contract}");
+                let interval_contract = options
+                    .interval
+                    .as_deref()
+                    .and_then(|raw| crate::loop_interval::parse_interval(raw).ok())
+                    .map_or_else(String::new, crate::loop_interval::interval_contract);
+                let final_prompt =
+                    format!("{prompt_text}{done_contract}{message_contract}{interval_contract}");
                 push_prompt(&mut cmd, backend, final_prompt);
             }
             if let Some(markers) = marker_paths {
@@ -1267,6 +1283,7 @@ fn build_launch_plan_for_target_at(
             image_path: args.graphics_image.clone(),
         },
         repeat_schedule,
+        loop_interval_secs,
         task_summary,
         loop_markers,
         stream_json_progress,

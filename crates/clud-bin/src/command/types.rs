@@ -57,6 +57,10 @@ pub struct LaunchPlan {
     pub graphics: GraphicsConfig,
     #[serde(default)]
     pub repeat_schedule: Option<RepeatSchedule>,
+    /// Seconds to wait between `clud loop` iterations (`--interval`). `None`
+    /// keeps the historic behaviour: the next iteration starts at once.
+    #[serde(default)]
+    pub loop_interval_secs: Option<u64>,
     #[serde(default)]
     pub task_summary: Option<String>,
     /// When set, the outer loop should poll for DONE/BLOCKED marker files
@@ -163,6 +167,7 @@ mod tests {
             cwd: None,
             graphics: GraphicsConfig::default(),
             repeat_schedule: None,
+            loop_interval_secs: None,
             task_summary: None,
             loop_markers: None,
             stream_json_progress: false,

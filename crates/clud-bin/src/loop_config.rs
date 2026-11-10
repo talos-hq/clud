@@ -43,6 +43,10 @@ pub struct LoopConfig {
     /// Re-run interval such as `30s`, `5m`, `1h`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeat: Option<String>,
+    /// Wait between iterations such as `30s`, `5m`, `1h`. Unlike `repeat`
+    /// (which sleeps after the whole loop) this paces every iteration.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub interval: Option<String>,
     /// Force re-fetch of a cached GitHub issue/PR body.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub refresh: Option<bool>,
@@ -124,6 +128,7 @@ impl LoopConfig {
             done: cli.done.clone().or_else(|| self.done.clone()),
             no_done: cli.no_done.or(self.no_done),
             repeat: cli.repeat.clone().or_else(|| self.repeat.clone()),
+            interval: cli.interval.clone().or_else(|| self.interval.clone()),
             refresh: cli.refresh.or(self.refresh),
             message: cli.message.clone().or_else(|| self.message.clone()),
         }
@@ -139,6 +144,7 @@ impl LoopConfig {
         done: Option<&str>,
         no_done: bool,
         repeat: Option<&str>,
+        interval: Option<&str>,
         refresh: bool,
         message: Option<&str>,
     ) -> Self {
@@ -152,6 +158,7 @@ impl LoopConfig {
             done: done.map(str::to_string),
             no_done: no_done.then_some(true),
             repeat: repeat.map(str::to_string),
+            interval: interval.map(str::to_string),
             refresh: refresh.then_some(true),
             message: message.map(str::to_string),
         }

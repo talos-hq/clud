@@ -192,9 +192,29 @@ accumulated into `captured_output` so the token fallback still works.
 PTY mode skips all of this — Claude already renders its own live TUI
 into the user's terminal.
 
+## --interval pacing
+
+`--interval <duration>` (or `loop.json: "interval"`) waits between
+iterations; `--repeat` waits after the whole loop has finished. Both parse
+the same `30s` / `5m` / `1h` durations (`loop_interval::parse_interval`),
+bounded to 1s..=24h.
+
+Without it, an iteration that finishes in seconds restarts the backend
+immediately, and every restart is a new provider session paying for the
+system prompt, the global `CLAUDE.md` and the task text again. A fleet
+coordinator running `clud loop --loop-count 100000` around a
+`systemctl is-active` poll burned 978 iterations in 5 h (~18 s apart),
+428 MB (27 %) of one day's whole-fleet context exposure.
+
+When the interval is set, the prompt carries a clause saying that ending
+the turn *is* the wait — the same advice the no-op-wait guard gives once a
+background task is running — so the agent's cheapest move is also the one
+the loop honours. The wait ticks at 250 ms and returns on Ctrl+C (exit 130)
+instead of holding the loop hostage.
+
 ## --repeat scheduling
 
-`parse_repeat_interval` (`builder.rs:250`) accepts `30s`, `5m`, `1h`,
+`parse_repeat_interval` (`builder.rs`) accepts `30s`, `5m`, `1h`,
 `24h` (rejects zero, fractional, negative, compound, and unknown
 units). When `--repeat` is set without `--done` and without
 `--no-done`, `repeat_implies_no_done_warning` (`builder.rs:290`) prints

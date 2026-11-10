@@ -8,6 +8,7 @@ fn full() -> LoopConfig {
         done: Some("D".into()),
         no_done: Some(false),
         repeat: Some("5m".into()),
+        interval: Some("30s".into()),
         refresh: Some(true),
         message: Some("m".into()),
     }
@@ -16,7 +17,7 @@ fn full() -> LoopConfig {
 #[test]
 fn from_cli_only_sets_explicit_values() {
     let argv: Vec<String> = vec!["clud".into(), "loop".into(), "t".into()];
-    let cli = LoopConfig::from_cli(&argv, Some("t"), 50, None, false, None, false, None);
+    let cli = LoopConfig::from_cli(&argv, Some("t"), 50, None, false, None, None, false, None);
     assert_eq!(
         cli.loop_count, None,
         "clap default must not override the file"
@@ -27,7 +28,7 @@ fn from_cli_only_sets_explicit_values() {
     let argv: Vec<String> = ["clud", "loop", "--loop-count=50"]
         .map(String::from)
         .to_vec();
-    let cli = LoopConfig::from_cli(&argv, None, 50, None, true, None, true, Some("m"));
+    let cli = LoopConfig::from_cli(&argv, None, 50, None, true, None, None, true, Some("m"));
     assert_eq!(cli.loop_count, Some(50));
     assert_eq!(cli.no_done, Some(true));
     assert_eq!(cli.refresh, Some(true));
@@ -87,6 +88,7 @@ fn cli_values_override_file_values() {
     assert_eq!(merged.message.as_deref(), Some("cli"));
     assert_eq!(merged.task.as_deref(), Some("t"));
     assert_eq!(merged.repeat.as_deref(), Some("5m"));
+    assert_eq!(merged.interval.as_deref(), Some("30s"));
     assert_eq!(merged.schema_version, SCHEMA_VERSION);
 }
 
@@ -142,4 +144,37 @@ fn schema_properties_match_struct_fields() {
     struct_keys.sort();
     assert_eq!(schema_keys, struct_keys);
     assert_eq!(schema["additionalProperties"], false);
+}
+
+#[test]
+fn cli_interval_overrides_the_file() {
+    let file = full();
+    let argv: Vec<String> = ["clud", "loop", "--interval", "2h"]
+        .map(String::from)
+        .to_vec();
+    let cli = LoopConfig::from_cli(&argv, None, 50, None, false, None, Some("2h"), false, None);
+    assert_eq!(cli.interval.as_deref(), Some("2h"));
+    let merged = file.overridden_by(&cli);
+    assert_eq!(merged.interval.as_deref(), Some("2h"));
+    assert_eq!(
+        merged.repeat.as_deref(),
+        Some("5m"),
+        "interval must not disturb repeat"
+    );
+}
+
+#[test]
+fn interval_parses_from_a_loop_json_file() {
+    let cfg = LoopConfig::parse(
+        Path::new("loop.json"),
+        r#"{"schema_version":1,"interval":"5m"}"#,
+    )
+    .unwrap();
+    assert_eq!(cfg.interval.as_deref(), Some("5m"));
+    assert_eq!(
+        LoopConfig::parse(Path::new("x"), "{\"schema_version\":1}")
+            .unwrap()
+            .interval,
+        None
+    );
 }
