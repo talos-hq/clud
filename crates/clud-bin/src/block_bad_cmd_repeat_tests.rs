@@ -692,3 +692,68 @@ fn poll_deny_message_names_the_waiter_and_the_deliberate_override() {
     assert!(message.contains("97 times"));
     assert!(!message.contains("sleep "), "{message}");
 }
+
+/// The 2026-11-09/10 measurement: one session polled `uv run --project ci
+/// errors` **783 times** under 80 presentations (`| grep -v "ERR  429" |
+/// tail -10`, `timeout 170`, `cut -c1-160`, a wrapping `cd`). 626 MB of that
+/// day's 1.7 GB exposure, and no two calls shared an exact key.
+const CI_POLL_DRESSINGS: &[&str] = &[
+    "cd /home/niteris/dev/twp2 && uv run --project ci errors --since 15m 2>&1 | grep -v \"ERR  429\" | tail -10",
+    "uv run --project ci errors --since 15m 2>&1 | grep -v \"ERR  429\" | tail -10",
+    "uv run --project ci errors --since 15m 2>&1 | grep -v \"ERR  429\" | tail -8",
+    "timeout 170 uv run --project ci errors --since 15m 2>&1 | grep -v \"ERR  429\" | sed -n '4,20p'",
+    "(cd /home/niteris/dev/twp2 && uv run --project ci errors --since 15m 2>&1 | cut -c1-160 | tail -n 13)",
+];
+
+#[test]
+fn a_project_runner_read_is_a_query() {
+    // `uv run <verb>` executes anything, so only a read verb is a query.
+    for command in CI_POLL_DRESSINGS {
+        assert!(is_query(command), "{command}");
+    }
+    assert!(is_query("uv run --project ci errors --since 15m"));
+    assert!(is_query("timeout 300 systemctl is-active obs-rust"));
+    assert!(!is_query("uv run --project ci test"));
+    assert!(!is_query("uv run --project ci deploy"));
+    assert!(!is_query("uv run pytest -q"));
+}
+
+#[test]
+fn poll_ledger_collapses_a_pipeline_dressing_into_one_query() {
+    let keys: Vec<String> = CI_POLL_DRESSINGS.iter().map(|c| flapped_key(c)).collect();
+    for key in &keys[1..] {
+        assert_eq!(&keys[0], key, "{keys:?}");
+    }
+    // A different time window is a different query.
+    assert_ne!(
+        keys[0],
+        flapped_key("uv run --project ci errors --since 1h | tail -10")
+    );
+    // A lone `grep -r` IS the query: presentation stripping must not merge two
+    // different searches into one count.
+    assert_ne!(
+        flapped_key("grep -rn render-logs src/"),
+        flapped_key("grep -rn presign-url src/")
+    );
+}
+
+#[test]
+fn the_measured_ci_poll_is_refused_past_its_limit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut refusals: Vec<usize> = Vec::new();
+    for index in 0..=u64::from(POLL_DENY_AT) + 3 {
+        let command = CI_POLL_DRESSINGS[index as usize % CI_POLL_DRESSINGS.len()];
+        let (verdict, _) = flapped_scan(tmp.path(), command, 1_000 + 300 * index);
+        if let Verdict::PollDeny { count } = verdict {
+            assert!(count > POLL_DENY_AT, "call {}: {count}", index + 1);
+            refusals.push(index as usize + 1);
+        }
+    }
+    // Every call past the limit is refused, and the refusals start there: the
+    // 783 measured calls would have stopped at 97.
+    assert_eq!(
+        refusals,
+        (POLL_DENY_AT as usize + 1..=POLL_DENY_AT as usize + 4).collect::<Vec<usize>>(),
+        "{refusals:?}"
+    );
+}

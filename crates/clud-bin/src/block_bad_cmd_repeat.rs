@@ -232,6 +232,56 @@ const REMOTE_READ: &[&str] = &[
     "describe",
 ];
 
+/// Verbs of a project task runner (`uv run --project ci errors --since 15m`)
+/// that only read external state. A runner can execute anything, so the verb
+/// is the whole signal; only read verbs are listed.
+const RUNNER_READ: &[&str] = &[
+    "errors", "events", "logs", "log", "status", "list", "ls", "show", "get", "view", "diff",
+    "tail", "results", "report", "ps", "inspect", "describe", "wait",
+];
+
+/// Flags of a project runner that take the next word as their value, so the
+/// value is not mistaken for the verb.
+const RUNNER_VALUE_FLAGS: &[&str] = &[
+    "--project",
+    "-p",
+    "--directory",
+    "-C",
+    "--package",
+    "--python",
+    "--with",
+    "--env-file",
+];
+
+/// Whether the segment from `start` runs a project runner's read-only verb:
+/// `uv run [--project X] <verb> [args...]`. Anything else (a missing `run`, a
+/// non-read verb, a write flag) is not a query.
+fn runner_reads(words: &[String], start: usize) -> bool {
+    let word = |offset: usize| -> &str {
+        words
+            .get(offset)
+            .map_or("", |w| w.trim_matches(&['\'', '"'][..]))
+    };
+    let mut index = start + 1;
+    if word(index) != "run" {
+        return false;
+    }
+    index += 1;
+    while index < words.len() {
+        let flag = word(index);
+        if flag.starts_with('-') {
+            index += if RUNNER_VALUE_FLAGS.contains(&flag) {
+                2
+            } else {
+                1
+            };
+            continue;
+        }
+        return RUNNER_READ.contains(&flag) && !writes(words);
+    }
+    false
+}
+
 /// Flags that make a request write instead of read.
 const WRITE_FLAGS: &[&str] = &[
     "-X",
@@ -274,6 +324,15 @@ fn reads_state(words: &[String]) -> bool {
             index += 1;
             continue;
         }
+        if word == "timeout" {
+            // `timeout [-k D] <duration> <command>`: the duration is not a program.
+            index += 1;
+            while index < words.len() && words[index].starts_with('-') {
+                index += 1;
+            }
+            index += 1;
+            continue;
+        }
         let arg = |offset: usize| -> &str {
             words
                 .get(index + offset)
@@ -290,6 +349,7 @@ fn reads_state(words: &[String]) -> bool {
                 }
                 next == "api" && !writes(words)
             }
+            "uv" => runner_reads(words, index),
             "git" => next == "ls-remote",
             "curl" => !writes(words),
             "ssh" => words
@@ -369,6 +429,50 @@ fn is_scheduling(words: &[String]) -> bool {
         && words.any(|word| word.contains("/tasks/") && word.contains(".output"))
 }
 
+/// Pipeline stages that only present or filter another command's output: they
+/// choose how much of an answer is shown, not which answer it is, so
+/// `| grep -v "ERR 429" | tail -10` must not split one poll into two keys.
+const PRESENTATION_PROGRAMS: &[&str] = &[
+    "grep", "egrep", "fgrep", "rg", "tail", "head", "sed", "cut", "wc", "sort", "uniq", "tr",
+    "column", "fmt", "fold", "jq", "awk", "less", "more",
+];
+
+/// A segment that only sets context for the query — a directory change — never
+/// the query itself.
+fn is_context(words: &[String]) -> bool {
+    let Some(first) = words.first() else {
+        return true;
+    };
+    crate::block_bad_cmd::block_bad_cmd_shell::program_name(first) == "cd"
+}
+
+/// The segment with a leading `timeout [-k D] <duration>` wrapper removed: the
+/// wrapper bounds how long a query may take, not which query it is.
+fn strip_timeout(words: &[String]) -> Vec<String> {
+    let first = words.first().map_or("", String::as_str);
+    if crate::block_bad_cmd::block_bad_cmd_shell::program_name(first) != "timeout" {
+        return words.to_vec();
+    }
+    let mut index = 1;
+    while index < words.len() && words[index].starts_with('-') {
+        index += 1;
+    }
+    words
+        .iter()
+        .skip(index.saturating_add(1))
+        .cloned()
+        .collect()
+}
+
+/// Whether a segment only presents another segment's output.
+fn is_presentation(words: &[String]) -> bool {
+    let Some(first) = words.first() else {
+        return true;
+    };
+    PRESENTATION_PROGRAMS
+        .contains(&crate::block_bad_cmd::block_bad_cmd_shell::program_name(first).as_str())
+}
+
 /// One segment, whitespace-collapsed, its `--json` field list sorted, and its
 /// words sorted: flag order and field order are presentation, so either one
 /// reordered must not split one query into two keys.
@@ -395,13 +499,26 @@ fn canonical_segment(text: &str) -> String {
 /// The state-reading core of a command: its query segments, with scheduling
 /// noise dropped. Empty when the command is nothing but noise.
 pub(super) fn poll_core(command: &str) -> String {
-    segments(command)
+    let kept: Vec<Vec<String>> = segments(command)
         .iter()
-        .filter(|segment| {
-            let words: Vec<String> = segment.split_whitespace().map(str::to_string).collect();
-            !is_scheduling(&words)
+        .map(|segment| {
+            strip_timeout(
+                &segment
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect::<Vec<String>>(),
+            )
         })
-        .map(|segment| canonical_segment(segment))
+        .filter(|words| !words.is_empty())
+        .filter(|words| !is_scheduling(words) && !is_context(words))
+        .collect();
+    // Presentation stages are noise only next to a real query: a lone
+    // `grep -r <pattern>` IS the query, and dropping it would merge unrelated
+    // searches into one count.
+    let has_query = kept.iter().any(|words| !is_presentation(words));
+    kept.iter()
+        .filter(|words| !(has_query && is_presentation(words)))
+        .map(|words| canonical_segment(&words.join(" ")))
         .filter(|segment| !segment.is_empty())
         .collect::<Vec<String>>()
         .join("; ")
