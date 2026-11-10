@@ -28,6 +28,10 @@ def test_pages_deployment_selects_one_artifact_after_a_rerun(
     # These are the actions' defaults when the workflow omits the inputs.
     producer = upload_name.group(1) if upload_name else "github-pages"
     consumer = deploy_name.group(1) if deploy_name else "github-pages"
+    if "needs.build-install-site.outputs.pages_artifact" in consumer:
+        output = re.search(r"(?m)^      pages_artifact: (.+)$", jobs[upload_job])
+        assert output is not None
+        consumer = output.group(1)
     artifacts: list[str] = []
     for attempt in (1, 2, 3):
         artifacts.append(producer.replace("${{ github.run_attempt }}", str(attempt)))
@@ -35,6 +39,16 @@ def test_pages_deployment_selects_one_artifact_after_a_rerun(
         assert artifacts.count(selected) == 1, (
             f"{deploy_job} attempt {attempt} must find exactly one Pages artifact: {artifacts}"
         )
+
+
+def test_pages_deployment_retry_reuses_the_successful_build_artifact() -> None:
+    text = (WORKFLOWS / "auto-release.yml").read_text(encoding="utf-8")
+    build = text.split("  build-install-site:\n", 1)[1].split("\n  deploy-install-site:", 1)[0]
+    deploy = text.split("  deploy-install-site:\n", 1)[1].split("\n  verify-promoted-public:", 1)[0]
+    # A failed-only rerun does not rerun a successful build. The consumer must
+    # retain that producer's name instead of using its own, newer run_attempt.
+    assert "pages_artifact: github-pages-${{ github.run_attempt }}" in build
+    assert "artifact_name: ${{ needs.build-install-site.outputs.pages_artifact }}" in deploy
 
 
 def test_ci_is_callable_with_a_candidate_that_resolves_the_full_tier() -> None:
