@@ -49,6 +49,8 @@ def artifact(manifest: dict, target: str) -> tuple[str, dict]:
         raise ValueError(f"no pinned lokr artifact for target {target}")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", item["filename"]):
         raise ValueError("invalid lokr asset filename")
+    if item["url"] != f"{ORIGIN}/{manifest['tag']}/{item['filename']}":
+        raise ValueError("invalid pinned lokr release URL")
     if not re.fullmatch(r"[0-9a-f]{64}", item["sha256"]):
         raise ValueError("invalid lokr digest")
     if not 0 < item["size_bytes"] <= MAX_BYTES:
@@ -69,7 +71,7 @@ def prepare(
     if cached.is_file():
         payload = cached.read_bytes()
     else:
-        payload = download(f"{ORIGIN}/{manifest['tag']}/{item['filename']}")
+        payload = download(item["url"])
     if hashlib.sha256(payload).hexdigest() != item["sha256"]:
         raise ValueError("lokr release digest mismatch")
     if len(payload) != item["size_bytes"]:

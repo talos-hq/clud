@@ -43,6 +43,7 @@ def spec(payload: bytes) -> dict:
         "artifacts": {
             "x86_64-unknown-linux-gnu": {
                 "filename": "lokr-x86_64-unknown-linux-gnu",
+                "url": f"{lokr_bundle.ORIGIN}/v0.1.0/lokr-x86_64-unknown-linux-gnu",
                 "sha256": hashlib.sha256(payload).hexdigest(),
                 "size_bytes": len(payload),
             }
@@ -98,11 +99,21 @@ def test_untrusted_asset_name_cannot_change_release_origin(tmp_path: Path) -> No
         lokr_bundle.prepare({}, "x86_64-unknown-linux-gnu", manifest, tmp_path)
 
 
+def test_untrusted_release_url_is_rejected_before_download(tmp_path: Path) -> None:
+    manifest = spec(b"fixture")
+    manifest["artifacts"]["x86_64-unknown-linux-gnu"]["url"] = "https://example.invalid/lokr"
+    with pytest.raises(ValueError, match="release URL"):
+        lokr_bundle.prepare(
+            {}, "x86_64-unknown-linux-gnu", manifest, tmp_path, download=lambda _: b"fixture"
+        )
+
+
 def test_static_clud_contains_desktop_gnu_and_musl_fallback(tmp_path: Path, monkeypatch) -> None:
     gnu, musl = b"fake GNU fixture", b"fake musl fixture"
     manifest = spec(gnu)
     item = spec(musl)["artifacts"]["x86_64-unknown-linux-gnu"]
     item["filename"] = "lokr-x86_64-unknown-linux-musl"
+    item["url"] = f"{lokr_bundle.ORIGIN}/v0.1.0/{item['filename']}"
     manifest["artifacts"]["x86_64-unknown-linux-musl"] = item
     pin = tmp_path / "pin.json"
     pin.write_text(json.dumps(manifest))
