@@ -2995,7 +2995,16 @@ mod arg_parser_stack_tests {
                     vec!["clud", "__apply-payload-rules"],
                     vec!["clud", "__meta-device-login", "--status"],
                     vec!["clud", "__kimi-device-login", "--refresh-stored"],
-                    vec!["clud", "secret", "--to-file", "credential.txt"],
+                    vec![
+                        "clud",
+                        "secret",
+                        "--title",
+                        "GitHub fixture token",
+                        "--message",
+                        "Authenticate the fixture using GitHub developer settings",
+                        "--to-file",
+                        "credential.txt",
+                    ],
                     vec!["clud", "auth", "status", "--json"],
                     vec!["clud", "tool", "log", "--grep", "needle"],
                     vec![

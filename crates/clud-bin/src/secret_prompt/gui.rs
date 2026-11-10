@@ -10,18 +10,66 @@ use zeroize::Zeroizing;
 use super::{Failure, Options, Secret};
 
 pub(super) fn prompt(options: &Options) -> Result<Secret, Failure> {
-    match native_prompt(options) {
-        Err(Failure::Unavailable) if !options.multiline && !super::test_mode() => {
-            external_fallback(options)
-        }
-        other => other,
+    if super::real_ui_disabled() {
+        return Err(Failure::Unavailable);
     }
+    select_prompt(
+        crate::platform::secret_prompt::graphics_available(),
+        || native_prompt(options),
+        || {
+            if tty_available() {
+                tty_prompt(options)
+            } else if !options.multiline {
+                external_fallback(options)
+            } else {
+                Err(Failure::Unavailable)
+            }
+        },
+    )
+}
+
+fn select_prompt(
+    graphics: bool,
+    native: impl FnOnce() -> Result<Secret, Failure>,
+    fallback: impl FnOnce() -> Result<Secret, Failure>,
+) -> Result<Secret, Failure> {
+    if graphics {
+        native()
+    } else {
+        fallback()
+    }
+}
+
+fn tty_available() -> bool {
+    use std::io::IsTerminal;
+    std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+}
+
+fn tty_prompt(options: &Options) -> Result<Secret, Failure> {
+    use std::io::Write;
+    // Never consume a pipe, a captured agent tool stream, or multiline key input.
+    if options.multiline || !tty_available() {
+        return Err(Failure::Unavailable);
+    }
+    let mut stderr = std::io::stderr().lock();
+    writeln!(
+        stderr,
+        "{}\n{}",
+        options.prompt_text(),
+        destination_label(options)
+    )
+    .and_then(|()| stderr.flush())
+    .map_err(|_| Failure::Unavailable)?;
+    drop(stderr);
+    rpassword::read_password()
+        .map(Zeroizing::new)
+        .map_err(|_| Failure::Cancelled)
 }
 
 /// #2197: zenity/kdialog/ksshaskpass/pinentry when the native window can't load.
 fn external_fallback(options: &Options) -> Result<Secret, Failure> {
     use crate::platform::secret_prompt::{external_prompt, ExternalFailure};
-    external_prompt(&options.title, &options.label).map_err(|error| match error {
+    external_prompt(&options.title, &options.prompt_text()).map_err(|error| match error {
         ExternalFailure::Cancelled => Failure::Cancelled,
         ExternalFailure::Unavailable => Failure::Unavailable,
     })
@@ -35,40 +83,27 @@ fn native_prompt(options: &Options) -> Result<Secret, Failure> {
     let returned = Rc::clone(&outcome);
     let options = options.clone();
     let title = options.title.clone();
-    let fixture = if super::test_mode() && std::env::var_os("CLUD_TEST_SECRET_PROMPT_GUI").is_some()
-    {
-        std::env::var_os("CLUD_TEST_SECRET_PROMPT_FILE")
-            .and_then(|path| std::fs::read_to_string(path).ok())
-    } else {
-        None
-    };
-    let automate = fixture.is_some();
-    let mut secret = Zeroizing::new(fixture.unwrap_or_default());
+    let mut secret = Zeroizing::new(String::new());
     let mut first_frame = true;
-    let mut painted = false;
     let mut native = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([520.0, if options.multiline { 300.0 } else { 180.0 }])
+            .with_inner_size([520.0, if options.multiline { 430.0 } else { 310.0 }])
             .with_resizable(false),
         ..Default::default()
     };
     crate::platform::secret_prompt::configure(&mut native);
     let result = eframe::run_ui_native(&title, native, move |ui, _frame| {
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.label(&options.label);
+            ui.heading(&options.title);
+            ui.label(options.context_text());
             ui.label(destination_label(&options));
             let response = masked_editor(ui, &mut secret, options.multiline);
             if first_frame {
                 response.request_focus();
                 first_frame = false;
             }
-            let auto_submit = automate && painted;
-            if automate && !painted {
-                painted = true;
-                ui.ctx().request_repaint();
-            }
             let enter = !options.multiline && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let mut accepted = (enter || auto_submit) && !secret.is_empty();
+            let mut accepted = enter && !secret.is_empty();
             let mut cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
             ui.horizontal(|ui| {
                 accepted |= ui
@@ -84,17 +119,14 @@ fn native_prompt(options: &Options) -> Result<Secret, Failure> {
             }
         });
     });
-    if let Err(error) = result {
-        if super::test_mode() && std::env::var_os("CLUD_TEST_SECRET_PROMPT_GUI").is_some() {
-            eprintln!("native window test initialization failed: {error}");
-        }
+    if result.is_err() {
         return Err(Failure::Unavailable);
     }
     let value = outcome.borrow_mut().take();
     value.ok_or(Failure::Cancelled)
 }
 
-fn destination_label(options: &Options) -> String {
+pub(super) fn destination_label(options: &Options) -> String {
     if let Some(path) = &options.to_file {
         format!("Store in {}", path.display())
     } else if let Some(command) = options.to_command.first() {
@@ -145,6 +177,36 @@ fn masked_lines(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unavailable_native_prompt_never_opens_a_second_prompt() {
+        for error in [Failure::Unavailable, Failure::Cancelled] {
+            let result = select_prompt(true, || Err(error), || panic!("second prompt"));
+            assert!(matches!(result, Err(actual) if actual == error));
+        }
+        let result = select_prompt(
+            false,
+            || panic!("native prompt"),
+            || Err(Failure::Cancelled),
+        );
+        assert!(matches!(result, Err(Failure::Cancelled)));
+    }
+
+    #[test]
+    fn tests_cannot_reach_any_real_prompt() {
+        use clap::Parser;
+        let options = Options::try_parse_from([
+            "secret",
+            "--title",
+            "GitHub token for fixture.example",
+            "--message",
+            "Authenticate the fixture; find tokens in GitHub developer settings",
+            "--to-file",
+            "unused",
+        ])
+        .unwrap();
+        assert!(matches!(prompt(&options), Err(Failure::Unavailable)));
+    }
 
     #[test]
     fn masked_multiline_layout_preserves_only_line_boundaries() {

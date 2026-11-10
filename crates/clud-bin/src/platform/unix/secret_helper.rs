@@ -301,7 +301,6 @@ pub fn prompt(
     title: &str,
     label: &str,
 ) -> Result<Zeroizing<String>, super::secret_prompt::ExternalFailure> {
-    use super::secret_prompt::ExternalFailure;
     let present = |name: &str| {
         std::env::var(name)
             .ok()
@@ -311,20 +310,26 @@ pub fn prompt(
     let path_env = absolute_path_entries(&std::env::var("PATH").unwrap_or_default());
     let found = |name: &str| crate::shim_resolve::which(name, &path_env);
     let helpers = select_helpers(display, |name| found(name).is_some());
-    if !helpers.is_empty() {
-        eprintln!("clud: waiting for a desktop prompt to collect the secret...");
-    }
-    for helper in helpers {
+    prompt_once(&helpers, |helper| {
         let Some(path) = found(helper.program()) else {
-            continue;
+            return Reply::Unusable;
         };
-        match run_helper(helper, &path, title, label) {
-            Reply::Secret(value) => return Ok(value),
-            Reply::Cancelled | Reply::TimedOut => return Err(ExternalFailure::Cancelled),
-            Reply::Unusable => {}
-        }
+        eprintln!("clud: waiting for a desktop prompt to collect the secret...");
+        run_helper(helper, &path, title, label)
+    })
+}
+
+fn prompt_once(
+    helpers: &[Helper],
+    mut run: impl FnMut(Helper) -> Reply,
+) -> Result<Zeroizing<String>, super::secret_prompt::ExternalFailure> {
+    use super::secret_prompt::ExternalFailure;
+    let helper = helpers.first().ok_or(ExternalFailure::Unavailable)?;
+    match run(*helper) {
+        Reply::Secret(value) => Ok(value),
+        Reply::Cancelled | Reply::TimedOut => Err(ExternalFailure::Cancelled),
+        Reply::Unusable => Err(ExternalFailure::Unavailable),
     }
-    Err(ExternalFailure::Unavailable)
 }
 
 #[cfg(test)]
@@ -333,6 +338,20 @@ mod tests {
 
     fn l(text: &str) -> Line {
         Zeroizing::new(text.to_string())
+    }
+
+    #[test]
+    fn failed_helper_never_opens_another_dialog() {
+        let mut attempts = 0;
+        let result = prompt_once(&Helper::ORDER, |_| {
+            attempts += 1;
+            Reply::Unusable
+        });
+        assert!(matches!(
+            result,
+            Err(super::super::secret_prompt::ExternalFailure::Unavailable)
+        ));
+        assert_eq!(attempts, 1);
     }
 
     #[test]

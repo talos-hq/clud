@@ -64,3 +64,8 @@ from the prompt to its sink; see [secret-prompt.md](secret-prompt.md).
 The scanner and MCP server live in the [lokr](https://github.com/zackees/lokr)
 library; its `DESIGN.md` owns their internals. clud's integration is
 `crates/clud-bin/src/secrets_catalog.rs`.
+
+[forge-ci/lokr](https://github.com/forge-ci/lokr) is the secrets catalog.
+Requests must name the secret and service/host so the catalog can find it later.
+The clud integration continues to use its own prompt; it does not depend on the
+parallel `lokr request` command.

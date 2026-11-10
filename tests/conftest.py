@@ -25,6 +25,10 @@ scrub_clud_session_env(os.environ)
 # Its shim directories on PATH would answer `rm`/`python` for the installers
 # and shims under test (#1817).
 scrub_clud_session_path(os.environ)
+# Test children may only use fake secret acquisition, never the user's desktop.
+os.environ["CLUD_TEST_NO_SECRET_UI"] = "1"
+for _display_variable in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET"):
+    os.environ.pop(_display_variable, None)
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 

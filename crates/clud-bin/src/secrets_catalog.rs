@@ -35,8 +35,10 @@ fn options(exe: OsString, store: &Path) -> lokr::ServerOptions {
         ask_command: vec![
             exe,
             "secret".into(),
-            "--label".into(),
-            "Enter the credential {name}".into(),
+            "--title".into(),
+            "{name} for the lokr catalog".into(),
+            "--message".into(),
+            "Store {name} for the authorized operation. Copy it from the named service’s credential settings or your secret manager.".into(),
             "--to-file".into(),
             store.join("{name}").into_os_string(),
         ],

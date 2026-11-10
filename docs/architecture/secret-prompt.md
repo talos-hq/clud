@@ -2,7 +2,12 @@
 
 `clud secret` opens a native masked credential window for an authorized
 operation. It supports passwords/tokens and `--multiline` private-key input.
-The prompt shows the requested host/purpose (`--label`) and destination.
+The prompt requires a specific credential and service/host in `--title`, plus
+`--label` (also accepted as `--message`) explaining why it is needed and where
+to find it. Empty or generic descriptions such as "password", "secret" or the
+old defaults are rejected before acquisition. Optional `--hint` describes the
+expected format. The window prominently displays the title, message, hint,
+destination, and "This is NOT your computer or login password."
 
 Choose exactly one sink:
 
@@ -17,14 +22,16 @@ Choose exactly one sink:
 For example:
 
 ```bash
-clud secret --label 'GitLab token for gitlab.example.com' --to-command glab auth login --hostname gitlab.example.com --stdin
-clud secret --label 'SSH private key' --multiline --to-command ssh-add -
+clud secret --title 'GitLab token for gitlab.example.com' --message 'Authenticate glab; create a token in GitLab user settings > Access Tokens' --to-command glab auth login --hostname gitlab.example.com --stdin
+clud secret --title 'SSH private key for the deployment host' --message 'Load the deployment identity into ssh-agent; copy the key from your secret manager' --multiline --to-command ssh-add -
 ```
 
+Use `--dry-run` to preview the title, message, hint, warning and destination
+without opening any prompt, reading any credential, or touching a sink.
+
 Optional `--pattern <regex>` requires a full-value match before any sink is
-called. A mismatch shows a one-line format notice and prompts again, up to
-three attempts total; exhaustion fails without storing anything. Invalid
-regexes produce a typed argument-validation error before prompting. Without
+called. A mismatch fails without storing anything or opening another prompt.
+Invalid regexes produce a typed argument-validation error before prompting. Without
 the flag, acquisition behavior is unchanged. Put it before `--to-command`.
 
 The normal CLI and `clud-secret` alias print only `stored` (exit 0),
@@ -46,15 +53,18 @@ The native window uses eframe/egui with password widgets for single and
 multiline input, built into the existing multicall executable. UI persistence
 is disabled. Secret buffers are zeroized when released, and have no Debug or
 serialization surface. No credential value is accepted on the command line.
-A missing desktop or unavailable graphics context fails clearly; this command
-does not fall back to echoing input in a terminal or asking through chat.
+When desktop prompts are unavailable, single-line requests can use a masked
+TTY fallback only when stdin and stderr are terminals. It shows the same title,
+message, hint, destination and login-password warning. Captured/piped sessions
+and multiline input fail clearly without reading input or asking through chat.
 
-On Linux, when the native window cannot load (#2197, e.g. KDE Wayland), a
-single-line prompt falls back to the first of `zenity --entry --hide-text`,
+On Linux, when the native graphics preflight is unavailable (#2197), a
+single-line request without an interactive TTY selects the first available `zenity --entry --hide-text`,
 `kdialog --password`, `ksshaskpass`, `pinentry` (Assuan `GETPIN`) that is on
 PATH with a display present (`platform/unix/secret_helper.rs`). The value
 returns on the helper's stdout to the same sink and is never logged. Multiline
-input has no fallback. Dismissing a helper is `cancelled`. Known GTK/Qt toolkit warnings on stderr do not
+input has no fallback. Only one backend is attempted per invocation; a failed native window or
+helper never opens another prompt. Dismissing a helper is `cancelled`. Known GTK/Qt toolkit warnings on stderr do not
 demote a silent exit 1 from cancel to unusable; a timeout ends the chain.
 
 Known limitation: the helper's stdout is read through `running-process`
@@ -80,24 +90,21 @@ selection and status-only verification. Prompting does not itself authorize
 logging into an unrelated service. Credentials already pasted into chat should
 be rotated.
 
-Debug builds with `CLUD_INTEGRATION_TESTS=1` support a file-backed prompt and
-cancellation/timeout fixtures. Release builds ignore these seams. Tests use
-fake credentials, check output suppression even when a sink echoes input,
-preserve multiline file contents, exercise cancellation and blocked stdin,
-and inspect masked widget output without opening a desktop window. A separate
-native-window probe renders and delivers a fake multiline value on graphical
-runners, using xvfb-run on Linux when available. A second Linux probe runs a
-headless Weston compositor with software OpenGL, removes `DISPLAY`, and opens
-the window through Wayland. It waits on compositor startup output with a
-deadline and always terminates the compositor. Headless skips do not establish
-native window coverage.
-The native CI setup sets `CLUD_TEST_REQUIRE_SECRET_GUI=1`: there a missing display,
-runtime or graphics context fails the probe rather than skipping coverage.
+Tests never open credential windows. Debug builds with `CLUD_INTEGRATION_TESTS=1`
+use only file-backed acquisition or cancellation fixtures; a missing fixture
+fails closed. The obsolete `CLUD_TEST_SECRET_PROMPT_GUI` flag cannot opt out.
+`CLUD_TEST_NO_SECRET_UI=1` also disables real GUI/helper/TTY acquisition in any
+build, and pytest sets it for every child process while removing display
+variables. The masked widgets render in an egui context without a window.
+Run checks with `env -u DISPLAY -u WAYLAND_DISPLAY -u WAYLAND_SOCKET` and use
+`--dry-run` for manual CLI previews. Single-run routing tests ensure a failed
+native attempt cannot open a helper or TTY prompt, and format mismatches never
+reopen acquisition. Real desktop/Wayland rendering is not claimed by these tests.
 
 The named GitLab consumer acceptance uses the real `glab auth login --stdin`
 and `glab auth status` commands with a synthetic token and a loopback GitLab API.
-The native prompt supplies the token directly to the login process. The status
-command must make another authenticated request using the saved credential.
+The fake acquisition fixture supplies the token directly to the login process.
+The status command must make another authenticated request using the saved credential.
 Both command outputs are captured and checked for the sentinel; the prompt's
 agent-facing output remains `stored`. The fixture disables update checks,
 clears inherited GitLab authentication/host overrides, and uses an isolated
@@ -111,3 +118,8 @@ temporary directory. `CLUD_TEST_GLAB_BINARY` points the test to that executable.
 Mandatory native coverage fails if it is missing. This dependency belongs to
 CI; clud still ships one multicall executable and requires no GitLab CLI for
 its other secret sinks.
+
+[forge-ci/lokr](https://github.com/forge-ci/lokr) is the secrets catalog.
+Name the secret and its service/host in each request so lokr can find it later.
+The parallel `lokr request` CLI is not required by this flow; clud continues to
+use its own prompt and sinks.
