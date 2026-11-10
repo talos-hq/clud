@@ -1,6 +1,6 @@
 # remote_connect/
 
-Native client for `clud remote connect clud.bot` and `clud connect clud.bot`
+Native client for `clud clud.bot` (the fixed-host alias), `clud remote connect clud.bot` and `clud connect clud.bot`
 (`connect.rs`: the mode prompt and the proxy-only session). See
 [remote assistance](../../../../docs/architecture/remote-assistance.md) for the
 consent boundary, protocol and executable integration check.

@@ -1123,7 +1123,7 @@ fn build_launch_plan_for_target_at(
             }
         }
         Some(Command::Ab(_))
-        | Some(Command::Remote { .. })
+        | Some(Command::Remote { .. } | Command::CludBot)
         | Some(Command::Connect { .. })
         | Some(Command::Serve(_))
         | Some(Command::Secret(_))

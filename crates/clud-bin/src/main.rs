@@ -564,6 +564,11 @@ fn run_meta_device_login_seam(cmd: Option<&args::Command>) -> i32 {
 fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
     let code = match args.command.as_ref()? {
         args::Command::Remote { action } => clud::remote_connect::run(action),
+        args::Command::CludBot => {
+            clud::remote_connect::run(&clud::remote_connect::Action::Connect {
+                host: "clud.bot".into(),
+            })
+        }
         args::Command::Connect { host, model } => {
             clud::remote_connect::connect::run(host, model.as_deref().or(args.model.as_deref()))
         }
