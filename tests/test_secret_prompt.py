@@ -599,3 +599,35 @@ def test_secret_missing_lokr_fails_closed(tmp_path: Path) -> None:
     assert result.stdout.strip() == "failed"
     assert "Install forge-ci/lokr" in result.stderr
     assert not (tmp_path / "destination").exists()
+
+
+def test_secret_catalog_delegates_stdio_to_fake_lokr(tmp_path: Path) -> None:
+    import json
+    import os
+    import sys
+
+    import pytest
+
+    if os.name == "nt":
+        pytest.skip("executable script fixture requires Unix")
+    fake = tmp_path / "lokr"
+    record = tmp_path / "argv.json"
+    fake.write_text(
+        f"#!{sys.executable}\n"
+        "import json, os, pathlib, sys\n"
+        "pathlib.Path(os.environ['LOKR_ARGV']).write_text(json.dumps(sys.argv[1:]))\n"
+        "sys.stdout.write(sys.stdin.read())\n"
+        "print('FAKE_LOKR_DIAGNOSTIC', file=sys.stderr)\n"
+    )
+    fake.chmod(0o700)
+    request = '{"jsonrpc":"2.0","id":1,"method":"initialize"}\n'
+    for command, route in [("secrets-mcp", "mcp"), ("secrets-daemon", "daemon")]:
+        result = _run(command, input_data=request, env_overrides={
+            "CLUD_INTEGRATION_TESTS": "1", "CLUD_TEST_LOKR_BINARY": str(fake),
+            "LOKR_ARGV": str(record), "LOKR_TEST_MODE": "1",
+        })
+        assert result.returncode == 0, result.stderr
+        # running-process captures logical lines without the final terminator.
+        assert result.stdout.splitlines() == request.splitlines()
+        assert result.stderr.strip() == "FAKE_LOKR_DIAGNOSTIC"
+        assert json.loads(record.read_text()) == [route]

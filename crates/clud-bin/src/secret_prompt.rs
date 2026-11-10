@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 mod gui;
 #[path = "secret_prompt/lokr.rs"]
 mod lokr;
+pub(crate) use lokr::catalog;
 #[path = "secret_prompt/sink.rs"]
 mod sink;
 

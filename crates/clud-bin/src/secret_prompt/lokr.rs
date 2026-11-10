@@ -107,6 +107,30 @@ pub(super) fn request(options: &Options) -> Result<(), Failure> {
     }
 }
 
+/// Delegate the catalog too: one installed lokr owns its current MCP schema and UI.
+pub(crate) fn catalog(command: &str) -> i32 {
+    let Ok(binary) = resolve() else {
+        eprintln!("lokr is required: install forge-ci/lokr and put lokr on PATH");
+        return 1;
+    };
+    let process = NativeProcess::new(ProcessConfig {
+        command: CommandSpec::Argv(vec![binary.to_string_lossy().into_owned(), command.into()]),
+        cwd: None,
+        env: None,
+        capture: false,
+        stderr_mode: StderrMode::Pipe,
+        stdin_mode: StdinMode::Inherit,
+        create_process_group: true,
+        creationflags: crate::win_creation_flags::invisible_helper_creationflags(),
+        nice: None,
+        address_space_limit_bytes: None,
+    });
+    if process.start().is_err() {
+        return 1;
+    }
+    process.wait(None).unwrap_or(1)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

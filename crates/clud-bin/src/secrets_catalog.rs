@@ -1,7 +1,6 @@
 //! `--allow-secrets`: registers lokr's MCP server with a Claude session, so the
 //! agent can see which credentials exist. No route returns a value.
 
-use std::ffi::OsString;
 use std::path::Path;
 
 /// Appended to the system prompt of an `--allow-secrets` launch.
@@ -29,38 +28,14 @@ fn config_arg(exe: &Path) -> String {
     format!("--mcp-config={config}")
 }
 
-fn options(exe: OsString) -> lokr::ServerOptions {
-    lokr::ServerOptions {
-        daemon_command: vec![exe.clone(), "secrets-daemon".into()],
-        // lokr validates structured context/sinks and appends their CLI flags.
-        ask_command: vec![exe, "secret".into()],
-    }
-}
-
-/// Runs the MCP server on stdio.
+/// Runs lokr's MCP server on inherited stdio.
 pub fn serve() -> i32 {
-    let Ok(exe) = std::env::current_exe() else {
-        eprintln!("clud secrets-mcp: cannot locate clud");
-        return 1;
-    };
-    match lokr::serve_stdio(&options(exe.into_os_string())) {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("clud secrets-mcp: {error}");
-            1
-        }
-    }
+    crate::secret_prompt::catalog("mcp")
 }
 
-/// Runs the background scanner.
+/// Runs lokr's background scanner.
 pub fn daemon() -> i32 {
-    match lokr::run_daemon() {
-        Ok(()) => 0,
-        Err(error) => {
-            eprintln!("clud secrets-daemon: {error}");
-            1
-        }
-    }
+    crate::secret_prompt::catalog("daemon")
 }
 
 #[cfg(test)]
@@ -74,16 +49,6 @@ mod tests {
         let config: serde_json::Value = serde_json::from_str(json).unwrap();
         assert_eq!(config["mcpServers"]["lokr"]["command"], "/opt/clud");
         assert_eq!(config["mcpServers"]["lokr"]["args"][0], "secrets-mcp");
-    }
-
-    #[test]
-    fn prompt_accepts_lokr_structured_request_flags() {
-        let built = options("clud".into());
-        assert_eq!(built.daemon_command[1], "secrets-daemon");
-        assert_eq!(
-            built.ask_command,
-            vec![OsString::from("clud"), "secret".into()]
-        );
     }
 
     #[test]
