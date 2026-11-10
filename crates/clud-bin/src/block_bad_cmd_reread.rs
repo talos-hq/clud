@@ -7,11 +7,30 @@
 //! 1,029,780 bytes re-supplied, led by agent slices of one 2,142-line file
 //! read 23 times.
 //!
-//! This guard denies such a read with a short message that names the bounded
-//! alternatives. It keys on the call's canonical input (so a different
-//! `offset`/`limit` is a different read) and on the file's `(len, mtime)`
-//! fingerprint: an edited file has a new fingerprint and is allowed again, so
-//! the read-after-edit verification loop is untouched.
+//! The first version of this guard keyed the call on its exact
+//! `offset`/`limit`, so it only saw byte-identical repeats. The habit the
+//! transcripts actually show is **overlapping windows**: the same file read
+//! again with a window that starts a little earlier or later, which is a
+//! different key and therefore was never refused. Measured on 24 h of
+//! transcripts (2026-11-10) that is 73 fully-covered reads over 700 kB, and
+//! the live ledgers carried the same shape — 67 files recorded with several
+//! entries of one unchanged fingerprint, e.g. one 551 kB `README.md` read
+//! twice, and `schemas.py` read 8 times in one session through windows that
+//! overlapped almost completely.
+//!
+//! So the ledger now keeps, per `(session, path, fingerprint)`, the **line
+//! intervals already brought into the conversation**. A read whose interval is
+//! contained in one of them returns only lines the model already has and is
+//! refused. Because line numbering is what the harness uses, over-claiming the
+//! end of an interval can only cover lines past end-of-file, which carry no
+//! content — the guard therefore never claims to have shown text it did not.
+//!
+//! Refusals are budgeted per file ([`MAX_REFUSALS`]): past it a covered read is
+//! allowed again and re-stamped. Compaction really can drop earlier content
+//! from the conversation, and a permanent wall would leave that reader with no
+//! escape except a session-wide kill switch; two refusals are enough to tell a
+//! habitual re-read from a genuine restore. A changed fingerprint always
+//! starts over, so read-after-edit verification is untouched.
 //!
 //! **Fail open.** Like the repeat guard this is a friction-reducing nudge, not
 //! a security boundary: a missing session id, an unreadable home, a file that
@@ -32,19 +51,53 @@ pub(super) const MIN_GUARDED_BYTES: u64 = 8 * 1024;
 pub(super) const DISABLE_ENV: &str = "CLUD_REREAD_GUARD";
 /// Directory under the clud state dir.
 pub(super) const DIR_NAME: &str = "reread-guard";
-/// Most entries kept per session; the oldest `at` goes first.
+/// Most files kept per session; the oldest `at` goes first.
 pub(super) const MAX_ENTRIES: usize = 256;
-const HASH_DOMAIN: &str = "clud-reread-guard-v1\0";
+/// Refusals of covered reads of one unchanged file before the read passes.
+/// A compaction can drop content from the conversation, and the reader must
+/// have an escape that is not a session-wide switch.
+pub(super) const MAX_REFUSALS: u32 = 2;
+/// Most intervals kept per file; the narrowest goes first, which can only
+/// widen what is allowed.
+pub(super) const MAX_SPANS: usize = 64;
+const HASH_DOMAIN: &str = "clud-reread-guard-v2\0";
+
+/// A line interval a past read already brought into the conversation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct Span {
+    /// First line, 1-based, as the harness numbers it.
+    pub start: u64,
+    /// Last line; `u64::MAX` when the read ran to the end of the file.
+    pub end: u64,
+    /// Unix seconds of the read that brought these lines in.
+    pub at: u64,
+}
+
+impl Span {
+    fn contains(self, other: Span) -> bool {
+        self.start <= other.start && other.end <= self.end
+    }
+
+    fn is_whole_file(self) -> bool {
+        self.start <= 1 && self.end == u64::MAX
+    }
+
+    fn width(self) -> u64 {
+        self.end.saturating_sub(self.start)
+    }
+}
 
 /// What one Read call asked for, plus the fingerprint of the file now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Request {
-    /// The call's canonical input, hashed; a different range is a new key.
+    /// Hash of the canonical path: one entry per file per session.
     pub key: String,
     /// Absolute path as the harness spelled it.
     pub path: PathBuf,
     /// `(len, mtime_secs, mtime_nanos)`, or `None` when the file is absent.
     pub stamp: Option<Stamp>,
+    /// The line interval this call would print, `at` filled in later.
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,16 +107,29 @@ pub(super) struct Stamp {
     pub nanos: u32,
 }
 
-/// One recorded read: what the file looked like, and when it was read.
+/// One file in one session: what it looked like, the lines already read, and
+/// how often a covered read was refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Entry {
     pub len: u64,
     pub secs: u64,
     pub nanos: u32,
-    /// Unix seconds of the read, for the "read it N ago" text.
+    /// Unix seconds of the last read that added lines.
     pub at: u64,
     /// File name only: the message is cheaper and the model knows the path.
     pub name: String,
+    /// Intervals already in the conversation, sorted and merged.
+    #[serde(default)]
+    pub spans: Vec<Span>,
+    /// Covered reads refused since this fingerprint appeared.
+    #[serde(default)]
+    pub refusals: u32,
+}
+
+impl Entry {
+    fn same_stamp(&self, other: &Entry) -> bool {
+        self.len == other.len && self.secs == other.secs && self.nanos == other.nanos
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -72,14 +138,16 @@ pub(super) struct Ledger {
     pub entries: std::collections::BTreeMap<String, Entry>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Verdict {
     Allow,
-    /// Allowed, but recorded: this is the first read of this fingerprint.
+    /// Allowed, but recorded: these lines are new to the conversation.
     Record,
     Deny {
         ago_secs: u64,
         kb: u64,
+        /// The interval the refused call asked for, for the message.
+        span: Span,
     },
 }
 
@@ -109,7 +177,51 @@ fn path_from(tool_input: Option<&Value>) -> Option<PathBuf> {
         .iter()
         .find_map(|key| input.get(*key).and_then(Value::as_str))
         .filter(|path| !path.is_empty())
-        .map(PathBuf::from)
+        .map(|path| expand_tilde(Path::new(path)))
+}
+
+/// A `Read` spelled with `~/` is the same file as its absolute path; without
+/// this the two spellings would sit in separate entries and neither would see
+/// the other's intervals.
+fn expand_tilde(raw: &Path) -> PathBuf {
+    let Some(rest) = raw.to_str().and_then(|text| text.strip_prefix("~/")) else {
+        return raw.to_path_buf();
+    };
+    std::env::var_os("HOME")
+        .map_or_else(|| raw.to_path_buf(), |home| PathBuf::from(home).join(rest))
+}
+
+/// The line interval a `Read` input asks for. `offset` is 1-based; a missing
+/// `limit` runs to the end of the file.
+pub(super) fn span_from(tool_input: Option<&Value>) -> Span {
+    let input = tool_input;
+    let start = input
+        .and_then(|value| value.get("offset"))
+        .and_then(Value::as_u64)
+        .unwrap_or(1)
+        .max(1);
+    let end = match input
+        .and_then(|value| value.get("limit"))
+        .and_then(Value::as_u64)
+    {
+        Some(limit) if limit > 0 => start.saturating_add(limit - 1),
+        _ => u64::MAX,
+    };
+    Span { start, end, at: 0 }
+}
+
+fn file_key(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(HASH_DOMAIN.as_bytes());
+    hasher.update(b"file\0");
+    hasher.update(path.to_string_lossy().as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn stamp_of(path: &Path) -> Option<Stamp> {
@@ -129,31 +241,85 @@ fn stamp_of(path: &Path) -> Option<Stamp> {
 /// The request this call represents, or `None` when there is nothing to guard.
 pub(super) fn request_for(tool_name: &str, tool_input: Option<&Value>) -> Option<Request> {
     let path = path_from(tool_input)?;
+    let mut span = span_from(tool_input);
+    span.at = 0;
+    debug_assert!(applies_to(tool_name));
     Some(Request {
-        key: super::block_bad_cmd_repeat::call_key(tool_name, tool_input),
+        key: file_key(&path),
         stamp: stamp_of(&path),
         path,
+        span,
     })
 }
 
-/// The decision table over injected facts: the verdict and the entry to keep.
+/// Sort, merge overlapping or adjacent intervals, and keep the widest
+/// [`MAX_SPANS`]. Dropping the narrowest interval can only *allow* more reads,
+/// so the cap can never turn into a wrong refusal.
+pub(super) fn trim_spans(spans: &mut Vec<Span>) {
+    spans.sort_by_key(|span| (span.start, span.end));
+    let mut merged: Vec<Span> = Vec::with_capacity(spans.len());
+    for span in spans.drain(..) {
+        match merged.last_mut() {
+            Some(last) if span.start <= last.end.saturating_add(1) => {
+                last.end = last.end.max(span.end);
+                last.at = last.at.min(span.at);
+            }
+            _ => merged.push(span),
+        }
+    }
+    while merged.len() > MAX_SPANS {
+        let narrowest = merged
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, span)| span.width())
+            .map(|(index, _)| index);
+        let Some(index) = narrowest else { return };
+        merged.remove(index);
+    }
+    *spans = merged;
+}
+
+/// The decision table over the ledger: the verdict, and the entry to keep.
 ///
-/// `now` is Unix seconds. A different fingerprint is the file having changed,
-/// so it always allows and re-records.
-pub(super) fn decide(previous: Option<&Entry>, current: &Entry) -> Verdict {
+/// `fresh` is the entry this read would record if it happened; `now` is its
+/// `at`. A different fingerprint means the file changed, so everything is
+/// re-recorded and the read passes.
+pub(super) fn advance(previous: Option<&Entry>, fresh: Entry, asked: Span) -> (Verdict, Entry) {
     let Some(previous) = previous else {
-        return Verdict::Record;
+        return (Verdict::Record, fresh);
     };
-    if previous.len != current.len
-        || previous.secs != current.secs
-        || previous.nanos != current.nanos
-    {
-        return Verdict::Record;
+    if !previous.same_stamp(&fresh) {
+        return (Verdict::Record, fresh);
     }
-    Verdict::Deny {
-        ago_secs: current.at.saturating_sub(previous.at),
-        kb: current.len / 1024,
+    let Some(cover) = previous
+        .spans
+        .iter()
+        .copied()
+        .find(|span| span.contains(asked))
+    else {
+        let mut extended = previous.clone();
+        extended.at = fresh.at;
+        extended.spans.push(asked);
+        trim_spans(&mut extended.spans);
+        return (Verdict::Record, extended);
+    };
+    if previous.refusals >= MAX_REFUSALS {
+        // The budget is spent: hand the read back and keep the record, so the
+        // next covered read of this file is not charged again either.
+        let mut allowed = previous.clone();
+        allowed.at = fresh.at;
+        return (Verdict::Allow, allowed);
     }
+    let mut refused = previous.clone();
+    refused.refusals = refused.refusals.saturating_add(1);
+    let verdict = Verdict::Deny {
+        ago_secs: fresh.at.saturating_sub(cover.at),
+        kb: fresh.len / 1024,
+        // `at` is meaningless on a refused interval: normalise it so the
+        // verdict is a pure function of the ledger and the request.
+        span: Span { at: 0, ..asked },
+    };
+    (verdict, refused)
 }
 
 fn now_secs() -> u64 {
@@ -195,7 +361,9 @@ pub(super) fn check_at(state_dir: &Path, session_id: &str, request: &Request, no
     if stamp.len < MIN_GUARDED_BYTES || session_id.is_empty() {
         return Verdict::Allow;
     }
-    let current = Entry {
+    let mut span = request.span;
+    span.at = now;
+    let fresh = Entry {
         len: stamp.len,
         secs: stamp.secs,
         nanos: stamp.nanos,
@@ -204,6 +372,8 @@ pub(super) fn check_at(state_dir: &Path, session_id: &str, request: &Request, no
             .path
             .file_name()
             .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+        spans: vec![span],
+        refusals: 0,
     };
     let path = session_file(state_dir, session_id);
     let existing = std::fs::read(&path).ok();
@@ -211,8 +381,8 @@ pub(super) fn check_at(state_dir: &Path, session_id: &str, request: &Request, no
         .as_deref()
         .and_then(|bytes| serde_json::from_slice::<Ledger>(bytes).ok())
         .unwrap_or_default();
-    let verdict = decide(ledger.entries.get(&request.key), &current);
-    ledger.entries.insert(request.key.clone(), current);
+    let (verdict, kept) = advance(ledger.entries.get(&request.key), fresh, span);
+    ledger.entries.insert(request.key.clone(), kept);
     trim_entries(&mut ledger);
     let Ok(bytes) = serde_json::to_vec(&ledger) else {
         return Verdict::Allow;
@@ -241,8 +411,17 @@ pub(super) fn reason(
     let read = request_for(tool_name, tool_input)?;
     let state_dir = crate::daemon::default_state_dir().ok()?;
     match check_at(&state_dir, session_id, &read, now_secs()) {
-        Verdict::Deny { ago_secs, kb } => Some(deny_message(&read, ago_secs, kb)),
+        Verdict::Deny { ago_secs, kb, span } => Some(deny_message(&read, span, ago_secs, kb)),
         Verdict::Allow | Verdict::Record => None,
+    }
+}
+
+/// "just now" already reads as a time, so it takes no `ago` suffix.
+fn ago_phrase(ago_secs: u64) -> String {
+    if ago_secs <= 9 {
+        "just now".to_string()
+    } else {
+        format!("{} ago", ago_text(ago_secs))
     }
 }
 
@@ -256,19 +435,32 @@ fn ago_text(ago_secs: u64) -> String {
     }
 }
 
-pub(super) fn deny_message(request: &Request, ago_secs: u64, kb: u64) -> String {
+/// The interval as the message names it. A whole-file request is named as
+/// such, because "lines 1-18446744073709551615" is not a sentence.
+pub(super) fn span_text(span: Span) -> String {
+    if span.is_whole_file() {
+        return "the whole file".to_string();
+    }
+    if span.end == u64::MAX {
+        return format!("lines {}-end", span.start);
+    }
+    format!("lines {}-{}", span.start, span.end)
+}
+
+pub(super) fn deny_message(request: &Request, span: Span, ago_secs: u64, kb: u64) -> String {
     let name = request
         .path
         .file_name()
         .map_or_else(String::new, |file| file.to_string_lossy().into_owned());
     format!(
-        "[clud reread-guard] {name} ({kb} kB) is byte-identical to the copy you read {} ago — this \
-         read returns nothing new and would be re-sent on every later request in this session. Work \
-         from the copy you have. If you need a different part, pass `offset`+`limit` (one range, \
-         <=200 lines); to map an unfamiliar file first, `clud tool run code/outline.py <path>`. An \
-         edit changes the file and this is allowed again. Off for this session: \
-         `{DISABLE_ENV}=0`.",
-        ago_text(ago_secs)
+        "[clud reread-guard] {name} ({kb} kB): {} is already in this conversation (read {}) and \
+         the file has not changed since, so this read returns nothing new — every later request \
+         re-sends it. Work from the copy you have. If you need a different part, pass \
+         `offset`+`limit` (one range, <=200 lines); to map an unfamiliar file first, \
+         `clud tool run code/outline.py <path>`. An edit changes the file and this is allowed \
+         again. Off for this session: `{DISABLE_ENV}=0`.",
+        span_text(span),
+        ago_phrase(ago_secs)
     )
 }
 
