@@ -187,7 +187,7 @@ pub(super) fn program(token: &str) -> &str {
 }
 
 /// `40,60p` (quoted or not) -> `(40, 60)`. Anything else is not a range.
-fn parse_range(token: &str) -> Option<(u32, u32)> {
+pub(super) fn parse_range(token: &str) -> Option<(u32, u32)> {
     let token = token.trim_matches(|c| c == '"' || c == '\'');
     let body = token.strip_suffix('p')?;
     let (start, end) = body.split_once(',')?;
@@ -196,7 +196,7 @@ fn parse_range(token: &str) -> Option<(u32, u32)> {
     (start <= end && start > 0).then_some((start, end))
 }
 
-fn is_in_place_sed(tokens: &[&str]) -> bool {
+pub(super) fn is_in_place_sed(tokens: &[&str]) -> bool {
     let Some(at) = tokens.iter().position(|token| program(token) == "sed") else {
         return false;
     };
@@ -210,7 +210,7 @@ fn is_in_place_sed(tokens: &[&str]) -> bool {
 
 /// Whether the segment writes a file (`>` / `>>` / `2>`), which makes it a
 /// write, not a read whose output lands in the transcript.
-fn writes_file(tokens: &[&str]) -> bool {
+pub(super) fn writes_file(tokens: &[&str]) -> bool {
     tokens
         .iter()
         .any(|token| token.contains('>') && !token.contains('<'))
