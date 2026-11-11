@@ -6748,6 +6748,18 @@ exactly what background + notify replaces; a non-literal length cannot be
 judged, so it fails closed. A `sleep` of any length beside a `gh` status read
 is refused, because that pair is one iteration of a poll.
 
+**No-ops (#1880).** A lone `true`, `:`, `echo waiting`/`still waiting`, or a
+`sleep 0` is refused by the same rule and with the same override. Refusing
+`sleep 120` alone left the cheapest evasion open: on 2026-11-09 a workflow
+sub-agent waiting for a merge routed around it with `true`, issuing 1,388
+bare no-op calls in 17 minutes -- 65 M billed input tokens, every turn
+reporting that it was still waiting. A no-op is worse than a poll: the poll
+at least reads state. The no-op refusal keeps the replacement list and adds
+that ending the turn *is* the wait once a background waiter is running, since
+its completion notification is what wakes the agent. Only a command whose
+entire body is the no-op is judged, so `cmd || true`, `true && sleep 5` and a
+loop body stay allowed.
+
 **Rejected.** Teaching a coding rule for loops (the four failures had four
 different bugs). Banning every `sleep` (see above). A `clud wait --file F
 --contains X --timeout` primitive: no need remains — background + notify plus

@@ -280,7 +280,16 @@ refuses: `while`/`until`/`select` loops and `for ((;;))`; a `for`/`foreach`
 loop whose body sleeps; `tail -f`/`-F`/`--follow` and `Get-Content -Wait`
 not wrapped in `timeout`; `watch`; a `sleep` in the same command as a `gh`
 status read; and a standalone `sleep` over 60 s or of non-literal length
-(DD-168). A `for` loop over a finite list with no `sleep`, a one-shot
+(DD-168). A lone no-op is refused too: `true`, `:`, an `echo` of
+`waiting`/`still waiting`, or a `sleep 0`/`0s`. Such a command cannot let
+anything change, so each attempt buys the same answer at the price of one
+more full turn -- on 2026-11-09 one workflow sub-agent issued 1,388 `true`
+calls in 17 minutes (65 M billed input tokens) waiting on a merge it could
+not advance. The no-op refusal adds the two real answers: a blocking waiter,
+or ending the turn so the background task's completion notification wakes
+the agent. A no-op inside a command that does real work (`cmd || true`,
+`true && sleep 5`, a loop body) is untouched, and only a lone command is
+judged. A `for` loop over a finite list with no `sleep`, a one-shot
 `pgrep`/`gh` snapshot and a short `sleep` stay allowed. Process-list waits
 (`while pgrep -f …`, `while ps … | grep …`) fall to the loop rule. The refusal
 names the replacement: a persistent process session and its wait operation,
