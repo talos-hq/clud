@@ -122,6 +122,25 @@ background launches and explicit settings overrides. All normal launches still
 use the canonical LaunchPlan and runner. The remote route never falls back to a
 local provider if the proxy refuses a request.
 
+### Model requests ride the session socket
+
+clud.bot's hosting edge runs a request firewall over HTTPS bodies. An agent's
+prompt carries shell commands and tool output, and the edge answers some of those
+requests with its own HTML `403 Blocked` page, which Claude reports as "Please
+run /login · API Error: 403 Blocked". The request never reaches the server, so it
+looks like a dead session. WebSocket frames are not inspected.
+
+When the server's `hello` carries `"proxy_channel": 2`, the client
+(`remote_connect/bridge.rs`) opens a loopback HTTP endpoint and points
+`ANTHROPIC_BASE_URL`/`OPENAI_BASE_URL` at it instead of the origin. It also exports
+`CLUD_REMOTE_PROXY_BRIDGE` so a nested launch rebuilds the same environment. The
+endpoint serves only callers presenting the session bearer, and only under
+`/api/proxy/v1/`. Each request is relayed as channel-2 binary frames on the
+socket the session already holds, and the server's status, content type and
+streamed body are written back unchanged. A server without `proxy_channel`
+keeps the direct HTTPS routes. The frame layout is owned by the server's
+`SPEC.md` §4.3.1.
+
 Proxy disablement leaves terminal control intact but invalidates inference on
 the server. Disconnect, denial and session end revoke the bearer and close the
 shell. The configuration-directory guard lives until the foreground remote

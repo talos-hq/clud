@@ -90,7 +90,7 @@ const ACCEPT_POLL: Duration = Duration::from_millis(5);
 const READ_POLL: Duration = Duration::from_millis(100);
 /// Pseudo-status meaning "stop without replying": the connection is being torn
 /// down, so there is nobody left to receive an error document.
-const ABANDON: u16 = 0;
+pub(crate) const ABANDON: u16 = 0;
 
 type ActiveConnections = Arc<Mutex<HashMap<usize, TcpStream>>>;
 type SharedBridgeLog = Arc<Mutex<BridgeLog>>;
@@ -6407,19 +6407,19 @@ fn new_message_id() -> String {
     )
 }
 
-struct ParsedRequest {
-    method: String,
-    path: String,
+pub(crate) struct ParsedRequest {
+    pub(crate) method: String,
+    pub(crate) path: String,
     headers: Vec<(String, String)>,
     authorization: Option<String>,
     session_id: Option<String>,
     agent_id: Option<String>,
-    content_length: usize,
-    body_prefix: Vec<u8>,
+    pub(crate) content_length: usize,
+    pub(crate) body_prefix: Vec<u8>,
 }
 
 impl ParsedRequest {
-    fn header(&self, name: &str) -> Option<&str> {
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
         self.headers
             .iter()
             .find(|(candidate, _)| candidate.eq_ignore_ascii_case(name))
@@ -6427,7 +6427,7 @@ impl ParsedRequest {
     }
 }
 
-fn read_headers(
+pub(crate) fn read_headers(
     stream: &mut TcpStream,
     limit: usize,
     deadline: Instant,
@@ -6512,7 +6512,7 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
     buffer.windows(4).position(|window| window == b"\r\n\r\n")
 }
 
-fn read_body(
+pub(crate) fn read_body(
     stream: &mut TcpStream,
     mut body: Vec<u8>,
     content_length: usize,
@@ -6573,7 +6573,7 @@ fn read_expired(deadline: Instant, shutdown: &AtomicBool) -> Option<u16> {
     (Instant::now() >= deadline).then_some(408)
 }
 
-fn write_error(stream: &mut TcpStream, status: u16) -> io::Result<()> {
+pub(crate) fn write_error(stream: &mut TcpStream, status: u16) -> io::Result<()> {
     let (error_type, message) = match status {
         400 => ("invalid_request_error", "invalid request"),
         401 => ("authentication_error", "unauthorized"),
@@ -6742,7 +6742,7 @@ fn close_after_response(stream: &mut TcpStream) {
     let _ = stream.shutdown(Shutdown::Both);
 }
 
-fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
     }

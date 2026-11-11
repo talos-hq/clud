@@ -1,4 +1,5 @@
 //! Native client for the clud.bot operator protocol.
+mod bridge;
 pub mod connect;
 mod console;
 mod paste;
@@ -95,11 +96,12 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
         .map_err(|_| "cannot install remote cancellation handler")?;
     let input = stdin_lines();
     let mut state = State::new(console::Console::stdout());
-    state.terminal.configure_proxy(proxy::SessionProxy::new(
+    // Configured on `hello`, which says whether model requests ride the socket.
+    state.proxy = Some(proxy::SessionProxy::new(
         base.as_str(),
         &session.client_token,
         &session.proxy_model,
-    )?)?;
+    )?);
     let mut heartbeat = Instant::now();
     while !stop.load(Ordering::Relaxed) {
         state.read_consent(&input, &mut socket)?;
@@ -110,6 +112,7 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
             state.mirror(&output);
             socket.send(output).map_err(|_| "remote connection lost")?;
         }
+        bridge::flush(state.bridge.as_ref(), &mut socket)?;
         if heartbeat.elapsed() >= Duration::from_secs(20) {
             send(&mut socket, json!({"type":"ping"}))?;
             heartbeat = Instant::now();
@@ -120,6 +123,11 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
                     serde_json::from_str(&text).map_err(|_| "invalid remote event")?;
                 if state.event(&event, &mut socket)? {
                     return Ok(0);
+                }
+            }
+            Ok(Message::Binary(bytes)) if bytes.first() == Some(&bridge::CHANNEL) => {
+                if let Some(bridge) = &state.bridge {
+                    bridge.deliver(&bytes)?;
                 }
             }
             Ok(Message::Binary(bytes)) if state.granted && bytes.first() == Some(&1) => {
@@ -142,6 +150,8 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
 struct State {
     console: console::Console,
     terminal: terminal::Terminal,
+    proxy: Option<proxy::SessionProxy>,
+    bridge: Option<bridge::Bridge>,
     connected: bool,
     granted: bool,
     pending: Option<String>,
@@ -153,6 +163,8 @@ impl State {
         Self {
             console,
             terminal: terminal::Terminal::default(),
+            proxy: None,
+            bridge: None,
             connected: false,
             granted: false,
             pending: None,
@@ -204,6 +216,10 @@ impl State {
                     socket,
                     json!({"type":"caps", "caps":["pty"], "client":concat!("clud/", env!("CARGO_PKG_VERSION"))}),
                 )?;
+                if let Some(mut proxy) = self.proxy.take() {
+                    self.bridge = bridge::offer(event, &mut proxy)?;
+                    self.terminal.configure_proxy(proxy)?;
+                }
                 if let Some(message) = end_message(event["state"].as_str().unwrap_or("")) {
                     self.console.line(message);
                     return Ok(true);
