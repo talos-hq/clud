@@ -711,6 +711,42 @@ artifact and named in the output).
   at most 24 runs per session, 2 days / 500 files retained; the count expires
   after 60 minutes without a read. Fails open on every state error.
 
+### Raw `git status` probe budget (#2233)
+
+`git status` is the fleet's most repeated repo probe. Its output is kept in the
+conversation and every later request re-sends it, and a status read lands early
+in a session, where "every later request" is longest.
+
+Evidence (24 h probe, 2026-11-07, `reports/rows-2026-11-07.jsonl`): `git` is
+the largest result category at **15.8 % of exposure**; bare `git status` alone
+was ~550 standalone calls producing ~1.6 MB of text at a ~2.9 kB median. The
+bounded replacement has been bundled since #2676 and the session instructions
+name it, but the fleet still typed raw `git status` in nearly every session: in
+the same window, `sed` was still called ~1.2k times even though the read-hunt
+and oversized-read guards and `code/slice.py` routing were all live. An
+instruction does not convert a habit; the hook does.
+
+- **Detection:** a command that is one plain `git status` invocation — no
+  chain (`;`, `&&`), no pipe, redirect, substitution, or env prefix. Only flags
+  in a short plain list (`-s`, `--short`, `-b`, `--branch`, `--long`,
+  `--no-renames`, `--untracked-files=normal`) qualify; `--porcelain`,
+  `--ignored`, a pathspec and any unknown flag pass untouched, because those
+  are already small or targeted. `git -C DIR` and `git --no-pager` are
+  understood. A directory outside a checkout fails open.
+- **At the limit** the next raw status in that checkout is refused once, with
+  the exact bounded call:
+  `cd <root> && "$CLUD_EXE" tool run git/state.py` — branch, upstream
+  ahead/behind, changed paths, recent commits, stashes and worktrees, every
+  list capped with an explicit `+N more`. A retry of the same command passes, so
+  the guard cannot wedge a session.
+- **Budget:** two raw statuses per checkout, then one refusal per checkout.
+  `CLUD_ALLOW_GIT_STATE=1` in the command skips one call,
+  `CLUD_GIT_STATE_LIMIT=<n>` sets the limit and `0` disables the guard. The
+  count expires after 60 minutes without a probe.
+- **State:** `<clud state dir>/git-state-guard/<session>.json`, one file per
+  session, at most 24 checkouts per session, 2 days / 500 files retained. Fails
+  open on every state, parse or filesystem error.
+
 ### Verification-to-edit ratio note (#1988)
 
 `block_bad_cmd_verify_ratio.rs` classifies each PreToolUse call as an edit
