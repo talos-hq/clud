@@ -1624,6 +1624,7 @@ fn apply_loop_config(args: &mut args::Args) {
         no_done,
         done,
         repeat,
+        interval,
         message,
         config,
     } = options.as_mut();
@@ -1652,6 +1653,7 @@ fn apply_loop_config(args: &mut args::Args) {
         done.as_deref(),
         *no_done,
         repeat.as_deref(),
+        interval.as_deref(),
         *refresh,
         message.as_deref(),
     );
@@ -1668,6 +1670,7 @@ fn apply_loop_config(args: &mut args::Args) {
     *done = resolved.done.clone();
     *no_done = resolved.no_done.unwrap_or(false);
     *repeat = resolved.repeat.clone();
+    *interval = resolved.interval.clone();
     *refresh = resolved.refresh.unwrap_or(false);
     if !args.dry_run {
         let _ = resolved.write_resolved(&git_root);
@@ -2268,6 +2271,7 @@ fn print_dry_run_and_exit(
             "image": plan.graphics.image_path.as_ref().map(|p| p.to_string_lossy().to_string()),
         },
         "repeat_interval_secs": plan.repeat_schedule.as_ref().map(|s| s.interval_secs),
+        "loop_interval_secs": plan.loop_interval_secs,
         // The resolved Codex selection, expanded from whatever short form
         // was typed, so a dry run shows what will actually be billed.
         "codex_model": plan.codex_model,

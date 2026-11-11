@@ -2144,6 +2144,7 @@ pub(crate) mod tests {
             cwd: None,
             graphics: GraphicsConfig::default(),
             repeat_schedule: None,
+            loop_interval_secs: None,
             task_summary: None,
             loop_markers: None,
             stream_json_progress: false,

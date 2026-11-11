@@ -834,7 +834,14 @@ clud loop "Implement the API endpoints from the spec"
 clud loop TASK.md                                  # Read prompt from a file
 clud loop https://github.com/org/repo/issues/42    # Fetch & iterate on a GH issue
 clud loop --loop-count 10 "fix bugs"               # Custom iteration count
+clud loop --loop-count 100 --interval 5m "fix bugs" # Wait 5m between iterations
 ```
+
+`--interval` paces the loop: without it the next iteration starts the moment
+the previous one exits, and each restart re-pays the whole prompt. If the work
+is not ready yet, the agent can just end its turn — the next iteration is
+already scheduled. `--repeat` is the different thing: it sleeps *after* the
+loop completes before re-running it.
 
 ### In-chat `/loop` for Codex models
 
