@@ -1824,8 +1824,8 @@ fn strip_gh_repo_flag(tokens: &[String]) -> Vec<String> {
     out
 }
 
-/// Bundled tools that only read, open to every capped role (#1339).
-const READ_ONLY_TOOLS: &[&str] = &["git/state.py", "code/outline.py"];
+/// Bundled tools that only read, open to every capped role (#1339, #2233).
+const READ_ONLY_TOOLS: &[&str] = &["git/state.py", "code/outline.py", "github/pr_status.py"];
 
 /// Whether ast-grep arguments write files: `-U`/`--update-all` and
 /// `-i`/`--interactive` apply rewrites, and `new` scaffolds files.
@@ -2565,6 +2565,20 @@ mod tests {
                 "{role}"
             );
         }
+    }
+
+    #[test]
+    fn every_role_may_read_a_pull_request_status() {
+        let facts = run(true, false);
+        let call = "clud tool run github/pr_status.py -- --repo o/r --pr 1 2";
+        for role in [PLANNER, EDITOR, REVIEWER, INTEGRATOR, LANDER, PREWORK] {
+            assert!(allowed(role, call, &facts), "{role}");
+        }
+        assert!(allowed(
+            PLANNER,
+            "clud tool run github/pr_status.py",
+            &facts
+        ));
     }
 
     #[test]

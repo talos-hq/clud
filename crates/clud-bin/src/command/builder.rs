@@ -524,6 +524,12 @@ pub(super) const BOUNDED_READ_ROUTING: &str = "Before reading a source file you 
 /// interactive session keeps the shorter prompt and decides for itself.
 pub(super) const GIT_STATE_ROUTING: &str = "To learn a checkout's git state make ONE call to `clud tool run git/state.py` — branch, upstream ahead/behind, changed paths, recent commits, stashes and worktrees, every list bounded — instead of chaining `git status`, `git branch`, `git log`, `git stash list` or `git worktree list`; run `git fetch -q` first when the question is what landed upstream, and add `--all` only when a full list matters. For a review, pin the range with `clud tool run git/review_range.py` before reading any file, then `git show --stat <sha>`, never `git log -p`.";
 
+/// One bounded line per pull request (#2233). A status sweep is otherwise a
+/// shell loop of `gh pr view --json state,mergeStateStatus` plus
+/// `gh pr checks | grep fail` for every PR, and the JSON rollup of even a
+/// passing PR is thousands of bytes that every later request re-sends.
+pub(super) const PR_STATUS_ROUTING: &str = "For the state and CI of one or more pull requests make ONE call to `clud tool run github/pr_status.py -- --repo OWNER/REPO --pr 42 43 44`: one bounded line per PR with state, draft, merge state, review decision, green/total checks and the NAMES of the failing ones, never a `statusCheckRollup` body. Use it instead of a `for p in ...; do gh pr view $p --json state,mergeStateStatus; gh pr checks $p | grep fail; done` sweep, which spends two `gh` calls per PR per sweep, and instead of `gh pr view --json statusCheckRollup`. It reads once and does not poll: waiting on a PR is still `github/pr_merge_watch.py`.";
+
 fn append_instructions(target: &mut String, text: &str) {
     if !text.is_empty() {
         if !target.is_empty() {
@@ -649,6 +655,7 @@ fn build_launch_plan_for_target_at(
             append_instructions(&mut deletion_instructions, BOUNDED_DIAGNOSTIC_ROUTING);
             append_instructions(&mut deletion_instructions, BOUNDED_READ_ROUTING);
             append_instructions(&mut deletion_instructions, GIT_STATE_ROUTING);
+            append_instructions(&mut deletion_instructions, PR_STATUS_ROUTING);
         }
     }
     let codex_passthrough_instructions = (backend == Backend::Codex)
@@ -808,6 +815,7 @@ fn build_launch_plan_for_target_at(
             append_instructions(&mut instructions, BOUNDED_DIAGNOSTIC_ROUTING);
             append_instructions(&mut instructions, BOUNDED_READ_ROUTING);
             append_instructions(&mut instructions, GIT_STATE_ROUTING);
+            append_instructions(&mut instructions, PR_STATUS_ROUTING);
         }
         if !instructions.is_empty() || has_user_instructions {
             cmd.extend([
