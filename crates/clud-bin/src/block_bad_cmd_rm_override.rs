@@ -1,6 +1,11 @@
 //! Protect user settings while distinguishing executable writes from data.
 //! A protected name in an issue search or scratch heredoc is not a write.
 //! Unknown operations that mention the protected setting still fail closed.
+//!
+//! A write the hook merely cannot *resolve* (`> $1.log`, `cp x $W/`, a
+//! `{...}` group too large to expand) is denied under its own
+//! `[unverifiable-target]` code, not as a settings write: the deny is the
+//! same, but blaming settings hides the only fix — spell the path out.
 
 use std::io::Read;
 use std::path::Path;
@@ -329,25 +334,43 @@ fn reason_in(
     let script = super::block_bad_cmd_shell::parse_command_with_home(command, dialect, cwd, home);
     let names_override = names_override(command, &script);
     let alts = pre_cd_cwds(command, &script.invocations, cwd);
-    let writes_settings = script.invocations.iter().any(|invocation| {
-        protected_operand(invocation, home, &alts)
-            || invocation.redirects.iter().any(|redirect| {
-                redirect.writes_file()
-                    && home.is_none_or(|home| {
-                        !safe_destination(&redirect.target, invocation, home, &alts)
-                    })
-            })
-    });
-    if writes_settings
-        || (names_override
-            && (script.has_error
-                || home.is_none()
-                || !script.invocations.iter().all(read_only_invocation)))
-    {
-        Some(REFUSAL.to_string())
-    } else {
-        None
+    let mut writes_settings = false;
+    let mut unverifiable: Option<String> = None;
+    for invocation in &script.invocations {
+        match protected_operand(invocation, home, &alts) {
+            Destination::Safe => {}
+            Destination::Protected => writes_settings = true,
+            Destination::Unverifiable => {
+                unverifiable.get_or_insert_with(|| invocation.source.clone());
+            }
+        }
+        for redirect in &invocation.redirects {
+            if !redirect.writes_file() {
+                continue;
+            }
+            match destination_verdict(&redirect.target, invocation, home, &alts) {
+                Destination::Safe => {}
+                Destination::Protected => writes_settings = true,
+                Destination::Unverifiable => {
+                    unverifiable.get_or_insert_with(|| redirect.target.text().to_string());
+                }
+            }
+        }
     }
+    if writes_settings {
+        return Some(REFUSAL.to_string());
+    }
+    if let Some(target) = unverifiable {
+        return Some(unverifiable_target(&target));
+    }
+    if names_override
+        && (script.has_error
+            || home.is_none()
+            || !script.invocations.iter().all(read_only_invocation))
+    {
+        return Some(REFUSAL.to_string());
+    }
+    None
 }
 
 /// Lowercased text with quotes and backslashes dropped, so spellings such as
@@ -552,36 +575,71 @@ fn pre_cd_cwds(command: &str, invocations: &[Invocation], cwd: Option<&Path>) ->
     cwds
 }
 
-fn protected_operand(invocation: &Invocation, home: Option<&Path>, alts: &[String]) -> bool {
+fn protected_operand(invocation: &Invocation, home: Option<&Path>, alts: &[String]) -> Destination {
     if read_only_invocation(invocation) {
-        return false;
+        return Destination::Safe;
     }
     let Some(home) = home else {
-        return false;
+        return Destination::Safe;
     };
     let mutator = matches!(
         invocation.effective_program().as_deref(),
         Some("cp" | "mv" | "tee" | "install" | "dd" | "set-content" | "add-content" | "out-file")
     );
     let Some(cwd) = invocation.cwd.as_literal() else {
-        return mutator || names_protected_file(invocation, home);
+        return if names_protected_file(invocation, home) {
+            Destination::Protected
+        } else if mutator {
+            Destination::Unverifiable
+        } else {
+            Destination::Safe
+        };
     };
-    invocation.effective_argv().iter().skip(1).any(|word| {
-        word.as_literal().map_or(mutator, |word| {
-            // A known protected operand on an unknown writer is refused too:
-            // passing a target to a script does not establish its authority.
-            let word = word.strip_prefix("of=").unwrap_or(word);
-            std::iter::once(cwd)
-                .chain(alts.iter().map(String::as_str))
-                .any(|cwd| operand_hits(word, cwd, home))
-        })
-    })
+    let mut verdict = Destination::Safe;
+    for word in invocation.effective_argv().iter().skip(1) {
+        let Some(word) = word.as_literal() else {
+            // An unknown word on a writer could be the target: refuse, but do
+            // not claim the target was the settings file.
+            if mutator {
+                verdict = merge_verdict(verdict, Destination::Unverifiable);
+            }
+            continue;
+        };
+        // A known protected operand on an unknown writer is refused too:
+        // passing a target to a script does not establish its authority.
+        let word = word.strip_prefix("of=").unwrap_or(word);
+        for cwd in std::iter::once(cwd).chain(alts.iter().map(String::as_str)) {
+            verdict = merge_verdict(verdict, operand_verdict(word, cwd, home));
+        }
+    }
+    verdict
+}
+
+/// `Protected` outranks `Unverifiable`: the stronger, always-true statement.
+fn merge_verdict(a: Destination, b: Destination) -> Destination {
+    match (a, b) {
+        (Destination::Protected, _) | (_, Destination::Protected) => Destination::Protected,
+        (Destination::Unverifiable, _) | (_, Destination::Unverifiable) => {
+            Destination::Unverifiable
+        }
+        _ => Destination::Safe,
+    }
 }
 
 /// Whether `word` resolves, or as a glob/brace pattern could resolve, to the
 /// protected file when run from `cwd`.
-fn operand_hits(word: &str, cwd: &str, home: &Path) -> bool {
-    protected_file(word, cwd, home) || (has_glob(word) && pattern_may_match(word, cwd, home))
+///
+/// A pattern too large to enumerate is `Unverifiable`, not `Protected`: the
+/// hook cannot show the write lands on the settings file, which is a weaker
+/// and different claim than knowing it does.
+fn operand_verdict(word: &str, cwd: &str, home: &Path) -> Destination {
+    if protected_file(word, cwd, home) {
+        return Destination::Protected;
+    }
+    if has_glob(word) {
+        return pattern_verdict(word, cwd, home);
+    }
+    Destination::Safe
 }
 
 fn has_glob(word: &str) -> bool {
@@ -757,9 +815,9 @@ fn wildcard_sequences(text: &str) -> String {
     out
 }
 
-fn pattern_may_match(word: &str, cwd: &str, home: &Path) -> bool {
+fn pattern_verdict(word: &str, cwd: &str, home: &Path) -> Destination {
     let Some(patterns) = expand_braces(word) else {
-        return true;
+        return Destination::Unverifiable;
     };
     let settings = crate::clud_settings::settings_path_at(home);
     let lower = |path: &Path| -> Vec<char> {
@@ -772,7 +830,7 @@ fn pattern_may_match(word: &str, cwd: &str, home: &Path) -> bool {
         lower(&settings),
         lower(&canonical_creation_target(&settings)),
     ];
-    patterns.iter().any(|pattern| {
+    let matched = patterns.iter().any(|pattern| {
         let expanded = match pattern
             .strip_prefix("~/")
             .or_else(|| pattern.strip_prefix("~\\"))
@@ -786,7 +844,12 @@ fn pattern_may_match(word: &str, cwd: &str, home: &Path) -> bool {
             .chars()
             .collect();
         targets.iter().any(|target| glob_match(&joined, target))
-    })
+    });
+    if matched {
+        Destination::Protected
+    } else {
+        Destination::Safe
+    }
 }
 
 /// With the cwd unknown a relative spelling cannot be resolved, so any word
@@ -820,19 +883,58 @@ fn names_protected_file(invocation: &Invocation, home: &Path) -> bool {
     })
 }
 
-fn safe_destination(target: &Value, invocation: &Invocation, home: &Path, alts: &[String]) -> bool {
-    let Some(target) = target.as_literal() else {
-        return false;
+/// What the hook can say about one redirect destination.
+///
+/// `Unverifiable` is kept apart from `Protected` on purpose: the deny is the
+/// same either way, but the reason the agent is told must be true.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Destination {
+    /// Resolves to a path that is not the protected settings file.
+    Safe,
+    /// Resolves to the protected settings file.
+    Protected,
+    /// A variable, substitution or positional parameter stands where the path
+    /// should be, so it cannot be shown not to be the settings file.
+    Unverifiable,
+}
+
+fn destination_verdict(
+    target: &Value,
+    invocation: &Invocation,
+    home: Option<&Path>,
+    alts: &[String],
+) -> Destination {
+    let (Some(target), Some(cwd), Some(home)) =
+        (target.as_literal(), invocation.cwd.as_literal(), home)
+    else {
+        return Destination::Unverifiable;
     };
     if target == "/dev/null" {
-        return true;
+        return Destination::Safe;
     }
-    let Some(cwd) = invocation.cwd.as_literal() else {
-        return false;
-    };
-    !std::iter::once(cwd)
+    if std::iter::once(cwd)
         .chain(alts.iter().map(String::as_str))
         .any(|cwd| protected_file(target, cwd, home))
+    {
+        Destination::Protected
+    } else {
+        Destination::Safe
+    }
+}
+
+/// The refusal for a write whose destination the hook cannot resolve.
+///
+/// Deliberately says nothing about user settings: no such write was shown, so
+/// blaming settings sends the agent to `clud settings set` for a scratch file
+/// and hides the one fix that works — spell the path out. Measured over 24 h
+/// on 2026-11-10: 19 refusals, none of which named the settings file.
+fn unverifiable_target(target: &str) -> String {
+    format!(
+        "[unverifiable-target] `{target}` is a write destination this hook cannot resolve \
+         (a variable, command substitution or positional parameter), so the write cannot be \
+         shown not to land on the protected user settings file; refusing. Spell the path out: \
+         a literal destination runs unchanged."
+    )
 }
 
 fn protected_file(target: &str, cwd: &str, home: &Path) -> bool {
@@ -1745,6 +1847,54 @@ mod tests {
             let got = reason(command);
             assert!(got.is_some(), "{command}");
             assert!(got.unwrap().contains("safe_rm.extra_roots"), "{command}");
+        }
+    }
+
+    #[test]
+    fn an_unresolvable_redirect_target_is_not_blamed_on_user_settings() {
+        // 2026-11-10, 24 h probe: 19 refusals carried the settings text and
+        // not one of them named the settings file. The causes were `$1.log`,
+        // `$(pwd)/a.log`, `$UNDEF/a.log` and `$D/b$i.html` — destinations the
+        // hook cannot resolve, reported as a settings write. The fix is
+        // message-only: the deny stands, the reason becomes true.
+        for command in [
+            "echo hi > $1.log",
+            "echo hi > $(pwd)/a.log",
+            "echo hi > $UNDEFINED/a.log",
+            "for i in $(seq 2); do brave --dump-dom https://e.com/$i > /tmp/b$i.html; done",
+            "gh run view $(cat id) --log-failed > $D/$1.log",
+            "cp ci/a.py ci/b.py $W/ci/",
+            "echo hi | tee $OUT/run.log",
+        ] {
+            let Some(got) = reason(command) else {
+                panic!("{command} should fail closed");
+            };
+            assert!(got.starts_with("[unverifiable-target]"), "{command}: {got}");
+            assert!(
+                !got.contains("raw writes to user settings"),
+                "{command}: {got}"
+            );
+            assert!(got.contains("literal"), "{command}: {got}");
+        }
+    }
+
+    #[test]
+    fn a_protected_target_still_wins_over_an_unresolvable_one() {
+        // Both causes in one command: the true statement is the stronger one,
+        // so an agent that ignores it cannot slip past on the second.
+        let got = reason("echo hi > $1.log && echo x > ~/.clud/settings.json")
+            .expect("a settings write is refused");
+        assert_eq!(got, REFUSAL);
+    }
+
+    #[test]
+    fn a_literal_destination_is_still_allowed() {
+        for command in [
+            "echo hi > /tmp/b1.html",
+            "for i in 1 2; do echo hi > /tmp/b$i.html; done",
+            "D=/tmp/out; gh run view 1 --log-failed > $D/run.log",
+        ] {
+            assert_eq!(reason(command), None, "{command}");
         }
     }
 
