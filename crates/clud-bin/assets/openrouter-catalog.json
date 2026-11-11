@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-10T12:55:54Z",
+  "generated_at": "2026-11-11T12:06:00Z",
   "source": "https://openrouter.ai/api/v1/models",
   "pricing_estimate": {
     "label": "lowest-priced eligible models by weighted token-mix estimate; not a quality ranking",
@@ -1208,6 +1208,59 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "baidu/ernie-5.5-flash-preview:free",
+      "name": "Baidu: ERNIE-5.5-Flash-Preview (free)",
+      "provider": "baidu",
+      "context_length": 1024000,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": false,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "baidu/ernie-light-dt-1.0-intl",
+      "name": "Baidu: ERNIE-Light-DT-1.0",
+      "provider": "baidu",
+      "context_length": 1024000,
+      "input_price_per_token": 1.13e-06,
+      "output_price_per_token": 3.94e-06,
+      "cached_input_price_per_token": 1.13e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "high",
+          "low",
+          "none"
+        ],
+        "default_effort": "max",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": false,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "bytedance-seed/seed-1.6",
       "name": "ByteDance Seed: Seed 1.6",
       "provider": "bytedance-seed",
@@ -1716,9 +1769,9 @@
       "name": "DeepSeek: DeepSeek V4 Flash 0423",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 9.1e-08,
-      "output_price_per_token": 1.82e-07,
-      "cached_input_price_per_token": 1.82e-08,
+      "input_price_per_token": 9e-08,
+      "output_price_per_token": 1.8e-07,
+      "cached_input_price_per_token": 1.8e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1882,9 +1935,9 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 6e-09,
-      "output_price_per_token": 5e-07,
-      "cached_input_price_per_token": 5e-09,
+      "input_price_per_token": 5.1e-08,
+      "output_price_per_token": 5.67e-07,
+      "cached_input_price_per_token": 1.8e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -2872,6 +2925,60 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "google/gemini-4-carbon",
+      "name": "Google: Gemini 4 Carbon",
+      "provider": "google",
+      "context_length": 1048576,
+      "input_price_per_token": 2e-06,
+      "output_price_per_token": 1e-05,
+      "cached_input_price_per_token": 1e-07,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "google/gemini-4-carbon:batch",
+      "name": "Google: Gemini 4 Carbon (batch)",
+      "provider": "google",
+      "context_length": 1048576,
+      "input_price_per_token": 1e-06,
+      "output_price_per_token": 5e-06,
+      "cached_input_price_per_token": 5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "google/gemini-nano-banana-2.1",
       "name": "Google: Nano Banana 2.1",
       "provider": "google",
@@ -3389,6 +3496,31 @@
       ]
     },
     {
+      "id": "kt/midm-k-3.0-pro",
+      "name": "KT: Mi:dm K 3.0 Pro",
+      "provider": "kt",
+      "context_length": 261795,
+      "input_price_per_token": 2e-07,
+      "output_price_per_token": 8e-07,
+      "cached_input_price_per_token": 4e-08,
+      "supports_tools": false,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": false
+      },
+      "supports_vision": false,
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
+    },
+    {
       "id": "liquid/lfm-2.5-2.6b",
       "name": "LiquidAI: LFM2.5-2.6B",
       "provider": "liquid",
@@ -3508,9 +3640,9 @@
       "name": "Mancer: Weaver (alpha)",
       "provider": "mancer",
       "context_length": 8000,
-      "input_price_per_token": 4e-07,
-      "output_price_per_token": 7.5e-07,
-      "cached_input_price_per_token": 4e-07,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 3e-07,
       "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4065,9 +4197,9 @@
       "name": "MiniMax: MiniMax M2.5",
       "provider": "minimax",
       "context_length": 200000,
-      "input_price_per_token": 3e-07,
-      "output_price_per_token": 1.2e-06,
-      "cached_input_price_per_token": 6e-08,
+      "input_price_per_token": 2.7e-07,
+      "output_price_per_token": 1.08e-06,
+      "cached_input_price_per_token": 2.7e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -5051,6 +5183,31 @@
       ]
     },
     {
+      "id": "motif-technologies/motif-3",
+      "name": "Motif Technologies: Motif 3",
+      "provider": "motif-technologies",
+      "context_length": 262144,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 1.2e-06,
+      "cached_input_price_per_token": 6e-08,
+      "supports_tools": false,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
+        "mandatory": false
+      },
+      "supports_vision": false,
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
+    },
+    {
       "id": "nex-agi/nex-n2.5-mini",
       "name": "Nex AGI: Nex-N2.5-Mini",
       "provider": "nex-agi",
@@ -5207,7 +5364,7 @@
       "id": "nvidia/nemotron-3-super-120b-a12b",
       "name": "NVIDIA: Nemotron 3 Super",
       "provider": "nvidia",
-      "context_length": 1048576,
+      "context_length": 262144,
       "input_price_per_token": 7.5e-08,
       "output_price_per_token": 4e-07,
       "cached_input_price_per_token": 7.5e-08,
@@ -8538,29 +8695,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "qwen/qwen-2.5-7b-instruct",
-      "name": "Qwen: Qwen2.5 7B Instruct",
-      "provider": "qwen",
-      "context_length": 32768,
-      "input_price_per_token": 1e-07,
-      "output_price_per_token": 2e-07,
-      "cached_input_price_per_token": 1e-07,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": false,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": null
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "qwen/qwen-2.5-coder-32b-instruct",
       "name": "Qwen2.5 Coder 32B Instruct",
       "provider": "qwen",
@@ -10503,9 +10637,9 @@
       "name": "ReMM SLERP 13B",
       "provider": "undi95",
       "context_length": 6144,
-      "input_price_per_token": 3.5e-07,
-      "output_price_per_token": 6.5e-07,
-      "cached_input_price_per_token": 3.5e-07,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 2e-07,
       "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10998,29 +11132,6 @@
       "ineligibility_reasons": []
     },
     {
-      "id": "xingchen-agi/xing4.0-29b-a4b:free",
-      "name": "XingChen: Xing4.0 29B A4B (free)",
-      "provider": "xingchen-agi",
-      "context_length": 262144,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": true,
-        "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
       "id": "z-ai/glm-4.5",
       "name": "Z.ai: GLM 4.5",
       "provider": "z-ai",
@@ -11232,9 +11343,9 @@
       "name": "Z.ai: GLM 5.1",
       "provider": "z-ai",
       "context_length": 204800,
-      "input_price_per_token": 1.4e-06,
-      "output_price_per_token": 4.4e-06,
-      "cached_input_price_per_token": 2.6e-07,
+      "input_price_per_token": 1.33e-06,
+      "output_price_per_token": 4.18e-06,
+      "cached_input_price_per_token": 2.47e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11255,9 +11366,9 @@
       "name": "Z.ai: GLM 5.2",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 1e-08,
+      "input_price_per_token": 7e-09,
       "output_price_per_token": 6.8e-06,
-      "cached_input_price_per_token": 9e-09,
+      "cached_input_price_per_token": 6e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11336,8 +11447,8 @@
       "name": "Z.ai: GLM 5.3 Flash",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 5e-07,
+      "input_price_per_token": 3.99e-08,
+      "output_price_per_token": 7.84e-08,
       "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -11363,9 +11474,9 @@
       "name": "Z.ai: GLM 5.3 Flash (batch)",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 3e-08,
+      "input_price_per_token": 4.7e-08,
       "output_price_per_token": 6.1e-08,
-      "cached_input_price_per_token": 1.3e-08,
+      "cached_input_price_per_token": 2e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11777,7 +11888,7 @@
       "provider": "moonshotai",
       "context_length": 1048576,
       "input_price_per_token": 1.824e-07,
-      "output_price_per_token": 9.3388e-06,
+      "output_price_per_token": 1.10055e-05,
       "cached_input_price_per_token": 1.8e-07,
       "supports_tools": true,
       "supports_text_input": true,
@@ -12054,6 +12165,10 @@
   ],
   "cheapest_programming": [
     {
+      "id": "baidu/ernie-5.5-flash-preview:free",
+      "weighted_usd_per_million_tokens": 0.0
+    },
+    {
       "id": "cohere/north-mini-code:free",
       "weighted_usd_per_million_tokens": 0.0
     },
@@ -12098,10 +12213,6 @@
       "weighted_usd_per_million_tokens": 0.0
     },
     {
-      "id": "xingchen-agi/xing4.0-29b-a4b:free",
-      "weighted_usd_per_million_tokens": 0.0
-    },
-    {
       "id": "inclusionai/ling-3.0-tiny",
       "weighted_usd_per_million_tokens": 0.0198
     },
@@ -12118,20 +12229,20 @@
       "weighted_usd_per_million_tokens": 0.0292
     },
     {
-      "id": "z-ai/glm-5.3-flash:batch",
-      "weighted_usd_per_million_tokens": 0.0345
-    },
-    {
       "id": "openai/gpt-oss-20b:batch",
       "weighted_usd_per_million_tokens": 0.0416
+    },
+    {
+      "id": "z-ai/glm-5.3-flash",
+      "weighted_usd_per_million_tokens": 0.04661
     },
     {
       "id": "~z-ai/glm-flash-latest",
       "weighted_usd_per_million_tokens": 0.04661
     },
     {
-      "id": "qwen/qwen3.7-flash",
-      "weighted_usd_per_million_tokens": 0.0476
+      "id": "z-ai/glm-5.3-flash:batch",
+      "weighted_usd_per_million_tokens": 0.0471
     }
   ]
 }
