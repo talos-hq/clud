@@ -11,6 +11,7 @@ mod e2e;
 )]
 pub(crate) mod leader;
 mod mirror;
+mod open_url;
 mod paste;
 pub mod proxy;
 mod resume;
@@ -724,6 +725,12 @@ impl State {
                     self.console.line(format!("Operator: {body}"));
                 }
             }
+            "open_url" => open_url::handle(
+                event,
+                self.connected && self.granted,
+                &self.console,
+                |url| open::that_detached(url).is_ok(),
+            ),
             "proxy_ended" => self
                 .console
                 .line("clud.bot disconnected remote AI inference."),
