@@ -9,6 +9,7 @@ pub mod block_bad_cmd_repeat;
 mod build_id;
 pub mod codex_auth;
 pub mod config;
+pub mod console_echo;
 pub mod console_input;
 pub mod console_setup;
 pub mod console_title;
