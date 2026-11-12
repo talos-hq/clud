@@ -251,6 +251,26 @@ impl State {
                     self.console.line(format!("Operator: {body}"));
                 }
             }
+            "open_url" if self.connected => {
+                // Silent, https-only: a connected operator may open an address in
+                // the user's browser without a per-URL prompt, but the client
+                // refuses anything that is not https (or loopback) and always
+                // reports what it opened, so a drive-by `file:`/`http:` is blocked
+                // and nothing opens invisibly.
+                match sanitize_open_url(event["url"].as_str().unwrap_or("")) {
+                    Ok(url) => {
+                        if open::that_detached(&url).is_ok() {
+                            self.console
+                                .line(format!("clud.bot opened in your browser: {url}"));
+                        } else {
+                            self.console.line(format!("clud.bot could not open: {url}"));
+                        }
+                    }
+                    Err(reason) => self
+                        .console
+                        .line(format!("clud.bot refused to open an address ({reason}).")),
+                }
+            }
             "proxy_ended" => self
                 .console
                 .line("clud.bot disconnected remote AI inference."),
@@ -279,6 +299,39 @@ impl State {
         }
         Ok(false)
     }
+}
+
+/// Accept only an address the client is willing to open in the user's browser:
+/// `https://` with a host, or a loopback `http://` origin for local development.
+/// Everything else (`file:`, `javascript:`, `data:`, bare paths, remote `http://`)
+/// is refused so an operator cannot open a local file or an unencrypted page.
+fn sanitize_open_url(raw: &str) -> Result<String, &'static str> {
+    let url = raw.trim();
+    if url.len() > 2048 {
+        return Err("address too long");
+    }
+    if let Some(rest) = url.strip_prefix("https://") {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let host = host.rsplit('@').next().unwrap_or("");
+        if host.is_empty() {
+            return Err("missing host");
+        }
+        return Ok(url.to_owned());
+    }
+    if let Some(rest) = url.strip_prefix("http://") {
+        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+        let host = host.rsplit('@').next().unwrap_or("");
+        let name = if let Some(inside) = host.strip_prefix('[') {
+            inside.split(']').next().unwrap_or("")
+        } else {
+            host.split(':').next().unwrap_or("")
+        };
+        if matches!(name, "localhost" | "127.0.0.1" | "::1") {
+            return Ok(url.to_owned());
+        }
+        return Err("only https or loopback http is allowed");
+    }
+    Err("only https addresses are allowed")
 }
 
 fn end_message(kind: &str) -> Option<&'static str> {
