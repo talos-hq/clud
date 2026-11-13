@@ -36,9 +36,8 @@ every backend's skills dir on launch. `clud-loop` was retired once
 - [clud-issue-triage/](clud-issue-triage/README.md) - Triage GitHub issues:
   close ones that are clearly resolved and silently file follow-ups for
   un-addressed CodeRabbit comments; supports single, last-week, or all.
-- [clud-tag-release/](clud-tag-release/README.md) - Tag a release after
-  validating version match, clean `main`, and no duplicate tag, then push and
-  surface the auto-release workflow URL.
+- [clud-tag-release/](clud-tag-release/README.md) - Observe automatic clud
+  releases, recover missing handoffs, or manually tag other tag-driven repos.
 - [clud-docker-rust-app-dev/](clud-docker-rust-app-dev/README.md) - Build a
   Rust app inside Docker for development iteration, not deployment. It uses
   fast incremental cargo builds via named volumes for `target/` + `CARGO_HOME`

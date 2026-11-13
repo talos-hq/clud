@@ -87,7 +87,7 @@ crates/                    → see crates/README.md
       skills/              → see crates/clud-bin/assets/skills/README.md
         clud-issue/        → see .../clud-issue/README.md
         clud-issue-triage/ → see .../clud-issue-triage/README.md
-        clud-tag-release/  → see .../clud-tag-release/README.md
+        clud-tag-release/  → automatic release observation / manual recovery; see README.md
 testbins/                  → see testbins/README.md
   mock-agent/              → see testbins/mock-agent/README.md
     src/                   → see testbins/mock-agent/src/README.md
@@ -365,8 +365,11 @@ queue's `merge_group` run tests the merged tree with the routine `minimal`
 lanes (#2125). To submit a reviewed PR use `clud tool run github/pr_merge.py --
 <PR> --repo <OWNER/REPO> --match-head-commit <full-head-SHA>`; it selects the
 queue mutation when the base requires a queue and never bypasses protections.
-Then use `github/pr_merge_watch.py` to wait for the actual merge. Manual full CI pins every job to a verified
-candidate SHA. See
+Then use `github/pr_merge_watch.py` to wait for the actual merge. Main CI
+automatically tags validated version bumps and dispatches Auto Release
+on that immutable tag; manual tagging remains a recovery path. See
+[automatic version tags](docs/architecture/ci.md#automatic-version-tags-2764).
+Manual full CI pins every job to a verified candidate SHA. See
 [`ci.md`](docs/architecture/ci.md#current-ci-selection).
 
 **Choose labels from the changed implementation, not the callers.** Business

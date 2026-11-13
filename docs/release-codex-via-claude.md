@@ -4,6 +4,10 @@ This feature is opt-in: `clud --codex --harness claude`. Native Claude and
 native Codex launches keep their existing defaults. Roll back a single launch
 with `--harness default`, or reset the saved harness choice in `clud settings`.
 
+Release orchestration and manual recovery follow
+[automatic version tags](architecture/ci.md#automatic-version-tags-2764).
+Complete this feature smoke record before merging the real version bump.
+
 ## Automated evidence (2026-08-04)
 
 - Rust component coverage exercises loopback authentication, routing, bounded

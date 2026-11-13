@@ -1,6 +1,6 @@
 ---
 name: clud-tag-release
-description: Tag a release and let the auto-release workflow build it. Validates version match, clean main, no duplicate tag — then pushes the tag and surfaces the workflow URL.
+description: Inspect clud's automatic release handoff, recover a missing tag or dispatch, or push an annotated release tag in another tag-driven Rust/Python repository.
 triggers:
   - When the user types "/clud-tag-release" with or without a version arg
   - When the user says "cut a release", "tag a release", "ship a version"
@@ -10,70 +10,78 @@ triggers:
 
 # /clud-tag-release
 
-Tag a release the way `zackees/zccache` does it: the tag is the trigger, the workflow does the rest. Five hard rules:
+First identify the repository's release path. In `talos-hq/clud`, a version-bump
+PR merged through the queue is the normal release action. Successful post-merge
+main CI creates the annotated bare version tag and dispatches Auto Release on
+that immutable tag. Observe that handoff; no manual tag push follows a normal
+bump. The gates, retry behavior and operator recovery are owned by
+[CI architecture](https://github.com/talos-hq/clud/blob/main/docs/architecture/ci.md#automatic-version-tags-2764).
+Other repositories with tag-triggered releases can use the manual fallback below.
 
-1. **Tag must equal workspace version.** Read the version from `Cargo.toml [workspace.package].version` (workspace) or `Cargo.toml [package].version` (single crate) or `pyproject.toml [project].version`. The tag pushed must match — `1.2.3` and `v1.2.3` are both fine, but `1.2.3` ≠ `1.2.4`. If they don't match, stop and tell the user to bump first; do not silently retag.
-2. **Tag from clean default branch only.** Working tree clean, on `main`/`master`, in sync with `origin`. Never tag from a feature branch or a dirty tree.
-3. **No duplicates.** Tag must not exist locally or on origin; no GitHub release record for that tag yet. If it does, stop — re-tagging a published release is destructive.
-4. **Push the tag — don't `gh release create`.** `gh release create` creates the release record directly and bypasses the auto-release workflow's preflight (version validation, idempotency check, registry skip-existing). The deliverable is an annotated tag pushed to origin; the workflow does everything else.
-5. **Verify the workflow kicked off.** After push, find the run, surface its URL, and confirm it transitioned to `in_progress` (or queued). A push that doesn't trigger a run means the workflow isn't wired up — surface that.
+## Inspect clud's normal path
 
-## Code Change Rule
+1. Read the workspace version and matching `pyproject.toml` project version.
+   A requested version must match. Do not bump versions as part of this skill.
+2. Locate the landed version-bump SHA and its original main-push CI run. Queue
+   `merge_group` proof alone does not authorize a tag. `CI OK` must have actually
+   executed its **Check results** verifier; a superseded shortcut is insufficient.
+   Verified default-branch reuse accepted by that verifier is valid.
+3. Check both `<version>` and `v<version>` remote tags, release records and Auto
+   Release runs bound to the landed SHA. Existing refs must never move. If a
+   matching release or run exists, report its URL/status instead of dispatching
+   again. For a failed release, rerun that release or use its documented immutable
+   acceptance recovery; do not create another tag or publication.
+4. If main CI is queued/running, report its URL. If canceled (including queue
+   overflow), rerun the original push run so its original event range and exact
+   SHA receive verification. Do not substitute current main or a manual CI run.
+5. A tag-created/dispatch-failed job retries reconciliation automatically. If both
+   attempts failed, rerun the original main CI run/failed tagging job. It checks
+   existing tag and run state before acting. A conflicting tag is a blocking
+   error; report both SHAs without deletion, force updates or retagging.
 
-This skill should not implement fixes or features. If the release is blocked by a code bug or missing feature, stop and send the user to `/goal`; that work must use RED -> GREEN before this tag-release flow resumes.
+## Explicit recovery and generic tag-driven repositories
 
-## Workflow
+This is a fallback for a missing automated handoff or a repository whose release
+workflow expects a human tag. Inspect its workflow before changing remote state.
+Do not create a GitHub release record directly: publication belongs to the release
+workflow and its gates.
 
-1. **Detect the version source.** In repo root, in this order:
-   - `Cargo.toml` with `[workspace.package].version` → that's the version.
-   - `Cargo.toml` with `[package].version` (no workspace) → that's the version.
-   - `pyproject.toml` with `[project].version` → that's the version.
-   - None of the above → stop with a message; this skill is for Rust/Python projects with a tag-driven release flow.
-2. **Detect the auto-release workflow.** Look for `.github/workflows/release-auto.yml` or any workflow whose `on.push.tags` pattern matches version-style tags (`v*`, `[0-9]*`). If none exists, stop and tell the user — point them at `zackees/zccache` (`.github/workflows/release-auto.yml`) for the canonical pattern. Don't try to push a tag with no workflow waiting.
-3. **Resolve the tag to push.**
-   - No arg → use the detected version verbatim. Tell the user: "I'll tag `<version>` (or `v<version>` if your existing tags use that prefix)." Pick the prefix that matches the most recent existing release tag; default to bare (no `v`) if there are no prior releases.
-   - Arg `<version>` or `v<version>` → use as given, but validate it matches the workspace version. On mismatch: stop and tell the user to bump (`crates/.../Cargo.toml` or `pyproject.toml`) first.
-4. **Set the goal.** With the resolved tag known, invoke `/goal Tag <tag> and confirm the auto-release workflow transitioned to in_progress or queued; report the run URL.` so the harness Stop hook blocks until the workflow run is located and surfaced. If any pre-flight gate (step 5) fails the skill aborts before pushing — clear the goal then.
-5. **Pre-flight gates.** Every gate is blocking. Run them in parallel where possible (`git fetch` and `gh api` calls). Report the first failure and stop:
-   - `git rev-parse --abbrev-ref HEAD` is `main` (or the repo's default — `gh api repos/<owner>/<repo> --jq .default_branch`).
-   - `git status --porcelain` is empty.
-   - `git fetch origin && git rev-list HEAD...origin/<default>` is empty (in sync, no diverging commits).
-   - `git tag -l <tag>` and `git tag -l v<tag>` are both empty (no local tag).
-   - `git ls-remote --tags origin <tag>` and same with `v<tag>` are empty (no remote tag).
-   - `gh api repos/<owner>/<repo>/releases/tags/<tag>` returns 404 (no published release).
-6. **Confirm with the user.** Show:
-   - Tag to push: `<tag>`
-   - HEAD SHA: `<sha>` (and one-line commit subject)
-   - Workflow that will fire: `<release-workflow-path>`
-   Wait for explicit confirmation. Don't proceed on silence.
-7. **Tag and push.**
-   - `git tag -a <tag> -m "Release <version>"` — **annotated**, not lightweight, so `git describe` works downstream.
-   - `git push origin <tag>` — push *just the tag*, not `--tags` (which would push every local tag).
-8. **Locate the triggered run.** Read `gh run list --workflow=<release-workflow-file> --event=push --limit 5 --json databaseId,headSha,status,url` **once**, looking for a run whose `headSha` matches the tagged commit's SHA. Never poll for it: a loop, a `sleep` before the read, `timeout … bash -c`, a Monitor call, a written script or Python are all hand-written waits that clud's hook refuses (zackees/clud#1972). The workflow can take a few seconds to register, so if the run is not listed yet, report the tag and the workflow's Actions page (`https://github.com/<owner>/<repo>/actions/workflows/<release-workflow-file>`) instead of a run URL, and say the run had not registered at the time of the read. If no run ever appears, the workflow may not be configured to trigger on this tag pattern.
-9. **Report.** Output exactly:
-   - Tag pushed: `<tag>` → `<sha>`
-   - Workflow run: `<url>` (status: `<queued|in_progress>`)
-   - One line on what the workflow will do (build, publish to PyPI/crates.io, attach release artifacts) — pulled from the workflow file's job names, not invented.
-   - Nothing else. Don't follow the run. If the user asked for its result, start `gh run watch <id> --exit-status` once with `run_in_background` and read the result when it exits; never a polling loop (for a PR, `"$CLUD_EXE" tool run github/pr_merge_watch.py <PR>` with `run_in_background` is the waiter).
+1. Detect the version from `Cargo.toml [workspace.package].version`, single-crate
+   `[package].version`, or `pyproject.toml [project].version`. When both Cargo and
+   Python versions exist, require them to match.
+2. Find the existing workflow with version-tag push triggers and its optional
+   dispatch inputs. Use the repository's established spelling; clud always creates
+   bare `<version>` tags and treats `v<version>` as an existing equivalent.
+3. Fetch origin. Require a clean, synchronized default-branch checkout, and verify
+   the intended commit belongs to that branch and has the repository's required
+   CI. For clud, use the exact landed SHA with successful executed post-merge CI,
+   even if main has since advanced. Recheck version metadata at that SHA.
+4. Check both tag spellings locally/remotely and both GitHub release records.
+   Existing tags skip creation. A different target stops recovery. An existing
+   release is immutable; use its original run's recovery path.
+5. Before creating a missing tag, show the exact tag, SHA and workflow. Ask for
+   confirmation only if the user's existing release instruction has not already
+   authorized that action. Never proceed on silence when approval is required.
+6. Create an annotated tag on the intended SHA:
+   `git tag -a <tag> <sha> -m "Release <version>"`, then
+   `git push origin refs/tags/<tag>`. Push exactly that ref, never `--tags`.
+7. A human/App-token push can trigger the workflow. A default `GITHUB_TOKEN` push
+   cannot. For clud recovery of an existing tag with no release run, dispatch the
+   existing workflow on that exact tag:
+   `gh workflow run auto-release.yml --ref refs/tags/<tag> -f tag=<tag>`.
+   Do not dispatch against moving main. Check for a matching existing run first;
+   a tag and a completed release handoff are distinct states.
+8. Locate the run once using `gh run list --workflow <file> --limit 10 --json
+   databaseId,event,headBranch,headSha,status,url`, matching tag and SHA. Report the
+   tag target, run URL/status, and what the workflow publishes. If the run is not
+   yet visible, report that fact instead of inventing success or redispatching.
+   To wait when requested, use one `gh run watch <id> --exit-status` with the
+   harness's live session/background completion mechanism. No sleep/poll loops.
 
-## Failure modes to avoid
+## Scope and failure handling
 
-- **Mismatched tag and workspace version.** Re-tagging to a version that doesn't exist in `Cargo.toml`/`pyproject.toml` will fail in the workflow's preflight anyway — better to catch it locally and tell the user to bump.
-- **`gh release create v1.2.3`.** This creates the release record directly; the auto-release workflow won't fire (or will see the release already exists and skip steps). Always use `git tag` + `git push origin <tag>`.
-- **`git push --tags`.** Pushes every local tag, including stale ones from old branches. Push exactly the one you just created.
-- **Lightweight tag.** `git tag <tag>` (no `-a`/`-m`) creates a lightweight ref with no metadata. Use annotated tags so `git describe` and release notes have something to anchor on.
-- **Tagging from a feature branch.** Even if the commit is identical to main's HEAD, the branch context muddies the audit trail. Switch to main first.
-- **Re-pushing a deleted tag.** If a tag was previously published and then deleted, the GitHub release may still exist (just untagged). The skill checks `releases/tags/<tag>`; respect the result.
-- **Skipping the workflow detection step.** Pushing a tag with no auto-release workflow is a silent no-op — the user will think they shipped, nothing happens. Always confirm a workflow is wired up to the tag pattern.
-
-## When NOT to use this
-
-- The repo has no auto-release workflow → set one up first (model on `zackees/zccache` `.github/workflows/release-auto.yml`).
-- The user wants to publish a hotfix from a branch other than main → that's a different flow; do a backport PR or use the workflow's `workflow_dispatch` input directly.
-- The user wants to bump the version → that's `/clud-bump` (or a manual edit + commit + this skill). This skill assumes the version is already bumped and committed.
-- The release publishes via a non-tag-driven path (e.g. `cargo publish` from CI on every main push) — the skill's pre-flight checks don't apply.
-
-
-Follow the [shared landing contract](https://github.com/talos-hq/clud/blob/main/docs/architecture/launch-plan.md#landing-preference) when delivering changes. Preserve this role's scope; required checks, review, merge queues, `--safe` and explicit user
-instructions take precedence over any immediate admin-merge shortcut. For a
-release, observe the tag's release workflow and report its result.
+Do not implement feature or code fixes inside this skill. Report a code blocker
+and route it to the normal code-change workflow. Do not create workflows, bypass
+CI/review/merge queues, change published tags/assets, use `gh release create`,
+or cut a release merely to test release automation. Keep unrelated repositories'
+tag-driven paths supported; clud's automatic path does not depend on this skill.

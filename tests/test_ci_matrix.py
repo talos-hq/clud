@@ -639,7 +639,7 @@ def test_hosted_pr_checks_do_not_require_local_bosn_receipts() -> None:
     for section in ("gate", "gate.trust"):
         body = config.split(f"[{section}]\n", 1)[1].split("\n[", 1)[0]
         assert re.findall(r'^mode\s*=\s*"([^"]+)"', body, re.MULTILINE) == ["shadow"]
-    gate = text.split("\n  ci-ok:\n", 1)[1].split("\n  nightly-report:\n", 1)[0]
+    gate = re.split(r"\n  [a-z][a-z0-9-]*:\n", text.split("\n  ci-ok:\n", 1)[1], maxsplit=1)[0]
     assert "--attested-workflow" not in gate
     assert "--workflow-plan ci.yml --needs needs.json" in gate
     assert "continue-on-error" not in static + gate

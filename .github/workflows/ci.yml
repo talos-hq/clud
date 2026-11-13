@@ -59,14 +59,15 @@ on:
 # Deliberately NO `profile` input anywhere in this file. Release builds are
 # reachable only from auto-release.yml; _build-target.yml enforces that.
 
-# A main push keeps one active run and only the newest pending one (#2048,
-# as obs-rust/obs-studio's push build): the merge queue already tested each
-# merged tree, so a burst of merges must not stack parallel main runs. The
-# nightly and SHA-pinned dispatch runs on main stay independent (run_id), and
+# Main pushes serialize without replacing pending runs (#2764): every landed
+# version bump needs its own successful post-merge verification before tagging.
+# GitHub retains up to 100 pending runs; canceled/overflow runs need a rerun.
+# Nightly and SHA-pinned dispatch runs on main stay independent (run_id), and
 # every other ref cancels its superseded run. A candidate run (manual
 # dispatch or the release's call) is always independent and never cancelled.
 concurrency:
   group: ${{ github.workflow }}-${{ inputs.candidate_sha && format('candidate-{0}', github.run_id) || github.ref == 'refs/heads/main' && (github.event_name == 'push' && 'main-push' || github.run_id) || github.ref }}
+  queue: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && !inputs.candidate_sha && 'max' || 'single' }}
   cancel-in-progress: ${{ !inputs.candidate_sha && github.ref != 'refs/heads/main' }}
 
 permissions:
@@ -711,6 +712,8 @@ jobs:
   ci-ok:
     name: CI OK
     if: always()
+    outputs:
+      verified: ${{ steps.verify.outputs.verified }}
     needs:
       - static
       - static-checks
@@ -819,6 +822,7 @@ jobs:
       # The shared verifier derives required jobs from this workflow and
       # independently verifies hosted results and default-branch reuse.
       - name: Check results
+        id: verify
         if: steps.superseded.outputs.superseded != 'true'
         env:
           RESULTS: ${{ toJSON(needs) }}
@@ -829,6 +833,52 @@ jobs:
           printf '%s\n' "$RESULTS" >needs.json
           printf '%s\n' "${REUSE_EVIDENCE:-null}" >reuse-check.json
           uvx --from git+https://github.com/zackees/ci.yml@442537be9afba8cdfe7270b83a5493e9910aa522 ci-lint gate --repo . --workflow-plan ci.yml --needs needs.json --default-branch-reuse reuse-check.json --event "$GITHUB_EVENT_PATH"
+          echo 'verified=true' >> "$GITHUB_OUTPUT"
+
+  # Only the actual post-merge verifier can authorize release intent. A green
+  # superseded shortcut has no verified output; reusable release CI cannot tag.
+  auto-tag:
+    name: Tag verified version bump
+    needs: [static, ci-ok]
+    if: >-
+      !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' &&
+      !inputs.candidate_sha && needs.ci-ok.result == 'success' &&
+      needs.ci-ok.outputs.verified == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+      actions: write
+    # Also serialize reruns/concurrent attempts, without dropping pending ones.
+    concurrency:
+      group: clud-auto-tag
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.static.outputs.source_ref }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Reconcile tag and release handoff
+        id: handoff
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_VERIFIED: ${{ needs.ci-ok.outputs.verified }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: python -m ci.auto_tag
+      # Recover a tag-created/dispatch-failed attempt automatically. Reconcile
+      # remote state first: never blindly retry a potentially accepted POST.
+      - name: Recover interrupted release handoff
+        if: steps.handoff.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_VERIFIED: ${{ needs.ci-ok.outputs.verified }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        run: python -m ci.auto_tag
 
   # ---------------------------------------------------------- nightly-report --
   # Turns the nightly run's verdict into one tracking issue (#1849): opened
