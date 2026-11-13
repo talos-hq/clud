@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-12T13:11:51Z",
+  "generated_at": "2026-11-13T12:34:14Z",
   "source": "https://openrouter.ai/api/v1/models",
   "pricing_estimate": {
     "label": "lowest-priced eligible models by weighted token-mix estimate; not a quality ranking",
@@ -1806,9 +1806,9 @@
       "name": "DeepSeek: DeepSeek V4 Pro 0423",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 8.97318e-07,
-      "output_price_per_token": 1.794636e-06,
-      "cached_input_price_per_token": 7.47765e-08,
+      "input_price_per_token": 9e-07,
+      "output_price_per_token": 1.5e-06,
+      "cached_input_price_per_token": 2.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1861,9 +1861,9 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 2.2e-08,
-      "output_price_per_token": 4e-07,
-      "cached_input_price_per_token": 4e-09,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 1.2e-06,
+      "cached_input_price_per_token": 6e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1889,9 +1889,9 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash 1017",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 6e-07,
-      "cached_input_price_per_token": 3e-09,
+      "input_price_per_token": 3.8e-08,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 1e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1917,10 +1917,10 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash 1017 (batch)",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 1.1e-08,
-      "output_price_per_token": 2e-07,
-      "cached_input_price_per_token": 2e-09,
-      "supports_tools": true,
+      "input_price_per_token": 5e-08,
+      "output_price_per_token": 1.5e-07,
+      "cached_input_price_per_token": 4e-09,
+      "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": true,
@@ -1937,8 +1937,10 @@
         "mandatory": false
       },
       "supports_vision": true,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
+      "eligible_for_coding": false,
+      "ineligibility_reasons": [
+        "requires tools and tool_choice support"
+      ]
     },
     {
       "id": "deepseek/deepseek-v4.1-flash:batch",
@@ -2905,6 +2907,62 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "google/gemini-4-hydrogen",
+      "name": "Google: Gemini 4 Hydrogen",
+      "provider": "google",
+      "context_length": 1048576,
+      "input_price_per_token": 1.5e-06,
+      "output_price_per_token": 7.5e-06,
+      "cached_input_price_per_token": 7.5e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "google/gemini-4-hydrogen:batch",
+      "name": "Google: Gemini 4 Hydrogen (batch)",
+      "provider": "google",
+      "context_length": 1048576,
+      "input_price_per_token": 7.5e-07,
+      "output_price_per_token": 3.75e-06,
+      "cached_input_price_per_token": 3.75e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "xhigh",
+          "high",
+          "medium",
+          "low"
+        ],
+        "default_effort": "medium",
+        "default_enabled": null,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "google/gemini-nano-banana-2.1",
       "name": "Google: Nano Banana 2.1",
       "provider": "google",
@@ -3089,9 +3147,9 @@
       "name": "Google: Gemma 4 26B A4B",
       "provider": "google",
       "context_length": 262144,
-      "input_price_per_token": 8e-08,
-      "output_price_per_token": 1e-07,
-      "cached_input_price_per_token": 4.6e-08,
+      "input_price_per_token": 9e-08,
+      "output_price_per_token": 3e-07,
+      "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3258,7 +3316,7 @@
       "provider": "ibm-granite",
       "context_length": 131072,
       "input_price_per_token": 6e-08,
-      "output_price_per_token": 1.5e-07,
+      "output_price_per_token": 2.5e-07,
       "cached_input_price_per_token": 1.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -3429,7 +3487,7 @@
       "input_price_per_token": 2e-07,
       "output_price_per_token": 8e-07,
       "cached_input_price_per_token": 4e-08,
-      "supports_tools": false,
+      "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": true,
@@ -3441,10 +3499,8 @@
         "mandatory": false
       },
       "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "liquid/lfm-2.5-2.6b",
@@ -3618,7 +3674,7 @@
       "input_price_per_token": 7.2e-07,
       "output_price_per_token": 7.2e-07,
       "cached_input_price_per_token": 7.2e-07,
-      "supports_tools": false,
+      "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": false,
@@ -3630,10 +3686,8 @@
         "mandatory": null
       },
       "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "meta-llama/llama-3.1-8b-instruct",
@@ -4122,10 +4176,10 @@
       "id": "minimax/minimax-m2.5",
       "name": "MiniMax: MiniMax M2.5",
       "provider": "minimax",
-      "context_length": 200000,
+      "context_length": 198000,
       "input_price_per_token": 2.7e-07,
-      "output_price_per_token": 1.08e-06,
-      "cached_input_price_per_token": 2.7e-08,
+      "output_price_per_token": 9.5e-07,
+      "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4860,9 +4914,9 @@
       "name": "MoonshotAI: Kimi K2.5",
       "provider": "moonshotai",
       "context_length": 262144,
-      "input_price_per_token": 5.32e-07,
-      "output_price_per_token": 3.325e-06,
-      "cached_input_price_per_token": 2.09e-07,
+      "input_price_per_token": 5e-07,
+      "output_price_per_token": 2.5e-06,
+      "cached_input_price_per_token": 1.5e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -4957,9 +5011,9 @@
       "name": "MoonshotAI: Kimi K3.1 Pro",
       "provider": "moonshotai",
       "context_length": 1048576,
-      "input_price_per_token": 2.375e-07,
-      "output_price_per_token": 8.7856e-06,
-      "cached_input_price_per_token": 1.9e-07,
+      "input_price_per_token": 2e-06,
+      "output_price_per_token": 1e-05,
+      "cached_input_price_per_token": 2e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -5146,7 +5200,7 @@
       "input_price_per_token": 3e-07,
       "output_price_per_token": 1.2e-06,
       "cached_input_price_per_token": 6e-08,
-      "supports_tools": false,
+      "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": true,
@@ -5158,10 +5212,8 @@
         "mandatory": false
       },
       "supports_vision": false,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "nex-agi/nex-n2.5-mini",
@@ -8399,6 +8451,37 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "particle-ai/particle-1:free",
+      "name": "Particle AI: Particle-1 (free)",
+      "provider": "particle-ai",
+      "context_length": 1048576,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "xhigh",
+          "high",
+          "medium",
+          "low",
+          "minimal",
+          "none"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "perceptron/perceptron-mk1",
       "name": "Perceptron: Perceptron Mk1",
       "provider": "perceptron",
@@ -9165,9 +9248,9 @@
       "name": "Qwen: Qwen3.5-9B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 1.33e-07,
-      "cached_input_price_per_token": 8.1e-08,
+      "input_price_per_token": 2.6e-08,
+      "output_price_per_token": 3.8e-08,
+      "cached_input_price_per_token": 2.3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9807,9 +9890,9 @@
       "name": "Ricursive: Ripple 65B Preview",
       "provider": "ricursiveai",
       "context_length": 1048576,
-      "input_price_per_token": 2e-07,
-      "output_price_per_token": 6e-07,
-      "cached_input_price_per_token": 5e-08,
+      "input_price_per_token": 1e-07,
+      "output_price_per_token": 3e-07,
+      "cached_input_price_per_token": 2.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -10427,6 +10510,35 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "thinkingmachines/inkling-2-small",
+      "name": "Thinking Machines: Inkling 2 Small",
+      "provider": "thinkingmachines",
+      "context_length": 1048576,
+      "input_price_per_token": 3e-07,
+      "output_price_per_token": 1e-06,
+      "cached_input_price_per_token": 3e-08,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": true,
+      "reasoning": {
+        "supported_efforts": [
+          "max",
+          "high",
+          "medium",
+          "low",
+          "minimal"
+        ],
+        "default_effort": "high",
+        "default_enabled": true,
+        "mandatory": true
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "thinkingmachines/inkling-2-small:free",
       "name": "Thinking Machines: Inkling 2 Small (free)",
       "provider": "thinkingmachines",
@@ -11023,9 +11135,9 @@
       "name": "Xiaomi: MiMo-V2.5-Pro",
       "provider": "xiaomi",
       "context_length": 1024000,
-      "input_price_per_token": 4.8e-07,
-      "output_price_per_token": 1.8e-06,
-      "cached_input_price_per_token": 9.6e-08,
+      "input_price_per_token": 4.35e-07,
+      "output_price_per_token": 8.7e-07,
+      "cached_input_price_per_token": 3.6e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11399,9 +11511,9 @@
       "name": "Z.ai: GLM 5.3",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 6.99e-08,
-      "output_price_per_token": 1.4e-06,
-      "cached_input_price_per_token": 6.89e-08,
+      "input_price_per_token": 8.4e-08,
+      "output_price_per_token": 3.6e-06,
+      "cached_input_price_per_token": 7.9e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11561,9 +11673,9 @@
       "name": "Z.ai: GLM 5.3 (batch)",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 3.22e-07,
-      "output_price_per_token": 9.89e-07,
-      "cached_input_price_per_token": 1.09e-07,
+      "input_price_per_token": 4.5e-07,
+      "output_price_per_token": 2e-06,
+      "cached_input_price_per_token": 1e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11728,9 +11840,9 @@
       "name": "DeepSeek: DeepSeek Flash Latest",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 2.2e-08,
-      "output_price_per_token": 4e-07,
-      "cached_input_price_per_token": 4e-09,
+      "input_price_per_token": 3.8e-08,
+      "output_price_per_token": 5e-07,
+      "cached_input_price_per_token": 1e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -11812,8 +11924,8 @@
       "name": "Google: Gemini Flash Latest",
       "provider": "google",
       "context_length": 1048576,
-      "input_price_per_token": 7.5e-07,
-      "output_price_per_token": 3.75e-06,
+      "input_price_per_token": 1.5e-06,
+      "output_price_per_token": 7.5e-06,
       "cached_input_price_per_token": 7.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -11822,12 +11934,13 @@
       "supports_reasoning_effort": true,
       "reasoning": {
         "supported_efforts": [
+          "xhigh",
           "high",
           "medium",
           "low"
         ],
         "default_effort": "medium",
-        "default_enabled": true,
+        "default_enabled": null,
         "mandatory": true
       },
       "supports_vision": true,
@@ -12192,6 +12305,10 @@
       "weighted_usd_per_million_tokens": 0.0
     },
     {
+      "id": "particle-ai/particle-1:free",
+      "weighted_usd_per_million_tokens": 0.0
+    },
+    {
       "id": "inclusionai/ling-3.0-tiny",
       "weighted_usd_per_million_tokens": 0.0198
     },
@@ -12204,6 +12321,10 @@
       "weighted_usd_per_million_tokens": 0.02772
     },
     {
+      "id": "qwen/qwen3.5-9b",
+      "weighted_usd_per_million_tokens": 0.0281
+    },
+    {
       "id": "mistralai/mistral-nemo",
       "weighted_usd_per_million_tokens": 0.0292
     },
@@ -12214,14 +12335,6 @@
     {
       "id": "z-ai/glm-5.3-flash",
       "weighted_usd_per_million_tokens": 0.04661
-    },
-    {
-      "id": "~z-ai/glm-flash-latest",
-      "weighted_usd_per_million_tokens": 0.04661
-    },
-    {
-      "id": "qwen/qwen3.7-flash",
-      "weighted_usd_per_million_tokens": 0.0476
     }
   ]
 }
