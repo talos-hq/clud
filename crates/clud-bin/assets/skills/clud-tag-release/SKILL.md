@@ -81,7 +81,8 @@ workflow and its gates.
 ## Scope and failure handling
 
 Do not implement feature or code fixes inside this skill. Report a code blocker
-and route it to the normal code-change workflow. Do not create workflows, bypass
+and route it to the normal code-change workflow, following RED -> GREEN before
+this release flow resumes. Do not create workflows, bypass
 CI/review/merge queues, change published tags/assets, use `gh release create`,
 or cut a release merely to test release automation. Keep unrelated repositories'
 tag-driven paths supported; clud's automatic path does not depend on this skill.
