@@ -1,10 +1,10 @@
 # clud-tag-release/
 
-Bundled skill that drives a tag-triggered release for Rust and Python projects. Activates on `/clud-tag-release` (with or without a version arg) or natural-language phrases like "cut a release" or "tag a release". It detects the workspace version from `Cargo.toml` or `pyproject.toml`, runs pre-flight gates (clean default branch, no duplicate tag, green CI, an auto-release workflow that listens for version tags), pushes an annotated tag to origin, and surfaces the URL of the triggered workflow run.
+Bundled skill for observing clud’s automatic version-tag handoff, recovering a missing handoff, and manually tagging releases in other tag-driven Rust/Python repositories. Normal clud version-bump merges need no human tag push; [CI architecture](../../../../../docs/architecture/ci.md#automatic-version-tags-2764) owns the automation and recovery contract.
 
 ## Files
 
-- `SKILL.md` - Skill frontmatter, triggers, the five hard rules, the step-by-step workflow, and failure modes to avoid.
+- `SKILL.md` - Skill frontmatter, triggers, normal-path observation, explicit recovery, and the generic manual fallback.
 
 ## How it ships
 

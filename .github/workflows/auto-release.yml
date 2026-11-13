@@ -39,6 +39,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # Tag-ref dispatch pins both the workflow definition and source even
+          # when main advances. Recovery deliberately uses its main harness.
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - uses: actions/setup-python@v5
@@ -80,6 +83,11 @@ jobs:
           else:
               raw_tag = os.environ.get("RAW_TAG", "").strip() or version
               checkout_ref = os.environ.get("GITHUB_SHA", "")
+
+          if event_name == "workflow_dispatch" and ref_type == "tag":
+              if raw_tag != os.environ["GITHUB_REF_NAME"]:
+                  sys.exit("Dispatch tag input must equal the selected tag ref")
+              checkout_ref = raw_tag
 
           candidate_sha = subprocess.check_output(
               ["git", "rev-parse", "HEAD"], text=True
@@ -182,8 +190,10 @@ jobs:
       candidate_sha: ${{ needs.preflight.outputs.candidate_sha }}
       recovery_run_id: ${{ inputs.resume_run_id }}
     # The union ci.yml's jobs request; a called workflow cannot exceed it.
+    # GitHub validates even skipped jobs. Only ci.yml's main-push auto-tag job
+    # requests contents:write; it cannot execute during this candidate call.
     permissions:
-      contents: read
+      contents: write
       actions: write
       pull-requests: read
       issues: write

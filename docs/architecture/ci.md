@@ -59,12 +59,12 @@ tagged SHA, inside the release run, as a reusable-workflow call with
 `candidate_sha`. A non-empty candidate resolves the full tier (all six
 triples, Dylint, unit and integration) exactly as a manual dispatch does, and
 `CI OK` fails the job unless every selected job passed. No release build or
-publisher starts until it succeeds. A routine `main` version change does not
-trigger the release.
+publisher starts until it succeeds. A version bump on `main` starts this release
+through the [post-merge tag handoff](#automatic-version-tags-2764).
 
 A release consults no earlier evidence: no local-gate attestation, no
 default-branch reuse decision, and no earlier CI run. The reuse steps in
-`ci.yml` key only on a `main` push; a call from a tag push is not one,
+`ci.yml` key only on a `main` push; a call from a tag push or tag-ref dispatch is not one,
 and `tests/test_release_gate.py` pins that. This
 replaced a lookup of a separately dispatched `CI full <sha>` run, which
 failed any tag pushed without that manual step. It is the fleet rule
@@ -106,6 +106,85 @@ regression checks in `tests/test_release_recovery_dag.py` exercise this case and
 reject failed, skipped or canceled proof prerequisites. Arch guests use `pacman -Syu` so their
 pinned base image is fully upgraded before installing tools; partial upgrades
 can mix incompatible OpenSSL ABIs from the rolling repository.
+
+### Automatic version tags (#2764)
+
+Merge the version-bump PR through the queue; that is the normal human release
+action. `ci.yml`'s main-push-only `auto-tag` job runs after successful `CI OK`
+**and** its `verified=true` output. That output is written only after the shared
+**Check results** verifier succeeds. A superseded shortcut cannot tag; verified
+default-branch reuse accepted by that verifier can. PR, merge-group, nightly and
+candidate/reusable CI cannot execute the tagging job.
+
+`ci/auto_tag.py` parses `[workspace.package].version` at the push event's `before`
+and `after` SHAs, covering merge commits and multi-commit pushes. An unrelated
+Cargo edit or unchanged version does nothing. A changed stable version requires
+matching `[project].version` in `pyproject.toml` before any write. The annotated
+bare `<version>` tag points to that run's validated landed SHA, never a queue
+ref or moving main. Both `<version>` and `v<version>` prevent duplicate creation;
+conflicting targets fail visibly. The release and installer catalog accept either
+spelling, but new automatic tags consistently use bare versions. Existing tag
+refs are never updated, forced, deleted or retagged, and existing releases are
+left immutable.
+
+Main-push concurrency retains up to 100 pending runs with `queue: max` instead
+of replacing pending runs. Each retained event therefore gets its own exact-SHA
+CI before tagging. GitHub can still cancel queue overflow or a manually canceled
+run: rerun that **original push run**, retaining its event range and SHA. Do not
+substitute a manual candidate dispatch. A single multi-commit push validates only
+its final SHA: only the final version is eligible; intermediate commits without
+successful exact-SHA post-merge CI are never tagged. If that range intentionally
+contains several release versions, split them into separate main pushes before
+landing. Queue validation does not replace post-merge verification.
+
+Only `auto-tag` executes with `contents: write` and `actions: write`. Other CI
+jobs retain read-only contents, including PR code. Auto Release's reusable
+`full-ci-gate` caller declares the permission union (including contents write)
+because GitHub validates even skipped nested jobs; that envelope gives no other
+CI job write access, and candidate calls cannot execute `auto-tag`.
+
+The default `GITHUB_TOKEN` creates the tag; its push does not trigger workflows.
+The helper explicitly dispatches existing `auto-release.yml` with
+`ref: refs/tags/<version>` and the matching `tag` input, requesting returned run
+details. This pins workflow provenance and checkout to the tag even if main
+advances. Preflight checks the input/ref agreement and tag target. The release
+still recomputes full CI on that exact SHA and retains all public acceptance,
+promotion/rollback and serialized Pages gates. Tag-push and manual dispatch
+entrypoints remain available; automatic orchestration uses only explicit dispatch.
+Failed original tag-ref-dispatched releases also support immutable acceptance
+recovery under the same proofs as tag-push releases.
+
+Tag existence and completed handoff are separate states. Reconciliation skips
+creation of an existing same-SHA tag, then checks Auto Release runs by workflow,
+exact SHA, tag and push/dispatch event before sending a dispatch. A second job
+step automatically retries a failed handoff from freshly read remote state; a
+failed-only/full rerun uses the same reconciliation. Existing runs, including
+queued or failed runs, are reported rather than redispatched. A failed release
+needs its original release run rerun or documented acceptance recovery, not a
+new publication. Lookup errors fail closed; a 403 is never treated as absence.
+GitHub dispatch has no idempotency key: an accepted POST with a lost response
+and delayed run visibility can produce a duplicate run. The globally serialized
+release preflight and existing-release guard still prevent a second publication.
+Do not blindly retry dispatch POSTs.
+
+For persistent tag/dispatch failure, rerun the original main CI tagging job. As
+an explicit manual fallback, verify its executed post-merge gate and absent
+release/run, then create a missing annotated bare tag on that exact SHA and push
+only that ref with a human/App credential. If the tag already exists at the
+correct SHA but no run does, use
+`gh workflow run auto-release.yml --ref refs/tags/<tag> -f tag=<tag>`.
+Never dispatch against moving main to recover a missing handoff. The bundled
+`clud-tag-release` skill guides this recovery and generic tag-driven repositories.
+
+On the next real bump, verify the original main-push run's **Check results** and
+**Tag verified version bump**, the remote annotation's peeled target equal to the
+landed SHA, and exactly one Auto Release handoff with `event=workflow_dispatch`,
+that tag and SHA. Its preflight checkout and **Exact SHA full CI** must use the
+same SHA before release builds/publication. Rerun reconciliation to confirm it
+reports the existing run without another tag or dispatch. Do not bump or publish
+solely to exercise this automation. `tests/test_auto_tag.py` covers the guards,
+races and interrupted handoff; the isolated scratch proof exercises real GitHub
+default-token suppression, tag-ref dispatch, advancing main and reusable CI.
 
 ## Local validation before remote CI
 
@@ -594,9 +673,9 @@ admins can bypass the queue. So:
 - The `push` run on `main` still runs `minimal` and still saves the caches
   PRs read.
   Its concurrency group is fixed (`main-push`, never cancelled): one run is
-  active and only the newest pending push waits behind it, so a burst of
-  merges cannot stack parallel `main` runs (#2048, as obs-rust/obs-studio's
-  push build). The queue already tested each merged tree; nightly and
+  active and up to 100 pending pushes wait behind it (`queue: max`), so bumps
+  retain their exact-SHA post-merge verification during bursts (#2764). Canceled
+  or overflowed runs need their original push run rerun; nightly and
   SHA-pinned dispatch runs on `main` keep their own `run_id` groups.
   Its `Default-branch reuse` step passes `--queue-evidence`: when the merged
   tree differs from the PR head's (the queue merged a PR that was behind
@@ -1241,8 +1320,8 @@ signed bytes. A structural post-check fails the step on any unsigned PE.
 `windows-signature-smoke` then requires `Get-AuthenticodeSignature` = `Valid`
 for every PE on native Windows x64/ARM64 and runs `clud.exe --version`; both
 publish jobs `need` it. Azure trusts the OIDC subject only for
-`refs/heads/main` and tags, so a release must be a tag push or a dispatch from
-`main`.
+`refs/heads/main` and tags, so a release can be a tag push, an exact-tag dispatch,
+or an explicitly validated recovery dispatch from `main`.
 
 ## Deduplicated checks
 
@@ -1312,8 +1391,9 @@ currently copy-pasted four times in exactly one place.
 | `.github/workflows/_build-target.yml` | reusable: one triple → one bundle (+ optional wheel/sdist artifact). Called by `ci.yml` and `auto-release.yml`. |
 | `.github/workflows/_run-tests.yml` | reusable: one triple × one suite → test execution. |
 | `.github/workflows/_dylint.yml` | reusable + dispatchable: one Linux Dylint job (host + Windows/macOS cross-target). |
-| `.github/workflows/ci.yml` | the only push/PR entrypoint. |
-| `.github/workflows/auto-release.yml` | unchanged triggers; now the sole caller that may pass `profile: release`. |
+| `.github/workflows/ci.yml` | push/PR/queue CI; main-only verified version-tag and release handoff. |
+| `.github/workflows/auto-release.yml` | tag push/tag-ref dispatch release entrypoint; sole caller allowed to pass `profile: release`. |
+| `ci/auto_tag.py` | exact push-range version comparison, immutable annotation and idempotent release dispatch. |
 | `ci/ci_matrix.py` | the triple table, shared by CI and the release matrix. |
 | `ci/xbuild.py` | every cargo/maturin invocation + the per-strategy cross environment. |
 | `ci/bundle.py`, `ci/run_bundle.py` | pack the bundle / execute it on the exec runner. |

@@ -131,7 +131,7 @@ def test_release_workflow_gates_every_publish_path() -> None:
     assert "linux-distro:" not in installer
     assert "source_ref: ${{ needs.preflight.outputs.candidate_sha }}" in text
     assert "ref: ${{ needs.preflight.outputs.candidate_sha }}" in text
-    assert "branches: [main]" not in text  # A main version bump cannot start a release.
+    assert "branches: [main]" not in text  # Main CI dispatches on an immutable tag ref.
 
 
 def test_candidate_proof_is_bound_to_dispatch_title() -> None:

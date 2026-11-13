@@ -7833,3 +7833,24 @@ tag; all original release and asset identity checks remain mandatory.
 repaired harness for publication. The original tag's data is tested anew and
 its existing artifacts are reused, so unrelated current model data cannot
 change a shipped byte. Bot refreshes can proceed without being reverted.
+
+
+## DD-213: version bumps hand off from verified main CI to immutable tag dispatch
+
+**Context:** A queued version-bump merge previously needed a later human tag push.
+Default-token tag pushes cannot start Auto Release, and latest-pending main CI
+concurrency could discard the only post-merge run for a release bump.
+
+**Decision:** Extend existing CI with a main-only job gated by the actual CI OK
+verifier output. Retain pending main runs, compare the complete push range's
+workspace versions, create an annotated bare tag at the validated landed SHA,
+and explicitly dispatch Auto Release on that tag ref. Reconcile both tag aliases
+and exact-tag/SHA runs before retrying; immutable release preflight still guards
+publication. Keep manual tags and dispatches as recovery paths. Details belong
+in [CI architecture](architecture/ci.md#automatic-version-tags-2764).
+
+**Why:** This reuses release-owned full validation without a new workflow or
+credential. A tag-ref dispatch pins both source and workflow provenance; neither
+queue proof nor a moving-main checkout can authorize a different release SHA.
+The reusable CI caller needs the nested permission union even when its tagging
+job is skipped, while only the main-only tagging job executes with contents write.

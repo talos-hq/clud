@@ -64,8 +64,11 @@ def test_every_original_build_and_smoke_proof_is_required(prefix, state):
         release_resume.require_run(run, jobs, TAG, SHA)
 
 
-def test_complete_failed_original_run_is_accepted():
-    release_resume.require_run(*proof(), TAG, SHA)
+@pytest.mark.parametrize("event", ["push", "workflow_dispatch"])
+def test_complete_failed_original_run_is_accepted(event):
+    run, jobs = proof()
+    run["event"] = event
+    release_resume.require_run(run, jobs, TAG, SHA)
 
 
 def test_paginated_original_proof_and_dispatch_origin(monkeypatch):

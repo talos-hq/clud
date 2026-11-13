@@ -58,6 +58,8 @@ test = [
     "pytest>=8.0.0",
     "pytest-cov>=6.0.0",
     "pytest-timeout>=2.3.0",
+    # Parse release workflow guards/permissions as YAML in tests/test_auto_tag.py.
+    "pyyaml>=6.0",
     # The Windows installer selector test runs in a real ConPTY; it must not
     # silently lose that coverage in the unit lane.
     "pywinpty>=3.0.5; sys_platform == 'win32'",

@@ -24,7 +24,7 @@ def require_run(run: dict, jobs: list[dict], tag: str, sha: str) -> None:
     """Require the original tag build and every prepublication proof."""
     if (
         run.get("path") != ".github/workflows/auto-release.yml"
-        or run.get("event") != "push"
+        or run.get("event") not in ("push", "workflow_dispatch")
         or run.get("head_branch") != tag
         or run.get("head_sha") != sha
         or run.get("status") != "completed"
