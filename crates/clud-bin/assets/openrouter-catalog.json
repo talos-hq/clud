@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-13T12:34:14Z",
+  "generated_at": "2026-11-14T11:43:26Z",
   "source": "https://openrouter.ai/api/v1/models",
   "pricing_estimate": {
     "label": "lowest-priced eligible models by weighted token-mix estimate; not a quality ranking",
@@ -1534,9 +1534,9 @@
       "name": "DeepSeek: DeepSeek V3",
       "provider": "deepseek",
       "context_length": 163840,
-      "input_price_per_token": 3.2e-07,
-      "output_price_per_token": 8.9e-07,
-      "cached_input_price_per_token": 3.2e-07,
+      "input_price_per_token": 2.574e-07,
+      "output_price_per_token": 1.0287e-06,
+      "cached_input_price_per_token": 2.574e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1861,9 +1861,9 @@
       "name": "DeepSeek: DeepSeek V4.1 Flash",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 3e-07,
-      "output_price_per_token": 1.2e-06,
-      "cached_input_price_per_token": 6e-09,
+      "input_price_per_token": 5.07e-08,
+      "output_price_per_token": 2.028e-07,
+      "cached_input_price_per_token": 1.014e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -1920,7 +1920,7 @@
       "input_price_per_token": 5e-08,
       "output_price_per_token": 1.5e-07,
       "cached_input_price_per_token": 4e-09,
-      "supports_tools": false,
+      "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
       "supports_reasoning": true,
@@ -1937,10 +1937,8 @@
         "mandatory": false
       },
       "supports_vision": true,
-      "eligible_for_coding": false,
-      "ineligibility_reasons": [
-        "requires tools and tool_choice support"
-      ]
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
     },
     {
       "id": "deepseek/deepseek-v4.1-flash:batch",
@@ -3147,9 +3145,9 @@
       "name": "Google: Gemma 4 26B A4B",
       "provider": "google",
       "context_length": 262144,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 3e-07,
-      "cached_input_price_per_token": 5e-08,
+      "input_price_per_token": 6.75e-08,
+      "output_price_per_token": 2.25e-07,
+      "cached_input_price_per_token": 3.75e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3430,6 +3428,29 @@
       "ineligibility_reasons": []
     },
     {
+      "id": "inclusionai/ling-3.2-flash:free",
+      "name": "inclusionAI: Ling 3.2 Flash (free)",
+      "provider": "inclusionai",
+      "context_length": 1048576,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
       "id": "inference-net/schematron-v2-small",
       "name": "Inference.net: Schematron V2 Small",
       "provider": "inference-net",
@@ -3497,52 +3518,6 @@
         "default_effort": null,
         "default_enabled": null,
         "mandatory": false
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "liquid/lfm-2.5-2.6b",
-      "name": "LiquidAI: LFM2.5-2.6B",
-      "provider": "liquid",
-      "context_length": 128000,
-      "input_price_per_token": 3.5e-07,
-      "output_price_per_token": 5e-07,
-      "cached_input_price_per_token": 4e-08,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
-      },
-      "supports_vision": false,
-      "eligible_for_coding": true,
-      "ineligibility_reasons": []
-    },
-    {
-      "id": "liquid/lfm-2.5-2.6b:free",
-      "name": "LiquidAI: LFM2.5-2.6B (free)",
-      "provider": "liquid",
-      "context_length": 65536,
-      "input_price_per_token": 0.0,
-      "output_price_per_token": 0.0,
-      "cached_input_price_per_token": 0.0,
-      "supports_tools": true,
-      "supports_text_input": true,
-      "supports_text_output": true,
-      "supports_reasoning": true,
-      "supports_reasoning_effort": false,
-      "reasoning": {
-        "supported_efforts": null,
-        "default_effort": null,
-        "default_enabled": null,
-        "mandatory": true
       },
       "supports_vision": false,
       "eligible_for_coding": true,
@@ -3742,9 +3717,9 @@
       "name": "Meta: Llama 3.2 3B Instruct",
       "provider": "meta-llama",
       "context_length": 131072,
-      "input_price_per_token": 5e-08,
-      "output_price_per_token": 3.3e-07,
-      "cached_input_price_per_token": 5e-08,
+      "input_price_per_token": 5.09e-08,
+      "output_price_per_token": 3.35e-07,
+      "cached_input_price_per_token": 5.09e-08,
       "supports_tools": false,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -7076,9 +7051,9 @@
       "name": "OpenAI: GPT-5.6 Sol",
       "provider": "openai",
       "context_length": 1050000,
-      "input_price_per_token": 4.4e-06,
-      "output_price_per_token": 2.2e-05,
-      "cached_input_price_per_token": 4.4e-07,
+      "input_price_per_token": 4e-06,
+      "output_price_per_token": 2e-05,
+      "cached_input_price_per_token": 4e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9248,9 +9223,9 @@
       "name": "Qwen: Qwen3.5-9B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 2.6e-08,
-      "output_price_per_token": 3.8e-08,
-      "cached_input_price_per_token": 2.3e-08,
+      "input_price_per_token": 1.7e-07,
+      "output_price_per_token": 2.5e-07,
+      "cached_input_price_per_token": 1.53e-07,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9550,7 +9525,7 @@
       "id": "qwen/qwen3.8-27b",
       "name": "Qwen: Qwen3.8 27B",
       "provider": "qwen",
-      "context_length": 1048575,
+      "context_length": 1024000,
       "input_price_per_token": 1.5e-07,
       "output_price_per_token": 1.875e-06,
       "cached_input_price_per_token": 3.75e-08,
@@ -12277,7 +12252,7 @@
       "weighted_usd_per_million_tokens": 0.0
     },
     {
-      "id": "liquid/lfm-2.5-2.6b:free",
+      "id": "inclusionai/ling-3.2-flash:free",
       "weighted_usd_per_million_tokens": 0.0
     },
     {
@@ -12321,10 +12296,6 @@
       "weighted_usd_per_million_tokens": 0.02772
     },
     {
-      "id": "qwen/qwen3.5-9b",
-      "weighted_usd_per_million_tokens": 0.0281
-    },
-    {
       "id": "mistralai/mistral-nemo",
       "weighted_usd_per_million_tokens": 0.0292
     },
@@ -12334,6 +12305,10 @@
     },
     {
       "id": "z-ai/glm-5.3-flash",
+      "weighted_usd_per_million_tokens": 0.04661
+    },
+    {
+      "id": "~z-ai/glm-flash-latest",
       "weighted_usd_per_million_tokens": 0.04661
     }
   ]
