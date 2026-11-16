@@ -8,6 +8,8 @@ consent boundary, protocol and executable integration check.
 - `mod.rs`: CLI action, foreground session, heartbeat and local consent state.
 - `console.rs`: the stdout worker: mirrors shell output to the client, prints
   notices and restores the local terminal, never blocking the session loop.
+- `mirror.rs`: what of the shell's output the local terminal may see: drops
+  queries, clipboard writes and input-reporting modes, keeps all drawing.
 - `transport.rs`: bounded session creation, same-origin bearer validation and
   HTTP/WebSocket TLS with bundled plus system roots.
 - `proxy.rs`: ephemeral inference environment, credential isolation and

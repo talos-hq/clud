@@ -5,8 +5,8 @@
 //! for the session: a stalled terminal blocks inside a write while holding the
 //! stdout lock, and neither mirroring nor a notice may then stall the session
 //! loop, which is what handles disconnect and Ctrl+C.
+use super::mirror::{MirrorFilter, RESET_INPUT_MODES};
 use crate::session::KeyboardEnhancementTracker;
-use crate::terminal_queries::TerminalQueryScanner;
 use std::io::Write;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -33,7 +33,9 @@ enum Command {
 struct Renderer<W: Write> {
     sink: W,
     modes: KeyboardEnhancementTracker,
-    queries: TerminalQueryScanner,
+    mirror: MirrorFilter,
+    /// Remote output reached the terminal since the last settle.
+    mirrored: bool,
     at_line_start: bool,
 }
 
@@ -42,7 +44,8 @@ impl<W: Write> Renderer<W> {
         Self {
             sink,
             modes: KeyboardEnhancementTracker::default(),
-            queries: TerminalQueryScanner::default(),
+            mirror: MirrorFilter::default(),
+            mirrored: false,
             at_line_start: true,
         }
     }
@@ -82,11 +85,13 @@ impl<W: Write> Renderer<W> {
     }
 
     fn output(&mut self, bytes: &[u8]) {
-        self.modes.observe(bytes);
-        // The operator's terminal already answers these on the server side. Here
-        // the replies would land on stdin, as junk on screen and in a consent answer.
-        let visible = self.queries.strip(bytes);
+        // The operator's terminal answers queries and reports input on the
+        // server side. Here replies and mouse reports would land on stdin, as
+        // junk on screen, in a consent answer and in the shell afterwards.
+        let visible = self.mirror.filter(bytes);
+        self.modes.observe(&visible);
         if let Some(&last) = visible.last() {
+            self.mirrored = true;
             self.at_line_start = last == b'\n';
             self.write(&visible);
         }
@@ -96,7 +101,12 @@ impl<W: Write> Renderer<W> {
     fn settle(&mut self) {
         let reset = self.modes.take_child_reset();
         self.write(&reset);
-        self.queries = TerminalQueryScanner::default();
+        // The filter never forwards an input-reporting mode; this also clears
+        // one left on by an older client that did, so the shell stays clean.
+        if std::mem::take(&mut self.mirrored) {
+            self.write(RESET_INPUT_MODES);
+        }
+        self.mirror = MirrorFilter::default();
         self.fresh_line();
     }
 }
@@ -143,7 +153,7 @@ impl Console {
         Self::with_sink(std::io::stdout())
     }
 
-    fn with_sink<W: Write + Send + 'static>(sink: W) -> Self {
+    pub(super) fn with_sink<W: Write + Send + 'static>(sink: W) -> Self {
         let (commands, receiver) = mpsc::channel();
         let pending = Arc::new(AtomicUsize::new(0));
         let dropped = Arc::new(AtomicUsize::new(0));
@@ -268,17 +278,30 @@ mod tests {
     #[test]
     fn settle_undoes_only_what_the_remote_left_on_and_only_once() {
         let out = rendered(|r| {
-            r.output(b"\x1b[?1049h\x1b[>1u\x1b[?25l");
+            r.output(b"\x1b[?1049h\x1b[>1u\x1b[?1003h\x1b[?25l");
             r.settle();
             r.settle();
         });
-        let expected_prefix = b"\x1b[?1049h\x1b[>1u\x1b[?25l";
+        // Keyboard and mouse reporting never reach the local terminal.
+        let expected_prefix = b"\x1b[?1049h\x1b[?25l";
+        assert!(out.starts_with(expected_prefix), "{out:?}");
         let reset = &out[expected_prefix.len()..];
         assert!(reset.starts_with(b"\x1b[?1049l"), "{reset:?}");
-        assert!(reset.windows(5).any(|w| w == b"\x1b[<1u"), "{reset:?}");
+        assert!(!reset.windows(5).any(|w| w == b"\x1b[<1u"), "{reset:?}");
         assert!(reset.windows(6).any(|w| w == b"\x1b[?25h"), "{reset:?}");
+        assert!(reset.windows(8).any(|w| w == b"\x1b[?1003l"), "{reset:?}");
         assert_eq!(reset.iter().filter(|&&b| b == b'\n').count(), 1);
         assert!(rendered(|r| r.settle()).is_empty());
+    }
+
+    #[test]
+    fn mirrored_tui_cannot_make_the_local_terminal_type_into_stdin() {
+        // What Claude Code sent when Konsole answered and spewed mouse reports.
+        let out = rendered(|r| {
+            r.output(b"\x1b[>0q\x1b[?1000;1006h\x1b[?1004h\x1b[?2004h\x1b[c");
+            r.output(b"WARNING: Bypass Permissions mode");
+        });
+        assert_eq!(out, b"WARNING: Bypass Permissions mode");
     }
 
     /// A terminal that accepts nothing until released, such as one paused by XOFF.

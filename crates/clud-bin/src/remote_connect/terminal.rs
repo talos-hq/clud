@@ -3,12 +3,18 @@ use super::paste::{InputFilter, OutputTracker, PasteMode};
 use running_process::pty::NativePtyProcess;
 use serde_json::{json, Value};
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc, Arc,
 };
 use tungstenite::Message;
 
 const FRAME_BYTES: usize = 16 * 1024;
+/// Operator input allowed to wait for the shell. A TUI with mouse tracking on
+/// gets a report per pointer move, in bursts, while it may be slow to read; a
+/// frame count overflowed and ended the session. The server already limits
+/// input to ~32 KiB/s, so a full budget means the shell has stopped reading:
+/// later frames are dropped and the operator sees a notice, the session stays.
+const INPUT_BUDGET_BYTES: usize = 1024 * 1024;
 const OUTPUT_FRAMES: usize = 128;
 /// ConPTY's first output: a cursor query it holds the shell behind until answered.
 const CONPTY_STARTUP_QUERY: &[u8] = b"\x1b[6n";
@@ -18,7 +24,7 @@ const CONPTY_STARTUP_REPLY: &[u8] = b"\x1b[1;1R";
 pub(super) struct Terminal {
     process: Option<Arc<NativePtyProcess>>,
     id: Option<String>,
-    input: Option<mpsc::SyncSender<Vec<u8>>>,
+    input: Option<InputQueue>,
     output: Option<mpsc::Receiver<Message>>,
     failed: Arc<AtomicBool>,
     command: String,
@@ -37,13 +43,41 @@ fn stop_process(process: &NativePtyProcess) {
     let _ = process.close_impl();
 }
 
+/// What [`Terminal::input`] did with a frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Delivery {
+    Queued,
+    /// Over [`INPUT_BUDGET_BYTES`] waiting: dropped, the session continues.
+    Dropped,
+}
+
+/// Operator input waiting for the shell, bounded by bytes rather than frames.
+struct InputQueue {
+    tx: mpsc::Sender<Vec<u8>>,
+    pending: Arc<AtomicUsize>,
+}
+
+impl InputQueue {
+    fn push(&self, data: &[u8]) -> Delivery {
+        if self.pending.load(Ordering::Relaxed) + data.len() > INPUT_BUDGET_BYTES {
+            return Delivery::Dropped;
+        }
+        self.pending.fetch_add(data.len(), Ordering::Relaxed);
+        // A closed queue means the pump ended; the output side reports why.
+        let _ = self.tx.send(data.to_vec());
+        Delivery::Queued
+    }
+}
+
 fn input_pump(
     process: Arc<NativePtyProcess>,
     rx: mpsc::Receiver<Vec<u8>>,
+    pending: Arc<AtomicUsize>,
     failed: Arc<AtomicBool>,
     mut paste: InputFilter,
 ) {
     for bytes in rx {
+        pending.fetch_sub(bytes.len(), Ordering::Relaxed);
         let bytes = paste.filter(&bytes);
         if bytes.is_empty() {
             continue;
@@ -211,7 +245,9 @@ impl Terminal {
         );
         process.start_impl().map_err(|e| e.to_string())?;
         self.failed = Arc::default();
-        let (input_tx, input_rx) = mpsc::sync_channel(8);
+        let (input_tx, input_rx) = mpsc::channel();
+        let pending = Arc::new(AtomicUsize::new(0));
+        let input_pending = Arc::clone(&pending);
         let (output_tx, output_rx) = mpsc::sync_channel(OUTPUT_FRAMES);
         let writer = Arc::clone(&process);
         let reader = Arc::clone(&process);
@@ -220,15 +256,24 @@ impl Terminal {
         let output_id = id.clone();
         let mode = PasteMode::default();
         let (paste_in, paste_out) = (InputFilter::new(mode.clone()), OutputTracker::new(mode));
-        std::thread::spawn(move || input_pump(writer, input_rx, input_failed, paste_in));
+        std::thread::spawn(move || {
+            input_pump(writer, input_rx, input_pending, input_failed, paste_in);
+        });
         std::thread::spawn(move || {
             output_pump(reader, output_tx, output_id, output_failed, paste_out);
         });
         self.process = Some(process);
-        self.input = Some(input_tx);
+        self.input = Some(InputQueue {
+            tx: input_tx,
+            pending,
+        });
         self.output = Some(output_rx);
         self.id = Some(id);
         self.opened()
+    }
+
+    pub fn id(&self) -> Option<&str> {
+        self.id.as_deref()
     }
 
     pub fn matches(&self, event: &Value) -> bool {
@@ -237,15 +282,14 @@ impl Terminal {
             .is_some_and(|id| event["pty_id"].as_str() == Some(id))
     }
 
-    pub fn input(&self, data: &[u8]) -> Result<(), String> {
+    pub fn input(&self, data: &[u8]) -> Result<Delivery, String> {
         if data.len() > 4096 {
             return Err("oversized remote terminal input".into());
         }
-        if let Some(tx) = &self.input {
-            tx.try_send(data.to_vec())
-                .map_err(|_| "remote terminal input buffer is full or closed")?;
-        }
-        Ok(())
+        Ok(self
+            .input
+            .as_ref()
+            .map_or(Delivery::Queued, |queue| queue.push(data)))
     }
 
     pub fn resize(&self, event: &Value) -> Result<(), String> {
@@ -295,6 +339,43 @@ impl Drop for Terminal {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_mouse_report_burst_is_queued_not_fatal() {
+        // A pointer swept across the operator's terminal: hundreds of tiny
+        // frames while the shell is busy. An 8-frame queue ended the session.
+        let (tx, rx) = mpsc::channel();
+        let queue = InputQueue {
+            tx,
+            pending: Arc::default(),
+        };
+        for col in 0..2000 {
+            let report = format!("\x1b[<35;{col};14M");
+            assert_eq!(queue.push(report.as_bytes()), Delivery::Queued);
+        }
+        assert_eq!(rx.try_iter().count(), 2000);
+    }
+
+    #[test]
+    fn input_past_the_byte_budget_is_dropped_then_flows_again() {
+        let (tx, rx) = mpsc::channel::<Vec<u8>>();
+        let pending = Arc::new(AtomicUsize::new(0));
+        let queue = InputQueue {
+            tx,
+            pending: Arc::clone(&pending),
+        };
+        let frame = vec![b'x'; 4096];
+        let fits = INPUT_BUDGET_BYTES / frame.len();
+        for _ in 0..fits {
+            assert_eq!(queue.push(&frame), Delivery::Queued);
+        }
+        assert_eq!(queue.push(&frame), Delivery::Dropped);
+        // The pump takes one frame; room for exactly one more.
+        let taken = rx.recv().unwrap();
+        pending.fetch_sub(taken.len(), Ordering::Relaxed);
+        assert_eq!(queue.push(&frame), Delivery::Queued);
+        assert_eq!(queue.push(&frame), Delivery::Dropped);
+    }
     use std::time::{Duration, Instant};
 
     #[test]
