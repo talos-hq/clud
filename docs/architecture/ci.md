@@ -1323,6 +1323,45 @@ publish jobs `need` it. Azure trusts the OIDC subject only for
 `refs/heads/main` and tags, so a release can be a tag push, an exact-tag dispatch,
 or an explicitly validated recovery dispatch from `main`.
 
+### Developer ID signing and notarization of macOS release wheels
+
+Release builds of the two `*-apple-darwin` triples are signed with the team's
+Developer ID Application certificate (hardened runtime, secure timestamp) and
+notarized by Apple, so Macs that only run notarized software accept them
+([DD-214](../DESIGN_DECISIONS.md#dd-214-macos-release-binaries-are-signed-and-notarized-on-linux-with-rcodesign)).
+`auto-release.yml`'s `sign-macos` job (one per macOS wheel, after `build`)
+runs `python -m ci.sign_macos_release sign --dist-dir dist`: a SHA-256-pinned
+rcodesign re-signs every Mach-O in the wheel (`clud`, `clud-webterm`),
+submits a zip of them to Apple's notary service and waits for `Accepted`,
+rewrites the wheel through `ci/wheel_rewrite.py`, checks the signature
+structure, and re-uploads the wheel under the **same artifact name**
+(`overwrite: true`). `wheel-smoke`, both publish jobs and
+`installer.release_assets` read that artifact, so PyPI, the standalone macOS
+assets, `SHA256SUMS`, the Pages catalog and the Homebrew formula all carry
+signed bytes. A bare Mach-O cannot be stapled; Gatekeeper looks the ticket up
+online. `macos-signature-smoke` then requires, on native macOS arm64 and
+x86_64, `codesign --verify --strict`, the Developer ID authority, the
+`runtime` flag and a timestamp, and `spctl --assess --type install` reporting
+`Notarized Developer ID` for every Mach-O, and runs `clud --version`. Both
+publish jobs `need` it, and release recovery requires both jobs' original
+proof.
+
+Credentials live only in the talos-hq/clud `release-signing` environment,
+which only these two jobs declare (the Rust build job never sees them):
+
+| Secret | Value |
+| --- | --- |
+| `MACOS_SIGNING_CERT` | base64 of the Developer ID Application `.p12` (key + cert) |
+| `MACOS_SIGNING_CERT_PASSWORD` | the `.p12` password |
+| `MACOS_SIGNING_IDENTITY` | the certificate common name, `Developer ID Application: <name> (<TEAMID>)` |
+| `APPLE_API_KEY_P8` | raw contents of the App Store Connect API key `AuthKey_<ID>.p8` (Developer role) |
+| `APPLE_API_KEY_ID` | that key's Key ID |
+| `APPLE_API_ISSUER` | the App Store Connect Issuer ID |
+
+A missing secret fails `sign-macos` with one error naming every absent secret,
+which blocks both publish jobs; there is no unsigned fallback. Only a release
+run exercises the credentials, notarization and the native verdict.
+
 ## Deduplicated checks
 
 | Check | Before | After |
