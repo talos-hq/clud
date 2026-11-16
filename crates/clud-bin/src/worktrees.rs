@@ -632,13 +632,19 @@ fn print_table(rows: &[Classified], _opts: &CleanOptions) {
 }
 
 fn confirm_interactive(n: usize) -> bool {
-    print!("Remove {n} worktree(s)? [y/N] ");
+    print!(
+        "{}",
+        crate::yes_no::question(
+            &format!("Remove {n} worktree(s)?"),
+            crate::yes_no::Default::No
+        )
+    );
     let _ = io::stdout().flush();
     let mut line = String::new();
     if io::stdin().read_line(&mut line).is_err() {
         return false;
     }
-    matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+    crate::yes_no::answer(&line, crate::yes_no::Default::No)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

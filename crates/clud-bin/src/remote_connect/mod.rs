@@ -9,7 +9,7 @@ mod tests;
 mod transport;
 
 use serde_json::{json, Value};
-use std::io::{BufRead, Write};
+use std::io::{BufRead, IsTerminal, Write};
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc, Arc,
@@ -68,7 +68,7 @@ fn stdin_lines() -> mpsc::Receiver<String> {
 fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let base = transport::base_url(host)?;
     let session = transport::create(&base, mode.map(connect::Mode::wire))?;
-    println!("Connecting to: {}connect#k={}", base, session.keyword);
+    println!("Connecting to {}connect#k={}", base, session.keyword);
     std::io::stdout()
         .flush()
         .map_err(|_| "cannot print remote keyword")?;
@@ -85,7 +85,10 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
             return Err(error);
         }
     };
-    println!("Connected!\n\nTell them this keyword:\n{}", session.keyword);
+    println!(
+        "Connected.\n\n  Keyword: {}\n\nRead this keyword to the operator.\n",
+        session.keyword
+    );
     std::io::stdout()
         .flush()
         .map_err(|_| "cannot print remote keyword")?;
@@ -178,7 +181,11 @@ impl State {
             return Ok(());
         };
         if let Some(id) = self.pending.take() {
-            let allow = matches!(line.trim().to_ascii_lowercase().as_str(), "y" | "yes");
+            let allow = crate::yes_no::answer(&line, crate::yes_no::Default::No);
+            self.console.answered(std::io::stdin().is_terminal());
+            if !allow {
+                self.console.line("Remote control declined.");
+            }
             self.approved = allow.then(|| id.clone());
             send(
                 socket,
@@ -215,8 +222,16 @@ impl State {
             }
             "control_request" if self.connected && self.pending.is_none() => {
                 self.pending = event["request_id"].as_str().map(str::to_owned);
-                self.console
-                    .line("Allow Remote Control by Zach Vorhies? [y/N]");
+                let question = crate::yes_no::question(
+                    "Allow Remote Control by Zach Vorhies?",
+                    crate::yes_no::Default::No,
+                );
+                // Typed answers share the question's line; piped ones need a line.
+                if std::io::stdin().is_terminal() {
+                    self.console.prompt(question);
+                } else {
+                    self.console.line(question.trim_end());
+                }
             }
             "control_granted"
                 if self.approved.is_some()

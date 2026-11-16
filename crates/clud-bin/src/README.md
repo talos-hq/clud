@@ -358,6 +358,10 @@ CLI surface and backend resolution:
   `Selector` trait and render through it.
 - `preference.rs` - shared pure typed-choice state machine used by launch
   scope and global settings selectors.
+- `yes_no.rs` - the one format for a typed yes/no question
+  (`Question? [y/N]: `, answered on the same line) and its answer parsing.
+  Line-read confirmations use `yes_no::question` and `yes_no::answer` instead
+  of spelling out `[y/N]` or matching `"y" | "yes"` by hand.
 - `subprocess.rs` - single decision point for the Windows `.cmd`/`.bat`
   rewrite (BatBadBat / CVE-2024-24576) via `running-process-core`'s
   `CommandSpec::Shell`.

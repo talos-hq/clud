@@ -540,19 +540,25 @@ fn release_claim(state_dir: &Path, checkout: CheckoutKey, yes: bool) -> io::Resu
         return Ok(());
     }
     if !yes {
+        let owners = owners
+            .iter()
+            .map(|entry| entry.session_id.as_str())
+            .collect::<Vec<_>>()
+            .join(", ");
         eprint!(
-            "Release claim held by {} for {}? [y/N] ",
-            owners
-                .iter()
-                .map(|entry| entry.session_id.as_str())
-                .collect::<Vec<_>>()
-                .join(", "),
-            checkout.worktree.display()
+            "{}",
+            crate::yes_no::question(
+                &format!(
+                    "Release claim held by {owners} for {}?",
+                    checkout.worktree.display()
+                ),
+                crate::yes_no::Default::No,
+            )
         );
         io::stderr().flush()?;
         let mut answer = String::new();
         io::stdin().read_line(&mut answer)?;
-        if !matches!(answer.trim(), "y" | "Y" | "yes" | "YES") {
+        if !crate::yes_no::answer(&answer, crate::yes_no::Default::No) {
             return Err(io::Error::other("claim release cancelled"));
         }
     }

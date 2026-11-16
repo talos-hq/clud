@@ -228,6 +228,7 @@ pub mod workspace_trust;
 pub mod worktree_consent;
 pub mod worktrees;
 pub mod xai_auth;
+pub mod yes_no;
 
 pub mod deletion_policy;
 pub mod deletion_rules;
