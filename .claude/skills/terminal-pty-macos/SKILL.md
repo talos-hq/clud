@@ -82,6 +82,12 @@ and Dylint proves only that the code compiles for macOS.
 
 ## Known behaviours and gotchas
 
+- **crossterm uses `use-dev-tty` on macOS only** (#2815). Its default
+  mio source registers stdin with kqueue, which rejects `/dev/tty`, so
+  `clud ... </dev/tty` (install.sh, connect.sh) failed with "Failed to
+  initialize input reader". The `use-dev-tty` source never reports an event
+  from `event::poll(Duration::ZERO)`; probe with `selector::event_ready`.
+
 - `ci-macos` and `ci-full` are the labels that run macOS. `ci-windows` and `ci-test`
   do not ([ci.md § Current CI selection](../../../docs/architecture/ci.md#current-ci-selection)).
 - The `pty` test harness runs inside a pseudo-terminal in CI with

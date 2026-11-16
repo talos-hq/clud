@@ -205,6 +205,14 @@ libc = "0.2"
 signal-hook = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
+# Issue #2815: crossterm's default event source registers its input fd with
+# mio, i.e. kqueue on macOS, and kqueue rejects `/dev/tty`. install.sh runs
+# the installer with `</dev/tty`, so every key read failed with "Failed to
+# initialize input reader". `use-dev-tty` swaps in the select()-based source
+# (filedescriptor uses select on macOS), which accepts `/dev/tty`. Linux and
+# Windows keep the default source. Its zero-timeout poll never reports an
+# event; callers use `selector::event_ready` instead of `poll(Duration::ZERO)`.
+crossterm = { version = "0.29", features = ["use-dev-tty"] }
 # Issue #877: Keychain-backed DeepSeek API-key storage.
 keyring = { version = "=3.6.3", default-features = false, features = ["apple-native"] }
 

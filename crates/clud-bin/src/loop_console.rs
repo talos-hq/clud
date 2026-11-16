@@ -629,7 +629,7 @@ impl LoopConsole {
     /// One UI tick: apply every pending input event, then repaint if due.
     pub(crate) fn input(&mut self) -> io::Result<Option<Action>> {
         let mut events = Vec::new();
-        while events.len() < MAX_EVENTS_PER_TICK && crossterm::event::poll(Duration::ZERO)? {
+        while events.len() < MAX_EVENTS_PER_TICK && crate::selector::event_ready()? {
             events.push(crossterm::event::read()?);
         }
         for line in take_deferred_diagnostics() {
