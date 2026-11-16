@@ -110,7 +110,11 @@ plain `clud` keeps its normal behavior. Setup run instructions use that name.
 assets (Linux uses static musl; a Rosetta shell on Apple Silicon gets aarch64),
 resolves the latest release tag from the `releases/latest` redirect unless
 `--version <tag>` is given, downloads the asset and the release's
-`SHA256SUMS`, and then hands the verified binary to itself:
+`SHA256SUMS`, and then hands the verified binary to itself. The asset download
+draws curl's progress bar on stderr when that is a terminal, or on the device
+`CLUD_INSTALL_PROGRESS` names (clud.bot's `connect.sh` logs the script's output
+and passes `/dev/tty`); set but empty, it is silent, so a slow link never looks
+hung. The handoff is
 `clud --installer --install-current --installer-json`, with
 `CLUD_INSTALL_DIR` exported and stdin taken from `/dev/tty` (stdin is the piped
 script). The script itself never edits a shell startup file. The native
