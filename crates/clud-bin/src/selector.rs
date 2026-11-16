@@ -502,7 +502,7 @@ struct CrosstermTerminal {
 
 impl Terminal for CrosstermTerminal {
     fn drain_pending(&mut self) -> io::Result<()> {
-        drain_pending_events(|| event::poll(Duration::ZERO), event::read).map(drop)
+        drain_pending_events(event_ready, event::read).map(drop)
     }
 
     fn next_input(&mut self, timeout: Option<Duration>) -> io::Result<Option<Input>> {
@@ -529,6 +529,20 @@ impl Terminal for CrosstermTerminal {
     fn rows(&self) -> usize {
         terminal::size().map_or(0, |(_, rows)| usize::from(rows))
     }
+}
+
+/// How long [`event_ready`] waits. Must be non-zero: see below.
+const READY_PROBE: Duration = Duration::from_millis(1);
+
+/// Whether a crossterm event can be read without blocking (in practice,
+/// within one millisecond).
+///
+/// Use this instead of `event::poll(Duration::ZERO)`. On macOS clud builds
+/// crossterm with `use-dev-tty` (#2815), and that source's `try_read` loop
+/// runs only while time is left, so a zero timeout returns `false` without
+/// polling the terminal or checking events it has already parsed.
+pub(crate) fn event_ready() -> io::Result<bool> {
+    event::poll(READY_PROBE)
 }
 
 fn drain_pending_events<P, R>(mut poll: P, mut read: R) -> io::Result<usize>
@@ -1071,6 +1085,42 @@ mod tests {
                     "{name} contains `{forbidden}`; render through crate::selector instead"
                 );
             }
+        }
+    }
+
+    /// #2815: on macOS crossterm's default (mio/kqueue) event source cannot
+    /// register `/dev/tty`, which is what install.sh hands the installer as
+    /// stdin. The macOS-only dependency entry must keep `use-dev-tty`.
+    #[test]
+    fn macos_crossterm_uses_the_dev_tty_event_source() {
+        let manifest: toml::Value = toml::from_str(include_str!("../Cargo.toml")).unwrap();
+        let features = manifest["target"]["cfg(target_os = \"macos\")"]["dependencies"]
+            ["crossterm"]["features"]
+            .as_array()
+            .expect("macOS crossterm entry lists features");
+        assert!(
+            features.iter().any(|f| f.as_str() == Some("use-dev-tty")),
+            "macOS crossterm must enable use-dev-tty (#2815): {features:?}"
+        );
+    }
+
+    /// `use-dev-tty`'s zero-timeout poll always reports nothing (#2815), so
+    /// production code probes through `event_ready` instead.
+    #[test]
+    fn no_production_code_polls_crossterm_with_a_zero_timeout() {
+        for (name, source) in [
+            ("selector.rs", include_str!("selector.rs")),
+            ("loop_console.rs", include_str!("loop_console.rs")),
+        ] {
+            let production = source.split("#[cfg(test)]").next().unwrap_or(source);
+            let code: String = production
+                .lines()
+                .filter(|line| !line.trim_start().starts_with("//"))
+                .collect();
+            assert!(
+                !code.contains("poll(Duration::ZERO)"),
+                "{name} polls crossterm with a zero timeout; use selector::event_ready"
+            );
         }
     }
 }

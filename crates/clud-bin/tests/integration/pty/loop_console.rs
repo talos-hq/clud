@@ -42,8 +42,15 @@ fn launch(shell: &str, binary: &Path, root: &Path) -> Vec<String> {
             "--norc".into(),
             "-c".into(),
             format!(
-                "exec '{}' {args}",
-                clud::path_norm::slash_separators(&binary).replace('\'', "'\\''")
+                "exec '{}' {args}{}",
+                clud::path_norm::slash_separators(&binary).replace('\'', "'\\''"),
+                // #2815: install.sh runs clud with stdin opened from
+                // /dev/tty, which macOS kqueue cannot register.
+                if shell == "bash-dev-tty" {
+                    " </dev/tty"
+                } else {
+                    ""
+                }
             ),
         ],
     }
@@ -229,6 +236,18 @@ fn exercise(shell: &str) {
 fn bash_queue_confirm_restart_and_restore() {
     require_pty_or_skip!("bash_queue_confirm_restart_and_restore");
     exercise("bash");
+}
+
+/// #2815: the same flow with stdin opened from `/dev/tty`, as install.sh
+/// and connect.sh run clud. Before the fix crossterm's macOS event source
+/// failed with "Failed to initialize input reader".
+#[test]
+fn bash_dev_tty_stdin_queue_confirm_restart_and_restore() {
+    if clud::platform::host::WINDOWS {
+        return;
+    }
+    require_pty_or_skip!("bash_dev_tty_stdin_queue_confirm_restart_and_restore");
+    exercise("bash-dev-tty");
 }
 
 #[test]
