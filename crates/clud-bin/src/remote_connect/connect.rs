@@ -274,7 +274,7 @@ fn run_proxy_session(host: &str) -> Result<i32, String> {
         }
     };
     println!(
-        "Asking the operator to approve {} through OpenRouter.\n\nTell them this keyword:\n{}",
+        "Asking the operator to approve {} through OpenRouter.\n\n  Keyword: {}\n\nRead this keyword to the operator.\n",
         session.proxy_model, session.keyword
     );
     std::io::stdout()

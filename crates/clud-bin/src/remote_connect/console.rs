@@ -24,6 +24,8 @@ const FINAL_WAIT: Duration = Duration::from_secs(1);
 enum Command {
     Output(Vec<u8>),
     Line(String),
+    Prompt(String),
+    Answered { echoed: bool },
     Settle(mpsc::SyncSender<()>),
 }
 
@@ -62,6 +64,21 @@ impl<W: Write> Renderer<W> {
         self.fresh_line();
         self.write(text.as_bytes());
         self.write(b"\n");
+    }
+
+    /// Ask a question (`crate::yes_no::question`) and leave the cursor after
+    /// it, where the answer is typed.
+    fn prompt(&mut self, text: &str) {
+        self.fresh_line();
+        self.write(text.as_bytes());
+        self.at_line_start = false;
+    }
+
+    /// A terminal echoes the answer's Enter, which already ended the prompt line.
+    fn answered(&mut self, echoed: bool) {
+        if echoed {
+            self.at_line_start = true;
+        }
     }
 
     fn output(&mut self, bytes: &[u8]) {
@@ -105,6 +122,8 @@ fn run_worker<W: Write>(
                 pending.fetch_sub(bytes.len(), Ordering::Relaxed);
             }
             Command::Line(text) => renderer.line(&text),
+            Command::Prompt(text) => renderer.prompt(&text),
+            Command::Answered { echoed } => renderer.answered(echoed),
             Command::Settle(done) => {
                 renderer.settle();
                 let _ = done.try_send(());
@@ -152,6 +171,16 @@ impl Console {
     /// Print a notice. Notices are few and are never dropped.
     pub fn line(&self, text: impl Into<String>) {
         let _ = self.commands.send(Command::Line(text.into()));
+    }
+
+    /// Ask a question; the answer is typed on the same line.
+    pub fn prompt(&self, text: impl Into<String>) {
+        let _ = self.commands.send(Command::Prompt(text.into()));
+    }
+
+    /// The prompt was answered. `echoed` is whether a terminal echoed the answer.
+    pub fn answered(&self, echoed: bool) {
+        let _ = self.commands.send(Command::Answered { echoed });
     }
 
     /// Restore the local terminal once the remote program has ended.
@@ -208,6 +237,32 @@ mod tests {
             r.line("next");
         });
         assert_eq!(out, b"$ \r\nOperator: hi\nnext\n");
+    }
+
+    #[test]
+    fn prompt_takes_its_answer_on_the_same_line() {
+        let out = rendered(|r| {
+            r.output(b"$ ");
+            r.prompt("Allow? [y/N]: ");
+            r.answered(true);
+            r.line("granted");
+        });
+        assert_eq!(out, b"$ \r\nAllow? [y/N]: granted\n");
+    }
+
+    #[test]
+    fn notice_after_unanswered_or_unechoed_prompt_starts_a_new_line() {
+        let pending = rendered(|r| {
+            r.prompt("Allow? [y/N]: ");
+            r.line("Operator: hi");
+        });
+        assert_eq!(pending, b"Allow? [y/N]: \r\nOperator: hi\n");
+        let piped = rendered(|r| {
+            r.prompt("Allow? [y/N]: ");
+            r.answered(false);
+            r.line("granted");
+        });
+        assert_eq!(piped, b"Allow? [y/N]: \r\ngranted\n");
     }
 
     #[test]

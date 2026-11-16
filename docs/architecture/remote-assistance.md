@@ -13,7 +13,7 @@ for development. Returned WebSocket credentials are accepted only for the same
 origin, never printed or saved, and WebSocket redirects are disabled.
 
 Acceptance does not grant control. A control request prints
-`Allow Remote Control by Zach Vorhies? [y/N]` in the client's terminal. Only a
+`Allow Remote Control by Zach Vorhies? [y/N]:` in the client's terminal, with the cursor left on that line for the answer. Only a
 local affirmative answer followed by the matching grant opens access to a shell.
 A negative answer denies control. The status page cannot grant consent.
 The client advertises PTY support and uses running-process's native PTY adapter;
