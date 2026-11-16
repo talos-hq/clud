@@ -267,15 +267,21 @@ pub fn run(
     } else {
         let _ = write!(
             out,
-            "Would you like to migrate clud credentials for providers into {}? [y/N] ",
-            product.display
+            "{}",
+            crate::yes_no::question(
+                &format!(
+                    "Would you like to migrate clud credentials for providers into {}?",
+                    product.display
+                ),
+                crate::yes_no::Default::No,
+            )
         );
         let _ = out.flush();
         let mut answer = String::new();
         if std::io::stdin().read_line(&mut answer).is_err() {
             return 0;
         }
-        matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+        crate::yes_no::answer(&answer, crate::yes_no::Default::No)
     };
     if !wanted {
         let _ = writeln!(out, "configure: left {} unchanged", product.display);

@@ -143,7 +143,7 @@ fn interactive_prompt_defaults_to_no() {
         );
         assert_eq!(run.outcome, Outcome::Skipped, "{answer:?}");
         assert_eq!(run.stored, 0);
-        assert!(run.out.contains(PROMPT.trim_end()), "{}", run.out);
+        assert!(run.out.contains(QUESTION), "{}", run.out);
         assert!(!run.out.contains(&fake_key()));
     }
     let yes = run_offer(
@@ -162,7 +162,7 @@ fn yes_never_imports_without_the_flag_and_dry_run_never_stores() {
         let run = run_offer(Some(sample(true)), mode, "y\n");
         assert_eq!(run.outcome, Outcome::Skipped, "{mode:?}");
         assert_eq!(run.stored, 0, "{mode:?}");
-        assert!(!run.out.contains(PROMPT.trim_end()), "{mode:?} prompted");
+        assert!(!run.out.contains(QUESTION), "{mode:?} prompted");
     }
 }
 

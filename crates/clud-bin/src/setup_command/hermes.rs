@@ -47,7 +47,7 @@ fn context_reference(home: &Path, instance: Option<PathBuf>) -> Result<String, S
 /// OpenRouter's endpoint, used when Hermes leaves `base_url` empty.
 pub const OPENROUTER_DEFAULT_BASE_URL: &str = "https://openrouter.ai/api/v1";
 const KEY_ENV: &str = "OPENROUTER_API_KEY";
-pub const PROMPT: &str = "Import these OpenRouter settings into clud? [y/N] ";
+pub const QUESTION: &str = "Import these OpenRouter settings into clud?";
 
 /// What setup found in one Hermes config.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -247,11 +247,15 @@ fn report(found: &Found, out: &mut dyn Write) {
 }
 
 fn ask(input: &mut dyn BufRead, out: &mut dyn Write) -> bool {
-    let _ = write!(out, "{PROMPT}");
+    let _ = write!(
+        out,
+        "{}",
+        crate::yes_no::question(QUESTION, crate::yes_no::Default::No)
+    );
     let _ = out.flush();
     let mut answer = String::new();
     input.read_line(&mut answer).is_ok()
-        && matches!(answer.trim().to_ascii_lowercase().as_str(), "y" | "yes")
+        && crate::yes_no::answer(&answer, crate::yes_no::Default::No)
 }
 
 /// Offer the import. `store` performs the write (credential store, model,

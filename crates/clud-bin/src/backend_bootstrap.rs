@@ -176,7 +176,7 @@ impl BackendInstallSpec {
                 vendor_name: "Anthropic",
                 installer_kind: "native",
                 prompt_text:
-                    "Claude Code is not installed. Install Anthropic's native Claude Code binary now? [y/N]",
+                    "Claude Code is not installed. Install Anthropic's native Claude Code binary now?",
                 manual_install_command: CLAUDE_POSIX_INSTALL_COMMAND,
                 installer: InstallerPlan::PosixShell {
                     command: CLAUDE_POSIX_INSTALL_COMMAND,
@@ -192,7 +192,7 @@ impl BackendInstallSpec {
                 vendor_name: "Anthropic",
                 installer_kind: "native",
                 prompt_text:
-                    "Claude Code is not installed. Install Anthropic's native Claude Code binary now? [y/N]",
+                    "Claude Code is not installed. Install Anthropic's native Claude Code binary now?",
                 manual_install_command: CLAUDE_WINDOWS_POWERSHELL_INSTALL_COMMAND,
                 installer: InstallerPlan::WindowsPowerShell {
                     command: CLAUDE_WINDOWS_POWERSHELL_INSTALL_COMMAND,
@@ -209,7 +209,7 @@ impl BackendInstallSpec {
                 vendor_name: "OpenAI",
                 installer_kind: "standalone",
                 prompt_text:
-                    "Codex CLI is not installed. Install OpenAI's standalone Codex CLI now? [y/N]",
+                    "Codex CLI is not installed. Install OpenAI's standalone Codex CLI now?",
                 manual_install_command: if platform == InstallPlatform::Linux {
                     CODEX_LINUX_MANAGED_INSTALL_COMMAND
                 } else {
@@ -233,7 +233,7 @@ impl BackendInstallSpec {
                 vendor_name: "OpenAI",
                 installer_kind: "standalone",
                 prompt_text:
-                    "Codex CLI is not installed. Install OpenAI's standalone Codex CLI now? [y/N]",
+                    "Codex CLI is not installed. Install OpenAI's standalone Codex CLI now?",
                 manual_install_command: CODEX_WINDOWS_POWERSHELL_INSTALL_COMMAND,
                 installer: InstallerPlan::WindowsPowerShell {
                     command: CODEX_WINDOWS_POWERSHELL_INSTALL_COMMAND,
@@ -265,8 +265,7 @@ impl BackendInstallSpec {
             product_name: "OpenCode",
             vendor_name: "OpenCode",
             installer_kind: "npm",
-            prompt_text:
-                "OpenCode is not installed. Install opencode-ai@1.19.5 with npm now? [y/N]",
+            prompt_text: "OpenCode is not installed. Install opencode-ai@1.19.5 with npm now?",
             manual_install_command: "npm install -g opencode-ai@1.19.5",
             installer: if platform == InstallPlatform::Windows {
                 InstallerPlan::WindowsPowerShell {
@@ -285,14 +284,16 @@ impl BackendInstallSpec {
     }
 
     pub fn prompt(&self) -> String {
-        if self.backend == Backend::DeepSeek {
-            return format!(
-                "{} Install DeepSeek AI's dsh {} into clud's private prefix now? [y/N]",
+        let text = if self.backend == Backend::DeepSeek {
+            format!(
+                "{} Install DeepSeek AI's dsh {} into clud's private prefix now?",
                 self.prompt_text,
                 crate::dsh_harness::DSH_VERSION
-            );
-        }
-        self.prompt_text.to_string()
+            )
+        } else {
+            self.prompt_text.to_string()
+        };
+        crate::yes_no::question(&text, crate::yes_no::Default::No)
     }
 
     fn fallback_path(&self, env: &InstallPathEnv) -> Option<PathBuf> {
@@ -507,7 +508,7 @@ where
         ),
     }
     .ok();
-    writeln!(err, "\n{}", spec.prompt()).ok();
+    write!(err, "\n{}", spec.prompt()).ok();
     err.flush().ok();
 
     if !read_yes(input) {
@@ -553,7 +554,7 @@ fn read_yes<R: BufRead>(input: &mut R) -> bool {
     if input.read_line(&mut line).is_err() {
         return false;
     }
-    matches!(line.trim(), "y" | "Y" | "yes" | "YES" | "Yes")
+    crate::yes_no::answer(&line, crate::yes_no::Default::No)
 }
 
 pub fn official_install_command(backend: Backend, platform: InstallPlatform) -> &'static str {
@@ -1432,7 +1433,7 @@ mod tests {
         assert_eq!(spec.manual_install_command, CLAUDE_POSIX_INSTALL_COMMAND);
         assert_eq!(
             spec.prompt(),
-            "Claude Code is not installed. Install Anthropic's native Claude Code binary now? [y/N]"
+            "Claude Code is not installed. Install Anthropic's native Claude Code binary now? [y/N]: "
         );
         assert_eq!(
             spec.installer,
@@ -1491,7 +1492,7 @@ mod tests {
         assert_eq!(spec.manual_install_command, CODEX_POSIX_INSTALL_COMMAND);
         assert_eq!(
             spec.prompt(),
-            "Codex CLI is not installed. Install OpenAI's standalone Codex CLI now? [y/N]"
+            "Codex CLI is not installed. Install OpenAI's standalone Codex CLI now? [y/N]: "
         );
         assert_eq!(
             spec.installer,
@@ -1530,7 +1531,7 @@ mod tests {
                 )
             );
             assert!(spec.prompt().contains(crate::dsh_harness::DSH_VERSION));
-            assert!(spec.prompt().ends_with("[y/N]"));
+            assert!(spec.prompt().ends_with("[y/N]: "));
         }
     }
 
@@ -1724,8 +1725,9 @@ mod tests {
                 resolve_with(backend, false, true, "yes\n", &mut host).expect("path");
             assert_eq!(path, installed.to_string_lossy());
             // #2002: one empty line separates diagnostics from the question.
+            // The answer is typed on the question's own line.
             let expected_prompt = format!(
-                "\n\n{}\n",
+                "\n\n{}",
                 BackendInstallSpec::for_backend(backend, InstallPlatform::Linux).prompt()
             );
             assert!(
