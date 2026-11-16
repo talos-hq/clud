@@ -7854,3 +7854,32 @@ credential. A tag-ref dispatch pins both source and workflow provenance; neither
 queue proof nor a moving-main checkout can authorize a different release SHA.
 The reusable CI caller needs the nested permission union even when its tagging
 job is skipped, while only the main-only tagging job executes with contents write.
+
+## DD-214: macOS release binaries are signed and notarized on Linux with rcodesign
+
+**Context:** clud's macOS wheels cross-build on Linux (soldr) and were shipped
+with only the linker's ad-hoc signature, which Macs that only run notarized
+Developer ID software refuse. Apple's `codesign` and `notarytool` exist only
+on macOS.
+
+**Decision:** Sign and notarize in a dedicated Auto Release job on Linux with
+a SHA-256-pinned rcodesign (apple-codesign): Developer ID Application
+identity, hardened runtime, secure timestamp, then a zip of the Mach-O files
+submitted to the Notary API with an App Store Connect API key. The job
+rewrites the wheel and re-uploads it under the build's artifact name, before
+anything installs or publishes it. A native macOS job then requires
+`codesign --verify --strict` and `spctl`'s `Notarized Developer ID` verdict.
+The credentials live in the `release-signing` environment, declared only by
+those two jobs. Missing secrets fail the release; there is no unsigned path.
+Details: [CI architecture](architecture/ci.md#developer-id-signing-and-notarization-of-macos-release-wheels).
+
+**Why:** This keeps the design that builds on Linux and executes on native
+runners, the same shape as Windows Authenticode signing with jsign. A macOS signing runner would mean
+importing the certificate into a temporary keychain on a scarcer, slower
+runner for no gain: rcodesign produces the same signature format and talks
+to the same Notary API, and the native smoke still gets macOS's own verdict.
+A separate job rather than a step in `_build-target.yml` keeps the Apple
+credentials away from the Rust build job, which runs third-party build
+scripts, and avoids a conditional environment on the shared build workflow.
+Notarization submits a zip because Apple rejects a bare Mach-O, and a bare
+executable cannot carry a stapled ticket.

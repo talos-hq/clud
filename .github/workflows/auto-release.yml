@@ -291,7 +291,7 @@ jobs:
   # release-profile wheel (only the PR lane's dev wheel).
   wheel-smoke:
     name: Install-smoke release wheels
-    needs: [preflight, release-matrix, build]
+    needs: [preflight, release-matrix, build, sign-macos]
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.release-matrix.outputs.smoke) }}
@@ -336,6 +336,93 @@ jobs:
         shell: pwsh
         run: python -m ci.sign_windows_release smoke --dist-dir wheels --version '${{ needs.preflight.outputs.version }}'
 
+  # Developer ID signing + notarization of the macOS wheels (DD-214). They
+  # cross-build on Linux, so a SHA-256-pinned rcodesign signs them on Linux too
+  # (ci/sign_macos_release.py): every Mach-O gets the Developer ID Application
+  # identity, the hardened runtime and a secure timestamp, then a zip of them
+  # goes to Apple's notary service (--wait). The re-written wheel replaces the
+  # build's artifact under the same name before wheel-smoke, both publish jobs
+  # and installer.release_assets read it, so PyPI, the standalone macOS assets,
+  # SHA256SUMS, the Pages catalog and the Homebrew formula carry signed bytes.
+  # This is the only job (besides the smoke below, which reads the identity)
+  # that holds the `release-signing` environment secrets; the Rust build job
+  # that runs third-party build scripts never sees them. Missing secrets fail
+  # the job, naming each one.
+  sign-macos:
+    name: Sign and notarize macOS (${{ matrix.artifact }})
+    needs: [preflight, build]
+    runs-on: ubuntu-24.04
+    environment: release-signing
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact: [wheels-macos-arm, wheels-macos-x86]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+      - name: Install signing-script dependency
+        run: python -m pip install running-process==4.10.1
+      - name: Developer ID sign and notarize every Mach-O in the wheel
+        env:
+          MACOS_SIGNING_CERT: ${{ secrets.MACOS_SIGNING_CERT }}
+          MACOS_SIGNING_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+        run: python -m ci.sign_macos_release sign --dist-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          overwrite: true
+
+  # rcodesign's structural check runs on Linux; this is macOS's own verdict
+  # (codesign --verify --strict, Developer ID authority, runtime, timestamp,
+  # and spctl's "Notarized Developer ID") on every Mach-O in the exact wheels
+  # PyPI and the standalone macOS release assets come from.
+  macos-signature-smoke:
+    name: Verify macOS signature (${{ matrix.artifact }})
+    needs: [preflight, sign-macos]
+    runs-on: ${{ matrix.runs-on }}
+    environment: release-signing
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - artifact: wheels-macos-arm
+            runs-on: macos-15
+          - artifact: wheels-macos-x86
+            runs-on: macos-15-intel
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheels
+      - name: Install signing-script dependency
+        run: python -m pip install running-process==4.10.1
+      - name: Require notarized Developer ID signatures and execute clud
+        env:
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: python -m ci.sign_macos_release smoke --dist-dir wheels --version '${{ needs.preflight.outputs.version }}'
+
   build-static-musl:
     name: Build static musl clud
     needs: [preflight, full-ci-gate, release-matrix]
@@ -378,11 +465,12 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, candidate-acceptance-gate, verify-prior-public]
+    needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, sign-macos, macos-signature-smoke, candidate-acceptance-gate, verify-prior-public]
     if: >-
       always() && !cancelled() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
       needs.candidate-acceptance-gate.result == 'success' && needs.verify-prior-public.result == 'success' &&
-      (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success'))
+      (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success' &&
+      needs.sign-macos.result == 'success' && needs.macos-signature-smoke.result == 'success'))
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -409,11 +497,12 @@ jobs:
 
   publish-release:
     name: Publish final bytes as public prerelease
-    needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, build-static-musl, verify-static-musl-arm64]
+    needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, sign-macos, macos-signature-smoke, build-static-musl, verify-static-musl-arm64]
     if: >-
       always() && !cancelled() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
       needs.snapshot-public.result == 'success' &&
       (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success' &&
+      needs.sign-macos.result == 'success' && needs.macos-signature-smoke.result == 'success' &&
       needs.build-static-musl.result == 'success' && needs.verify-static-musl-arm64.result == 'success'))
     runs-on: ubuntu-latest
     permissions:

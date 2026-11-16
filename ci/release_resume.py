@@ -14,6 +14,8 @@ REQUIRED = {
     "Build static musl clud (": 2,
     "Install-smoke release wheels (": 4,
     "Verify Authenticode (": 2,
+    "Sign and notarize macOS (": 2,
+    "Verify macOS signature (": 2,
     "Execute release static musl ARM64": 1,
     "Attach versioned public candidate catalog": 1,
     "Verify anonymous final bytes and prerelease asset identity": 1,
