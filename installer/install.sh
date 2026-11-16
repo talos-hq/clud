@@ -14,6 +14,8 @@
 #
 # Environment:
 #   CLUD_INSTALL_DIR   install directory (default: $HOME/.local/bin)
+#   CLUD_INSTALL_PROGRESS  where the download progress bar goes (default: stderr
+#                      when it is a terminal; empty disables it)
 #   NO_COLOR           print the next step without colour
 #
 # After installing, when the new binary reports that setup has not been run
@@ -119,8 +121,32 @@ fi
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/clud-install.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
+# The binary is tens of megabytes; on a slow link a silent download looks hung.
+# Show curl's progress bar where a person can see it: stderr when that is a
+# terminal, or the device CLUD_INSTALL_PROGRESS names (connect.sh logs our
+# output to a file and passes /dev/tty). Set but empty, it disables the bar.
+if [ -n "${CLUD_INSTALL_PROGRESS+set}" ]; then
+    progress="$CLUD_INSTALL_PROGRESS"
+elif [ -t 2 ]; then
+    progress=stderr
+else
+    progress=""
+fi
+# The probe runs in a subshell: a failed redirection on `:` would exit a POSIX sh.
+case "$progress" in
+    ""|stderr) ;;
+    *) (: >>"$progress") 2>/dev/null || progress="" ;;
+esac
+fetch_binary() {
+    case "$progress" in
+        "") curl -fsSL -o "$1" "$2" ;;
+        stderr) curl -fL --progress-bar -o "$1" "$2" ;;
+        *) curl -fL --progress-bar -o "$1" "$2" 2>>"$progress" ;;
+    esac
+}
+
 say "Downloading $asset ($version)"
-curl -fsSL -o "$tmp/$asset" "$base/$asset" || die "download failed: $base/$asset"
+fetch_binary "$tmp/$asset" "$base/$asset" || die "download failed: $base/$asset"
 curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" || die "download failed: $base/SHA256SUMS"
 
 expected="$(awk -v name="$asset" '$2 == name || $2 == "./" name || $2 == "*" name { print $1; exit }' "$tmp/SHA256SUMS")"

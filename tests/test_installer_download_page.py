@@ -534,6 +534,8 @@ def make_stubs(tmp_path: Path, uname_s: str, uname_m: str, sums: str, digest: st
     script(
         "curl",
         f'echo "$*" >> "{log}"\n'
+        # Like curl, draw the bar on stderr only when asked for one.
+        'case " $* " in *" --progress-bar "*) printf "%s\\n" "######## 100.0%" >&2;; esac\n'
         'out=""; url=""; head=0\n'
         'while [ $# -gt 0 ]; do case "$1" in\n'
         '  -o) out="$2"; shift;; -I) head=1;; -w) shift;; -*) ;; *) url="$1";;\n'
@@ -641,6 +643,50 @@ def test_install_sh_installs_verified_binary(tmp_path) -> None:
     assert os.access(installed, os.X_OK)
     assert "clud setup" in done.stdout + done.stderr
     assert not (tmp_path / "home" / ".profile").exists()
+
+
+def _fetches(calls: list[str]) -> tuple[str, str]:
+    (binary,) = [c for c in calls if "clud-2.8.56-x86_64-unknown-linux-musl" in c]
+    (sums,) = [c for c in calls if c.endswith("/SHA256SUMS")]
+    return binary, sums
+
+
+@posix_only
+def test_install_sh_draws_the_download_bar_where_progress_points(tmp_path) -> None:
+    """A slow download must not look hung: the binary fetch shows a bar."""
+    digest = "a" * 64
+    sums = f"{digest}  ./clud-2.8.56-x86_64-unknown-linux-musl\n"
+    bar = tmp_path / "terminal"
+    bar.touch()
+    done, calls = run_install(
+        tmp_path,
+        ["--version", "2.8.56"],
+        sums=sums,
+        digest=digest,
+        env={"CLUD_INSTALL_PROGRESS": str(bar)},
+    )
+    assert done.returncode == 0, done.stderr
+    binary, checksums = _fetches(calls)
+    assert "--progress-bar" in binary.split()
+    assert "-s" not in binary.split()
+    assert "-fsSL" not in binary.split()
+    assert "--progress-bar" not in checksums.split()
+    assert "100.0%" in bar.read_text(encoding="utf-8")
+    assert "100.0%" not in done.stdout + done.stderr
+
+
+@posix_only
+@pytest.mark.parametrize("progress", [None, "", "/nonexistent-dir/tty"])
+def test_install_sh_download_is_quiet_without_a_visible_terminal(tmp_path, progress) -> None:
+    """Unset with a non-terminal stderr, empty, or unopenable: no bar, still installs."""
+    digest = "a" * 64
+    sums = f"{digest}  ./clud-2.8.56-x86_64-unknown-linux-musl\n"
+    env = {} if progress is None else {"CLUD_INSTALL_PROGRESS": progress}
+    done, calls = run_install(tmp_path, ["--version", "2.8.56"], sums=sums, digest=digest, env=env)
+    assert done.returncode == 0, done.stderr
+    binary, _ = _fetches(calls)
+    assert "--progress-bar" not in binary.split()
+    assert "100.0%" not in done.stdout + done.stderr
 
 
 @posix_only
@@ -914,8 +960,12 @@ def test_download_names_and_same_origin_bytes() -> None:
 @pytest.mark.parametrize(
     ("facts", "os_name", "arch", "filename"),
     [
-        ({"platform": "Win32", "userAgent": "Windows NT 10.0; Win64; x64"},
-         "windows", "x86_64", "clud.exe"),
+        (
+            {"platform": "Win32", "userAgent": "Windows NT 10.0; Win64; x64"},
+            "windows",
+            "x86_64",
+            "clud.exe",
+        ),
         ({"platform": "MacIntel", "userAgent": MAC_SAFARI}, "darwin", "aarch64", "clud"),
     ],
 )
