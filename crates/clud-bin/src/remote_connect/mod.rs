@@ -1,6 +1,7 @@
 //! Native client for the clud.bot operator protocol.
 pub mod connect;
 mod console;
+mod mirror;
 mod paste;
 pub mod proxy;
 mod terminal;
@@ -126,7 +127,10 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
                 }
             }
             Ok(Message::Binary(bytes)) if state.granted && bytes.first() == Some(&1) => {
-                state.terminal.input(&bytes[1..])?;
+                let delivery = state.terminal.input(&bytes[1..])?;
+                if let Some(notice) = state.input_notice(delivery) {
+                    send(&mut socket, notice)?;
+                }
             }
             Ok(Message::Close(_)) => return Err("remote connection closed".into()),
             Err(tungstenite::Error::Io(error))
@@ -149,6 +153,8 @@ struct State {
     granted: bool,
     pending: Option<String>,
     approved: Option<String>,
+    /// Operator input is being dropped; the operator has been told once.
+    dropping: bool,
 }
 
 impl State {
@@ -160,7 +166,18 @@ impl State {
             granted: false,
             pending: None,
             approved: None,
+            dropping: false,
         }
+    }
+
+    /// One notice per run of dropped input frames, none while input flows.
+    fn input_notice(&mut self, delivery: terminal::Delivery) -> Option<Value> {
+        let dropped = delivery == terminal::Delivery::Dropped;
+        let first = dropped && !self.dropping;
+        self.dropping = dropped;
+        first.then(
+            || json!({"type":"pty_error", "pty_id":self.terminal.id(), "code":"input_dropped"}),
+        )
     }
 
     /// The consenting user watches everything the server is sent.

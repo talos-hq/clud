@@ -31,14 +31,20 @@ the foreground client and close the PTY through its cleanup guard. Client output
 and control events are not written to files by clud.
 
 The shell's output also goes to the client's own terminal, so the person who
-consented can watch what the operator does (`remote_connect/console.rs`). Bytes
-are mirrored unchanged except terminal queries, which the operator's terminal
-answers: a local reply would land on stdin, on screen and in a consent answer.
-Only the queries `terminal_queries` knows are removed. The PTY keeps the
+consented can watch what the operator does (`remote_connect/console.rs`). The
+view is watch-only: the operator's terminal answers queries and reports input.
+`remote_connect/mirror.rs` passes drawing through unchanged and removes, with a
+streaming parser that survives split reads, every sequence that would make the
+local terminal type into the client's stdin: queries (DA, DSR, XTVERSION,
+DECRQM, XTWINOPS reports, colour/`?` OSCs, XTGETTCAP, DECRQSS), OSC 52 clipboard
+access, the mouse/focus/bracketed-paste modes and keyboard protocols (kitty,
+modifyOtherKeys). Forwarded, a mouse-tracking TUI made Konsole send a report per
+pointer move into the client and, after it exited, into the user's shell. The
+PTY keeps the
 operator's dimensions, so a differently sized local terminal can wrap a
 full-screen program oddly. When the shell ends or control is revoked the client
-undoes what the program left on (alternate screen, input modes, keyboard frames)
-before printing anything else. A single worker owns stdout: past 2 MiB waiting
+undoes what the program left on (alternate screen, cursor, input modes) before
+printing anything else, and turns every input-reporting mode off. A single worker owns stdout: past 2 MiB waiting
 on a stalled local terminal, mirrored output is dropped and the gap is reported,
 while the session and the server's copy carry on unaffected.
 
@@ -48,10 +54,14 @@ not be attached or hold control, and a second reply would reach the shell as inp
 ConPTY also keeps its output open after the shell exits, so the pump polls for exit
 whenever output is idle rather than waiting for the reader's EOF.
 
-Terminal writes run on a separate bounded worker so a program that stops reading
-input cannot prevent session cancellation. Output frames are at most 16 KiB and
-the forwarding queue holds at most 128 frames (2 MiB). An overloaded input/output pump
-ends the session with an explicit error and closes the shell. This bounds noisy
+Terminal writes run on a separate worker so a program that stops reading
+input cannot prevent session cancellation. Operator input waiting for the shell
+is bounded by bytes (1 MiB), not frames: mouse tracking sends a frame per pointer
+move, and an 8-frame queue ended sessions mid-use. Past the budget a frame is
+dropped and the operator gets one `pty_error` `input_dropped` per run of drops;
+the session carries on. Output frames are at most 16 KiB and the forwarding
+queue holds at most 128 frames (2 MiB). An overloaded output pump ends the
+session with an explicit error and closes the shell. This bounds noisy
 or blocked terminals; a sufficiently fast output burst can hit the limit.
 
 The server contract is maintained in `talos-hq/clud.bot`'s `SPEC.md`. This native
