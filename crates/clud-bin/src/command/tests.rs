@@ -1381,7 +1381,10 @@ fn password_rule_reaches_every_backend_launch() {
     assert!(rule.contains("`clud sudo -- <cmd>`"), "{rule}");
     assert!(rule.contains("`clud secret`"), "{rule}");
     assert!(rule.contains("Never ask for a password in chat"), "{rule}");
-    assert!(rule.contains("tell the user to run the command themselves"), "{rule}");
+    assert!(
+        rule.contains("tell the user to run the command themselves"),
+        "{rule}"
+    );
     assert!(!rule.contains(['\r', '\n']), "argv-safe single line");
     assert!(rule.len() < 300, "terse: it costs tokens on every launch");
     for backend in ["--claude", "--codex"] {

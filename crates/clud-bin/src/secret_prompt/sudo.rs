@@ -121,7 +121,10 @@ pub(crate) fn check_command(argv: &[String]) -> Result<(), String> {
         };
         index += if takes_next { 2 } else { 1 };
         if shell && argv.get(index).is_none() {
-            return Err("an interactive root shell cannot run under an agent; name the command to run".into());
+            return Err(
+                "an interactive root shell cannot run under an agent; name the command to run"
+                    .into(),
+            );
         }
     }
     if argv.get(index).is_none() {
@@ -295,11 +298,15 @@ fn authenticate(options: &SudoOptions) -> Result<Auth, Failure> {
                     return Ok(Auth::Rejected(attempts));
                 }
                 attempts += 1;
-                let secret = super::acquire_with(&prompt_options(options, attempts), super::acquire)
-                    .inspect_err(|_| {
-                        let _ = process.kill();
-                    })?;
-                if process.write_stdin_streaming(&password_line(&secret)).is_err() {
+                let secret =
+                    super::acquire_with(&prompt_options(options, attempts), super::acquire)
+                        .inspect_err(|_| {
+                            let _ = process.kill();
+                        })?;
+                if process
+                    .write_stdin_streaming(&password_line(&secret))
+                    .is_err()
+                {
                     let _ = process.kill();
                     return Err(Failure::Sink);
                 }
@@ -312,7 +319,9 @@ fn authenticate(options: &SudoOptions) -> Result<Auth, Failure> {
             }
         }
     }
-    let code = process.wait(Some(VALIDATE_TIMEOUT)).map_err(|_| Failure::Sink)?;
+    let code = process
+        .wait(Some(VALIDATE_TIMEOUT))
+        .map_err(|_| Failure::Sink)?;
     Ok(if code == 0 {
         Auth::Granted(last)
     } else {
@@ -432,7 +441,9 @@ fn report_failure(error: Failure) -> i32 {
 /// `clud sudo [--reason TEXT] -- <command>`.
 pub fn run(options: &SudoOptions) -> i32 {
     if crate::platform::host::WINDOWS {
-        eprintln!("clud sudo: sudo is a Unix tool; on Windows run the command from an elevated terminal.");
+        eprintln!(
+            "clud sudo: sudo is a Unix tool; on Windows run the command from an elevated terminal."
+        );
         return 2;
     }
     if let Err(message) = check_command(&options.command) {
@@ -457,7 +468,9 @@ pub fn run(options: &SudoOptions) -> i32 {
     match authenticate(options) {
         Ok(Auth::Granted(secret)) => finish(run_validated(&options.command, secret.as_ref())),
         Ok(Auth::Rejected(0)) => {
-            eprintln!("clud sudo: `sudo -S -v` failed before asking for a password; nothing was run.");
+            eprintln!(
+                "clud sudo: `sudo -S -v` failed before asking for a password; nothing was run."
+            );
             finish(1)
         }
         Ok(Auth::Rejected(attempts)) => {
@@ -531,14 +544,18 @@ mod tests {
 
     #[test]
     fn prompt_names_account_host_purpose_and_retry() {
-        let options = SudoOptions::try_parse_from(["sudo", "--", "apt-get", "install", "-y", "foo"])
-            .unwrap();
+        let options =
+            SudoOptions::try_parse_from(["sudo", "--", "apt-get", "install", "-y", "foo"]).unwrap();
         let first = prompt_options(&options, 1);
         assert!(first.title.starts_with("sudo password for "));
-        assert!(first.label.starts_with("Run as root: apt-get install -y foo."));
+        assert!(first
+            .label
+            .starts_with("Run as root: apt-get install -y foo."));
         assert!(super::super::parse_context(&first.title).is_ok());
         let retry = prompt_options(&options, 2);
-        assert!(retry.label.starts_with("sudo rejected the previous password (attempt 2 of 3)."));
+        assert!(retry
+            .label
+            .starts_with("sudo rejected the previous password (attempt 2 of 3)."));
         let reasoned = SudoOptions::try_parse_from([
             "sudo",
             "--reason",
@@ -557,9 +574,13 @@ mod tests {
     fn denial_text_is_recognized_on_both_sudo_flavours() {
         assert!(is_denial("Sorry, user bob may not run sudo on host."));
         assert!(is_denial("bob is not in the sudoers file."));
-        assert!(is_denial("sudo-rs: I'm sorry bob. I'm afraid I can't do that"));
+        assert!(is_denial(
+            "sudo-rs: I'm sorry bob. I'm afraid I can't do that"
+        ));
         assert!(!is_denial("sudo: a password is required"));
-        assert!(!is_denial("sudo-rs: interactive authentication is required"));
+        assert!(!is_denial(
+            "sudo-rs: interactive authentication is required"
+        ));
     }
 
     #[test]

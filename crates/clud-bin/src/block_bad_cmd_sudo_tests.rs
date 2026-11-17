@@ -24,7 +24,10 @@ fn decision_table() {
         ("sudo -h otherhost id", Verdict::Prompts),
         ("sudo -p 'pw:' id", Verdict::Prompts),
         ("/usr/bin/sudo id", Verdict::Prompts),
-        ("sudo DEBIAN_FRONTEND=noninteractive apt-get install -y foo", Verdict::Prompts),
+        (
+            "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y foo",
+            Verdict::Prompts,
+        ),
         // The password would come from the agent's stdin.
         ("sudo -S id", Verdict::Stdin),
         ("sudo --stdin id", Verdict::Stdin),
@@ -54,8 +57,14 @@ fn decision_table() {
 #[test]
 fn replacement_keeps_target_options_and_drops_password_plumbing() {
     for (command, expected) in [
-        ("sudo apt-get install -y foo", "clud sudo -- apt-get install -y foo"),
-        ("sudo -u postgres psql -c 'select 1'", "clud sudo -- -u postgres psql -c 'select 1'"),
+        (
+            "sudo apt-get install -y foo",
+            "clud sudo -- apt-get install -y foo",
+        ),
+        (
+            "sudo -u postgres psql -c 'select 1'",
+            "clud sudo -- -u postgres psql -c 'select 1'",
+        ),
         ("sudo -upostgres psql", "clud sudo -- -upostgres psql"),
         ("sudo -E -H make install", "clud sudo -- -E -H make install"),
         ("sudo -S -p '' id -u", "clud sudo -- id -u"),
@@ -83,20 +92,38 @@ fn hook_refuses_prompting_sudo_with_the_exact_blessed_command() {
         return;
     }
     for (command, blessed) in [
-        ("sudo apt-get install -y foo", "`clud sudo -- apt-get install -y foo`"),
-        ("cd /tmp && sudo make install", "`clud sudo -- make install`"),
+        (
+            "sudo apt-get install -y foo",
+            "`clud sudo -- apt-get install -y foo`",
+        ),
+        (
+            "cd /tmp && sudo make install",
+            "`clud sudo -- make install`",
+        ),
         ("echo pw | sudo -S id", "`clud sudo -- id`"),
         ("SUDO_ASKPASS=/x sudo -A id", "`clud sudo -- id`"),
-        ("bash -c 'sudo systemctl restart nginx'", "`clud sudo -- systemctl restart nginx`"),
+        (
+            "bash -c 'sudo systemctl restart nginx'",
+            "`clud sudo -- systemctl restart nginx`",
+        ),
         ("env FOO=1 sudo id", "`clud sudo -- id`"),
-        ("x=$(sudo cat /etc/shadow)", "`clud sudo -- cat /etc/shadow`"),
+        (
+            "x=$(sudo cat /etc/shadow)",
+            "`clud sudo -- cat /etc/shadow`",
+        ),
     ] {
         let reason = hook_reason(command).unwrap_or_else(|| panic!("{command} should be refused"));
         assert!(reason.starts_with("[sudo-prompt]"), "{command}: {reason}");
         assert!(reason.contains(blessed), "{command}: {reason}");
         assert!(reason.contains("masked password prompt"), "{reason}");
-        assert!(reason.contains("Never ask for the password in chat"), "{reason}");
-        assert!(reason.contains("CLUD_BAD_CMD_OVERRIDE=\"sudo-prompt:"), "{reason}");
+        assert!(
+            reason.contains("Never ask for the password in chat"),
+            "{reason}"
+        );
+        assert!(
+            reason.contains("CLUD_BAD_CMD_OVERRIDE=\"sudo-prompt:"),
+            "{reason}"
+        );
     }
 }
 

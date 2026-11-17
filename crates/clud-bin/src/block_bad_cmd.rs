@@ -4175,10 +4175,10 @@ mod block_bad_cmd_slice;
 
 #[path = "block_bad_cmd_imgview.rs"]
 mod block_bad_cmd_imgview;
-#[path = "block_bad_cmd_sudo.rs"]
-mod block_bad_cmd_sudo;
 #[path = "block_bad_cmd_proc_scan.rs"]
 mod block_bad_cmd_proc_scan;
+#[path = "block_bad_cmd_sudo.rs"]
+mod block_bad_cmd_sudo;
 
 #[path = "block_bad_cmd_cilog.rs"]
 mod block_bad_cmd_cilog;
