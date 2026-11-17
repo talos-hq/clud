@@ -69,6 +69,7 @@ impl Selector for Prompt {
                 })
                 .collect(),
             footer: vec![PROMPT.into()],
+            ..View::default()
         }
     }
 

@@ -26,6 +26,9 @@ if sys.platform != "win32":
 
 pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="requires POSIX startup files")
 
+# The interactive success line, printed only after fresh-shell verification.
+INSTALLED = b"is installed and on your PATH"
+
 
 class InstallerTerminal:
     def __init__(self, pid: int, master: int):
@@ -129,10 +132,10 @@ def test_activation_repair_requires_separate_bounded_consent(
     if decision == "approve":
         assert profile.read_text().startswith(changed)
         assert profile.read_text().count("# >>> clud installer PATH >>>") == 1
-        assert b"verified fresh name-based lookup" in terminal.output
+        assert INSTALLED in terminal.output
     else:
         assert profile.read_text() == changed
-        assert b"verified fresh name-based lookup" not in terminal.output
+        assert INSTALLED not in terminal.output
 
 
 @pytest.mark.parametrize("structured", [False, True])

@@ -98,6 +98,7 @@ impl Selector for ScopeSelector {
                 })
                 .collect(),
             footer: Vec::new(),
+            ..View::default()
         }
     }
 

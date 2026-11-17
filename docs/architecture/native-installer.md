@@ -76,7 +76,18 @@ of PATH. Noninteractive explicit mode requires a single choice and `--yes`;
 otherwise it exits without writing.
 
 All menus are selector models in `self_install/picker.rs` rendered by the
-shared `selector.rs` terminal driver. The driver owns pending-input draining,
+shared `selector.rs` terminal driver in its prompt layout. The menu reads the
+running executable's plan first, so one screen shows the version, location,
+what it replaces and the PATH directory, and choosing **Install** there is the
+consent; no second confirmation follows. **Choose another version** and
+`--install-current` show the same summary with **Install** / **Not now**
+(default) / **Show details**. Details expand in place to the source, full
+SHA-256, exact startup-file or User Path edit, and prompt engine. `--yes`
+prints that full plan to stderr instead. Colour follows `NO_COLOR`, `TERM=dumb`
+and whether stderr is a terminal; the pointer is ASCII `>` unless the console
+is known to have the glyph (Windows Terminal, VS Code, or a UTF-8 POSIX
+locale), so the legacy Windows console never shows a missing-glyph box
+([DD-215](../DESIGN_DECISIONS.md#dd-215-installer-consent-is-one-plain-screen-with-the-exact-plan-one-keystroke-away)). The driver owns pending-input draining,
 raw mode, CRLF output, viewport scrolling, Windows key-release filtering,
 cursor restoration, and Escape/Ctrl-C handling. The release picker uses
 `Catalog::compatible_releases`; its default follows the `latest-stable`
@@ -94,8 +105,8 @@ enter normal discovery through a mixed catalog.
 
 An accepted selection becomes either `InstallIntent::CurrentExecutable` or
 `InstallIntent::Published(asset)`. `transaction.rs::plan` runs without writes,
-records the source digest and destination state, and shows the exact plan
-before consent. Only then does `execute` create the approved per-user bin
+records the source digest and destination state, and shows the plan before
+consent (the summary, with the exact plan under **Show details**). Only then does `execute` create the approved per-user bin
 directory, acquire its install lock, stage a private executable, verify its
 format, digest, and version, and commit it with a recoverable prior copy.
 The running-executable path copies offline. The release path uses the exact

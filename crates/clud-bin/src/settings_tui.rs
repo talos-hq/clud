@@ -454,6 +454,7 @@ impl Selector for Menu {
             } else {
                 Vec::new()
             },
+            ..View::default()
         }
     }
 

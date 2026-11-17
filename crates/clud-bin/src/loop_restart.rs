@@ -58,6 +58,7 @@ impl Selector for RestartPrompt {
             gap: true,
             rows,
             footer: Vec::new(),
+            ..View::default()
         }
     }
 

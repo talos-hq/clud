@@ -26,6 +26,10 @@ use std::time::{Duration, Instant};
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::terminal;
 
+mod prompt;
+
+pub use prompt::{elide_middle, render_blocks, wrap, Block, Fit, Style, Theme, Tone};
+
 const HIDE_CURSOR: &[u8] = b"\x1b[?25l";
 const SHOW_CURSOR: &[u8] = b"\x1b[?25h";
 /// Columns between the longest label and an inline note.
@@ -66,6 +70,10 @@ pub struct View {
     pub rows: Vec<Row>,
     /// Lines under the rows, indented.
     pub footer: Vec<String>,
+    /// Aligned content between the hints and the rows; drawn by
+    /// [`Theme::Prompt`] only.
+    pub body: Vec<Block>,
+    pub theme: Theme,
 }
 
 /// One selectable line: `> [x] Label` plus an optional note.
@@ -213,6 +221,9 @@ pub fn render(view: &View, columns: usize) -> Frame {
 /// line saying how many rows are hidden above and below. The frame stays within
 /// `rows - 1` physical rows, so its last line feed never scrolls the top away.
 pub fn render_within(view: &View, columns: usize, rows: usize) -> Frame {
+    if let Theme::Prompt(style) = view.theme {
+        return prompt::render(view, style, columns, rows);
+    }
     let inline_width = view
         .rows
         .iter()
@@ -396,6 +407,11 @@ pub fn run<S: Selector, W: Write>(out: &mut W, selector: &mut S) -> io::Result<S
         Ok(outcome) => restored.map(|()| outcome),
         Err(error) => Err(error),
     }
+}
+
+/// The real terminal's width in columns; `0` when unknown.
+pub fn terminal_columns() -> usize {
+    terminal::size().map_or(0, |(columns, _)| usize::from(columns))
 }
 
 /// The selector loop, independent of the real terminal.
@@ -692,6 +708,7 @@ mod tests {
                     note: Note::None,
                 }],
                 footer: Vec::new(),
+                ..View::default()
             }
         }
 
@@ -743,6 +760,7 @@ mod tests {
                 })
                 .collect(),
             footer: vec!["footer".to_string()],
+            ..View::default()
         }
     }
 
@@ -866,6 +884,7 @@ mod tests {
                 row(false, "Noted", Note::Below("below".to_string())),
             ],
             footer: vec!["footer".to_string()],
+            ..View::default()
         };
         assert_eq!(
             render(&view, 0).text(),
@@ -881,6 +900,7 @@ mod tests {
             gap: false,
             rows: vec![row(true, "label", Note::Below("note\nsecond".to_string()))],
             footer: vec!["tab\there".to_string()],
+            ..View::default()
         };
         let frame = render(&view, 0);
         let text = frame.text();

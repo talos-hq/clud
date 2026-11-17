@@ -178,18 +178,28 @@ def expect_installer_prompt(
         raise installer_prompt_failure(process, f"Missing installer prompt {pattern!r}") from error
 
 
+# A confirmation title after the release list, with or without the colour
+# escapes around it; the group is the selected version.
+CONFIRMATION = re.compile(r"Choose a clud release.*Install clud ([0-9][0-9A-Za-z.+-]*)", re.DOTALL)
+
+# Releases before the installer redesign report verification in log form.
+INSTALLED = re.compile(r"verified fresh name-based lookup|is installed and on your PATH")
+
+
 def expect_install_confirmation(
     process: PseudoTerminalProcess, version: str, timeout: float = 30,
 ) -> None:
     # Match any selected version first: a stale catalog must fail immediately,
     # rather than waiting for a confirmation for a version that was not selected.
-    expect_installer_prompt(
-        process, re.compile(r"Install clud [^\r\n]+ at this destination\?"), timeout,
-    )
-    expected = f"Install clud {version} at this destination?"
-    if expected not in process.output_text:
+    # Only a title drawn after the release list counts; the first screen also
+    # names a version. Installers before the redesign ask
+    # "Install clud X at this destination?".
+    expect_installer_prompt(process, CONFIRMATION, timeout)
+    selected = CONFIRMATION.findall(process.output_text)[-1]
+    if selected != version:
         raise installer_prompt_failure(
-            process, f"Installer selected a different release; expected {expected!r}",
+            process,
+            f"Installer selected a different release; expected {version!r}, got {selected!r}",
         )
 
 
@@ -216,7 +226,10 @@ def test_missing_installer_prompt_reports_terminal_tail_and_exit_code(exits: boo
 
 
 def test_wrong_installer_selection_fails_at_the_actual_confirmation() -> None:
-    script = "print('Install clud 2.8.56 at this destination?', flush=True); input()"
+    script = (
+        "print('Choose a clud release', flush=True); "
+        "print('Install clud 2.8.56 at this destination?', flush=True); input()"
+    )
     process = PseudoTerminalProcess([sys.executable, "-c", script], capture=True)
     try:
         with pytest.raises(AssertionError) as error:
@@ -256,7 +269,7 @@ def assert_public_latest_install(
         else:
             process.write("\x1b[B\r")  # Claude: subscription, no key needed
         assert process.wait(timeout=120) == 0, process.output_text
-        assert "verified fresh name-based lookup" in process.output_text
+        assert INSTALLED.search(process.output_text), process.output_text
     except (EOFError, TimeoutError) as error:
         raise installer_prompt_failure(process, f"Installer interaction failed: {error}") from error
     finally:

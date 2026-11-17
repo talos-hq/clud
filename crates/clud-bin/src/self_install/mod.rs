@@ -6,4 +6,5 @@ pub mod entry;
 pub mod picker;
 mod result;
 pub mod setup;
+pub mod summary;
 pub mod transaction;

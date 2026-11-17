@@ -1,10 +1,19 @@
-//! Installer menu models rendered through the shared terminal selector.
+//! Installer screens rendered through the shared terminal selector in its
+//! prompt layout (`selector::Theme::Prompt`).
+//!
+//! Each decision is one screen: a title naming the version, the plan in plain
+//! words ([`super::summary`]), and one single-choice list. **Show details**
+//! prints the exact plan into scrollback and reopens the screen below it, so
+//! a long plan never makes the screen taller than the terminal. The list order is part of the interface:
+//! automation and muscle memory press Down/Up from the default row, so new
+//! rows go after **Not now**.
 
 use std::time::Duration;
 
-use crate::selector::{self, Key, Note, Row, Selector, Step, View};
+use crate::selector::{self, Block, Key, Note, OnExit, Row, Selector, Step, Style, Theme, View};
 
 use super::catalog::ResolvedRelease;
+use super::summary::{Facts, PathStyle};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuChoice {
@@ -15,47 +24,177 @@ pub enum MenuChoice {
     Cancelled,
 }
 
-pub struct Menu {
-    selected: usize,
+/// One row of an installer screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    Install,
+    Repair,
+    Releases,
+    Browser,
+    NotNow,
+    Details,
 }
 
-impl Menu {
-    pub fn new(automatic: bool) -> Self {
+/// A titled plan summary with one single-choice list.
+pub struct Screen {
+    title: String,
+    hints: Vec<String>,
+    summary: Vec<Block>,
+    details: Vec<Block>,
+    actions: Vec<Action>,
+    selected: usize,
+    /// Set when **Show details** closes the screen, which then erases itself
+    /// so the details print where it stood and it reopens below them.
+    details_requested: bool,
+    style: Style,
+}
+
+impl Screen {
+    /// The first screen of `--installer` and the first-run offer: install
+    /// this executable, pick another release, open the download page, or
+    /// decline. The offer defaults to **Not now**. `facts` is `None` when the
+    /// plan could not be read; choosing **Install** then reports why.
+    pub fn menu(facts: Option<&Facts>, paths: &PathStyle, automatic: bool, style: Style) -> Self {
+        let mut actions = vec![
+            Action::Install,
+            Action::Releases,
+            Action::Browser,
+            Action::NotNow,
+        ];
+        if facts.is_some() {
+            actions.push(Action::Details);
+        }
         Self {
+            title: facts.map_or_else(
+                || format!("Install clud {}", env!("CARGO_PKG_VERSION")),
+                Facts::title,
+            ),
+            hints: automatic
+                .then(|| "clud is not set up as a command yet.".to_owned())
+                .into_iter()
+                .chain(facts.map(|facts| facts.subtitle().to_owned()))
+                .collect(),
+            summary: facts.map(|facts| facts.summary(paths)).unwrap_or_default(),
+            details: facts.map(Facts::details).unwrap_or_default(),
+            actions,
             selected: if automatic { 3 } else { 0 },
+            details_requested: false,
+            style,
+        }
+    }
+
+    /// Consent for one planned install. Defaults to **Not now**.
+    pub fn confirm(facts: &Facts, paths: &PathStyle, style: Style) -> Self {
+        Self {
+            title: facts.title(),
+            hints: vec![facts.subtitle().to_owned()],
+            summary: facts.summary(paths),
+            details: facts.details(),
+            actions: vec![Action::Install, Action::NotNow, Action::Details],
+            selected: 1,
+            details_requested: false,
+            style,
+        }
+    }
+
+    /// Separate consent for one more activation attempt. Defaults to
+    /// **Not now**.
+    pub fn repair(title: String, style: Style) -> Self {
+        Self {
+            title,
+            hints: vec![
+                "clud is installed, but new terminals cannot find it yet.".into(),
+                "Retry once? Nothing changes unless you choose to retry.".into(),
+            ],
+            summary: Vec::new(),
+            details: Vec::new(),
+            actions: vec![Action::Repair, Action::NotNow],
+            selected: 1,
+            details_requested: false,
+            style,
         }
     }
 
     pub fn selected(&self) -> usize {
         self.selected
     }
+
+    /// The exact plan as text to print above the reopened screen.
+    pub fn details_text(&self, columns: usize) -> String {
+        selector::render_blocks(&self.details, self.style, columns)
+    }
+
+    /// Reopen after the details were printed: they stay in scrollback, so
+    /// the row that showed them goes.
+    fn details_shown(&mut self) {
+        self.details_requested = false;
+        self.actions.retain(|action| *action != Action::Details);
+        self.selected = self.selected.min(self.actions.len() - 1);
+    }
+
+    fn label(action: Action) -> &'static str {
+        match action {
+            Action::Install => "Install",
+            Action::Repair => "Retry command setup",
+            Action::Releases => "Choose another version",
+            Action::Browser => "Open download page",
+            Action::NotNow => "Not now",
+            Action::Details => "Show details",
+        }
+    }
 }
 
-impl Selector for Menu {
-    type Outcome = MenuChoice;
+/// Run `screen` until it closes with a choice, printing the details above it
+/// each time they are requested.
+fn run_screen(mut screen: Screen) -> std::io::Result<MenuChoice> {
+    loop {
+        if let Some(choice) = selector::run(&mut std::io::stderr(), &mut screen)? {
+            return Ok(choice);
+        }
+        eprint!("\n{}", screen.details_text(selector::terminal_columns()));
+        screen.details_shown();
+    }
+}
+
+/// The key hint under every installer list.
+pub fn hint(style: Style) -> String {
+    if style.unicode {
+        "\u{2191}/\u{2193} move \u{b7} Enter select \u{b7} Esc cancel".into()
+    } else {
+        "Up/Down move, Enter select, Esc cancel".into()
+    }
+}
+
+fn rows(labels: impl Iterator<Item = String>, selected: usize) -> Vec<Row> {
+    labels
+        .enumerate()
+        .map(|(index, label)| Row {
+            current: index == selected,
+            marker: String::new(),
+            label,
+            note: Note::None,
+        })
+        .collect()
+}
+
+impl Selector for Screen {
+    /// `None` asks for the details.
+    type Outcome = Option<MenuChoice>;
 
     fn view(&self, _elapsed: Duration) -> View {
-        let labels = [
-            "Install this version",
-            "Choose a release",
-            "Open download page",
-            "Not now",
-        ];
         View {
-            title: "Install clud".into(),
-            hints: vec!["Up/Down choose, Enter confirm, Esc cancel".into()],
+            title: self.title.clone(),
+            hints: self.hints.clone(),
+            body: self.summary.clone(),
             gap: true,
-            rows: labels
-                .iter()
-                .enumerate()
-                .map(|(index, label)| Row {
-                    current: self.selected == index,
-                    marker: if self.selected == index { "[x]" } else { "[ ]" }.into(),
-                    label: (*label).into(),
-                    note: Note::None,
-                })
-                .collect(),
-            footer: Vec::new(),
+            rows: rows(
+                self.actions
+                    .iter()
+                    .map(|action| Self::label(*action).to_owned()),
+                self.selected,
+            ),
+            footer: vec![hint(self.style)],
+            theme: Theme::Prompt(self.style),
         }
     }
 
@@ -66,19 +205,29 @@ impl Selector for Menu {
                 Step::Redraw
             }
             Key::Down => {
-                self.selected = (self.selected + 1).min(3);
+                self.selected = (self.selected + 1).min(self.actions.len() - 1);
                 Step::Redraw
             }
-            Key::Enter => Step::Done(
-                [
-                    MenuChoice::Current,
-                    MenuChoice::Releases,
-                    MenuChoice::Browser,
-                    MenuChoice::NotNow,
-                ][self.selected],
-            ),
-            Key::Escape => Step::Done(MenuChoice::Cancelled),
+            Key::Enter => Step::Done(match self.actions[self.selected] {
+                Action::Install | Action::Repair => Some(MenuChoice::Current),
+                Action::Releases => Some(MenuChoice::Releases),
+                Action::Browser => Some(MenuChoice::Browser),
+                Action::NotNow => Some(MenuChoice::NotNow),
+                Action::Details => {
+                    self.details_requested = true;
+                    None
+                }
+            }),
+            Key::Escape => Step::Done(Some(MenuChoice::Cancelled)),
             Key::Space | Key::Char(_) => Step::Stay,
+        }
+    }
+
+    fn on_exit(&self) -> OnExit {
+        if self.details_requested {
+            OnExit::Erase
+        } else {
+            OnExit::Keep
         }
     }
 }
@@ -93,10 +242,11 @@ pub struct Releases {
     rows: Vec<ResolvedRelease>,
     latest_stable: String,
     selected: usize,
+    style: Style,
 }
 
 impl Releases {
-    pub fn new(rows: Vec<ResolvedRelease>, latest_stable: &str) -> Self {
+    pub fn new(rows: Vec<ResolvedRelease>, latest_stable: &str, style: Style) -> Self {
         let selected = rows
             .iter()
             .position(|row| row.version == latest_stable)
@@ -105,6 +255,7 @@ impl Releases {
             rows,
             latest_stable: latest_stable.into(),
             selected,
+            style,
         }
     }
 
@@ -121,11 +272,11 @@ impl Selector for Releases {
             title: "Choose a clud release".into(),
             hints: vec![
                 format!(
-                    "Current: {}   Latest: {}",
+                    "This copy: {}   Latest: {}",
                     env!("CARGO_PKG_VERSION"),
                     self.latest_stable
                 ),
-                "Up/Down scroll, Enter select, Esc cancel".into(),
+                "You review the version you pick before it installs.".into(),
             ],
             gap: true,
             rows: self
@@ -134,7 +285,7 @@ impl Selector for Releases {
                 .enumerate()
                 .map(|(index, row)| Row {
                     current: self.selected == index,
-                    marker: if self.selected == index { "[x]" } else { "[ ]" }.into(),
+                    marker: String::new(),
                     label: format!("clud {}", row.version),
                     note: Note::Release {
                         asset: row.asset.filename.to_string(),
@@ -143,7 +294,9 @@ impl Selector for Releases {
                     },
                 })
                 .collect(),
-            footer: Vec::new(),
+            footer: vec![hint(self.style)],
+            theme: Theme::Prompt(self.style),
+            ..View::default()
         }
     }
 
@@ -168,8 +321,13 @@ impl Selector for Releases {
     }
 }
 
-pub fn prompt_menu(automatic: bool) -> std::io::Result<MenuChoice> {
-    selector::run(&mut std::io::stderr(), &mut Menu::new(automatic))
+pub fn prompt_menu(facts: Option<&Facts>, automatic: bool) -> std::io::Result<MenuChoice> {
+    run_screen(Screen::menu(
+        facts,
+        &PathStyle::detect(),
+        automatic,
+        Style::detect(),
+    ))
 }
 
 pub fn prompt_releases(
@@ -178,7 +336,7 @@ pub fn prompt_releases(
 ) -> std::io::Result<ReleaseChoice> {
     selector::run(
         &mut std::io::stderr(),
-        &mut Releases::new(rows, latest_stable),
+        &mut Releases::new(rows, latest_stable, Style::detect()),
     )
 }
 
@@ -189,161 +347,29 @@ pub enum ConfirmChoice {
     Cancelled,
 }
 
-pub struct Confirm {
-    label: String,
-    action: &'static str,
-    selected: usize,
-}
-
-impl Confirm {
-    pub fn new(label: String) -> Self {
-        Self::with_action(label, "Install")
-    }
-
-    fn with_action(label: String, action: &'static str) -> Self {
-        Self {
-            label,
-            action,
-            selected: 1,
+impl From<MenuChoice> for ConfirmChoice {
+    fn from(choice: MenuChoice) -> Self {
+        match choice {
+            MenuChoice::Current => Self::Proceed,
+            MenuChoice::Cancelled => Self::Cancelled,
+            MenuChoice::Releases | MenuChoice::Browser | MenuChoice::NotNow => Self::NotNow,
         }
     }
 }
 
-impl Selector for Confirm {
-    type Outcome = ConfirmChoice;
-
-    fn view(&self, _elapsed: Duration) -> View {
-        View {
-            title: self.label.clone(),
-            hints: vec!["Up/Down choose, Enter confirm, Esc cancel".into()],
-            gap: true,
-            rows: [self.action, "Not now"]
-                .iter()
-                .enumerate()
-                .map(|(index, label)| Row {
-                    current: self.selected == index,
-                    marker: if self.selected == index { "[x]" } else { "[ ]" }.into(),
-                    label: (*label).into(),
-                    note: Note::None,
-                })
-                .collect(),
-            footer: Vec::new(),
-        }
-    }
-
-    fn on_key(&mut self, key: Key) -> Step<Self::Outcome> {
-        match key {
-            Key::Up => {
-                self.selected = 0;
-                Step::Redraw
-            }
-            Key::Down => {
-                self.selected = 1;
-                Step::Redraw
-            }
-            Key::Enter => Step::Done(if self.selected == 0 {
-                ConfirmChoice::Proceed
-            } else {
-                ConfirmChoice::NotNow
-            }),
-            Key::Escape => Step::Done(ConfirmChoice::Cancelled),
-            Key::Space | Key::Char(_) => Step::Stay,
-        }
-    }
-}
-
-pub fn prompt_confirm(label: String) -> std::io::Result<ConfirmChoice> {
-    selector::run(&mut std::io::stderr(), &mut Confirm::new(label))
+pub fn prompt_confirm(facts: &Facts) -> std::io::Result<ConfirmChoice> {
+    run_screen(Screen::confirm(
+        facts,
+        &PathStyle::detect(),
+        Style::detect(),
+    ))
+    .map(ConfirmChoice::from)
 }
 
 pub fn prompt_repair(label: String) -> std::io::Result<ConfirmChoice> {
-    selector::run(
-        &mut std::io::stderr(),
-        &mut Confirm::with_action(label, "Repair"),
-    )
+    run_screen(Screen::repair(label, Style::detect())).map(ConfirmChoice::from)
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::self_install::catalog::{Arch, Flavor, MediaType, Os, ResolvedAsset};
-
-    fn row(version: &str) -> ResolvedRelease {
-        ResolvedRelease {
-            version: version.into(),
-            asset: ResolvedAsset {
-                version: version.into(),
-                filename: format!("clud-{version}-x86_64-unknown-linux-musl"),
-                media_type: MediaType::Direct,
-                size_bytes: 1,
-                sha256: "0".repeat(64),
-                url: String::new(),
-                flavor: Flavor::StaticMusl,
-                os: Os::Linux,
-                arch: Arch::X86_64,
-            },
-        }
-    }
-
-    #[test]
-    fn automatic_defaults_to_not_now_and_explicit_to_current() {
-        let mut auto = Menu::new(true);
-        assert_eq!(auto.selected(), 3);
-        assert_eq!(auto.on_key(Key::Enter), Step::Done(MenuChoice::NotNow));
-        assert_eq!(
-            Menu::new(false).on_key(Key::Enter),
-            Step::Done(MenuChoice::Current)
-        );
-        assert_eq!(auto.on_key(Key::Escape), Step::Done(MenuChoice::Cancelled));
-        let mut confirm = Confirm::new("Install clud?".into());
-        assert_eq!(
-            confirm.on_key(Key::Enter),
-            Step::Done(ConfirmChoice::NotNow)
-        );
-        assert_eq!(confirm.on_key(Key::Up), Step::Redraw);
-        assert_eq!(
-            confirm.on_key(Key::Enter),
-            Step::Done(ConfirmChoice::Proceed)
-        );
-    }
-
-    #[test]
-    fn release_markers_show_both_versions_and_render_trusted_colors() {
-        let current = env!("CARGO_PKG_VERSION");
-        for latest in [current, "99.0.0"] {
-            let picker = Releases::new(vec![row(current), row("99.0.0")], latest);
-            let view = picker.view(Duration::ZERO);
-            assert!(view.hints[0].contains(current));
-            assert!(view.hints[0].contains(latest));
-            let rendered = selector::render(&view, 200).text();
-            assert!(rendered.contains("\x1b[33m<-- current\x1b[0m"));
-            assert!(rendered.contains("\x1b[32m<-- latest\x1b[0m"));
-            assert_eq!(rendered.matches("<-- current").count(), 1);
-            assert_eq!(rendered.matches("<-- latest").count(), 1);
-        }
-        let picker = Releases::new(vec![row("99.0.0")], "99.0.0");
-        assert!(!selector::render(&picker.view(Duration::ZERO), 200)
-            .text()
-            .contains("<-- current"));
-    }
-
-    #[test]
-    fn release_picker_defaults_to_stable_pointer_and_keeps_exact_choice() {
-        let mut picker = Releases::new(
-            vec![row("3.0.0-rc.1"), row("2.9.0"), row("2.8.14")],
-            "2.9.0",
-        );
-        assert_eq!(picker.selected().unwrap().version, "2.9.0");
-        assert!(matches!(picker.on_key(Key::Down), Step::Redraw));
-        assert!(
-            matches!(picker.on_key(Key::Enter), Step::Done(ReleaseChoice::Selected(ref selected)) if selected.version == "2.8.14")
-        );
-        let frame = selector::render_within(&picker.view(Duration::ZERO), 24, 7);
-        assert!(frame.text().contains("more above") || frame.text().contains("more below"));
-        assert!(frame
-            .bytes()
-            .iter()
-            .enumerate()
-            .all(|(i, byte)| *byte != b'\n' || (i > 0 && frame.bytes()[i - 1] == b'\r')));
-    }
-}
+#[path = "picker_tests.rs"]
+mod tests;

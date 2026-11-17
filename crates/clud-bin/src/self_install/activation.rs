@@ -15,6 +15,23 @@ pub struct ActivationPlan {
     host: host_activation::ActivationHost,
 }
 
+/// What activation does to PATH, in the terms the consent screen shows. The
+/// exact edit stays in [`ActivationPlan::description`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PathChange {
+    /// `directory` already leads PATH; nothing is written.
+    Unchanged { directory: PathBuf },
+    /// `directory` is added for new terminals. `files` are the startup files
+    /// edited; empty when the change is the Windows user PATH.
+    Add {
+        directory: PathBuf,
+        files: Vec<PathBuf>,
+    },
+    /// The login shell is not one the installer edits: the user adds
+    /// `directory` themselves.
+    Manual { directory: PathBuf },
+}
+
 pub fn plan(destination: &Path) -> Result<ActivationPlan, String> {
     Ok(ActivationPlan {
         destination: destination.to_path_buf(),
@@ -30,6 +47,10 @@ pub fn terminal_commands(destination: &Path) -> Result<Vec<(&'static str, String
 impl ActivationPlan {
     pub fn description(&self) -> String {
         host_activation::description(&self.destination, &self.host)
+    }
+
+    pub fn path_change(&self) -> PathChange {
+        host_activation::path_change(&self.destination, &self.host)
     }
 
     /// How the user picks up the new PATH in an already-open terminal.

@@ -12,6 +12,8 @@ use running_process::{spawn_with_env_policy, EnvironmentPolicy, SpawnStdio, Stdi
 use winreg::enums::{RegType, HKEY_CURRENT_USER, KEY_READ, KEY_WRITE};
 use winreg::RegKey;
 
+use crate::self_install::activation::PathChange;
+
 const USER_ENVIRONMENT: &str = "Environment";
 
 pub fn terminal_commands(destination: &Path) -> Result<Vec<(&'static str, String)>, String> {
@@ -181,13 +183,26 @@ pub fn description(destination: &Path, plan: &ActivationHost) -> String {
         .unwrap_or_default();
     let after = decode_path(&plan.next_user_path.bytes).unwrap_or_default();
     format!(
-        "{} HKCU\\Environment\\Path ({:?}) from {:?} to {:?}; prepend {}; broadcast Environment change; verify OS-built User environment",
+        "{} HKCU\\Environment\\Path ({:?}) from \"{}\" to \"{}\"; prepend {}; broadcast Environment change; verify OS-built User environment",
         if plan.prior_user_path.as_ref() == Some(&plan.next_user_path) { "keep" } else { "write" },
         plan.next_user_path.kind,
         before,
         after,
         bin.display()
     )
+}
+
+/// The plan in consent-screen terms: whether the User Path gains the directory.
+pub fn path_change(destination: &Path, plan: &ActivationHost) -> PathChange {
+    let directory = destination.parent().unwrap_or(destination).to_path_buf();
+    if plan.prior_user_path.as_ref() == Some(&plan.next_user_path) {
+        PathChange::Unchanged { directory }
+    } else {
+        PathChange::Add {
+            directory,
+            files: Vec::new(),
+        }
+    }
 }
 
 /// What to tell the user once the User PATH is written: running terminals keep

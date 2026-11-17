@@ -6,6 +6,7 @@ import errno
 import hashlib
 import json
 import os
+import re
 import select
 import shutil
 import sys
@@ -733,8 +734,9 @@ def test_first_run_offer_defaults_to_not_now_and_cancels_without_writes(
     before = browser_user_path_snapshot()
     process = PseudoTerminalProcess([str(clud_binary())], env=env, capture=True)
     try:
-        process.expect("[x] Not now", timeout=30)
-        assert "[ ] Install this version" in process.output_text
+        # The pointer is ">" or "\u276f" depending on the console's glyphs.
+        process.expect(re.compile("[>\u276f] Not now"), timeout=30)
+        assert "Choose another version" in process.output_text
         process.write(cancel)
         # running-process reports a child's interrupt exit as an exception.
         with pytest.raises(KeyboardInterrupt):

@@ -4,11 +4,16 @@
 dispatch runs before the runtime-cache hop, Windows trampoline, daemon,
 backend, title keeper, and launch setup. The automatic offer is limited to a
 bare, interactive `clud` invocation when no executable named `clud` resolves
-on the effective PATH. `picker.rs` supplies the menu, confirmation, and full
-release-list models (current/latest version summaries and yellow/green ASCII
-arrows) to the shared `selector.rs` terminal driver. The automatic
-menu defaults to **Not now**; the explicit menu defaults to **Install this
-version**. `transaction.rs` builds the read-only plan, verifies the selected
+on the effective PATH. `picker.rs` supplies the install screen, confirmation, repair and full
+release-list models to the shared `selector.rs` terminal driver in its prompt
+layout (`selector/prompt.rs`). `summary.rs` turns a plan into the screen's
+plain-language fields (version, location, what it replaces, the PATH
+directory) and the **Show details** block (source, full SHA-256, exact PATH
+edit, prompt engine); see [DD-215](../../../../docs/DESIGN_DECISIONS.md#dd-215-installer-consent-is-one-plain-screen-with-the-exact-plan-one-keystroke-away).
+`picker_tests.rs` renders every screen at 60, 80 and 120 columns, with and
+without colour; set `CLUD_INSTALLER_GALLERY=<dir>` to write the renders.
+The automatic menu defaults to **Not now**; the explicit menu defaults to
+**Install**. Row order is stable for automation: new rows go after **Not now**. `transaction.rs` builds the read-only plan, verifies the selected
 source, and commits one public executable. It also installs the verified,
 checksum-pinned lokr into a private versioned directory before committing clud;
 native installers work offline, while release wheels download verified bytes
