@@ -47,3 +47,16 @@ fn stdin_terminal_check_happens_before_stdin_is_read() {
         "definition + one call"
     );
 }
+
+/// `sudo` is offered only where a session leader can share the ticket (not
+/// Windows) and the password can be typed hidden (a terminal).
+#[test]
+fn sudo_is_advertised_only_on_a_terminal_off_windows() {
+    let caps = |inline| super::caps(inline)["caps"].clone();
+    assert_eq!(caps(false), serde_json::json!(["pty"]));
+    if crate::platform::host::WINDOWS {
+        assert_eq!(caps(true), serde_json::json!(["pty"]));
+    } else {
+        assert_eq!(caps(true), serde_json::json!(["pty", "sudo"]));
+    }
+}

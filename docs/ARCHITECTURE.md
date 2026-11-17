@@ -106,4 +106,4 @@ Release-manager evidence for the optional cross-route is tracked separately in
 - **"Where do in-session `git` / `gh` calls get logged?"** -> [git-gh-telemetry-shim.md](architecture/git-gh-telemetry-shim.md)
 - **"How should skills and bundled tools keep output small?"** -> [bounded-output.md](architecture/bounded-output.md)
 
-- [Remote assistance](architecture/remote-assistance.md): clud.bot pairing, local consent and native PTY protocol.
+- [Remote assistance](architecture/remote-assistance.md): clud.bot pairing, local consent, native PTY protocol and Request sudo.

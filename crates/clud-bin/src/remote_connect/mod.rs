@@ -1,9 +1,17 @@
 //! Native client for the clud.bot operator protocol.
 pub mod connect;
 mod console;
+// The leader half runs only where `platform::remote_shell` is supported; on
+// hosts with the stub (Windows) only the client half is reachable.
+#[allow(
+    dead_code,
+    reason = "the session-leader half is unused where platform::remote_shell is a stub"
+)]
+pub(crate) mod leader;
 mod mirror;
 mod paste;
 pub mod proxy;
+mod sudo;
 mod terminal;
 #[cfg(test)]
 mod tests;
@@ -101,6 +109,7 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let input = stdin_lines();
     let mut state = State::new(console::Console::stdout());
     state.inline = inline;
+    state.terminal.enable_leader(sudo::advertised(inline));
     state.terminal.configure_proxy(proxy::SessionProxy::new(
         base.as_str(),
         &session.client_token,
@@ -109,6 +118,9 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let mut heartbeat = Instant::now();
     while !stop.load(Ordering::Relaxed) {
         state.read_consent(&input, &mut socket)?;
+        if let Some(event) = state.sudo.poll(&state.console) {
+            send(&mut socket, event)?;
+        }
         for _ in 0..32 {
             let Some(output) = state.terminal.output()? else {
                 break;
@@ -160,6 +172,9 @@ fn answers_inline() -> bool {
 
 struct State {
     console: console::Console,
+    /// Declared before `terminal`: on drop (Ctrl+C, a lost server) sudo is
+    /// dropped before the PTY that holds it is killed.
+    sudo: sudo::Sudo,
     terminal: terminal::Terminal,
     connected: bool,
     granted: bool,
@@ -175,6 +190,7 @@ impl State {
     fn new(console: console::Console) -> Self {
         Self {
             console,
+            sudo: sudo::Sudo::new(),
             terminal: terminal::Terminal::default(),
             connected: false,
             granted: false,
@@ -212,6 +228,12 @@ impl State {
         let Ok(line) = input.try_recv() else {
             return Ok(());
         };
+        if self.sudo.wants_line() {
+            if let Some(event) = self.sudo.on_line(line, &self.console) {
+                send(socket, event)?;
+            }
+            return Ok(());
+        }
         if let Some(id) = self.pending.take() {
             let allow = crate::yes_no::answer(&line, crate::yes_no::Default::No);
             self.console.answered(self.inline);
@@ -228,6 +250,7 @@ impl State {
     }
 
     fn revoke(&mut self) {
+        self.sudo.shutdown(&self.console);
         self.granted = false;
         self.pending = None;
         self.approved = None;
@@ -235,14 +258,53 @@ impl State {
         self.console.settle();
     }
 
+    /// Open the shell and hand its session leader, if any, to the sudo flow.
+    fn open_pty(&mut self, event: &Value) -> Value {
+        let failed = json!({"type":"pty_error", "pty_id":event["pty_id"], "code":"spawn_failed"});
+        let Ok(opened) = self.terminal.open(event) else {
+            return failed;
+        };
+        if let Some(leader) = self.terminal.take_leader() {
+            match sudo::Link::new(leader) {
+                Ok(link) => self.sudo.attach(link),
+                Err(_) => {
+                    self.terminal.stop();
+                    return failed;
+                }
+            }
+        }
+        opened
+    }
+
+    /// `sudo_request` / `sudo_drop`; `false` for any other event.
+    fn sudo_event(
+        &mut self,
+        event: &Value,
+        socket: &mut transport::Socket,
+    ) -> Result<bool, String> {
+        let reply = match event["type"].as_str() {
+            Some("sudo_request") => {
+                let ready = self.granted && self.terminal.id().is_some();
+                self.sudo
+                    .on_request(event["request_id"].as_str(), ready, &self.console)
+            }
+            Some("sudo_drop") => self.sudo.on_drop(&self.console),
+            _ => return Ok(false),
+        };
+        if let Some(reply) = reply {
+            send(socket, reply)?;
+        }
+        Ok(true)
+    }
+
     fn event(&mut self, event: &Value, socket: &mut transport::Socket) -> Result<bool, String> {
+        if self.sudo_event(event, socket)? {
+            return Ok(false);
+        }
         match event["type"].as_str().unwrap_or("") {
             "hello" => {
                 self.connected = matches!(event["state"].as_str(), Some("accepted" | "connected"));
-                send(
-                    socket,
-                    json!({"type":"caps", "caps":["pty"], "client":concat!("clud/", env!("CARGO_PKG_VERSION"))}),
-                )?;
+                send(socket, caps(self.inline))?;
                 if let Some(message) = end_message(event["state"].as_str().unwrap_or("")) {
                     self.console.line(message);
                     return Ok(true);
@@ -273,19 +335,18 @@ impl State {
                 self.console.line("Remote control granted to Zach Vorhies.");
             }
             "control_revoked" => {
+                self.sudo.shutdown(&self.console);
                 if let Some(exit) = self.terminal.close_event() {
                     send(socket, exit)?;
                 }
                 self.revoke();
             }
-            "pty_open" if self.granted => {
-                let response = self.terminal.open(event).unwrap_or_else(|_| json!({"type":"pty_error", "pty_id":event["pty_id"], "code":"spawn_failed"}));
-                send(socket, response)?;
-            }
+            "pty_open" if self.granted => send(socket, self.open_pty(event))?,
             "pty_resize" if self.granted && self.terminal.matches(event) => {
                 self.terminal.resize(event)?
             }
             "pty_kill" if self.terminal.matches(event) => {
+                self.sudo.shutdown(&self.console);
                 self.terminal.stop();
                 send(
                     socket,
@@ -325,6 +386,16 @@ impl State {
         }
         Ok(false)
     }
+}
+
+/// The capabilities this client advertises. `sudo` only where the shell can
+/// run under the session leader and the password can be typed hidden.
+fn caps(inline: bool) -> Value {
+    let mut caps = vec!["pty"];
+    if sudo::advertised(inline) {
+        caps.push("sudo");
+    }
+    json!({"type":"caps", "caps":caps, "client":concat!("clud/", env!("CARGO_PKG_VERSION"))})
 }
 
 fn end_message(kind: &str) -> Option<&'static str> {

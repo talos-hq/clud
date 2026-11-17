@@ -7916,3 +7916,43 @@ the running executable (and its `--version`) before the first-run offer
 appears. That is read-only, and a planning error is shown only if the user
 chooses to install. Glyph detection errs toward ASCII because the legacy
 console host's default fonts draw unknown glyphs as boxes.
+
+## DD-216: remote sudo is validated by a clud session leader inside the operator PTY
+
+**Status:** Accepted. Replaces the unmerged per-command root panel.
+
+**Context:** clud.bot operators need to run `sudo` in the shell a user has
+consented to. Under sudo's default `timestamp_type=tty` a ticket is keyed by
+uid, tty, session ID and the session leader's start time. Container
+experiments on classic sudo 1.9 and sudo-rs 0.2 showed that the client
+cannot validate on the operator's behalf: its own `sudo -S -v` elevates the
+user's terminal instead, and it cannot join the PTY's session (`TIOCSCTTY`
+fails with `EPERM`). Typing the password into the PTY hands it to the shell
+the operator controls, and into the support log. `SUDO_ASKPASS` runs under the
+operator's control, prints the lecture into the PTY, and sudo-rs rejects
+`-A`. A sudoers drop-in is a standing root grant that survives a crash.
+
+**Decision:** When the client can offer sudo (Unix, on a terminal), the PTY's
+first process is `clud-remote-shell`, an argv[0] name of the one `clud`
+binary (DD-121). It authenticates to the client over a one-shot private
+socket before the shell exists, makes itself non-dumpable, then starts the
+shell as its child in the same session. The user approves with `[y/N]` and
+types the password hidden on their own terminal; the leader pipes it to the
+root-owned setuid `sudo -S -p '' -v` with a clean environment. The leader
+refreshes every 60 s, stops at 4 hours, and drops with `sudo -k` (never
+`-K`). Revoke, disconnect and Ctrl+C drop sudo before the PTY is killed. The
+server hears only a closed set of states. The shell is started through
+running-process's caller-owned foreground API, because `NativeProcess`
+always captures stdout and the shell must inherit the PTY; sudo runs through
+`NativeProcess`. Windows is not offered sudo. Details:
+[remote-assistance.md](architecture/remote-assistance.md#request-sudo).
+
+**Why:** Only a process inside the PTY's session can create a ticket the
+operator's shell will use, and only a process the operator cannot inspect
+may hold the password. A leader that exists before any operator process,
+proves itself on a socket nobody else can reach, and is non-dumpable meets
+both. Session scope keeps the grant bounded: it never reaches the user's
+other terminals, and it dies with the leader. The 4-hour cap and per-request
+consent replace an unbounded "until the session ends". Touch ID is not
+offered: with `-S`, clud reading the password itself is the one path that
+behaves the same on every host.

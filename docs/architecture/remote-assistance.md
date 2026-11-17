@@ -17,7 +17,9 @@ Acceptance does not grant control. A control request prints
 local affirmative answer followed by the matching grant opens access to a shell.
 A negative answer denies control. The status page cannot grant consent.
 The client advertises PTY support and uses running-process's native PTY adapter;
-no system SSH daemon, persistent key or separate helper executable is needed.
+no system SSH daemon, persistent key or separate helper executable is needed
+(on Unix terminals the shell runs under `clud-remote-shell`, an argv[0] name
+of `clud` itself; see [Request sudo](#request-sudo)).
 The shell runs as the current user in the client's current directory. The
 operator can read and modify anything that user can access. Only connect to an
 operator you trust. Closing the session stops the shell; this does not undo its
@@ -71,6 +73,97 @@ validates that the bearer matches its same-origin WebSocket credential and deriv
 the inference URL from the user-selected origin, never from an arbitrary returned
 URL. Its remote HTTP and WebSocket connectors combine bundled public roots with
 system trust; unrelated HTTP clients keep their existing trust policy.
+
+## Request sudo
+
+The operator can ask for administrator access from the admin console's
+**Request sudo** button. The server sends `sudo_request {request_id}`; the
+client answers only with `sudo_state {request_id?, state, until?}`, where
+`state` is one of `prompting`, `active`, `denied`, `unavailable`, `dropped`
+or `expired` and `until` (Unix seconds) accompanies `active`. No free text
+and never a password. **Drop sudo** sends `sudo_drop`. The client advertises
+the `sudo` capability only on Unix and only when stdin and stdout are a
+terminal (`sudo::advertised`), because the password must be typed hidden.
+Windows clients never advertise it; the console disables the button with
+"sudo is not available on Windows".
+
+**Why a session leader.** Under sudo's default `timestamp_type=tty`, a
+ticket is keyed by uid, tty, session ID and the session leader's start time.
+The client is not in the operator PTY's session and cannot join it
+(`TIOCSCTTY` from another session fails with `EPERM`), so it cannot validate
+on the operator's behalf. When the client offers `sudo`, the PTY's first
+process is therefore `clud-remote-shell`, an argv[0] name of the one `clud`
+binary (`multicall.rs`; the client places the alias in a private 0700
+directory and runs it from there). It connects back to a socket in that
+directory, proves itself with a nonce from its environment, and waits. The
+client accepts exactly one connection whose peer is the PTY's process and a
+session leader, acknowledges it, and removes the socket and the alias. Only
+then does the leader start the user's shell, as its child in the same
+session. No operator-controlled process exists before the handshake ends.
+On Linux the leader makes itself non-dumpable (`PR_SET_DUMPABLE`), so the
+same-uid operator cannot ptrace it or read its memory or environment. On
+macOS the signed release binary's hardened runtime refuses debuggers. Its
+socket is close-on-exec, so the shell never inherits it.
+
+**Flow.** On `sudo_request` the client sends `prompting` and asks the leader
+to probe (`sudo -n -v`). If no password is needed it reports `active` without
+`until`. If the user has no sudo rights, or there is no root-owned setuid
+sudo at `/usr/bin/sudo`, `/bin/sudo` or NixOS's `/run/wrappers/bin/sudo`
+(PATH is never used), it reports `unavailable`. Otherwise the user sees,
+with mirrored shell output held back until the question is answered:
+
+```text
+Zach Vorhies is asking for administrator (sudo) access for up to 4 hours.
+Changes made as root stay after sudo ends.
+Allow sudo for Zach Vorhies? [y/N]:
+```
+
+Anything but yes reports `denied` without asking for the password. On yes:
+
+```text
+Password for <user> (typing is hidden; it is never sent to clud.bot):
+```
+
+Echo is off for that line (`platform::console_echo`: `ECHO` cleared,
+`ECHONL` set, `ICANON` and `ISIG` kept, applied with `TCSANOW`). The guard
+restores it when the line arrives, on revoke, disconnect, Ctrl+C or a panic.
+The line moves into a zeroized buffer, goes over the private socket, and is
+zeroed. A copy can remain in the standard-input reader's internal buffer
+until it is overwritten. The leader runs `sudo -S -p '' -v` with the
+password on a pipe, then EOF, a clean environment (`PATH`, `LC_ALL=C`) and
+pipes for every stream, so nothing sudo prints reaches the PTY. A wrong
+password asks again, up to three attempts (`passwd_tries`), then reports
+`denied`. A grandchild probe confirms that the ticket is shared with the
+session; under `timestamp_type=ppid` or a zero timeout it is not, and the
+leader runs `sudo -k` and reports `unavailable`.
+
+**Lifetime.** The leader refreshes with `sudo -n -v` every 60 seconds and
+stops at 4 hours after approval: it runs `sudo -k` and reports `expired`, and
+the operator must ask again. **Drop sudo** runs `sudo -k` and reports
+`dropped`. Control revocation, Restart shell, disconnect and Ctrl+C drop sudo
+before the PTY is killed. Losing the client hangs up the shell and drops
+sudo, and the leader's exit invalidates the ticket on its own (it is bound to
+the leader's start time). Only `sudo -k` is used, never `-K`, which would
+also log the user out of sudo in their own terminals. The ticket does not
+carry into `tmux`, `screen` or new terminals. Changes made as root stay.
+
+The leader runs sudo with SIGTTOU and SIGTTIN ignored. The shell owns the
+terminal's foreground, and sudo-rs touches the controlling terminal even
+with `-S`; from the leader's background group the kernel stopped it. The
+shell, started earlier, keeps the default dispositions.
+
+**macOS** uses the same leader. The password is always read by clud and
+passed with `-S`; Touch ID (`pam_tid`) is not offered. **Windows** is not
+supported: UAC elevates one process at a time and a ConPTY shell cannot
+become elevated. A UAC-elevated admin tab is tracked as a separate project.
+
+The shell is started through running-process's caller-owned foreground API
+(`running_process::foreground::spawn`) with a configuration-only `Command`
+(the `command-builder` exception in `ci/banned_imports.py`), because
+`NativeProcess` always captures stdout and the shell must inherit the PTY.
+It is reaped with `waitpid`; sudo itself runs through `NativeProcess`.
+[DD-216](../DESIGN_DECISIONS.md#dd-216-remote-sudo-is-validated-by-a-clud-session-leader-inside-the-operator-pty)
+records why.
 
 ## Choosing a mode: `clud connect`
 
@@ -142,6 +235,15 @@ this command never persists an OpenAI key.
 
 `cli::remote_connect_e2e_cli` runs the actual client and a real shell against an
 in-process operator server on every host, without clud.bot or credentials.
+Its terminal-hosted case runs the client in a PTY, so it offers `sudo` and
+starts the shell under `clud-remote-shell`. The leader's own tests
+(`platform::unix::remote_shell::tests`, Linux) drive it in a real PTY session
+with a stub sudo that keys tickets by session ID: wrong password, success,
+sharing with the operator's shell and a nested script, drop, keep-alive,
+expiry at the cap, the shell's exit code, losing the client, and a
+non-dumpable leader. With `CLUD_TEST_REAL_SUDO_PASSWORD` set, in a throwaway
+container whose user may use sudo, the same tests and the terminal-hosted
+end-to-end case use the system's setuid sudo.
 The CLI parsing regression is `remote_connect::tests`. Transport unit tests
 reject insecure origins and cross-origin bearer handoff. The site's
 `tests/e2e/native_client.py` launches the actual built Rust executable against

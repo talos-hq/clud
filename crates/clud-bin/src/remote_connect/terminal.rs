@@ -1,5 +1,6 @@
 //! Bounded terminal pumps over the existing running-process PTY boundary.
 use super::paste::{InputFilter, OutputTracker, PasteMode};
+use crate::platform::remote_shell::{LeaderListener, LeaderStream};
 use running_process::pty::NativePtyProcess;
 use serde_json::{json, Value};
 use std::sync::{
@@ -19,6 +20,8 @@ const OUTPUT_FRAMES: usize = 128;
 /// ConPTY's first output: a cursor query it holds the shell behind until answered.
 const CONPTY_STARTUP_QUERY: &[u8] = b"\x1b[6n";
 const CONPTY_STARTUP_REPLY: &[u8] = b"\x1b[1;1R";
+/// The leader connects before it starts the shell; this bounds a failure.
+const LEADER_CONNECT: std::time::Duration = std::time::Duration::from_secs(10);
 
 #[derive(Default)]
 pub(super) struct Terminal {
@@ -30,6 +33,10 @@ pub(super) struct Terminal {
     command: String,
     environment: Option<Vec<(String, String)>>,
     config: Option<tempfile::TempDir>,
+    /// Start the shell under `clud-remote-shell` so sudo can be shared.
+    leader_enabled: bool,
+    /// The connected leader, until the sudo flow takes it.
+    leader: Option<LeaderStream>,
 }
 
 fn dimensions(event: &Value) -> (u16, u16) {
@@ -227,23 +234,7 @@ impl Terminal {
             .filter(|s| !s.is_empty() && s.len() <= 128)
             .ok_or("invalid remote terminal ID")?
             .to_owned();
-        let (rows, cols) = dimensions(event);
-        let argv = shell_arguments(self.environment.is_some());
-        self.command = argv[0].clone();
-        let process = Arc::new(
-            NativePtyProcess::new(
-                argv,
-                None,
-                self.environment
-                    .clone()
-                    .or_else(|| Some(vec![("TERM".into(), "xterm-256color".into())])),
-                rows,
-                cols,
-                None,
-            )
-            .map_err(|e| e.to_string())?,
-        );
-        process.start_impl().map_err(|e| e.to_string())?;
+        let process = self.spawn(dimensions(event))?;
         self.failed = Arc::default();
         let (input_tx, input_rx) = mpsc::channel();
         let pending = Arc::new(AtomicUsize::new(0));
@@ -270,6 +261,53 @@ impl Terminal {
         self.output = Some(output_rx);
         self.id = Some(id);
         self.opened()
+    }
+
+    /// Run future shells under the sudo-capable session leader.
+    pub fn enable_leader(&mut self, enabled: bool) {
+        self.leader_enabled = enabled;
+    }
+
+    /// The leader of the shell just opened, for the sudo flow.
+    pub fn take_leader(&mut self) -> Option<LeaderStream> {
+        self.leader.take()
+    }
+
+    /// Start the shell, under `clud-remote-shell` when enabled. The leader
+    /// must connect back and prove itself before the shell exists; if it
+    /// cannot, the PTY is killed rather than run without its cleanup owner.
+    fn spawn(&mut self, (rows, cols): (u16, u16)) -> Result<Arc<NativePtyProcess>, String> {
+        let mut argv = shell_arguments(self.environment.is_some());
+        self.command = argv[0].clone();
+        let mut environment = self
+            .environment
+            .clone()
+            .unwrap_or_else(|| vec![("TERM".into(), "xterm-256color".into())]);
+        let listener = if self.leader_enabled {
+            let listener = LeaderListener::bind()
+                .map_err(|e| format!("cannot prepare the remote shell leader: {e}"))?;
+            argv.insert(0, listener.program().to_string_lossy().into_owned());
+            environment.extend(listener.environment());
+            Some(listener)
+        } else {
+            None
+        };
+        let process = Arc::new(
+            NativePtyProcess::new(argv, None, Some(environment), rows, cols, None)
+                .map_err(|e| e.to_string())?,
+        );
+        process.start_impl().map_err(|e| e.to_string())?;
+        if let Some(listener) = listener {
+            let pid = || process.pid().ok().flatten();
+            match listener.accept(&pid, LEADER_CONNECT) {
+                Ok(stream) => self.leader = Some(stream),
+                Err(error) => {
+                    stop_process(&process);
+                    return Err(format!("the remote shell leader did not start: {error}"));
+                }
+            }
+        }
+        Ok(process)
     }
 
     pub fn id(&self) -> Option<&str> {
@@ -316,6 +354,7 @@ impl Terminal {
 
     pub fn stop(&mut self) {
         self.input = None;
+        self.leader = None;
         if let Some(process) = self.process.take() {
             stop_process(&process);
         }
