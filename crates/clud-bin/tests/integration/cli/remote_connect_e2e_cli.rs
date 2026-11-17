@@ -687,6 +687,10 @@ fn a_lost_connection_resumes_the_same_shell_with_output_from_the_outage() {
     operator.type_into_shell(remember);
     let (later, late) = print_later();
     operator.type_into_shell(later);
+    // Cut only once the client has read the input: a reset discards data the
+    // client's kernel received but the client had not read yet. The echo of
+    // the second command means both reached the shell, in order.
+    operator.wait_shell_output("LATE_");
     drop_connection(operator);
     client.wait_for(LOST);
     // Let the shell write while nobody is connected.
