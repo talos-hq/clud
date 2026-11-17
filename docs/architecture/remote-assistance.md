@@ -203,10 +203,13 @@ client treats as final ("This session was resumed from another connection.").
 A deliberate exit closes with 1000 so the server ends the session at once
 rather than waiting out its grace window.
 
-**While disconnected** the PTY's output is still drained, mirrored to the local
-terminal and held in `Outage`, at most 1 MiB, oldest dropped first; the
-`pty_exit` of a shell that ended offline is never dropped. A consent answer
-typed while offline is remembered, not sent.
+**While disconnected** the PTY's output is still drained at the local
+terminal's pace, mirrored there and held in `Outage`, at most 1 MiB, oldest
+dropped first; the `pty_exit` of a shell that ended offline is never dropped.
+Unlike the connected path, which slows the shell to the socket's pace (see
+above), nothing paces an outage of unknown length, so the operator gets the
+newest output and a `pty_gap` marker for the rest. A consent answer typed
+while offline is remembered, not sent.
 
 **Resync.** On the new `hello`, `State::resume` reconciles with the server's
 record (`hello.resume`). Local consent stays authoritative:
