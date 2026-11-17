@@ -1441,6 +1441,8 @@ pub enum Command {
     Serve(Box<ServeArgs>),
     /// Acquire a credential in a masked window and deliver it directly to a sink.
     Secret(crate::secret_prompt::Options),
+    /// Run one command as root; a needed sudo password comes from the masked prompt.
+    Sudo(crate::secret_prompt::SudoOptions),
     /// lokr's MCP server for `--allow-secrets` sessions.
     #[command(hide = true)]
     SecretsMcp,
@@ -2211,6 +2213,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "test",
     "auth",
     "secret",
+    "sudo",
     "secrets-mcp",
     "secrets-daemon",
     "models",
@@ -2780,7 +2783,7 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
     // swallows everything after `--` as backend passthrough, and the subcommand
     // sees an empty command vector.
     const SEPARATOR_OWNING_SUBCOMMANDS: &[&str] =
-        &["tool", "test", "safe-rm", "secret", "grind-facts"];
+        &["tool", "test", "safe-rm", "secret", "sudo", "grind-facts"];
 
     // Which subcommand we are inside, once one has been seen. `None` means the
     // tokens still belong to clud's own top-level flags.

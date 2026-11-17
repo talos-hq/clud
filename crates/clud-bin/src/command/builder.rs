@@ -494,7 +494,10 @@ pub(super) const CLAUDE_WORKER_AGENT: &str = concat!(
 
 /// The patterns clud's command hooks refuse most often, stated before the
 /// agent tries them: a refused call still costs a full round trip (#2354).
-pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refused call is a wasted round trip): never wait with a while/until/sleep loop, `watch` or `tail -f`, in Bash or Monitor; use run_in_background and its completion notification, or a tool with its own deadline (pr_merge_watch, clud ci). Prefer `(cd DIR && CMD)` or absolute paths over a bare `cd`. Run one GitHub mutation (push, PR create, merge, issue or API write) per call.";
+/// The last sentence makes the masked prompt the one way any agent gets a
+/// password; the `sudo-prompt` rule refuses plain `sudo`
+/// (`docs/architecture/secret-catalog.md#sudo`).
+pub(super) const TOOL_CALL_RULES: &str = "Tool-call rules clud enforces (a refused call is a wasted round trip): never wait with a while/until/sleep loop, `watch` or `tail -f`, in Bash or Monitor; use run_in_background and its completion notification, or a tool with its own deadline (pr_merge_watch, clud ci). Prefer `(cd DIR && CMD)` or absolute paths over a bare `cd`. Run one GitHub mutation (push, PR create, merge, issue or API write) per call. Passwords: when a command needs sudo, run `clud sudo -- <cmd>` (masked desktop prompt, same call; plain `sudo` is refused); for any other password or token use `clud secret`. Never ask for a password in chat or tell the user to run the command themselves.";
 
 /// Bounded diagnostics for the two reads agents repeat most: whole GitHub
 /// threads and whole noisy test logs. Both bundled tools keep the complete
@@ -1127,6 +1130,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Connect { .. })
         | Some(Command::Serve(_))
         | Some(Command::Secret(_))
+        | Some(Command::Sudo(_))
         | Some(Command::SecretsMcp)
         | Some(Command::SecretsDaemon)
         | Some(Command::Auth { .. })

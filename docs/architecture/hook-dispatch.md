@@ -269,6 +269,11 @@ the range would include the whole rebase delta). The denial names the correct
 `git/review_range.py`. A fresh upstream, a branch with no upstream, and any other
 command are untouched. Code: `block_bad_cmd_stale_upstream.rs`.
 
+**sudo-prompt guard.** For any caller, a `sudo` that would prompt for a password
+is denied with the exact `clud sudo -- <command>` replacement; `sudo -n`, `-k`,
+`-K` and `-V` pass. Contract and table:
+[secret-catalog.md](secret-catalog.md#sudo). Code: `block_bad_cmd_sudo.rs`.
+
 ### Hand-written wait guard (#1880)
 
 Never poll. Wait on the existing process through the execution capabilities

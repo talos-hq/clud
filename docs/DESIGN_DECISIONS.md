@@ -7956,3 +7956,37 @@ other terminals, and it dies with the leader. The 4-hour cap and per-request
 consent replace an unbounded "until the session ends". Touch ID is not
 offered: with `-S`, clud reading the password itself is the one path that
 behaves the same on every host.
+
+## DD-217: an agent's sudo password comes only from `clud sudo`
+
+**Status:** Accepted.
+
+**Context:** On a stock install, an agent that needed root ran `sudo cmd`. It
+got `a terminal is required` and asked the user for the password in chat.
+`clud-askpass` could serve as `SUDO_ASKPASS`, but nothing pointed agents at it,
+and sudo-rs (Ubuntu 25.10's default sudo) rejects `-A`. An agent's shell call
+has no controlling terminal, so sudo keys a ticket on the parent process.
+Container runs on classic sudo 1.9 and sudo-rs 0.2 showed that a ticket from
+one call, or from a helper such as `clud secret --to-command sudo -S -v`, is
+never visible to the next command.
+
+**Decision:** Add `clud sudo [--reason TEXT] -- <command>`, which is the parent
+of every sudo it runs. It tries `sudo -n -v` first. When a password is needed,
+it runs one `sudo -S -v` with a marker prompt. Each password request opens
+lokr's masked prompt, and clud writes the answer to sudo's stdin pipe. Then
+it runs `sudo -n <command>`. If sudo keeps no ticket, it runs
+`sudo -S -p '' <command>` instead. It then drops the ticket with `sudo -k`.
+The `clud-secret` skill (automatic), one appended system-prompt line
+(in `TOOL_CALL_RULES`, for Claude and Codex) and the `sudo-prompt` hook rule make this
+the only path an agent takes. The rule refuses every prompting `sudo`
+spelling, and its refusal names the exact replacement command. Details:
+[secret-catalog.md](architecture/secret-catalog.md#sudo).
+
+**Why:** One process per privileged command is the only shape whose ticket
+the command can use under every sudo flavour. `-S` is the one password channel
+that classic sudo, sudo-rs and macOS sudo share. A new subcommand was chosen
+over a `clud secret --sudo` sink because the command's output must stream to
+the agent, while secret sinks deliberately suppress output. It also avoids
+`--title`/`--message` boilerplate on the most common credential request.
+Refusing raw `sudo` costs one round trip on NOPASSWD hosts. The refusal
+offers `sudo -n` for them, and `clud sudo` never prompts there.

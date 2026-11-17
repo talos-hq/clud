@@ -2510,6 +2510,10 @@ fn invocation_reason(
     if let Some(reason) = find_filesystem_root_reason(&words, evaluation) {
         return Some(reason);
     }
+    // A raw sudo would wait for a password on a terminal the agent lacks.
+    if let Some(reason) = block_bad_cmd_sudo::reason(&words, evaluation) {
+        return Some(reason);
+    }
     if let Some(reason) = evaluate_structured_rules(&words, context.bad_commands, evaluation) {
         return Some(reason);
     }
@@ -4173,6 +4177,8 @@ mod block_bad_cmd_slice;
 mod block_bad_cmd_imgview;
 #[path = "block_bad_cmd_proc_scan.rs"]
 mod block_bad_cmd_proc_scan;
+#[path = "block_bad_cmd_sudo.rs"]
+mod block_bad_cmd_sudo;
 
 #[path = "block_bad_cmd_cilog.rs"]
 mod block_bad_cmd_cilog;
@@ -5649,7 +5655,8 @@ mod tests {
             assert!(denied_by_policy(command, policy), "{command}");
         }
         assert!(!denied_by_policy("rm -rf ./target", policy));
-        assert!(!denied_by_policy("sudo rm report.txt", policy));
+        // `-n`: a plain `sudo` is refused by the sudo-prompt rule regardless.
+        assert!(!denied_by_policy("sudo -n rm report.txt", policy));
         assert!(!denied_by_policy("command -v rm", policy));
     }
 
