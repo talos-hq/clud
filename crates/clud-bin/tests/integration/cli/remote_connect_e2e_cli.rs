@@ -1,6 +1,7 @@
 //! `clud remote connect` end to end on every host: the real binary and a real
 //! shell against an in-process operator server, over real HTTP and WebSocket.
 use crate::exe;
+use running_process::pty::NativePtyProcess;
 use running_process::{
     CommandSpec, NativeProcess, ProcessConfig, ReadStatus, StderrMode, StdinMode,
 };
@@ -264,7 +265,40 @@ fn accepted_session() -> (Client, Operator, Value) {
     (client, operator, created)
 }
 
-fn request_control(client: &Client, operator: &mut Operator, id: &str, answer: &str) -> bool {
+/// What the tests need from a running client, piped or on a terminal.
+trait ClientIo {
+    fn text(&self) -> String;
+    fn answer(&self, line: &str);
+
+    fn wait_for(&self, needle: &str) {
+        let deadline = Instant::now() + WAIT;
+        while !self.text().contains(needle) {
+            assert!(
+                Instant::now() < deadline,
+                "client never showed {needle:?}: {}",
+                self.text()
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+}
+
+impl ClientIo for Client {
+    fn text(&self) -> String {
+        Client::text(self)
+    }
+
+    fn answer(&self, line: &str) {
+        Client::answer(self, line);
+    }
+}
+
+fn request_control(
+    client: &impl ClientIo,
+    operator: &mut Operator,
+    id: &str,
+    answer: &str,
+) -> bool {
     let shown = client.text().matches("Allow Remote Control").count();
     operator.send(json!({"type":"control_request", "request_id":id}));
     let deadline = Instant::now() + WAIT;
@@ -278,7 +312,7 @@ fn request_control(client: &Client, operator: &mut Operator, id: &str, answer: &
     response["allow"].as_bool().unwrap()
 }
 
-fn open_shell(client: &Client, operator: &mut Operator) {
+fn open_shell(client: &impl ClientIo, operator: &mut Operator) {
     assert!(request_control(client, operator, "grant", "y"));
     operator.send(json!({"type":"control_granted", "request_id":"grant"}));
     client.wait_for("Remote control granted");
@@ -367,4 +401,195 @@ fn operator_denial_ends_the_client_with_its_message() {
     operator.send(json!({"type":"denied"}));
     client.wait_for("clud.bot denied this connection.");
     assert_eq!(client.wait_exit(), 0);
+}
+
+/// `clud remote connect` on a terminal: what a user runs. Only then is the
+/// password prompt hideable, so only then does the client offer `sudo`.
+struct TtyClient {
+    process: Arc<NativePtyProcess>,
+    output: Arc<Mutex<String>>,
+    _cwd: tempfile::TempDir,
+}
+
+impl TtyClient {
+    fn start(origin: &str) -> Self {
+        let cwd = tempfile::tempdir().unwrap();
+        let mut env: Vec<(String, String)> = std::env::vars().collect();
+        env.push(("TERM".into(), "xterm-256color".into()));
+        let argv = vec![
+            exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"))
+                .to_string_lossy()
+                .into_owned(),
+            "remote".into(),
+            "connect".into(),
+            origin.into(),
+        ];
+        let cwd_text = cwd.path().to_string_lossy().into_owned();
+        let process = Arc::new(
+            NativePtyProcess::new(argv, Some(cwd_text), Some(env), 40, 160, None).unwrap(),
+        );
+        process.start_impl().unwrap();
+        let output = Arc::new(Mutex::new(String::new()));
+        let (reader, sink) = (Arc::clone(&process), Arc::clone(&output));
+        std::thread::spawn(move || loop {
+            match reader.read_chunk_impl(Some(0.05)) {
+                Ok(Some(bytes)) => sink
+                    .lock()
+                    .unwrap()
+                    .push_str(&String::from_utf8_lossy(&bytes)),
+                Ok(None) => {}
+                Err(_) => break,
+            }
+        });
+        Self {
+            process,
+            output,
+            _cwd: cwd,
+        }
+    }
+
+    fn wait_exit(&self) -> Option<i32> {
+        self.process.wait_impl(Some(WAIT.as_secs_f64())).ok()
+    }
+}
+
+impl ClientIo for TtyClient {
+    fn text(&self) -> String {
+        self.output.lock().unwrap().clone()
+    }
+
+    fn answer(&self, line: &str) {
+        self.process
+            .write_impl(format!("{line}\r").as_bytes(), false)
+            .unwrap();
+    }
+}
+
+impl Drop for TtyClient {
+    fn drop(&mut self) {
+        let _ = self.process.kill_tree_impl();
+        let _ = self.process.close_impl();
+    }
+}
+
+/// Run `command` in the operator's shell and return its exit status.
+fn operator_status(operator: &mut Operator, command: &str, mark: &str) -> String {
+    operator.type_into_shell(&format!("{command}; echo \"{mark}=$?\""));
+    let deadline = Instant::now() + WAIT;
+    loop {
+        let shown = String::from_utf8_lossy(&operator.shell_output).into_owned();
+        if let Some(at) = shown.rfind(&format!("{mark}=")) {
+            let digits: String = shown[at + mark.len() + 1..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            if !digits.is_empty() {
+                return digits;
+            }
+        }
+        assert!(Instant::now() < deadline, "no {mark}: {shown}");
+        operator.pump_once();
+    }
+}
+
+/// The operator asks for sudo; return the settled state that follows `prompting`.
+fn request_sudo(client: &TtyClient, operator: &mut Operator, password: Option<&str>) -> Value {
+    operator.send(json!({"type":"sudo_request", "request_id":"0123456789abcdef0123456789abcdef"}));
+    let first = operator.wait_event("sudo_state");
+    assert_eq!(first["state"], "prompting", "{first}");
+    let deadline = Instant::now() + WAIT;
+    loop {
+        if let Some(index) = operator
+            .events
+            .iter()
+            .position(|e| e["type"] == "sudo_state")
+        {
+            return operator.events.remove(index);
+        }
+        if client
+            .text()
+            .contains("Allow sudo for Zach Vorhies? [y/N]: ")
+        {
+            let Some(password) = password else {
+                client.answer("n");
+                return operator.wait_event("sudo_state");
+            };
+            client.answer("y");
+            client.wait_for("(typing is hidden; it is never sent to clud.bot): ");
+            client.answer(password);
+            return operator.wait_event("sudo_state");
+        }
+        assert!(
+            Instant::now() < deadline,
+            "no sudo outcome: {}",
+            client.text()
+        );
+        operator.pump_once();
+    }
+}
+
+/// From a terminal the client offers `sudo` (not on Windows) and runs the
+/// shell under `clud-remote-shell`; the shell's exit status still reaches
+/// the operator. The sudo outcome depends on the host's sudo: a password
+/// prompt is declined here, NOPASSWD reports `active`, no sudo `unavailable`.
+/// With `CLUD_TEST_REAL_SUDO_PASSWORD` (a throwaway container user) the
+/// password is typed, and `sudo -n true` in the operator's shell must
+/// succeed after Request sudo and fail after Drop sudo.
+#[test]
+fn sudo_from_a_terminal_client_is_offered_consented_and_dropped() {
+    if clud::platform::host::WINDOWS {
+        return;
+    }
+    let password = std::env::var("CLUD_TEST_REAL_SUDO_PASSWORD").ok();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let client = TtyClient::start(&origin);
+    serve_session_creation(&listener);
+    let mut operator = Operator::accept(&listener);
+    client.wait_for(KEYWORD);
+    operator.send(json!({"type":"hello", "state":"pending"}));
+    assert_eq!(operator.wait_event("caps")["caps"], json!(["pty", "sudo"]));
+    operator.send(json!({"type":"state", "state":"accepted"}));
+    client.wait_for("Operator accepted the connection.");
+    open_shell(&client, &mut operator);
+    let (command, marker) = print_marker();
+    operator.type_into_shell(command);
+    operator.wait_shell_output(marker);
+
+    let outcome = request_sudo(&client, &mut operator, password.as_deref());
+    let state = outcome["state"].as_str().unwrap().to_owned();
+    assert!(
+        ["active", "denied", "unavailable"].contains(&state.as_str()),
+        "{outcome}"
+    );
+    if let Some(password) = &password {
+        assert_eq!(state, "active", "{}", client.text());
+        assert!(outcome["until"].as_u64().is_some(), "{outcome}");
+        assert_eq!(
+            operator_status(&mut operator, "sudo -n true", "AFTER_REQUEST"),
+            "0"
+        );
+        operator.send(json!({"type":"sudo_drop"}));
+        assert_eq!(operator.wait_event("sudo_state")["state"], "dropped");
+        assert_eq!(
+            operator_status(&mut operator, "sudo -n true", "AFTER_DROP"),
+            "1"
+        );
+        assert!(
+            !client.text().contains(password.as_str()),
+            "{}",
+            client.text()
+        );
+        let shell = String::from_utf8_lossy(&operator.shell_output).into_owned();
+        assert!(!shell.contains(password.as_str()), "{shell}");
+        for event in &operator.events {
+            assert!(!event.to_string().contains(password.as_str()), "{event}");
+        }
+    }
+
+    operator.type_into_shell("exit 7");
+    assert_eq!(operator.wait_event("pty_exit")["code"], 7);
+    operator.send(json!({"type":"disconnect"}));
+    client.wait_for("clud.bot has ended a connection");
+    assert_eq!(client.wait_exit(), Some(0));
 }

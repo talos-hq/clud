@@ -26,6 +26,7 @@ enum Command {
     Line(String),
     Prompt(String),
     Answered { echoed: bool },
+    Hold(bool),
     Settle(mpsc::SyncSender<()>),
 }
 
@@ -118,6 +119,8 @@ fn run_worker<W: Write>(
     dropped: Arc<AtomicUsize>,
 ) {
     let mut renderer = Renderer::new(sink);
+    // Output held while a local question is open, still counted as pending.
+    let mut held: Option<Vec<Vec<u8>>> = None;
     for command in commands {
         // Before every command: output may stop for good right after a gap.
         let missing = dropped.swap(0, Ordering::Relaxed);
@@ -127,9 +130,17 @@ fn run_worker<W: Write>(
             ));
         }
         match command {
-            Command::Output(bytes) => {
-                renderer.output(&bytes);
-                pending.fetch_sub(bytes.len(), Ordering::Relaxed);
+            Command::Output(bytes) => match &mut held {
+                Some(chunks) => chunks.push(bytes),
+                None => show(&mut renderer, &bytes, &pending),
+            },
+            Command::Hold(true) => {
+                held.get_or_insert_with(Vec::new);
+            }
+            Command::Hold(false) => {
+                for bytes in held.take().unwrap_or_default() {
+                    show(&mut renderer, &bytes, &pending);
+                }
             }
             Command::Line(text) => renderer.line(&text),
             Command::Prompt(text) => renderer.prompt(&text),
@@ -140,6 +151,11 @@ fn run_worker<W: Write>(
             }
         }
     }
+}
+
+fn show<W: Write>(renderer: &mut Renderer<W>, bytes: &[u8], pending: &AtomicUsize) {
+    renderer.output(bytes);
+    pending.fetch_sub(bytes.len(), Ordering::Relaxed);
 }
 
 pub(super) struct Console {
@@ -191,6 +207,14 @@ impl Console {
     /// The prompt was answered. `echoed` is whether a terminal echoed the answer.
     pub fn answered(&self, echoed: bool) {
         let _ = self.commands.send(Command::Answered { echoed });
+    }
+
+    /// Hold mirrored output while a local question (the sudo consent and
+    /// hidden password) is open, so the operator's output cannot interleave
+    /// with it; release shows what was held. Still bounded by the 2 MiB
+    /// pending limit, past which output is dropped and the gap reported.
+    pub fn hold(&self, on: bool) {
+        let _ = self.commands.send(Command::Hold(on));
     }
 
     /// Restore the local terminal once the remote program has ended.
@@ -302,6 +326,34 @@ mod tests {
             r.output(b"WARNING: Bypass Permissions mode");
         });
         assert_eq!(out, b"WARNING: Bypass Permissions mode");
+    }
+
+    #[test]
+    fn held_output_waits_for_the_answer_and_then_appears_in_order() {
+        let written = Arc::new(Mutex::new(Vec::new()));
+        struct Shared(Arc<Mutex<Vec<u8>>>);
+        impl Write for Shared {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let console = Console::with_sink(Shared(Arc::clone(&written)));
+        console.hold(true);
+        console.prompt("Allow? [y/N]: ");
+        console.output(b"operator-1 ");
+        console.output(b"operator-2");
+        console.settle();
+        let shown = String::from_utf8_lossy(&written.lock().unwrap()).into_owned();
+        assert!(!shown.contains("operator"), "{shown}");
+        console.hold(false);
+        console.settle();
+        let shown = String::from_utf8_lossy(&written.lock().unwrap()).into_owned();
+        assert!(shown.contains("operator-1 operator-2"), "{shown}");
+        assert_eq!(console.pending.load(Ordering::Relaxed), 0);
     }
 
     /// A terminal that accepts nothing until released, such as one paused by XOFF.

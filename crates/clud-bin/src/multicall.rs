@@ -42,6 +42,8 @@ pub enum Personality {
     Shim,
     Secret,
     Askpass,
+    /// `clud-remote-shell`: the remote-assistance PTY's session leader.
+    RemoteShell,
     Installer,
 }
 
@@ -53,6 +55,7 @@ pub fn alias_names() -> Vec<String> {
         SHIM.to_string(),
         "clud-secret".to_string(),
         "clud-askpass".to_string(),
+        crate::remote_connect::leader::PROGRAM.to_string(),
     ];
     for spec in shim_registry::SHIMS {
         if !names.iter().any(|name| name == spec.name) {
@@ -83,6 +86,8 @@ fn personality_for_name(name: &str) -> Option<Personality> {
         Some(Personality::Secret)
     } else if name == "clud-askpass" {
         Some(Personality::Askpass)
+    } else if name == crate::remote_connect::leader::PROGRAM {
+        Some(Personality::RemoteShell)
     } else if name == CMD_SCAN || name == LEGACY_CMD_SCAN {
         Some(Personality::CmdScan)
     } else if name == SHIM || shim_registry::SHIMS.iter().any(|spec| spec.name == name) {
@@ -138,6 +143,7 @@ fn run_personality(personality: Personality, argv: &[OsString]) -> i32 {
         Personality::CmdScan => run_cmd_scan(argv),
         Personality::Secret => crate::secret_prompt::run_alias(argv),
         Personality::Askpass => crate::secret_prompt::run_askpass(argv),
+        Personality::RemoteShell => crate::platform::remote_shell::run(argv),
         Personality::Shim => crate::shim_main::run(argv),
     }
 }
@@ -239,6 +245,8 @@ mod tests {
                 Personality::Secret
             } else if name == "clud-askpass" {
                 Personality::Askpass
+            } else if name == crate::remote_connect::leader::PROGRAM {
+                Personality::RemoteShell
             } else {
                 Personality::Shim
             };
