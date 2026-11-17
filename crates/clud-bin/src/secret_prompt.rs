@@ -13,6 +13,9 @@ mod lokr;
 pub(crate) use lokr::catalog;
 #[path = "secret_prompt/sink.rs"]
 mod sink;
+#[path = "secret_prompt/sudo.rs"]
+mod sudo;
+pub use sudo::{run as run_sudo, SudoOptions};
 
 /// Public options shared by `clud secret` and its multicall alias.
 #[derive(Debug, Clone, Parser)]
@@ -219,7 +222,8 @@ fn acquire_with(
 }
 
 fn acquire(options: &Options) -> Result<Secret, Failure> {
-    if test_mode() {
+    // A test lokr exercises the real prompt path without opening any window.
+    if test_mode() && std::env::var_os("CLUD_TEST_LOKR_BINARY").is_none() {
         return fixture_prompt(
             std::env::var_os("CLUD_TEST_SECRET_PROMPT_CANCEL").is_some(),
             std::env::var_os("CLUD_TEST_SECRET_PROMPT_FILE")

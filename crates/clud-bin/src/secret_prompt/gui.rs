@@ -2,7 +2,8 @@
 use super::{Failure, Options, Secret};
 
 pub(super) fn prompt(options: &Options) -> Result<Secret, Failure> {
-    if super::real_ui_disabled() {
+    // Test mode resolves only CLUD_TEST_LOKR_BINARY, never a real lokr.
+    if super::real_ui_disabled() && !super::test_mode() {
         return Err(Failure::Unavailable);
     }
     let dir = tempfile::tempdir().map_err(|_| Failure::Sink)?;

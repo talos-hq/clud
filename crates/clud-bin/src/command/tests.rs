@@ -1375,6 +1375,32 @@ fn tool_call_rules_reach_both_backends_even_without_landing() {
 }
 
 #[test]
+fn password_rule_reaches_every_backend_launch() {
+    let rules = super::builder::TOOL_CALL_RULES;
+    let rule = &rules[rules.find("Passwords:").expect("password sentence")..];
+    assert!(rule.contains("`clud sudo -- <cmd>`"), "{rule}");
+    assert!(rule.contains("`clud secret`"), "{rule}");
+    assert!(rule.contains("Never ask for a password in chat"), "{rule}");
+    assert!(rule.contains("tell the user to run the command themselves"), "{rule}");
+    assert!(!rule.contains(['\r', '\n']), "argv-safe single line");
+    assert!(rule.len() < 300, "terse: it costs tokens on every launch");
+    for backend in ["--claude", "--codex"] {
+        for argv in [
+            vec!["clud", backend],
+            vec!["clud", backend, "-p", "hello"],
+            vec!["clud", backend, "--no-land", "-p", "hello"],
+            vec!["clud", backend, "--unsafe", "-p", "hello"],
+        ] {
+            let p = plan(&argv);
+            assert!(
+                p.command.iter().any(|arg| arg.contains(rule)),
+                "{argv:?} is missing the password rule"
+            );
+        }
+    }
+}
+
+#[test]
 fn print_turns_use_compact_protocol_but_explicit_native_output_is_preserved() {
     for backend in ["--claude", "--codex"] {
         let p = plan(&["clud", backend, "-p", "hello"]);

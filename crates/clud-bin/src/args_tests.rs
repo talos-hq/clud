@@ -2152,6 +2152,36 @@ fn correctly_placed_or_escaped_flags_pass() {
 }
 
 #[test]
+fn sudo_owns_its_flags_and_the_raw_command_after_the_separator() {
+    let argv = [
+        "clud",
+        "sudo",
+        "--dry-run",
+        "--reason",
+        "Install foo",
+        "--",
+        "-u",
+        "root",
+        "apt-get",
+        "install",
+        "-y",
+        "foo",
+    ];
+    assert_eq!(misplaced_global_flag(&strings(&argv)), None);
+    let args = parse(&argv);
+    let Some(Command::Sudo(options)) = args.command else {
+        panic!("sudo command")
+    };
+    assert!(options.dry_run);
+    assert_eq!(options.reason.as_deref(), Some("Install foo"));
+    assert_eq!(
+        options.command,
+        ["-u", "root", "apt-get", "install", "-y", "foo"]
+    );
+    assert!(args.passthrough.is_empty(), "{:?}", args.passthrough);
+}
+
+#[test]
 fn secret_message_alias_is_owned_by_the_subcommand() {
     for message_flag in ["--message", "--label"] {
         let argv = [
