@@ -456,6 +456,10 @@ pub fn run(options: &SudoOptions) -> i32 {
     }
     match authenticate(options) {
         Ok(Auth::Granted(secret)) => finish(run_validated(&options.command, secret.as_ref())),
+        Ok(Auth::Rejected(0)) => {
+            eprintln!("clud sudo: `sudo -S -v` failed before asking for a password; nothing was run.");
+            finish(1)
+        }
         Ok(Auth::Rejected(attempts)) => {
             eprintln!("clud sudo: sudo rejected the password {attempts} times; nothing was run.");
             finish(1)
