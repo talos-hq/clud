@@ -176,6 +176,10 @@ struct Operator {
 
 impl Operator {
     /// Accept the client's socket and return the request path and query it used.
+    #[expect(
+        clippy::result_large_err,
+        reason = "tungstenite's accept_hdr callback must return its ErrorResponse by value"
+    )]
     fn accept_path(listener: &TcpListener) -> (Self, String) {
         let stream = accept_before_deadline(listener);
         stream.set_read_timeout(Some(WAIT)).unwrap();
