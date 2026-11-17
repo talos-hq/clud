@@ -584,7 +584,10 @@ fn sudo_from_a_terminal_client_is_offered_consented_and_dropped() {
     let (mut operator, _) = Operator::accept_path(&listener);
     client.wait_for(KEYWORD);
     operator.send(json!({"type":"hello", "state":"pending"}));
-    assert_eq!(operator.wait_event("caps")["caps"], json!(["pty", "resume", "sudo"]));
+    assert_eq!(
+        operator.wait_event("caps")["caps"],
+        json!(["pty", "resume", "sudo"])
+    );
     operator.send(json!({"type":"state", "state":"accepted"}));
     client.wait_for("Operator accepted the connection.");
     open_shell(&client, &mut operator);
@@ -628,6 +631,7 @@ fn sudo_from_a_terminal_client_is_offered_consented_and_dropped() {
     operator.send(json!({"type":"disconnect"}));
     client.wait_for("clud.bot has ended a connection");
     assert_eq!(client.wait_exit(), Some(0));
+}
 
 const LOST: &str = "Connection to clud.bot lost; reconnecting";
 

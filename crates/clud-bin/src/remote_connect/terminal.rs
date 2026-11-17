@@ -287,7 +287,8 @@ impl Terminal {
             .filter(|s| !s.is_empty() && s.len() <= 128)
             .ok_or("invalid remote terminal ID")?
             .to_owned();
-        let process = self.spawn(dimensions(event))?;
+        let size = dimensions(event);
+        let process = self.spawn(size)?;
         self.failed = Arc::default();
         let (input_tx, input_rx) = mpsc::channel();
         let pending = Arc::new(AtomicUsize::new(0));
@@ -307,7 +308,7 @@ impl Terminal {
             output_pump(reader, output_tx, output_id, output_failed, paste_out);
         });
         self.process = Some(process);
-        self.size = (rows, cols);
+        self.size = size;
         self.input = Some(InputQueue {
             tx: input_tx,
             pending,

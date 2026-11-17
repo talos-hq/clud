@@ -220,6 +220,12 @@ record (`hello.resume`). Local consent stays authoritative:
 - a pending question with the same request id is not asked again; an answer
   typed while offline is sent if that request is still open; a request the
   operator withdrew clears the question;
+- sudo keeps running in the session leader while the client is away; the
+  client re-reports where it stands (`Sudo::report`: `prompting` or `active`
+  with `until`), or the last `sudo_state` that could not be sent, or
+  `dropped` when the server still shows sudo on and nothing is running here.
+  A server restart forgets sudo state, so this is what restores the console's
+  view; revoking control while away drops sudo with the shell;
 - the client reports the terminal it still holds (`resume`), then sends the
   held output, preceded by `pty_gap` when output was dropped, and prints
   `Reconnected.`
