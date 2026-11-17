@@ -355,7 +355,10 @@ CLI surface and backend resolution:
   raw mode, cursor hide/show, pending-input draining, key decoding, CRLF-only
   rendering with wrap-aware row counts, and redraw/erase. The launch-scope
   prompt, the harness picker, and `clud settings` each implement its
-  `Selector` trait and render through it.
+  `Selector` trait and render through it. `selector/prompt.rs` adds the
+  `Theme::Prompt` layout (aligned `Block` fields, a pointer instead of
+  checkboxes, `Style`-gated colour and glyphs) the installer screens use
+  (DD-215).
 - `preference.rs` - shared pure typed-choice state machine used by launch
   scope and global settings selectors.
 - `yes_no.rs` - the one format for a typed yes/no question

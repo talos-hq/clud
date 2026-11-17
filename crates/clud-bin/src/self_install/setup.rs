@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::args::DeepseekAuthSubcommand;
 use crate::backend::{HarnessSelection, ModelProvider};
-use crate::selector::{self, Key, Note, Row, Selector, Step, View};
+use crate::selector::{self, Key, Note, Row, Selector, Step, Style, Theme, View};
 
 /// The default OpenRouter model: DeepSeek V4.1 Flash, pinned to its 1017 checkpoint.
 pub(crate) const DEEPSEEK: &str = "deepseek/deepseek-v4.1-flash-1017";
@@ -40,9 +40,9 @@ impl Selector for Choice {
     type Outcome = Option<usize>;
 
     fn view(&self, _: Duration) -> View {
+        let style = Style::detect();
         View {
             title: self.title.into(),
-            hints: vec!["Up/Down choose, Enter confirm, Esc cancel".into()],
             gap: true,
             rows: self
                 .labels
@@ -50,12 +50,14 @@ impl Selector for Choice {
                 .enumerate()
                 .map(|(index, label)| Row {
                     current: self.selected == index,
-                    marker: if self.selected == index { "[*]" } else { "[ ]" }.into(),
+                    marker: String::new(),
                     label: (*label).into(),
                     note: Note::None,
                 })
                 .collect(),
-            footer: Vec::new(),
+            footer: vec![super::picker::hint(style)],
+            theme: Theme::Prompt(style),
+            ..View::default()
         }
     }
 
@@ -202,7 +204,9 @@ mod tests {
             assert_eq!(choice.on_key(Key::Down), Step::Redraw);
             assert_eq!(choice.on_key(Key::Enter), Step::Done(Some(1)));
             assert_eq!(choice.on_key(Key::Escape), Step::Done(None));
-            assert_eq!(choice.view(Duration::ZERO).rows[1].marker, "[*]");
+            let view = choice.view(Duration::ZERO);
+            assert!(view.rows[1].current && !view.rows[0].current);
+            assert!(matches!(view.theme, crate::selector::Theme::Prompt(_)));
         }
     }
 }

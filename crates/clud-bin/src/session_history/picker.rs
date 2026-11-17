@@ -146,6 +146,7 @@ impl Selector for SessionPicker {
                     .map(|(i, c)| self.session_row(i, c))
                     .collect(),
                 footer: Vec::new(),
+                ..View::default()
             },
             Stage::Recovery { session, selected } => {
                 let candidate = &self.candidates[*session];
@@ -170,6 +171,7 @@ impl Selector for SessionPicker {
                         "Checkpoint and recent-history choices start a new session with a truncated history"
                             .to_string(),
                     ],
+                    ..View::default()
                 }
             }
         }

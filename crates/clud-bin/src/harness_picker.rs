@@ -332,6 +332,7 @@ impl Selector for PickerModel {
                 })
                 .collect(),
             footer: vec!["Last choice is remembered".to_string()],
+            ..View::default()
         }
     }
 

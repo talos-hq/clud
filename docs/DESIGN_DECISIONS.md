@@ -7883,3 +7883,36 @@ credentials away from the Rust build job, which runs third-party build
 scripts, and avoids a conditional environment on the shared build workflow.
 Notarization submits a zip because Apple rejects a bare Mach-O, and a bare
 executable cannot carry a stapled ticket.
+
+## DD-215: installer consent is one plain screen with the exact plan one keystroke away
+
+**Status:** Accepted. Refines DD-108 and DD-109.
+
+**Context:** The installer showed a four-item `[x]` menu, then printed every
+plan field (source path, full SHA-256, the registry value type, the whole User
+Path before and after with escaped backslashes, the prompt engine's hashed
+path) and asked again in a second menu. On an 80-column Windows console the
+PATH line alone wrapped four times. Users read it as a debug dump and could
+not find the one decision it asked for.
+
+**Decision:** The first screen reads the running executable's plan before it
+draws, then shows a title, four aligned plain-language fields (version,
+location, what it replaces, the PATH directory) and one single-choice list.
+Choosing **Install** there is the consent. The other paths to an install
+(`--install-current`, a release picked from the list) show the same summary
+with **Install** / **Not now** / **Show details**. The exact plan from DD-109
+expands in place under **Show details**, and `--yes` still prints it in full.
+The screens use the selector's `Theme::Prompt`: a pointer rather than
+checkboxes, colour only for `NO_COLOR`-free terminals, and non-ASCII glyphs
+only where the console is known to have them. Row order is kept so that
+Down/Up from each default reach the same actions as before.
+
+**Why:** Consent needs the facts a person can act on: what is installed, where,
+over what, and what changes in their shell. The digest and raw edit are for
+audit; DD-109 requires showing them before consent, not making them the
+screen. A detail toggle keeps them a keystroke away without a second prompt
+or a verbosity flag nobody discovers. Reading the plan first costs a hash of
+the running executable (and its `--version`) before the first-run offer
+appears. That is read-only, and a planning error is shown only if the user
+chooses to install. Glyph detection errs toward ASCII because the legacy
+console host's default fonts draw unknown glyphs as boxes.

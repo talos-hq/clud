@@ -28,6 +28,8 @@ pub struct InstallPlan {
     pub source_label: String,
     pub source_sha256: String,
     pub replacement: Option<String>,
+    /// The `--version` of the executable being replaced, without `clud `.
+    pub existing_version: Option<String>,
     pub path_proposal: String,
     pub activation: Option<ActivationPlan>,
     source: Source,
@@ -67,11 +69,12 @@ pub fn plan(intent: InstallIntent, modify_path: bool) -> Result<InstallPlan, Str
     let backup = destination.with_extension("clud-backup");
     let recovering =
         backup.exists() && (!destination.exists() || run_version(&destination).is_err());
-    if recovering {
-        inspect_destination(&backup, true)?;
+    let existing_version = if recovering {
+        inspect_existing(&backup, true)?
     } else {
-        inspect_destination(&destination, true)?;
+        inspect_existing(&destination, true)?
     }
+    .map(|line| line.trim_start_matches("clud ").to_owned());
     let replacement = if recovering {
         Some(hash_path(&backup, MAX_PRIOR_BINARY_BYTES)?.0)
     } else if destination.exists() {
@@ -108,6 +111,7 @@ pub fn plan(intent: InstallIntent, modify_path: bool) -> Result<InstallPlan, Str
                 source_label: path.display().to_string(),
                 source_sha256: sha,
                 replacement,
+                existing_version,
                 path_proposal,
                 activation,
                 source: Source::Current {
@@ -131,6 +135,7 @@ pub fn plan(intent: InstallIntent, modify_path: bool) -> Result<InstallPlan, Str
                 source_label: asset.url.clone(),
                 source_sha256: asset.sha256.clone(),
                 replacement,
+                existing_version,
                 path_proposal,
                 activation,
                 source: Source::Published(asset),
@@ -283,6 +288,12 @@ fn approved_destination() -> Result<PathBuf, String> {
 }
 
 pub(crate) fn inspect_destination(destination: &Path, probe_version: bool) -> Result<(), String> {
+    inspect_existing(destination, probe_version).map(drop)
+}
+
+/// [`inspect_destination`], returning the `--version` line of an existing
+/// executable when `probe_version` ran it.
+fn inspect_existing(destination: &Path, probe_version: bool) -> Result<Option<String>, String> {
     let parent = destination.parent().ok_or("missing install directory")?;
     let home = if host::UNIX {
         Some(
@@ -332,9 +343,10 @@ pub(crate) fn inspect_destination(destination: &Path, probe_version: bool) -> Re
             if !output.starts_with("clud ") {
                 return Err("existing destination is not a clud executable".into());
             }
+            return Ok(Some(output));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 fn hash_path(path: &Path, limit: u64) -> Result<(String, u64), String> {

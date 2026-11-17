@@ -190,6 +190,11 @@ impl Version {
 }
 
 /// Check an exact release version without fetching a catalog.
+/// Release order of two version strings; `None` if either does not parse.
+pub fn compare_versions(left: &str, right: &str) -> Option<Ordering> {
+    Some(Version::parse(left).ok()?.cmp(&Version::parse(right).ok()?))
+}
+
 pub fn validate_version(value: &str) -> Result<(), String> {
     Version::parse(value).map(|_| ())
 }

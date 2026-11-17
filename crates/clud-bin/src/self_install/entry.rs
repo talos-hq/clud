@@ -4,12 +4,14 @@ use std::io::{self, IsTerminal, Read};
 use std::time::Duration;
 
 use crate::args::Args;
+use crate::selector::{Style, Tone};
 
 use super::activation::{self, ActivationPlan};
 use super::catalog::{Arch, Catalog, GnuEligibility, Host, Os, ResolvedAsset, VersionChoice};
 use super::picker::{self, ConfirmChoice, MenuChoice, ReleaseChoice};
 use super::result::Outcome;
-use super::transaction;
+use super::summary::Facts;
+use super::transaction::{self, InstallPlan};
 
 const CANDIDATE_CATALOG_NAME: &str = "installer-candidate-manifest.json";
 pub const INSTALL_PAGE: &str = "https://talos-hq.github.io/clud/install/index.html";
@@ -128,10 +130,11 @@ pub fn run_auto_offer(args: &Args) -> Option<i32> {
     ) {
         return None;
     }
-    match picker::prompt_menu(true) {
+    let plan = current_plan(InstallOptions::default());
+    match picker::prompt_menu(plan.as_ref().ok().map(Facts::of).as_ref(), true) {
         Ok(MenuChoice::NotNow) => None,
         Ok(choice) => {
-            let outcome = run_menu_choice(choice, InstallOptions::default());
+            let outcome = run_menu_choice(choice, plan, InstallOptions::default());
             Some(finish_with_provider_setup(args, &outcome))
         }
         Err(error) if error.kind() == io::ErrorKind::Interrupted => Some(130),
@@ -173,8 +176,9 @@ fn run_request(request: Request, options: InstallOptions, automatic: bool) -> Ou
                 eprintln!("clud installer: a terminal is required without an explicit install choice and --yes");
                 return Outcome::refused(2, "terminal_required");
             }
-            match picker::prompt_menu(automatic) {
-                Ok(choice) => run_menu_choice(choice, options),
+            let plan = current_plan(options);
+            match picker::prompt_menu(plan.as_ref().ok().map(Facts::of).as_ref(), automatic) {
+                Ok(choice) => run_menu_choice(choice, plan, options),
                 Err(error) if error.kind() == io::ErrorKind::Interrupted => {
                     Outcome::refused(130, "cancelled")
                 }
@@ -233,18 +237,36 @@ fn run_selected(intent: InstallIntent, options: InstallOptions) -> Outcome {
             return Outcome::failed(1, "planning_failed");
         }
     };
-    eprintln!("{}", plan.description());
-    if let Some(refusal) = confirm_installation(&plan, options.yes) {
+    if options.yes {
+        // Unattended: no screen, so the log carries the exact plan.
+        eprintln!("{}", plan.description());
+    } else if let Some(refusal) = confirm_installation(&plan) {
         return refusal;
     }
+    install_planned(plan, options)
+}
+
+/// The plan for installing the running executable, read before the first
+/// screen so that screen can show it. A planning error is reported only when
+/// the user chooses to install.
+fn current_plan(options: InstallOptions) -> Result<InstallPlan, String> {
+    transaction::plan(InstallIntent::CurrentExecutable, options.modify_path)
+}
+
+/// Commit a plan the user has consented to, then activate it.
+fn install_planned(plan: InstallPlan, options: InstallOptions) -> Outcome {
+    let interactive = !options.yes && terminal_available();
     let activation = plan.activation.clone();
     let version = plan.version.clone();
     let destination = plan.destination.clone();
     match transaction::execute(plan) {
         Ok(()) => {
-            let outcome =
-                finish_activation(activation, &version, !options.yes && terminal_available());
-            print_terminal_commands(&destination);
+            let outcome = finish_activation(activation, &version, interactive);
+            // A verified interactive install has already said how to reach
+            // clud; the per-shell commands are for everyone else.
+            if !(interactive && outcome.is_complete()) {
+                print_terminal_commands(&destination);
+            }
             outcome.committed(&version, &destination)
         }
         Err(error) => {
@@ -254,12 +276,8 @@ fn run_selected(intent: InstallIntent, options: InstallOptions) -> Outcome {
     }
 }
 
-fn confirm_installation(plan: &transaction::InstallPlan, yes: bool) -> Option<Outcome> {
-    if yes {
-        return None;
-    }
-    let label = format!("Install clud {} at this destination?", plan.version);
-    let outcome = match picker::prompt_confirm(label) {
+fn confirm_installation(plan: &InstallPlan) -> Option<Outcome> {
+    let outcome = match picker::prompt_confirm(&Facts::of(plan)) {
         Ok(ConfirmChoice::Proceed) => return None,
         Ok(ConfirmChoice::NotNow) => Outcome::refused(0, "declined"),
         Ok(ConfirmChoice::Cancelled) => Outcome::refused(130, "cancelled"),
@@ -286,10 +304,12 @@ fn print_terminal_commands(destination: &std::path::Path) {
     }
 }
 
+/// `interactive` offers a repair after a failed activation and reports
+/// success for a person rather than a log.
 fn finish_activation(
     activation: Option<ActivationPlan>,
     version: &str,
-    ask_repair: bool,
+    interactive: bool,
 ) -> Outcome {
     let Some(activation) = activation else {
         eprintln!(
@@ -299,14 +319,18 @@ fn finish_activation(
     };
     if let Err(error) = activation.apply_and_verify(version) {
         eprintln!("clud installer: binary committed, but activation failed: {error}");
-        return if ask_repair {
+        return if interactive {
             offer_activation_repair(&activation, version)
         } else {
             Outcome::failed(1, "activation_failed")
         };
     }
-    let outcome = activation_result(Ok(()), version);
-    eprintln!("{}", activation.reload_hint());
+    let outcome = activation_result(Ok(()), version, interactive);
+    if interactive {
+        eprintln!("    {}", activation.reload_hint());
+    } else {
+        eprintln!("{}", activation.reload_hint());
+    }
     outcome
 }
 
@@ -335,7 +359,7 @@ fn execute_approved_repair(
     apply: impl FnOnce() -> Result<(), String>,
 ) -> Outcome {
     match prompt() {
-        Ok(ConfirmChoice::Proceed) => activation_result(apply(), version),
+        Ok(ConfirmChoice::Proceed) => activation_result(apply(), version, true),
         Ok(ConfirmChoice::NotNow) => Outcome::refused(1, "repair_declined"),
         Ok(ConfirmChoice::Cancelled) => Outcome::refused(130, "cancelled"),
         Err(error) if error.kind() == io::ErrorKind::Interrupted => {
@@ -348,8 +372,16 @@ fn execute_approved_repair(
     }
 }
 
-fn activation_result(result: Result<(), String>, version: &str) -> Outcome {
+fn activation_result(result: Result<(), String>, version: &str, interactive: bool) -> Outcome {
     match result {
+        Ok(()) if interactive => {
+            let style = Style::detect();
+            eprintln!(
+                "\n  {} clud {version} is installed and on your PATH",
+                style.paint(style.check(), Tone::Good)
+            );
+            Outcome::complete()
+        }
         Ok(()) => {
             eprintln!(
                 "clud installer: installed clud {version} and verified fresh name-based lookup"
@@ -363,9 +395,21 @@ fn activation_result(result: Result<(), String>, version: &str) -> Outcome {
     }
 }
 
-fn run_menu_choice(choice: MenuChoice, options: InstallOptions) -> Outcome {
+/// Act on the first screen's choice. That screen showed `plan`, so choosing
+/// to install commits it without a second confirmation.
+fn run_menu_choice(
+    choice: MenuChoice,
+    plan: Result<InstallPlan, String>,
+    options: InstallOptions,
+) -> Outcome {
     match choice {
-        MenuChoice::Current => run_selected(InstallIntent::CurrentExecutable, options),
+        MenuChoice::Current => match plan {
+            Ok(plan) => install_planned(plan, options),
+            Err(error) => {
+                eprintln!("clud installer: {error}");
+                Outcome::failed(1, "planning_failed")
+            }
+        },
         MenuChoice::Releases => run_releases(options),
         MenuChoice::Browser => {
             let code = open_download_page();

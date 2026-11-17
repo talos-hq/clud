@@ -171,6 +171,7 @@ impl Selector for CodexCliImportSelector {
                 "Refreshes stay in clud's copy; the Codex CLI may later need a re-login."
                     .to_string(),
             ],
+            ..View::default()
         }
     }
 

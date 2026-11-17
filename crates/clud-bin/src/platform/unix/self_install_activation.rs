@@ -11,6 +11,8 @@ use std::time::{Duration, Instant};
 
 use running_process::ReadStatus;
 
+use crate::self_install::activation::PathChange;
+
 /// The Unix activation plan: the managed startup-file edits for the login
 /// shell, or a manual instruction when the shell is not Bash, zsh, or fish.
 #[derive(Debug, Clone)]
@@ -391,6 +393,25 @@ pub fn description(_destination: &Path, plan: &ActivationHost) -> String {
         lines.join("; "),
         plan.snippet
     )
+}
+
+/// The plan in consent-screen terms: the startup files that change.
+pub fn path_change(destination: &Path, plan: &ActivationHost) -> PathChange {
+    let directory = destination.parent().unwrap_or(destination).to_path_buf();
+    if plan.manual_instruction.is_some() {
+        return PathChange::Manual { directory };
+    }
+    let files: Vec<PathBuf> = plan
+        .edits
+        .iter()
+        .filter(|edit| edit.prior.as_ref() != Some(&edit.next))
+        .map(|edit| edit.path.clone())
+        .collect();
+    if files.is_empty() {
+        PathChange::Unchanged { directory }
+    } else {
+        PathChange::Add { directory, files }
+    }
 }
 
 /// What to tell the user once the startup files are written: the current
