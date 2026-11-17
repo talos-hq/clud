@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 import stat
 import struct
@@ -22,9 +23,12 @@ SECRETS = {
     "MACOS_SIGNING_CERT": base64.b64encode(b"p12-bytes").decode(),
     "MACOS_SIGNING_CERT_PASSWORD": "pw",
     "MACOS_SIGNING_IDENTITY": IDENTITY,
-    "APPLE_API_KEY_P8": "-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----",
-    "APPLE_API_KEY_ID": "KEYID12345",
-    "APPLE_API_ISSUER": "00000000-0000-0000-0000-000000000000",
+}
+NOTARY = {
+    "MACOS_SIGNING_IDENTITY": IDENTITY,
+    "APPLE_NOTARY_USER": "release@example.com",
+    "APPLE_NOTARY_PASSWORD": "abcd-efgh-ijkl-mnop",
+    "APPLE_TEAM_ID": "ABCDE12345",
 }
 
 
@@ -77,27 +81,36 @@ def test_missing_secrets_fail_closed_naming_every_one() -> None:
     with pytest.raises(sign.SigningError) as error:
         sign.config_from_env({"MACOS_SIGNING_CERT": SECRETS["MACOS_SIGNING_CERT"]})
     message = str(error.value)
-    for name in (*sign.CERT_SECRETS[1:], *sign.NOTARY_SECRETS):
+    for name in sign.CERT_SECRETS[1:]:
         assert name in message
     assert "MACOS_SIGNING_CERT," not in message
     assert "release-signing" in message
-    partial = {k: v for k, v in SECRETS.items() if not k.startswith("APPLE_API")}
+    # Signing needs only the certificate; notarization only the Apple ID.
+    assert sign.config_from_env(SECRETS).identity == IDENTITY
     with pytest.raises(
-        sign.SigningError, match="APPLE_API_KEY_P8, APPLE_API_KEY_ID, APPLE_API_ISSUER"
+        sign.SigningError, match="APPLE_NOTARY_USER, APPLE_NOTARY_PASSWORD, APPLE_TEAM_ID"
     ):
-        sign.config_from_env(partial)
+        sign.notary_config_from_env({"MACOS_SIGNING_IDENTITY": IDENTITY})
+    with pytest.raises(sign.SigningError, match="MACOS_SIGNING_IDENTITY"):
+        sign.notary_config_from_env({k: v for k, v in NOTARY.items() if k != "MACOS_SIGNING_IDENTITY"})
 
 
 def test_config_validates_identity_and_certificate_encoding() -> None:
     config = sign.config_from_env(SECRETS)
     assert config.cert_p12 == b"p12-bytes"
-    assert config.api_key_p8.endswith("-----END PRIVATE KEY-----\n")
     with pytest.raises(sign.SigningError, match="Developer ID Application"):
         sign.config_from_env({**SECRETS, "MACOS_SIGNING_IDENTITY": "Apple Development: x"})
     with pytest.raises(sign.SigningError, match="base64"):
         sign.config_from_env({**SECRETS, "MACOS_SIGNING_CERT": "not base64!"})
     with pytest.raises(sign.SigningError, match="MACOS_SIGNING_IDENTITY"):
         sign.identity_from_env({})
+
+
+def test_notary_team_must_be_the_signing_team() -> None:
+    config = sign.notary_config_from_env(NOTARY)
+    assert (config.apple_id, config.team_id) == ("release@example.com", "ABCDE12345")
+    with pytest.raises(sign.SigningError, match="APPLE_TEAM_ID does not match"):
+        sign.notary_config_from_env({**NOTARY, "APPLE_TEAM_ID": "ZZZZZ99999"})
 
 
 @pytest.mark.parametrize(
@@ -164,7 +177,7 @@ def test_verify_fails_closed_on_adhoc_wheel(tmp_path: Path) -> None:
         sign.verify_dist(tmp_path / "empty", IDENTITY)
 
 
-def test_commands_keep_secrets_off_argv(tmp_path: Path) -> None:
+def test_sign_command_keeps_secrets_off_argv() -> None:
     command = sign.sign_command(Path("rc"), Path("id.p12"), Path("pw"), Path("clud"))
     for flag, value in (
         ("--p12-file", "id.p12"),
@@ -175,20 +188,97 @@ def test_commands_keep_secrets_off_argv(tmp_path: Path) -> None:
         assert command[command.index(flag) + 1] == value
     assert "--for-notarization" in command
     assert "--p12-password" not in command
-    notary = sign.notary_command(Path("rc"), Path("key.json"), Path("x.zip"))
-    assert notary[1] == "notary-submit"
-    assert notary[notary.index("--api-key-file") + 1] == "key.json"
-    assert "--wait" in notary
 
 
-def test_notary_upload_is_a_zip_of_executables(tmp_path: Path) -> None:
-    binary = tmp_path / "clud"
-    binary.write_bytes(_macho())
-    upload = sign.notary_zip([binary], tmp_path / "up.zip")
-    with zipfile.ZipFile(upload) as archive:
-        (info,) = archive.infolist()
-        assert info.filename == "0/clud"
-        assert (info.external_attr >> 16) & 0o777 == 0o755
+def test_notarytool_commands() -> None:
+    config = sign.notary_config_from_env(NOTARY)
+    submit = sign.notary_submit_command(config, Path("x.zip"))
+    assert submit[:4] == ["xcrun", "notarytool", "submit", "x.zip"]
+    for flag, value in (
+        ("--apple-id", "release@example.com"),
+        ("--team-id", "ABCDE12345"),
+        ("--timeout", sign.NOTARY_TIMEOUT),
+        ("--output-format", "json"),
+    ):
+        assert submit[submit.index(flag) + 1] == value
+    assert "--wait" in submit
+    log = sign.notary_log_command(config, "sub-1")
+    assert log[:4] == ["xcrun", "notarytool", "log", "sub-1"]
+    assert log[log.index("--team-id") + 1] == "ABCDE12345"
+    assert sign.ditto_command(Path("d"), Path("u.zip")) == [
+        "ditto", "-c", "-k", "--keepParent", "d", "u.zip",
+    ]
+
+
+def test_notary_result_parses_the_final_json_record() -> None:
+    record = {"id": "sub-1", "status": "Accepted", "message": "Processing complete"}
+    assert sign.notary_result(json.dumps(record))["status"] == "Accepted"
+    noisy = "Conducting pre-submission checks...\n" + json.dumps(record) + "\n"
+    assert sign.notary_result(noisy)["id"] == "sub-1"
+    with pytest.raises(sign.SigningError, match="no JSON"):
+        sign.notary_result("Error: HTTP status code: 401")
+
+
+def _signed_wheel(tmp_path: Path) -> Path:
+    good = _macho(_superblob(sign.CS_RUNTIME, _good_cms()))
+    return _wheel(
+        tmp_path,
+        {"clud-2.8.66.data/scripts/clud": good, "clud-2.8.66.data/scripts/clud-webterm": good},
+    )
+
+
+def _fake_notary(status: str, code: int = 0):
+    calls: list[list[str]] = []
+
+    def run(command: list[str]) -> tuple[int, str, str]:
+        calls.append(command)
+        if command[0] == "ditto":
+            staged = Path(command[-2])
+            assert sorted(p.name for p in staged.rglob("*") if p.is_file()) == [
+                "clud",
+                "clud-webterm",
+            ]
+            assert all(p.stat().st_mode & 0o111 for p in staged.rglob("*") if p.is_file())
+            Path(command[-1]).write_bytes(b"zip")
+            return 0, "", ""
+        if command[2] == "submit":
+            record = {"id": "sub-1", "status": status, "message": "done"}
+            return code, json.dumps(record), "Conducting pre-submission checks..."
+        return 0, '{"issues": [{"message": "The signature does not include a secure timestamp."}]}', ""
+
+    return run, calls
+
+
+def test_notarize_accepts_and_leaves_the_wheel_untouched(tmp_path: Path) -> None:
+    wheel = _signed_wheel(tmp_path)
+    before = wheel.read_bytes()
+    run, calls = _fake_notary("Accepted")
+    accepted = sign.notarize_dist(tmp_path, sign.notary_config_from_env(NOTARY), run)
+    assert accepted == {wheel.name: "sub-1"}
+    assert [c[0] if c[0] == "ditto" else c[2] for c in calls] == ["ditto", "submit"]
+    assert wheel.read_bytes() == before
+
+
+@pytest.mark.parametrize(("status", "code"), [("Invalid", 0), ("Rejected", 0), ("Accepted", 1)])
+def test_notarize_fails_on_anything_but_accepted_and_prints_the_log(
+    tmp_path: Path, status: str, code: int, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _signed_wheel(tmp_path)
+    run, calls = _fake_notary(status, code)
+    with pytest.raises(sign.SigningError, match=f"not accepted: submission sub-1 status {status}"):
+        sign.notarize_dist(tmp_path, sign.notary_config_from_env(NOTARY), run)
+    assert calls[-1][:4] == ["xcrun", "notarytool", "log", "sub-1"]
+    out = capsys.readouterr().out
+    assert "secure timestamp" in out
+    assert NOTARY["APPLE_NOTARY_PASSWORD"] not in out
+
+
+def test_notarize_refuses_an_unsigned_wheel_before_submitting(tmp_path: Path) -> None:
+    _wheel(tmp_path, {"clud-2.8.66.data/scripts/clud": _macho()})
+    run, calls = _fake_notary("Accepted")
+    with pytest.raises(sign.SigningError, match="unsigned macOS release binaries"):
+        sign.notarize_dist(tmp_path, sign.notary_config_from_env(NOTARY), run)
+    assert calls == []
 
 
 def test_rcodesign_pin_is_a_linux_release_with_a_sha256() -> None:
@@ -209,32 +299,99 @@ def test_release_workflow_signs_and_notarizes_macos_wheels_before_publish() -> N
     darwin = sorted(t.artifact for t in ci_matrix.TARGETS if t.triple.endswith("-apple-darwin"))
     signer = _job(release, "sign-macos")
     assert "environment: release-signing" in signer
+    assert "runs-on: ubuntu-24.04" in signer
     assert "needs: [preflight, build]" in signer
     assert f"artifact: [{', '.join(darwin)}]" in signer
     assert "python -m ci.sign_macos_release sign --dist-dir dist" in signer
     assert "overwrite: true" in signer
-    for name in (*sign.CERT_SECRETS, *sign.NOTARY_SECRETS):
+    for name in sign.CERT_SECRETS:
         assert f"{name}: ${{{{ secrets.{name} }}}}" in signer
+    notary = _job(release, "notarize-macos")
+    assert "environment: release-signing" in notary
+    assert "runs-on: macos-15" in notary
+    assert "needs: [preflight, sign-macos]" in notary
+    assert f"artifact: [{', '.join(darwin)}]" in notary
+    assert "python -m ci.sign_macos_release notarize --dist-dir dist" in notary
+    # It reads the signed artifact and never replaces it: published bytes are
+    # exactly what sign-macos produced.
+    assert "upload-artifact" not in notary
+    for name in ("MACOS_SIGNING_IDENTITY", *sign.NOTARY_SECRETS):
+        assert f"{name}: ${{{{ secrets.{name} }}}}" in notary
+    assert "MACOS_SIGNING_CERT" not in notary
+    for name in sign.NOTARY_SECRETS:
+        assert name not in signer
     smoke = _job(release, "macos-signature-smoke")
-    assert "needs: [preflight, sign-macos]" in smoke
+    assert "needs: [preflight, notarize-macos]" in smoke
     assert sorted(re.findall(r"- artifact: (\S+)", smoke)) == darwin
     assert "python -m ci.sign_macos_release smoke" in smoke
-    assert "APPLE_API_KEY_P8" not in smoke
+    for name in (*sign.NOTARY_SECRETS, "MACOS_SIGNING_CERT"):
+        assert name not in smoke
+    assert "APPLE_API" not in release
     assert "needs: [preflight, release-matrix, build, sign-macos]" in release
     for job in ("publish-pypi", "publish-release"):
         body = release[release.index(f"  {job}:") :]
         needs = body.split("needs:", 1)[1].split("\n", 1)[0]
-        assert "sign-macos" in needs, job
-        assert "macos-signature-smoke" in needs, job
         condition = body.split("    if: >-", 1)[1].split("    runs-on:", 1)[0]
-        assert "needs.sign-macos.result == 'success'" in condition, job
-        assert "needs.macos-signature-smoke.result == 'success'" in condition, job
+        for proof in ("sign-macos", "notarize-macos", "macos-signature-smoke"):
+            assert proof in needs, job
+            assert f"needs.{proof}.result == 'success'" in condition, job
+    # Only the signing chain declares the secrets environment.
+    holders = [
+        name
+        for name in re.findall(r"^  ([a-z0-9-]+):$", release.split("\njobs:\n", 1)[1], re.MULTILINE)
+        if "environment: release-signing" in _job(release, name)
+    ]
+    assert holders == ["sign-macos", "notarize-macos", "macos-signature-smoke"]
     # The Rust build job runs third-party build scripts; it never sees Apple secrets.
     build = (WORKFLOWS / "_build-target.yml").read_text(encoding="utf-8")
     for name in (*sign.CERT_SECRETS, *sign.NOTARY_SECRETS):
         assert name not in build
 
 
+# Jobs a notarize_only proof run executes. Every other job must be skipped.
+PROOF_JOBS = {
+    "preflight",
+    "release-matrix",
+    "build",
+    "sign-macos",
+    "notarize-macos",
+    "macos-signature-smoke",
+    "wheel-smoke",
+}
+
+
+def test_notarize_only_proof_run_publishes_nothing() -> None:
+    release = (WORKFLOWS / "auto-release.yml").read_text(encoding="utf-8")
+    assert "notarize_only:\n" in release
+    assert "type: boolean" in release.split("notarize_only:\n", 1)[1].split("\n\n", 1)[0] + "\n"
+    jobs = re.findall(r"^  ([a-z0-9-]+):$", release.split("\njobs:\n", 1)[1], re.MULTILINE)
+    assert set(PROOF_JOBS) <= set(jobs)
+    for name in jobs:
+        body = _job(release, name)
+        if name in PROOF_JOBS:
+            continue
+        # A job runs in the proof run only when it opts out of the implicit
+        # success() check (always()); every such job names the input. Jobs
+        # without always() are skipped because the gate they need is skipped.
+        if "always()" in body.split("    steps:", 1)[0]:
+            assert "!inputs.notarize_only" in body, name
+        else:
+            assert re.search(r"needs: .*(full-ci-gate|build-static-musl)", body) or (
+                "if: ${{ !inputs.notarize_only }}" in body
+            ), name
+    gate = _job(release, "full-ci-gate")
+    assert "if: ${{ !inputs.notarize_only }}" in gate
+    # The build may follow a skipped gate only in notarize_only mode.
+    for name in ("release-matrix", "build"):
+        assert (
+            "needs.full-ci-gate.result == 'success' || "
+            "(inputs.notarize_only && needs.full-ci-gate.result == 'skipped')"
+        ) in _job(release, name)
+    assert "--release ${{ inputs.notarize_only && '--macos-only' || '' }}" in release
+    assert "clud-notarize-proof-" in release
+
+
 def test_resume_requires_the_original_macos_signing_proof() -> None:
-    assert release_resume.REQUIRED["Sign and notarize macOS ("] == 2
+    assert release_resume.REQUIRED["Sign macOS ("] == 2
+    assert release_resume.REQUIRED["Notarize macOS ("] == 2
     assert release_resume.REQUIRED["Verify macOS signature ("] == 2

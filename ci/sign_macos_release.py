@@ -1,17 +1,14 @@
-"""Developer ID sign and notarize the macOS release wheels with rcodesign.
+"""Developer ID sign the macOS release wheels with rcodesign; notarize with notarytool.
 
 Both ``*-apple-darwin`` release lanes cross-build on Linux runners, so the
 signer is rcodesign (apple-codesign, https://github.com/indygreg/apple-platform-rs),
-a pure-Rust implementation of Apple code signing and of the Notary API. Its
-Linux release tarball is pinned by version and SHA-256 and refused on mismatch.
+a pure-Rust implementation of Apple code signing. Its Linux release tarball is
+pinned by version and SHA-256 and refused on mismatch.
 
-``sign --dist-dir dist`` runs in Auto Release's ``sign-macos`` job, the only
-job that holds the ``release-signing`` environment secrets. It re-signs every
-Mach-O inside each macOS wheel (``clud``, ``clud-webterm``; the linker's
-ad-hoc signature is replaced) with the Developer ID Application certificate,
-the hardened runtime and a secure timestamp, then submits a zip of them to
-Apple's notary service and waits for ``Accepted``. A bare Mach-O cannot carry
-a stapled ticket, so Gatekeeper checks the notarization online. The wheel is
+``sign --dist-dir dist`` runs in Auto Release's ``sign-macos`` job on Linux. It
+re-signs every Mach-O inside each macOS wheel (``clud``, ``clud-webterm``; the
+linker's ad-hoc signature is replaced) with the Developer ID Application
+certificate, the hardened runtime and a secure timestamp. The wheel is
 rewritten through ``ci.wheel_rewrite`` so RECORD matches the signed bytes, and
 the job re-uploads it under the same artifact name. PyPI, the standalone macOS
 assets ``installer.release_assets`` extracts from these wheels, SHA256SUMS,
@@ -19,15 +16,28 @@ the Pages catalog and the Homebrew formula therefore all carry signed bytes.
 A structural post-check fails the step when any Mach-O lacks the identity,
 the hardened-runtime flag or the timestamp.
 
+``notarize --dist-dir dist`` runs in the ``notarize-macos`` job on a macOS
+runner, because notarization authenticates with an Apple ID and app-specific
+password, which only Apple's ``xcrun notarytool`` accepts (rcodesign's
+``notary-submit`` takes App Store Connect API keys only). It re-checks the
+signature structure, zips the signed Mach-O files with ``ditto`` (Apple
+notarizes zips, never a bare Mach-O), submits with ``notarytool submit
+--wait`` and fails unless the status is ``Accepted``, printing ``notarytool
+log`` otherwise. It never modifies the wheel: notarization registers the
+signed files' code-directory hashes with Apple, so the bytes signed on Linux
+are the bytes that ship. A bare executable cannot carry a stapled ticket, so
+Gatekeeper looks the ticket up online; nothing is stapled.
+
 Missing secrets fail closed, naming every absent secret at once.
 
 ``smoke --dist-dir wheels`` runs on native macOS and requires
 ``codesign --verify --strict``, a Developer ID authority with the hardened
 runtime and a timestamp, and ``spctl`` reporting ``Notarized Developer ID`` for
-every Mach-O, then executes ``clud --version``.
+every Mach-O (an online ticket lookup), then executes ``clud --version``.
 
 Usage (CI):
-    python -m ci.sign_macos_release sign --dist-dir dist/
+    python -m ci.sign_macos_release sign --dist-dir dist/                  # Linux
+    python -m ci.sign_macos_release notarize --dist-dir dist/              # macOS runner
     python -m ci.sign_macos_release verify --dist-dir dist/
     python -m ci.sign_macos_release smoke --dist-dir wheels/ --version X   # macOS runner
 """
@@ -37,6 +47,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import json
 import os
 import re
 import shutil
@@ -62,11 +73,13 @@ RCODESIGN_URL = (
 RCODESIGN_SHA256 = "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002"
 
 TIMESTAMP_URL = "http://timestamp.apple.com/ts01"
-NOTARY_MAX_WAIT_SECONDS = "1800"
+NOTARY_TIMEOUT = "30m"
+NOTARY_ACCEPTED = "Accepted"
 
 ENVIRONMENT = "release-signing"
 CERT_SECRETS = ("MACOS_SIGNING_CERT", "MACOS_SIGNING_CERT_PASSWORD", "MACOS_SIGNING_IDENTITY")
-NOTARY_SECRETS = ("APPLE_API_KEY_P8", "APPLE_API_KEY_ID", "APPLE_API_ISSUER")
+# Apple ID + app-specific password (appleid.apple.com), and the Developer team.
+NOTARY_SECRETS = ("APPLE_NOTARY_USER", "APPLE_NOTARY_PASSWORD", "APPLE_TEAM_ID")
 IDENTITY_RE = re.compile(r"^Developer ID Application: .+ \(([A-Z0-9]{10})\)$")
 
 # Mach-O headers (little-endian thin images, either-endian fat images).
@@ -94,14 +107,21 @@ class SigningError(RuntimeError):
 
 @dataclass(frozen=True)
 class SigningConfig:
-    """Developer ID and App Store Connect credentials, read from the job environment."""
+    """Developer ID certificate credentials, read from the job environment."""
 
     cert_p12: bytes
     cert_password: str
     identity: str
-    api_key_p8: str
-    api_key_id: str
-    api_issuer: str
+
+
+@dataclass(frozen=True)
+class NotaryConfig:
+    """Apple ID notarization credentials, read from the job environment."""
+
+    apple_id: str
+    password: str
+    team_id: str
+    identity: str
 
 
 def missing_secrets(env: dict[str, str], names: tuple[str, ...]) -> list[str]:
@@ -130,7 +150,7 @@ def validated_identity(identity: str) -> str:
 
 
 def config_from_env(env: dict[str, str]) -> SigningConfig:
-    require_secrets(env, CERT_SECRETS + NOTARY_SECRETS)
+    require_secrets(env, CERT_SECRETS)
     try:
         cert = base64.b64decode(env["MACOS_SIGNING_CERT"].strip(), validate=True)
     except (binascii.Error, ValueError) as exc:
@@ -139,9 +159,24 @@ def config_from_env(env: dict[str, str]) -> SigningConfig:
         cert_p12=cert,
         cert_password=env["MACOS_SIGNING_CERT_PASSWORD"],
         identity=validated_identity(env["MACOS_SIGNING_IDENTITY"]),
-        api_key_p8=env["APPLE_API_KEY_P8"].strip() + "\n",
-        api_key_id=env["APPLE_API_KEY_ID"].strip(),
-        api_issuer=env["APPLE_API_ISSUER"].strip(),
+    )
+
+
+def notary_config_from_env(env: dict[str, str]) -> NotaryConfig:
+    require_secrets(env, ("MACOS_SIGNING_IDENTITY", *NOTARY_SECRETS))
+    identity = validated_identity(env["MACOS_SIGNING_IDENTITY"])
+    team_id = env["APPLE_TEAM_ID"].strip()
+    match = IDENTITY_RE.match(identity)
+    if match is None or match.group(1) != team_id:
+        raise SigningError(
+            "APPLE_TEAM_ID does not match the team in MACOS_SIGNING_IDENTITY; "
+            "notarization must use the team that signed the binaries"
+        )
+    return NotaryConfig(
+        apple_id=env["APPLE_NOTARY_USER"].strip(),
+        password=env["APPLE_NOTARY_PASSWORD"].strip(),
+        team_id=team_id,
+        identity=identity,
     )
 
 
@@ -197,17 +232,56 @@ def sign_command(rcodesign: Path, p12: Path, password: Path, target: Path) -> li
     ]
 
 
-def notary_command(rcodesign: Path, api_key_json: Path, upload: Path) -> list[str]:
+def notary_credentials(config: NotaryConfig) -> list[str]:
+    """notarytool auth flags. The password is on argv (notarytool has no file or
+    environment form) of a single-tenant ephemeral runner; Actions masks the
+    value, and callers never print or raise with the command line."""
     return [
-        str(rcodesign),
-        "notary-submit",
-        "--api-key-file",
-        str(api_key_json),
-        "--wait",
-        "--max-wait-seconds",
-        NOTARY_MAX_WAIT_SECONDS,
-        str(upload),
+        "--apple-id",
+        config.apple_id,
+        "--password",
+        config.password,
+        "--team-id",
+        config.team_id,
     ]
+
+
+def notary_submit_command(config: NotaryConfig, upload: Path) -> list[str]:
+    return [
+        "xcrun",
+        "notarytool",
+        "submit",
+        str(upload),
+        *notary_credentials(config),
+        "--wait",
+        "--timeout",
+        NOTARY_TIMEOUT,
+        "--output-format",
+        "json",
+    ]
+
+
+def notary_log_command(config: NotaryConfig, submission_id: str) -> list[str]:
+    return ["xcrun", "notarytool", "log", submission_id, *notary_credentials(config)]
+
+
+def ditto_command(source_dir: Path, upload: Path) -> list[str]:
+    return ["ditto", "-c", "-k", "--keepParent", str(source_dir), str(upload)]
+
+
+def notary_result(stdout: str) -> dict[str, str]:
+    """The final submission record notarytool prints with ``--output-format json``."""
+    for line in reversed([stdout, *stdout.splitlines()]):
+        text = line.strip()
+        if not text.startswith("{"):
+            continue
+        try:
+            record = json.loads(text)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and "status" in record:
+            return {key: str(value) for key, value in record.items()}
+    raise SigningError("notarytool printed no JSON submission status")
 
 
 def is_macho(data: bytes) -> bool:
@@ -293,7 +367,7 @@ def verify_wheel(wheel: Path, identity: str) -> list[str]:
 
 
 def sign_wheel(wheel: Path, sign_files) -> list[str]:
-    """Sign (and notarize) every Mach-O in ``wheel`` via ``sign_files``; rewrite it."""
+    """Sign every Mach-O in ``wheel`` via ``sign_files``; rewrite it."""
     machos = wheel_machos(wheel)
     if not machos:
         raise SigningError(f"no Mach-O files inside {wheel.name}")
@@ -316,19 +390,6 @@ def sign_wheel(wheel: Path, sign_files) -> list[str]:
     return targets
 
 
-def notary_zip(files: list[Path], dest: Path) -> Path:
-    """Apple notarizes bundles, disk images, packages and zips; never a bare Mach-O."""
-    # Not a wheel: the notary upload, so ci/wheel_rewrite.py does not apply.
-    archive = zipfile.ZipFile(dest, "w")  # wheel-write-lint: allow (notary zip)
-    with archive:
-        for index, path in enumerate(files):
-            info = zipfile.ZipInfo(f"{index}/{path.name}")
-            info.external_attr = 0o100755 << 16
-            info.compress_type = zipfile.ZIP_DEFLATED
-            archive.writestr(info, path.read_bytes())
-    return dest
-
-
 def _private_file(path: Path, data: bytes) -> Path:
     descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, "wb") as handle:
@@ -342,38 +403,81 @@ def sign_dist(dist_dir: Path, config: SigningConfig, tool_dir: Path) -> None:
         secrets = Path(secrets_dir)
         p12 = _private_file(secrets / "developer-id.p12", config.cert_p12)
         password = _private_file(secrets / "p12-password", config.cert_password.encode())
-        p8 = _private_file(secrets / f"AuthKey_{config.api_key_id}.p8", config.api_key_p8.encode())
-        api_key_json = secrets / "api-key.json"
-        process.run(
-            [
-                str(rcodesign),
-                "encode-app-store-connect-api-key",
-                "--output-path",
-                str(api_key_json),
-                config.api_issuer,
-                config.api_key_id,
-                str(p8),
-            ],
-            check=True,
-        )
-        p8.unlink()
 
         def sign_files(label: str, files: list[Path]) -> None:
             for path in files:
                 print(f"rcodesign: signing {label}:{path.name} as {config.identity}")
                 process.run(sign_command(rcodesign, p12, password, path), check=True)
-            upload = notary_zip(files, secrets / f"{label}-notary.zip")
-            print(f"rcodesign: notarizing {upload.name} ({len(files)} Mach-O file(s))")
-            process.run(notary_command(rcodesign, api_key_json, upload), check=True)
-            upload.unlink()
 
         failures = []
         for wheel in macos_wheels(dist_dir):
             ours = sign_wheel(wheel, sign_files)
-            print(f"{wheel.name}: signed and notarized {', '.join(ours)}")
+            print(f"{wheel.name}: signed {', '.join(ours)}")
             failures += verify_wheel(wheel, config.identity)
     if failures:
         raise SigningError("unsigned macOS release binaries:\n" + "\n".join(failures))
+
+
+def _quiet(command: list[str]) -> tuple[int, str, str]:
+    """Run without ever echoing ``command``: notarytool's argv holds the password."""
+    completed = process.run(command, capture_output=True, text=True, check=False)
+    return completed.returncode, completed.stdout or "", completed.stderr or ""
+
+
+def stage_machos(wheel: Path, dest: Path) -> list[str]:
+    """Write ``wheel``'s Mach-O files, executable, under ``dest``; return their names."""
+    names = sorted(wheel_machos(wheel))
+    if not names:
+        raise SigningError(f"no Mach-O files inside {wheel.name}")
+    with zipfile.ZipFile(wheel) as archive:
+        for index, name in enumerate(names):
+            path = dest / str(index) / Path(name).name
+            path.parent.mkdir(parents=True)
+            path.write_bytes(archive.read(name))
+            path.chmod(0o755)
+    return names
+
+
+def notarize_wheel(wheel: Path, config: NotaryConfig, run=_quiet) -> str:
+    """Submit ``wheel``'s signed Mach-O files to Apple; return the Accepted submission ID."""
+    with tempfile.TemporaryDirectory(prefix="clud-notary-") as scratch:
+        staged = Path(scratch) / wheel.stem
+        names = stage_machos(wheel, staged)
+        upload = Path(scratch) / f"{wheel.stem}-notary.zip"
+        code, out, err = run(ditto_command(staged, upload))
+        if code != 0:
+            raise SigningError(f"ditto failed for {wheel.name}: {(out + err).strip()}")
+        print(f"notarytool: submitting {upload.name} ({len(names)} Mach-O file(s)); waiting")
+        code, out, err = run(notary_submit_command(config, upload))
+        print(err.strip())
+        try:
+            record = notary_result(out)
+        except SigningError as exc:
+            raise SigningError(f"{exc} for {wheel.name} (exit {code}): {out.strip()}") from exc
+        submission = record.get("id", "")
+        status = record.get("status", "")
+        print(f"notarytool: {wheel.name}: submission {submission} status {status}")
+        if code != 0 or status != NOTARY_ACCEPTED:
+            if submission:
+                _code, log, log_err = run(notary_log_command(config, submission))
+                print(log.strip() or log_err.strip())
+            raise SigningError(
+                f"notarization of {wheel.name} was not accepted: submission "
+                f"{submission or '<none>'} status {status or '<none>'} "
+                f"({record.get('message', '')}) exit {code}"
+            )
+    return submission
+
+
+def notarize_dist(dist_dir: Path, config: NotaryConfig, run=_quiet) -> dict[str, str]:
+    verify_dist(dist_dir, config.identity)
+    accepted = {wheel.name: notarize_wheel(wheel, config, run) for wheel in macos_wheels(dist_dir)}
+    summary = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            for name, submission in accepted.items():
+                handle.write(f"- `{name}`: notarization `{submission}` {NOTARY_ACCEPTED}\n")
+    return accepted
 
 
 def verify_dist(dist_dir: Path, identity: str) -> None:
@@ -437,7 +541,7 @@ def smoke_dist(dist_dir: Path, identity: str, version: str | None) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
-    parser.add_argument("mode", choices=("sign", "verify", "smoke"))
+    parser.add_argument("mode", choices=("sign", "notarize", "verify", "smoke"))
     parser.add_argument("--dist-dir", type=Path, required=True)
     parser.add_argument("--tool-dir", type=Path, default=None)
     parser.add_argument("--version", default=None, help="smoke: expected clud version")
@@ -449,6 +553,8 @@ def main(argv: list[str] | None = None) -> int:
             config = config_from_env(env)
             runner_temp = Path(env.get("RUNNER_TEMP", tempfile.gettempdir()))
             sign_dist(args.dist_dir, config, args.tool_dir or runner_temp / "rcodesign")
+        elif args.mode == "notarize":
+            notarize_dist(args.dist_dir, notary_config_from_env(env))
         elif args.mode == "verify":
             verify_dist(args.dist_dir, identity_from_env(env))
         else:

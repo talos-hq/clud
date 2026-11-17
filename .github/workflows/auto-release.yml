@@ -15,10 +15,22 @@ on:
         description: "Resume an immutable public prerelease from a failed Auto Release run after acceptance-harness repair (main only)."
         required: false
         type: string
+      # Proof run for the macOS signing chain on any ref: build the two macOS
+      # wheels, then sign-macos -> notarize-macos -> macos-signature-smoke and
+      # wheel-smoke. Skips the full CI gate and every snapshot, publish,
+      # promote, Homebrew and Pages job (each one's `if:` is checked in
+      # tests/test_sign_macos_release.py). Nothing it builds is published.
+      notarize_only:
+        description: "Proof run only: build, sign, notarize and smoke the macOS wheels; publish nothing."
+        required: false
+        type: boolean
+        default: false
 
 # Serialize release publication with both Pages publishers.
 concurrency:
-  group: clud-pages-publication
+  # A notarize_only proof run publishes nothing, so it never queues behind (or
+  # in front of) a real release.
+  group: ${{ inputs.notarize_only && format('clud-notarize-proof-{0}', github.run_id) || 'clud-pages-publication' }}
   queue: max
   cancel-in-progress: false
 
@@ -54,6 +66,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RAW_TAG: ${{ inputs.tag }}
           RESUME_RUN_ID: ${{ inputs.resume_run_id }}
+          NOTARIZE_ONLY: ${{ inputs.notarize_only }}
         run: |
           python - <<'PY'
           import json
@@ -92,6 +105,19 @@ jobs:
           candidate_sha = subprocess.check_output(
               ["git", "rev-parse", "HEAD"], text=True
           ).strip()
+          if os.environ.get("NOTARIZE_ONLY") == "true":
+              # Proof run: no tag, release or recovery state is consulted
+              # because nothing downstream of it publishes.
+              if os.environ.get("RAW_TAG", "").strip() or os.environ.get("RESUME_RUN_ID", "").strip():
+                  sys.exit("notarize_only takes no tag or resume_run_id")
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+                  fh.write(f"checkout_ref={candidate_sha}\n")
+                  fh.write(f"candidate_sha={candidate_sha}\n")
+                  fh.write(f"release_tag=notarize-proof-{version}\n")
+                  fh.write(f"version={version}\n")
+                  fh.write(f"artifact_run={os.environ['GITHUB_RUN_ID']}\n")
+              print(f"notarize_only proof run of {candidate_sha} (version {version})")
+              sys.exit(0)
           existing_tag = subprocess.run(
               ["git", "rev-parse", "--verify", f"refs/tags/{raw_tag}^{{commit}}"],
               capture_output=True,
@@ -182,6 +208,9 @@ jobs:
   full-ci-gate:
     name: Exact SHA full CI
     needs: preflight
+    # Skipped only by the notarize_only proof run, which publishes nothing;
+    # a skipped gate fails every publish job's `== 'success'` check.
+    if: ${{ !inputs.notarize_only }}
     uses: ./.github/workflows/ci.yml
     # Reusable workflows get no secrets by default; setup-soldr's remote S3
     # build cache needs SOLDR_S3_CACHE_ACCESS_KEY / _SECRET_KEY.
@@ -240,6 +269,9 @@ jobs:
   release-matrix:
     name: Resolve release matrix
     needs: [preflight, full-ci-gate]
+    if: >-
+      always() && !cancelled() && needs.preflight.result == 'success' &&
+      (needs.full-ci-gate.result == 'success' || (inputs.notarize_only && needs.full-ci-gate.result == 'skipped'))
     runs-on: ubuntu-24.04
     outputs:
       build: ${{ steps.matrix.outputs.build }}
@@ -253,12 +285,15 @@ jobs:
         with:
           python-version: "3.11"
       - id: matrix
-        run: python -m ci.ci_matrix --release
+        run: python -m ci.ci_matrix --release ${{ inputs.notarize_only && '--macos-only' || '' }}
 
   build:
     name: Build wheels
     needs: [preflight, full-ci-gate, release-matrix]
-    if: ${{ !inputs.resume_run_id }}
+    if: >-
+      always() && !cancelled() && !inputs.resume_run_id &&
+      needs.preflight.result == 'success' && needs.release-matrix.result == 'success' &&
+      (needs.full-ci-gate.result == 'success' || (inputs.notarize_only && needs.full-ci-gate.result == 'skipped'))
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.release-matrix.outputs.build) }}
@@ -309,6 +344,7 @@ jobs:
   windows-signature-smoke:
     name: Verify Authenticode (${{ matrix.artifact }})
     needs: [preflight, build]
+    if: ${{ !inputs.notarize_only }}
     runs-on: ${{ matrix.runs-on }}
     timeout-minutes: 15
     strategy:
@@ -336,22 +372,66 @@ jobs:
         shell: pwsh
         run: python -m ci.sign_windows_release smoke --dist-dir wheels --version '${{ needs.preflight.outputs.version }}'
 
-  # Developer ID signing + notarization of the macOS wheels (DD-214). They
+  # Developer ID signing of the macOS wheels (DD-214, DD-218). They
   # cross-build on Linux, so a SHA-256-pinned rcodesign signs them on Linux too
   # (ci/sign_macos_release.py): every Mach-O gets the Developer ID Application
-  # identity, the hardened runtime and a secure timestamp, then a zip of them
-  # goes to Apple's notary service (--wait). The re-written wheel replaces the
-  # build's artifact under the same name before wheel-smoke, both publish jobs
-  # and installer.release_assets read it, so PyPI, the standalone macOS assets,
-  # SHA256SUMS, the Pages catalog and the Homebrew formula carry signed bytes.
-  # This is the only job (besides the smoke below, which reads the identity)
-  # that holds the `release-signing` environment secrets; the Rust build job
-  # that runs third-party build scripts never sees them. Missing secrets fail
-  # the job, naming each one.
+  # identity, the hardened runtime and a secure timestamp. The re-written wheel
+  # replaces the build's artifact under the same name before wheel-smoke,
+  # notarize-macos, both publish jobs and installer.release_assets read it, so
+  # PyPI, the standalone macOS assets, SHA256SUMS, the Pages catalog and the
+  # Homebrew formula carry signed bytes. Only the sign, notarize and smoke jobs
+  # declare the `release-signing` environment; the Rust build job that runs
+  # third-party build scripts never sees its secrets. Missing secrets fail the
+  # job, naming each one.
   sign-macos:
-    name: Sign and notarize macOS (${{ matrix.artifact }})
+    name: Sign macOS (${{ matrix.artifact }})
     needs: [preflight, build]
     runs-on: ubuntu-24.04
+    environment: release-signing
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        artifact: [wheels-macos-arm, wheels-macos-x86]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist
+      - name: Install signing-script dependency
+        run: python -m pip install running-process==4.10.1
+      - name: Developer ID sign every Mach-O in the wheel
+        env:
+          MACOS_SIGNING_CERT: ${{ secrets.MACOS_SIGNING_CERT }}
+          MACOS_SIGNING_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+        run: python -m ci.sign_macos_release sign --dist-dir dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+          overwrite: true
+
+  # Notarization authenticates with an Apple ID and app-specific password,
+  # which only Apple's `xcrun notarytool` accepts, so it runs on macOS
+  # (DD-218). It zips the signed Mach-O files with `ditto` (Apple refuses a
+  # bare Mach-O), runs `notarytool submit --wait` and fails unless the status
+  # is Accepted, printing `notarytool log` otherwise. It only reads the signed
+  # artifact and uploads nothing: notarization registers the signatures'
+  # code-directory hashes, so the published bytes stay the exact bytes
+  # sign-macos produced. A bare executable cannot be stapled; Gatekeeper
+  # (and macos-signature-smoke's spctl) looks the ticket up online.
+  notarize-macos:
+    name: Notarize macOS (${{ matrix.artifact }})
+    needs: [preflight, sign-macos]
+    runs-on: macos-15
     environment: release-signing
     timeout-minutes: 45
     strategy:
@@ -371,21 +451,13 @@ jobs:
           path: dist
       - name: Install signing-script dependency
         run: python -m pip install running-process==4.10.1
-      - name: Developer ID sign and notarize every Mach-O in the wheel
+      - name: Submit the signed Mach-O files to Apple's notary service
         env:
-          MACOS_SIGNING_CERT: ${{ secrets.MACOS_SIGNING_CERT }}
-          MACOS_SIGNING_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
-          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
-          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-        run: python -m ci.sign_macos_release sign --dist-dir dist
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: dist/*
-          if-no-files-found: error
-          overwrite: true
+          APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: python -m ci.sign_macos_release notarize --dist-dir dist
 
   # rcodesign's structural check runs on Linux; this is macOS's own verdict
   # (codesign --verify --strict, Developer ID authority, runtime, timestamp,
@@ -393,7 +465,7 @@ jobs:
   # PyPI and the standalone macOS release assets come from.
   macos-signature-smoke:
     name: Verify macOS signature (${{ matrix.artifact }})
-    needs: [preflight, sign-macos]
+    needs: [preflight, notarize-macos]
     runs-on: ${{ matrix.runs-on }}
     environment: release-signing
     timeout-minutes: 15
@@ -465,12 +537,12 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, sign-macos, macos-signature-smoke, candidate-acceptance-gate, verify-prior-public]
+    needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, sign-macos, notarize-macos, macos-signature-smoke, candidate-acceptance-gate, verify-prior-public]
     if: >-
-      always() && !cancelled() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
+      always() && !cancelled() && !inputs.notarize_only && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
       needs.candidate-acceptance-gate.result == 'success' && needs.verify-prior-public.result == 'success' &&
       (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success' &&
-      needs.sign-macos.result == 'success' && needs.macos-signature-smoke.result == 'success'))
+      needs.sign-macos.result == 'success' && needs.notarize-macos.result == 'success' && needs.macos-signature-smoke.result == 'success'))
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -497,12 +569,12 @@ jobs:
 
   publish-release:
     name: Publish final bytes as public prerelease
-    needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, sign-macos, macos-signature-smoke, build-static-musl, verify-static-musl-arm64]
+    needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, sign-macos, notarize-macos, macos-signature-smoke, build-static-musl, verify-static-musl-arm64]
     if: >-
-      always() && !cancelled() && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
+      always() && !cancelled() && !inputs.notarize_only && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
       needs.snapshot-public.result == 'success' &&
       (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success' &&
-      needs.sign-macos.result == 'success' && needs.macos-signature-smoke.result == 'success' &&
+      needs.sign-macos.result == 'success' && needs.notarize-macos.result == 'success' && needs.macos-signature-smoke.result == 'success' &&
       needs.build-static-musl.result == 'success' && needs.verify-static-musl-arm64.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
@@ -636,7 +708,7 @@ jobs:
     name: Attach versioned public candidate catalog
     needs: [preflight, publish-release]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.publish-release.result == 'success'
     runs-on: ubuntu-24.04
@@ -667,7 +739,7 @@ jobs:
     name: Verify anonymous final bytes and prerelease asset identity
     needs: [preflight, snapshot-public, publish-candidate-catalog]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.snapshot-public.result == 'success' &&
       needs.publish-candidate-catalog.result == 'success'
@@ -735,7 +807,7 @@ jobs:
     name: Verify public prerelease on every native host and guest
     needs: [preflight, verify-candidate-public]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.verify-candidate-public.result == 'success'
     permissions:
@@ -748,7 +820,7 @@ jobs:
 
   candidate-acceptance-gate:
     name: Require executed public candidate acceptance
-    if: always()
+    if: ${{ always() && !inputs.notarize_only }}
     needs: verify-candidate-installer
     runs-on: ubuntu-24.04
     steps:
@@ -761,7 +833,7 @@ jobs:
     name: Prove failed candidate cannot move previous stable
     needs: [preflight, candidate-acceptance-gate]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.candidate-acceptance-gate.result == 'success'
     runs-on: ubuntu-24.04
@@ -784,7 +856,7 @@ jobs:
     name: Promote the same public asset IDs to stable
     needs: [preflight, publish-pypi, verify-prior-public]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.publish-pypi.result == 'success' &&
       needs.verify-prior-public.result == 'success'
@@ -810,7 +882,7 @@ jobs:
     name: Update the Homebrew tap formula
     needs: [preflight, released-acceptance-gate]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.released-acceptance-gate.result == 'success'
     runs-on: ubuntu-24.04
@@ -865,7 +937,7 @@ jobs:
     name: Build and validate installer Pages
     needs: [preflight, promote-release]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.promote-release.result == 'success'
     runs-on: ubuntu-24.04
@@ -909,7 +981,7 @@ jobs:
     name: Deploy installer Pages
     needs: build-install-site
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.build-install-site.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
@@ -949,7 +1021,7 @@ jobs:
     name: Prove promoted release is canonical latest stable
     needs: [preflight, deploy-install-site]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.deploy-install-site.result == 'success'
     runs-on: ubuntu-24.04
@@ -972,7 +1044,7 @@ jobs:
     name: Verify promoted public bytes on all host platforms and guests
     needs: [preflight, verify-promoted-public]
     if: >-
-      always() && !cancelled() &&
+      always() && !cancelled() && !inputs.notarize_only &&
       needs.preflight.result == 'success' &&
       needs.verify-promoted-public.result == 'success'
     permissions:
@@ -985,7 +1057,7 @@ jobs:
 
   released-acceptance-gate:
     name: Require executed public released acceptance
-    if: always()
+    if: ${{ always() && !inputs.notarize_only }}
     needs: verify-published-installer
     runs-on: ubuntu-24.04
     steps:
@@ -996,7 +1068,7 @@ jobs:
 
   rollback-public:
     name: Restore previous public stable after post-promotion failure
-    if: always() && needs.publish-pypi.result == 'success' && needs.released-acceptance-gate.result != 'success'
+    if: always() && !inputs.notarize_only && needs.publish-pypi.result == 'success' && needs.released-acceptance-gate.result != 'success'
     needs: [preflight, publish-pypi, promote-release, deploy-install-site, verify-promoted-public, verify-published-installer, released-acceptance-gate]
     runs-on: ubuntu-24.04
     permissions:
