@@ -269,6 +269,12 @@ fn request_drop_keepalive_and_expiry_in_a_real_pty_session() {
         "the leader exits with the shell's code"
     );
 
+    assert_nothing_leaked(&fixture, &session);
+}
+
+/// Neither the password nor sudo's output reached the PTY; with the stub,
+/// sudo saw the expected calls and never `-K`.
+fn assert_nothing_leaked(fixture: &Fixture, session: &Session) {
     let shown = String::from_utf8_lossy(&session.output).into_owned();
     assert!(
         !shown.contains(&fixture.password),

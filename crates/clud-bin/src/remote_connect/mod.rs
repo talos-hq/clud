@@ -1,6 +1,12 @@
 //! Native client for the clud.bot operator protocol.
 pub mod connect;
 mod console;
+// The leader half runs only where `platform::remote_shell` is supported; on
+// hosts with the stub (Windows) only the client half is reachable.
+#[allow(
+    dead_code,
+    reason = "the session-leader half is unused where platform::remote_shell is a stub"
+)]
 pub(crate) mod leader;
 mod mirror;
 mod paste;

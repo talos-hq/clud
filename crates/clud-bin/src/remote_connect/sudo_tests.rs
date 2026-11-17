@@ -86,7 +86,7 @@ impl Harness {
     }
 
     /// Request, probe says a password is needed, user answers `y`.
-    fn to_password_prompt(&mut self, id: &str) {
+    fn reach_password_prompt(&mut self, id: &str) {
         assert_eq!(self.request(id).unwrap()["state"], "prompting");
         assert_eq!(self.leader_in.take(), "probe\n");
         assert_eq!(self.reply(Reply::NeedsPassword), None);
@@ -165,7 +165,7 @@ fn anything_but_yes_declines_without_asking_for_the_password() {
 #[test]
 fn a_correct_password_reaches_only_the_leader_and_activates_sudo() {
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     assert_eq!(h.type_line(PASSWORD), None);
     assert_eq!(h.leader_in.take(), format!("validate\n{PASSWORD}\n"));
     assert_eq!(h.sudo.phase, Phase::Validating(1));
@@ -200,7 +200,7 @@ fn a_correct_password_reaches_only_the_leader_and_activates_sudo() {
 #[test]
 fn three_wrong_passwords_deny_and_each_attempt_asks_again() {
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     for attempt in 1..=3u8 {
         assert_eq!(h.sudo.phase, Phase::Password(attempt));
         h.type_line(&format!("wrong-{attempt}"));
@@ -225,7 +225,7 @@ fn three_wrong_passwords_deny_and_each_attempt_asks_again() {
 #[test]
 fn an_empty_password_declines() {
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     assert_eq!(state(h.type_line("")), "denied");
     assert!(h.leader_in.text().is_empty());
 }
@@ -271,7 +271,7 @@ fn no_password_needed_and_no_rights_are_reported_without_a_prompt() {
 #[test]
 fn drop_and_expiry_end_an_active_ticket() {
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
     h.leader_in.take();
     h.reply(Reply::Active { until: 9 });
@@ -280,7 +280,7 @@ fn drop_and_expiry_end_an_active_ticket() {
     assert_eq!(state(h.reply(Reply::Dropped)), "dropped");
 
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
     h.reply(Reply::Active { until: 9 });
     assert_eq!(state(h.reply(Reply::Expired)), "expired");
@@ -291,7 +291,7 @@ fn drop_and_expiry_end_an_active_ticket() {
 #[test]
 fn dropping_while_validating_ignores_the_late_activation() {
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
     h.sudo.on_drop(&h.console);
     assert_eq!(h.reply(Reply::Active { until: 9 }), None);
@@ -302,7 +302,7 @@ fn dropping_while_validating_ignores_the_late_activation() {
 #[test]
 fn shutdown_tells_the_leader_to_drop_and_forgets_the_link() {
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
     h.reply(Reply::Active { until: 9 });
     h.leader_in.take();
@@ -322,7 +322,7 @@ fn shutdown_tells_the_leader_to_drop_and_forgets_the_link() {
 #[test]
 fn shutdown_mid_password_releases_the_prompt() {
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     h.replies.send(Reply::Dropped).unwrap();
     h.sudo.shutdown(&h.console);
     assert!(!h.sudo.wants_line());
@@ -333,7 +333,7 @@ fn shutdown_mid_password_releases_the_prompt() {
 #[test]
 fn the_shell_ending_ends_sudo() {
     let mut h = Harness::new();
-    h.to_password_prompt("r1");
+    h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
     h.reply(Reply::Active { until: 9 });
     // The leader exited: its reply stream ends.
