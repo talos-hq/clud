@@ -121,7 +121,7 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
         if let Some(event) = state.sudo.poll(&state.console) {
             send(&mut socket, event)?;
         }
-        for _ in 0..32 {
+        for _ in 0..terminal::OUTPUT_DRAIN {
             let Some(output) = state.terminal.output()? else {
                 break;
             };

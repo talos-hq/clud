@@ -315,8 +315,10 @@ fn inspect_existing(destination: &Path, probe_version: bool) -> Result<Option<St
                 && !fs_host::user_controlled_dir(&meta)
             {
                 return Err(format!(
-                    "install directory is not exclusively user-controlled: {}",
-                    path.display()
+                    "install directory is not exclusively user-controlled: {}: \
+                     another user or group can write to it; {}",
+                    path.display(),
+                    fs_host::user_controlled_dir_remedy(&path)
                 ));
             }
             if fs_host::is_reparse_point(&meta) {

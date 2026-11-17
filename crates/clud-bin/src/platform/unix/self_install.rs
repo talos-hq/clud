@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 
 use crate::self_install::catalog::{Arch, GnuEligibility};
 
+mod private_group;
+
 fn euid() -> u32 {
     // SAFETY: geteuid has no preconditions and cannot fail.
     unsafe { libc::geteuid() }
@@ -70,9 +72,21 @@ pub fn replaceable_launcher_link(path: &Path, meta: &fs::Metadata) -> bool {
             })
 }
 
-/// True when the effective user owns the directory and no one else may write it.
+/// True when the effective user owns the directory and no one else may write
+/// it. Group write is allowed only for the user's private group (umask 002 on
+/// Debian-family hosts); see [`private_group`].
 pub fn user_controlled_dir(meta: &fs::Metadata) -> bool {
-    meta.uid() == euid() && meta.mode() & 0o022 == 0
+    private_group::user_controlled(private_group::DirFacts {
+        uid: meta.uid(),
+        gid: meta.gid(),
+        mode: meta.mode(),
+    })
+}
+
+/// What to run to make a rejected directory pass [`user_controlled_dir`].
+pub fn user_controlled_dir_remedy(path: &Path) -> String {
+    let quoted = path.to_string_lossy().replace('\'', "'\\''");
+    format!("run `chmod g-w,o-w '{quoted}'` (and make sure you own it), then retry")
 }
 
 /// The device/inode pair that pins a file's identity across a consent prompt.
@@ -298,6 +312,35 @@ mod tests {
         fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o777)).unwrap();
         assert!(inspect_destination(&destination, false).is_err());
         fs::set_permissions(&target_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    /// The walk covers every ancestor under HOME: a world-writable parent of
+    /// `~/.local/bin` is rejected, and the error names the fix to run.
+    #[test]
+    fn a_world_writable_ancestor_is_rejected_with_the_chmod_to_run() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        let local = dir.path().join("local");
+        let bin = local.join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let destination = bin.join("clud");
+        assert!(inspect_destination(&destination, false).is_ok());
+        fs::set_permissions(&local, fs::Permissions::from_mode(0o777)).unwrap();
+        let error = inspect_destination(&destination, false).unwrap_err();
+        fs::set_permissions(&local, fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(error.contains("not exclusively user-controlled"), "{error}");
+        let fix = format!("chmod g-w,o-w '{}'", local.display());
+        assert!(error.contains(&fix), "{error}");
+    }
+
+    #[test]
+    fn the_remedy_quotes_the_path_for_the_shell() {
+        let remedy =
+            super::user_controlled_dir_remedy(std::path::Path::new("/home/o'neil/.local/bin"));
+        assert!(
+            remedy.contains("chmod g-w,o-w '/home/o'\\''neil/.local/bin'"),
+            "{remedy}"
+        );
     }
 
     #[test]

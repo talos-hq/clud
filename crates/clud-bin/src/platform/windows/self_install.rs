@@ -26,6 +26,11 @@ pub fn user_controlled_dir(_meta: &fs::Metadata) -> bool {
     true
 }
 
+/// Never shown: [`user_controlled_dir`] accepts every directory here.
+pub fn user_controlled_dir_remedy(_path: &std::path::Path) -> String {
+    "restrict the directory to your own account, then retry".into()
+}
+
 /// Windows fingerprints a file by length and mtime only.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FileIdentity;

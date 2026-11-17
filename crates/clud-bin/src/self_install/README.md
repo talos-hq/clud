@@ -35,7 +35,12 @@ startup-file edits and fresh-shell proof, and
 `platform/windows/self_install_activation.rs` owns the HKCU User Path edit,
 change broadcast, and OS-built user-environment proof on Windows.
 `platform/{unix,windows}/self_install.rs` hold the owner, mode, and
-reparse-point checks `transaction.rs` applies. A binary commit alone does not
+reparse-point checks `transaction.rs` applies to every install-path ancestor
+under HOME. On Unix a directory must be owned by the user and not
+world-writable; group write is accepted only for the user's private group
+(same name, no other members: the umask 002 default on Debian, Ubuntu and
+Pop!_OS, `platform/unix/self_install/private_group.rs`). A rejection names the
+`chmod g-w,o-w` to run. A binary commit alone does not
 count as installer success. Explicit `--no-modify-path` instead skips the
 activation plan entirely, preserves profiles/User Path, and reports binary
 installation with activation still required. `setup.rs` is the provider step of `clud setup`
