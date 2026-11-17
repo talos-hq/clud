@@ -46,3 +46,10 @@ The persistence contract is documented in
 [process-reaping.md](../../../../docs/architecture/process-reaping.md#explicit-command-prompt-windows-on-windows-2007).
 
 `stdio::output_is_utf8` supplies native console capability to [foreground print output](../../../../docs/architecture/prompt-output.md).
+
+`remote_shell` is `clud-remote-shell`, the remote-assistance PTY's session
+leader that shares a sudo ticket with the operator's shell, plus the client's
+private socket to it; `console_echo` hides the sudo password while it is typed.
+Both are Unix implementations with Windows stubs (sudo is not offered on
+Windows). See [Request sudo](../../../../docs/architecture/remote-assistance.md#request-sudo)
+and [DD-216](../../../../docs/DESIGN_DECISIONS.md#dd-216-remote-sudo-is-validated-by-a-clud-session-leader-inside-the-operator-pty).

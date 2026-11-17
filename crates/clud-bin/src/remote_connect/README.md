@@ -16,6 +16,12 @@ consent boundary, protocol and executable integration check.
   foreground-only nested launch selection before local credential access.
 - `terminal.rs`: consented shell PTY, binary streams, resize and cleanup through
   running-process and the existing platform boundary.
+- `sudo.rs`: "Request sudo" on the client: the `[y/N]` consent, the hidden
+  password prompt, and the closed `sudo_state` set the server may hear.
+- `leader.rs`: the portable half of `clud-remote-shell`, the PTY's session
+  leader (`platform::remote_shell`): the client <-> leader line protocol,
+  sudo output classification, the 60 s keep-alive and the 4-hour cap. See
+  [Request sudo](../../../../docs/architecture/remote-assistance.md#request-sudo).
 - `paste.rs`: drops bracketed-paste markers from operator input while the
   remote shell has not enabled the mode, so a console paste never reaches the
   shell as `^[[200~...~`.
