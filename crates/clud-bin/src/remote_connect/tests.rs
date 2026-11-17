@@ -25,3 +25,25 @@ fn the_operator_hears_once_per_run_of_dropped_input() {
     assert!(state.input_notice(Queued).is_none());
     assert!(state.input_notice(Dropped).is_some());
 }
+
+/// On Windows, `is_terminal` on a piped stdin waits behind the stdin reader
+/// thread's pending read, so the client hung before the consent question.
+/// The terminal check must run once, before `stdin_lines` starts reading.
+#[test]
+fn stdin_terminal_check_happens_before_stdin_is_read() {
+    let source = include_str!("mod.rs");
+    let body = source.split("fn run_session(").nth(1).unwrap();
+    let check = body
+        .find("answers_inline()")
+        .expect("checked in run_session");
+    let reader = body.find("stdin_lines()").expect("reader started");
+    assert!(
+        check < reader,
+        "check stdin before the reader thread starts"
+    );
+    assert_eq!(
+        source.matches("answers_inline()").count(),
+        2,
+        "definition + one call"
+    );
+}
