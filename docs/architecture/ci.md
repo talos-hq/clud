@@ -1328,39 +1328,73 @@ or an explicitly validated recovery dispatch from `main`.
 Release builds of the two `*-apple-darwin` triples are signed with the team's
 Developer ID Application certificate (hardened runtime, secure timestamp) and
 notarized by Apple, so Macs that only run notarized software accept them
-([DD-214](../DESIGN_DECISIONS.md#dd-214-macos-release-binaries-are-signed-and-notarized-on-linux-with-rcodesign)).
-`auto-release.yml`'s `sign-macos` job (one per macOS wheel, after `build`)
-runs `python -m ci.sign_macos_release sign --dist-dir dist`: a SHA-256-pinned
-rcodesign re-signs every Mach-O in the wheel (`clud`, `clud-webterm`),
-submits a zip of them to Apple's notary service and waits for `Accepted`,
-rewrites the wheel through `ci/wheel_rewrite.py`, checks the signature
-structure, and re-uploads the wheel under the **same artifact name**
-(`overwrite: true`). `wheel-smoke`, both publish jobs and
-`installer.release_assets` read that artifact, so PyPI, the standalone macOS
-assets, `SHA256SUMS`, the Pages catalog and the Homebrew formula all carry
-signed bytes. A bare Mach-O cannot be stapled; Gatekeeper looks the ticket up
-online. `macos-signature-smoke` then requires, on native macOS arm64 and
-x86_64, `codesign --verify --strict`, the Developer ID authority, the
-`runtime` flag and a timestamp, and `spctl --assess --type install` reporting
-`Notarized Developer ID` for every Mach-O, and runs `clud --version`. Both
-publish jobs `need` it, and release recovery requires both jobs' original
-proof.
+([DD-214](../DESIGN_DECISIONS.md#dd-214-macos-release-binaries-are-signed-and-notarized-on-linux-with-rcodesign),
+[DD-220](../DESIGN_DECISIONS.md#dd-220-macos-notarization-uses-notarytool-with-an-apple-id-on-a-macos-runner)).
+Three jobs in `auto-release.yml` run one leg per macOS wheel:
 
-Credentials live only in the talos-hq/clud `release-signing` environment,
-which only these two jobs declare (the Rust build job never sees them):
+1. **`sign-macos`** (`ubuntu-24.04`, after `build`) runs
+   `python -m ci.sign_macos_release sign --dist-dir dist`. A SHA-256-pinned
+   rcodesign re-signs every Mach-O in the wheel (`clud`, `clud-webterm`). The
+   job rewrites the wheel through `ci/wheel_rewrite.py`, checks the signature
+   structure, and re-uploads it under the **same artifact name**
+   (`overwrite: true`). This is the only job that writes the published macOS bytes.
+2. **`notarize-macos`** (`macos-15`, after `sign-macos`) runs
+   `python -m ci.sign_macos_release notarize --dist-dir dist`. It re-checks
+   the signature structure and `ditto`-zips the signed Mach-O files, because
+   Apple refuses a bare Mach-O. It submits them with `xcrun notarytool submit
+   --apple-id --password --team-id --wait --output-format json` and fails
+   unless the status is `Accepted`, printing `notarytool log <id>` otherwise.
+   The submission IDs go to the job summary. The job uploads nothing:
+   notarization records the signatures' code-directory hashes, so the bytes
+   signed on Linux are the bytes that ship. A bare executable cannot be
+   stapled, so nothing is stapled. Gatekeeper looks the ticket up online.
+3. **`macos-signature-smoke`** (native `macos-15` arm64 and `macos-15-intel`
+   x86_64, after `notarize-macos`) requires, for every Mach-O:
+   - `codesign --verify --strict`;
+   - the Developer ID authority, the `runtime` flag and a timestamp;
+   - `spctl --assess --type install` reporting `Notarized Developer ID`
+     (an online ticket lookup).
 
-| Secret | Value |
-| --- | --- |
-| `MACOS_SIGNING_CERT` | base64 of the Developer ID Application `.p12` (key + cert) |
-| `MACOS_SIGNING_CERT_PASSWORD` | the `.p12` password |
-| `MACOS_SIGNING_IDENTITY` | the certificate common name, `Developer ID Application: <name> (<TEAMID>)` |
-| `APPLE_API_KEY_P8` | raw contents of the App Store Connect API key `AuthKey_<ID>.p8` (Developer role) |
-| `APPLE_API_KEY_ID` | that key's Key ID |
-| `APPLE_API_ISSUER` | the App Store Connect Issuer ID |
+   It then runs `clud --version`.
 
-A missing secret fails `sign-macos` with one error naming every absent secret,
-which blocks both publish jobs; there is no unsigned fallback. Only a release
-run exercises the credentials, notarization and the native verdict.
+`wheel-smoke`, both publish jobs and `installer.release_assets` read the
+signed artifact. PyPI, the standalone macOS assets, `SHA256SUMS`, the Pages
+catalog and the Homebrew formula therefore all carry signed bytes. Both
+publish jobs `need` all three jobs, and release recovery requires each job's
+original proof.
+
+Credentials live only in the talos-hq/clud `release-signing` environment.
+Only these three jobs declare it, so the Rust build job never sees the
+credentials:
+
+| Secret | Value | Used by |
+| --- | --- | --- |
+| `MACOS_SIGNING_CERT` | base64 of the Developer ID Application `.p12` (key + cert) | sign |
+| `MACOS_SIGNING_CERT_PASSWORD` | the `.p12` password | sign |
+| `MACOS_SIGNING_IDENTITY` | the certificate common name, `Developer ID Application: <name> (<TEAMID>)` | sign, notarize, smoke |
+| `APPLE_NOTARY_USER` | the Apple ID email | notarize |
+| `APPLE_NOTARY_PASSWORD` | an app-specific password for that Apple ID (appleid.apple.com) | notarize |
+| `APPLE_TEAM_ID` | the Developer team ID; must equal `<TEAMID>` in the identity | notarize |
+
+A missing secret fails its job with one error naming every absent secret. That
+blocks both publish jobs; there is no unsigned or unnotarized fallback.
+
+**Proving the chain without a release.** Dispatch the workflow from any ref
+with `notarize_only`:
+
+```bash
+gh workflow run auto-release.yml --ref <branch> -f notarize_only=true
+```
+
+`preflight` skips its tag and published-release checks, and `full-ci-gate`
+is skipped. `release-matrix` emits only the macOS wheels
+(`ci_matrix --release --macos-only`). The run then executes `build`,
+`sign-macos`, `notarize-macos`, `macos-signature-smoke` and `wheel-smoke`,
+in its own concurrency group. Every snapshot, publish, promote, Homebrew,
+Pages and rollback job is skipped; `tests/test_sign_macos_release.py`
+checks each job's `if:`. It uses real secrets and Apple's notary service. A
+dispatch from a branch can read them only while the `release-signing`
+environment has no deployment-branch policy.
 
 ## Deduplicated checks
 

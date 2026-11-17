@@ -327,6 +327,11 @@ jobs:
   wheel-smoke:
     name: Install-smoke release wheels
     needs: [preflight, release-matrix, build, sign-macos]
+    # always(): a notarize_only proof run skips full-ci-gate, and GitHub's implicit
+    # success() fails on any skipped ancestor. build itself succeeds only past the gate.
+    if: >-
+      always() && !cancelled() && needs.preflight.result == 'success' && needs.release-matrix.result == 'success' &&
+      needs.build.result == 'success' && needs.sign-macos.result == 'success'
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.release-matrix.outputs.smoke) }}
@@ -372,7 +377,7 @@ jobs:
         shell: pwsh
         run: python -m ci.sign_windows_release smoke --dist-dir wheels --version '${{ needs.preflight.outputs.version }}'
 
-  # Developer ID signing of the macOS wheels (DD-214, DD-218). They
+  # Developer ID signing of the macOS wheels (DD-214, DD-220). They
   # cross-build on Linux, so a SHA-256-pinned rcodesign signs them on Linux too
   # (ci/sign_macos_release.py): every Mach-O gets the Developer ID Application
   # identity, the hardened runtime and a secure timestamp. The re-written wheel
@@ -386,6 +391,9 @@ jobs:
   sign-macos:
     name: Sign macOS (${{ matrix.artifact }})
     needs: [preflight, build]
+    # always(): a notarize_only proof run skips full-ci-gate, and GitHub's implicit
+    # success() fails on any skipped ancestor. build itself succeeds only past the gate.
+    if: always() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success'
     runs-on: ubuntu-24.04
     environment: release-signing
     timeout-minutes: 30
@@ -421,7 +429,7 @@ jobs:
 
   # Notarization authenticates with an Apple ID and app-specific password,
   # which only Apple's `xcrun notarytool` accepts, so it runs on macOS
-  # (DD-218). It zips the signed Mach-O files with `ditto` (Apple refuses a
+  # (DD-220). It zips the signed Mach-O files with `ditto` (Apple refuses a
   # bare Mach-O), runs `notarytool submit --wait` and fails unless the status
   # is Accepted, printing `notarytool log` otherwise. It only reads the signed
   # artifact and uploads nothing: notarization registers the signatures'
@@ -431,6 +439,7 @@ jobs:
   notarize-macos:
     name: Notarize macOS (${{ matrix.artifact }})
     needs: [preflight, sign-macos]
+    if: always() && !cancelled() && needs.preflight.result == 'success' && needs.sign-macos.result == 'success'
     runs-on: macos-15
     environment: release-signing
     timeout-minutes: 45
@@ -466,6 +475,7 @@ jobs:
   macos-signature-smoke:
     name: Verify macOS signature (${{ matrix.artifact }})
     needs: [preflight, notarize-macos]
+    if: always() && !cancelled() && needs.preflight.result == 'success' && needs.notarize-macos.result == 'success'
     runs-on: ${{ matrix.runs-on }}
     environment: release-signing
     timeout-minutes: 15

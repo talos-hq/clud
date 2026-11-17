@@ -92,7 +92,9 @@ def test_missing_secrets_fail_closed_naming_every_one() -> None:
     ):
         sign.notary_config_from_env({"MACOS_SIGNING_IDENTITY": IDENTITY})
     with pytest.raises(sign.SigningError, match="MACOS_SIGNING_IDENTITY"):
-        sign.notary_config_from_env({k: v for k, v in NOTARY.items() if k != "MACOS_SIGNING_IDENTITY"})
+        sign.notary_config_from_env(
+            {k: v for k, v in NOTARY.items() if k != "MACOS_SIGNING_IDENTITY"}
+        )
 
 
 def test_config_validates_identity_and_certificate_encoding() -> None:
@@ -244,7 +246,8 @@ def _fake_notary(status: str, code: int = 0):
         if command[2] == "submit":
             record = {"id": "sub-1", "status": status, "message": "done"}
             return code, json.dumps(record), "Conducting pre-submission checks..."
-        return 0, '{"issues": [{"message": "The signature does not include a secure timestamp."}]}', ""
+        issue = {"message": "The signature does not include a secure timestamp."}
+        return 0, json.dumps({"issues": [issue]}), ""
 
     return run, calls
 

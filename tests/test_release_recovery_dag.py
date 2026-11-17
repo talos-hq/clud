@@ -60,6 +60,8 @@ def holds(
     tag="v2.8.65",
     event="workflow_dispatch",
     labels=(),
+    resume="123",
+    notarize_only=False,
 ):
     # GitHub adds success() when no status-check function is present. That
     # includes *ancestors*, not only the direct needs which may all be green.
@@ -67,8 +69,9 @@ def holds(
         condition = "success() && (" + condition + ")"
     condition = re.sub(r"needs\.([a-z][a-z0-9-]*)\.result", lambda m: repr(states[m[1]]), condition)
     condition = condition.replace("inputs.release_tag", repr(tag)).replace(
-        "inputs.resume_run_id", repr("123")
+        "inputs.resume_run_id", repr(resume)
     )
+    condition = condition.replace("inputs.notarize_only", repr(notarize_only))
     condition = condition.replace("github.event_name", repr(event))
     condition = re.sub(
         r"contains\(github\.event\.pull_request\.labels\.\*\.name, '([^']+)'\)",
@@ -143,3 +146,62 @@ def test_publishers_honor_cancellation_even_when_all_proofs_pass(name):
     dependencies, condition = job("auto-release.yml", name)
     states = dict.fromkeys(dependencies, "success")
     assert not holds(condition, states, ancestor_skipped=True, cancelled=True), name
+
+
+# Auto Release's notarize_only proof run: every job that writes public state.
+PUBLISHERS = (
+    "snapshot-public",
+    "publish-pypi",
+    "publish-release",
+    *PUBLICATION,
+    "candidate-acceptance-gate",
+    "released-acceptance-gate",
+    "rollback-public",
+)
+
+
+@pytest.mark.parametrize("name", PUBLISHERS)
+def test_notarize_only_proof_run_never_publishes(name):
+    dependencies, condition = job("auto-release.yml", name)
+    for state in ("success", "skipped"):
+        states = dict.fromkeys(dependencies, state)
+        if "full-ci-gate" in states:
+            # Its own `if: !inputs.notarize_only` skips it in a proof run.
+            states["full-ci-gate"] = "skipped"
+        for ancestor_skipped in (True, False):
+            assert not holds(
+                condition, states, ancestor_skipped=ancestor_skipped, resume="", notarize_only=True
+            ), (name, state)
+
+
+@pytest.mark.parametrize("name", ["release-matrix", "build"])
+def test_only_a_proof_run_builds_after_a_skipped_ci_gate(name):
+    dependencies, condition = job("auto-release.yml", name)
+    states = {**dict.fromkeys(dependencies, "success"), "full-ci-gate": "skipped"}
+    assert holds(condition, states, ancestor_skipped=True, resume="", notarize_only=True)
+    assert not holds(condition, states, ancestor_skipped=True, resume="", notarize_only=False)
+    for state in ("failure", "cancelled"):
+        failed = {**states, "full-ci-gate": state}
+        assert not holds(condition, failed, ancestor_skipped=True, resume="", notarize_only=True)
+    passed = dict.fromkeys(dependencies, "success")
+    assert holds(condition, passed, ancestor_skipped=False, resume="", notarize_only=False)
+
+
+# The proof run's chain must survive the skipped full-ci-gate ancestor, yet
+# still require every direct predecessor to have succeeded.
+PROOF_CHAIN = ("wheel-smoke", "sign-macos", "notarize-macos", "macos-signature-smoke")
+
+
+@pytest.mark.parametrize("name", PROOF_CHAIN)
+def test_proof_chain_runs_past_the_skipped_gate_only_on_success(name):
+    dependencies, condition = job("auto-release.yml", name)
+    states = dict.fromkeys(dependencies, "success")
+    assert holds(condition, states, ancestor_skipped=True, resume="", notarize_only=True)
+    assert not holds(condition, states, ancestor_skipped=True, cancelled=True, resume="")
+    for dependency in dependencies:
+        for state in ("failure", "skipped", "cancelled"):
+            failed = {**states, dependency: state}
+            assert not holds(condition, failed, ancestor_skipped=True, resume=""), (
+                dependency,
+                state,
+            )
