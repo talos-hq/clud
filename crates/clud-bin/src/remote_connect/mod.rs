@@ -97,8 +97,10 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let signal = Arc::clone(&stop);
     ctrlc::set_handler(move || signal.store(true, Ordering::Relaxed))
         .map_err(|_| "cannot install remote cancellation handler")?;
+    let inline = answers_inline();
     let input = stdin_lines();
     let mut state = State::new(console::Console::stdout());
+    state.inline = inline;
     state.terminal.configure_proxy(proxy::SessionProxy::new(
         base.as_str(),
         &session.client_token,
@@ -146,6 +148,16 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     Ok(130)
 }
 
+/// Whether the answer is typed on the question's own line: the question is
+/// drawn on stdout and echoed input comes from stdin, so both must be the
+/// terminal. Call it before [`stdin_lines`] starts reading: on Windows,
+/// `is_terminal` on a piped stdin queries the pipe's name, which waits behind
+/// the reader thread's pending synchronous read, so the client hung until a
+/// line arrived and never showed the consent question.
+fn answers_inline() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
 struct State {
     console: console::Console,
     terminal: terminal::Terminal,
@@ -155,6 +167,8 @@ struct State {
     approved: Option<String>,
     /// Operator input is being dropped; the operator has been told once.
     dropping: bool,
+    /// [`answers_inline`], decided before stdin was being read.
+    inline: bool,
 }
 
 impl State {
@@ -167,6 +181,7 @@ impl State {
             pending: None,
             approved: None,
             dropping: false,
+            inline: false,
         }
     }
 
@@ -199,7 +214,7 @@ impl State {
         };
         if let Some(id) = self.pending.take() {
             let allow = crate::yes_no::answer(&line, crate::yes_no::Default::No);
-            self.console.answered(std::io::stdin().is_terminal());
+            self.console.answered(self.inline);
             if !allow {
                 self.console.line("Remote control declined.");
             }
@@ -243,8 +258,7 @@ impl State {
                     "Allow Remote Control by Zach Vorhies?",
                     crate::yes_no::Default::No,
                 );
-                // Typed answers share the question's line; piped ones need a line.
-                if std::io::stdin().is_terminal() {
+                if self.inline {
                     self.console.prompt(question);
                 } else {
                     self.console.line(question.trim_end());
