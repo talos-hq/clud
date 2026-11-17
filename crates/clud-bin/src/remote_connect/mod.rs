@@ -146,6 +146,14 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     Ok(130)
 }
 
+/// Whether the answer is typed on the question's own line: the question is
+/// drawn on stdout and echoed input comes from stdin, so both must be the
+/// terminal. A captured stdout needs whole lines even when stdin is a console
+/// (a Windows child can report a console stdin while its output is piped).
+fn answers_inline() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
 struct State {
     console: console::Console,
     terminal: terminal::Terminal,
@@ -199,7 +207,7 @@ impl State {
         };
         if let Some(id) = self.pending.take() {
             let allow = crate::yes_no::answer(&line, crate::yes_no::Default::No);
-            self.console.answered(std::io::stdin().is_terminal());
+            self.console.answered(answers_inline());
             if !allow {
                 self.console.line("Remote control declined.");
             }
@@ -243,8 +251,7 @@ impl State {
                     "Allow Remote Control by Zach Vorhies?",
                     crate::yes_no::Default::No,
                 );
-                // Typed answers share the question's line; piped ones need a line.
-                if std::io::stdin().is_terminal() {
+                if answers_inline() {
                     self.console.prompt(question);
                 } else {
                     self.console.line(question.trim_end());
