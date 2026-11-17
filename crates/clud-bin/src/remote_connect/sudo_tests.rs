@@ -343,3 +343,26 @@ fn the_shell_ending_ends_sudo() {
     assert_eq!(state(h.sudo.poll(&h.console)), "dropped");
     assert!(h.sudo.link.is_none());
 }
+
+/// A resumed session re-reports where sudo stands, never the password, and
+/// nothing once it is idle (the server's stale view is corrected by `dropped`).
+#[test]
+fn the_report_for_a_resumed_session_follows_the_phase() {
+    let mut h = Harness::new();
+    assert_eq!(h.sudo.report(), None);
+    h.reach_password_prompt("r1");
+    assert_eq!(
+        h.sudo.report(),
+        Some(json!({"type":"sudo_state", "request_id":"r1", "state":"prompting"}))
+    );
+    h.type_line(PASSWORD);
+    assert_eq!(state(h.sudo.report()), "prompting");
+    h.reply(Reply::Active { until: 77 });
+    assert_eq!(
+        h.sudo.report(),
+        Some(json!({"type":"sudo_state", "request_id":"r1", "state":"active", "until":77}))
+    );
+    assert!(!h.sudo.report().unwrap().to_string().contains(PASSWORD));
+    h.sudo.on_drop(&h.console);
+    assert_eq!(h.sudo.report(), None, "a drop in flight reports nothing");
+}

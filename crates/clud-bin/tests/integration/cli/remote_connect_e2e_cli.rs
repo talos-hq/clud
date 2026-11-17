@@ -79,7 +79,8 @@ struct Client {
 }
 
 impl Client {
-    fn start(origin: &str) -> Self {
+    /// With `env` (added to this process's environment) set for the client.
+    fn start_with(origin: &str, env: Option<(&str, &str)>) -> Self {
         let cwd = tempfile::tempdir().unwrap();
         let process = Arc::new(NativeProcess::new(ProcessConfig {
             command: CommandSpec::Argv(vec![
@@ -91,7 +92,12 @@ impl Client {
                 origin.into(),
             ]),
             cwd: Some(cwd.path().to_path_buf()),
-            env: None,
+            env: env.map(|(key, value)| {
+                let mut vars: Vec<(String, String)> =
+                    std::env::vars().filter(|(name, _)| name != key).collect();
+                vars.push((key.into(), value.into()));
+                vars
+            }),
             capture: true,
             stderr_mode: StderrMode::Stdout,
             creationflags: None,
@@ -169,19 +175,32 @@ struct Operator {
 }
 
 impl Operator {
-    fn accept(listener: &TcpListener) -> Self {
+    /// Accept the client's socket and return the request path and query it used.
+    fn accept_path(listener: &TcpListener) -> (Self, String) {
         let stream = accept_before_deadline(listener);
         stream.set_read_timeout(Some(WAIT)).unwrap();
-        let socket = tungstenite::accept(stream).unwrap();
+        let mut path = String::new();
+        let socket = tungstenite::accept_hdr(
+            stream,
+            |request: &tungstenite::handshake::server::Request,
+             response: tungstenite::handshake::server::Response| {
+                path = request.uri().to_string();
+                Ok(response)
+            },
+        )
+        .unwrap();
         socket
             .get_ref()
             .set_read_timeout(Some(Duration::from_millis(50)))
             .unwrap();
-        Self {
-            socket,
-            events: Vec::new(),
-            shell_output: Vec::new(),
-        }
+        (
+            Self {
+                socket,
+                events: Vec::new(),
+                shell_output: Vec::new(),
+            },
+            path,
+        )
     }
 
     fn send(&mut self, event: Value) {
@@ -251,18 +270,35 @@ impl Operator {
 }
 
 fn accepted_session() -> (Client, Operator, Value) {
+    let (client, operator, created, _) =
+        session_with(json!({"type":"hello", "state":"pending"}), None);
+    (client, operator, created)
+}
+
+/// A session whose server supports resume; the listener takes the reconnects.
+fn resumable_session(env: Option<(&str, &str)>) -> (Client, Operator, TcpListener) {
+    let hello = json!({"type":"hello", "state":"pending", "resume":{"control":"none"}});
+    let (client, operator, _, listener) = session_with(hello, env);
+    (client, operator, listener)
+}
+
+fn session_with(hello: Value, env: Option<(&str, &str)>) -> (Client, Operator, Value, TcpListener) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
-    let client = Client::start(&origin);
+    let client = Client::start_with(&origin, env);
     let created = serve_session_creation(&listener);
-    let mut operator = Operator::accept(&listener);
+    let (mut operator, path) = Operator::accept_path(&listener);
+    assert!(
+        path.ends_with("&resume=1"),
+        "client declares resume: {path}"
+    );
     client.wait_for(KEYWORD);
-    operator.send(json!({"type":"hello", "state":"pending"}));
+    operator.send(hello);
     let caps = operator.wait_event("caps");
-    assert_eq!(caps["caps"], json!(["pty"]));
+    assert_eq!(caps["caps"], json!(["pty", "resume"]));
     operator.send(json!({"type":"state", "state":"accepted"}));
     client.wait_for("Operator accepted the connection.");
-    (client, operator, created)
+    (client, operator, created, listener)
 }
 
 /// What the tests need from a running client, piped or on a terminal.
@@ -545,10 +581,10 @@ fn sudo_from_a_terminal_client_is_offered_consented_and_dropped() {
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let client = TtyClient::start(&origin);
     serve_session_creation(&listener);
-    let mut operator = Operator::accept(&listener);
+    let (mut operator, _) = Operator::accept_path(&listener);
     client.wait_for(KEYWORD);
     operator.send(json!({"type":"hello", "state":"pending"}));
-    assert_eq!(operator.wait_event("caps")["caps"], json!(["pty", "sudo"]));
+    assert_eq!(operator.wait_event("caps")["caps"], json!(["pty", "resume", "sudo"]));
     operator.send(json!({"type":"state", "state":"accepted"}));
     client.wait_for("Operator accepted the connection.");
     open_shell(&client, &mut operator);
@@ -592,4 +628,230 @@ fn sudo_from_a_terminal_client_is_offered_consented_and_dropped() {
     operator.send(json!({"type":"disconnect"}));
     client.wait_for("clud.bot has ended a connection");
     assert_eq!(client.wait_exit(), Some(0));
+
+const LOST: &str = "Connection to clud.bot lost; reconnecting";
+
+/// The connection dies without a close frame (a crashed server, a dead link).
+fn drop_connection(operator: Operator) {
+    drop(operator);
+}
+
+/// Accept the client's reconnect and answer it with the server's record.
+fn resume_with(listener: &TcpListener, record: Value) -> Operator {
+    let (mut operator, path) = Operator::accept_path(listener);
+    assert!(path.contains(&format!("token={TOKEN}")), "{path}");
+    assert!(path.ends_with("&resume=1"), "{path}");
+    operator.send(json!({"type":"hello", "state":"connected", "resume":record}));
+    operator.wait_event("caps");
+    operator
+}
+
+/// Set a variable in the shell, then print it so the output differs from the command.
+fn remember_and_recall() -> (&'static str, &'static str, &'static str) {
+    if clud::platform::host::WINDOWS {
+        ("set MARK=ESUMED_SHELL", "echo R%MARK%", "RESUMED_SHELL")
+    } else {
+        (
+            "MARK=ESUMED_SHELL",
+            "printf 'R%s\\n' \"$MARK\"",
+            "RESUMED_SHELL",
+        )
+    }
+}
+
+/// Output the shell writes a moment later, while the link is down.
+fn print_later() -> (&'static str, &'static str) {
+    if clud::platform::host::WINDOWS {
+        (
+            "ping -n 4 127.0.0.1 >nul & echo LATE_^OUTPUT",
+            "LATE_OUTPUT",
+        )
+    } else {
+        ("sleep 2; printf 'LATE_%s\\n' OUTPUT", "LATE_OUTPUT")
+    }
+}
+
+#[test]
+fn a_lost_connection_resumes_the_same_shell_with_output_from_the_outage() {
+    let (client, mut operator, listener) = resumable_session(None);
+    open_shell(&client, &mut operator);
+    let (remember, recall, recalled) = remember_and_recall();
+    operator.type_into_shell(remember);
+    let (later, late) = print_later();
+    operator.type_into_shell(later);
+    drop_connection(operator);
+    client.wait_for(LOST);
+    // Let the shell write while nobody is connected.
+    std::thread::sleep(Duration::from_secs(4));
+    let mut operator = resume_with(
+        &listener,
+        json!({"control":"granted", "grant_id":"grant", "control_request":null}),
+    );
+    let report = operator.wait_event("resume");
+    assert_eq!(report["pty"]["pty_id"], "shell", "{report}");
+    client.wait_for("Reconnected.");
+    operator.wait_shell_output(late);
+    operator.type_into_shell(recall);
+    operator.wait_shell_output(recalled);
+    assert_eq!(client.text().matches(LOST).count(), 1, "{}", client.text());
+    operator.send(json!({"type":"disconnect"}));
+    client.wait_for("clud.bot has ended a connection");
+    assert_eq!(client.wait_exit(), 0);
+}
+
+#[test]
+fn control_revoked_while_away_is_not_regained_on_resume() {
+    let (client, mut operator, listener) = resumable_session(None);
+    open_shell(&client, &mut operator);
+    drop_connection(operator);
+    client.wait_for(LOST);
+    let mut operator = resume_with(&listener, json!({"control":"none", "grant_id":null}));
+    let report = operator.wait_event("resume");
+    assert!(
+        report["pty"].is_null(),
+        "no terminal without the grant: {report}"
+    );
+    client.wait_for("Remote control ended while the connection was down.");
+    operator.send(json!({"type":"pty_open", "pty_id":"again", "rows":24, "cols":80}));
+    operator
+        .socket
+        .send(Message::Binary(vec![1, b'x', b'\n'].into()))
+        .unwrap();
+    operator.settle();
+    assert!(!operator.events.iter().any(|e| e["type"] == "pty_opened"));
+    assert!(operator.shell_output.is_empty());
+    operator.send(json!({"type":"disconnect"}));
+    assert_eq!(client.wait_exit(), 0);
+}
+
+#[test]
+fn a_grant_the_client_does_not_hold_is_released_not_used() {
+    let (client, operator, listener) = resumable_session(None);
+    drop_connection(operator);
+    client.wait_for(LOST);
+    let mut operator = resume_with(&listener, json!({"control":"granted", "grant_id":"forged"}));
+    operator.wait_event("control_release");
+    assert!(operator.wait_event("resume")["pty"].is_null());
+    operator.send(json!({"type":"pty_open", "pty_id":"forged", "rows":24, "cols":80}));
+    operator.settle();
+    assert!(!operator.events.iter().any(|e| e["type"] == "pty_opened"));
+    operator.send(json!({"type":"disconnect"}));
+    assert_eq!(client.wait_exit(), 0);
+}
+
+#[test]
+fn a_question_pending_across_a_resume_is_asked_once_and_an_offline_answer_is_sent() {
+    let (client, mut operator, listener) = resumable_session(None);
+    operator.send(json!({"type":"control_request", "request_id":"q1"}));
+    client.wait_for("Allow Remote Control");
+    drop_connection(operator);
+    client.wait_for(LOST);
+    // The user answers while the connection is down.
+    client.answer("y");
+    std::thread::sleep(Duration::from_millis(300));
+    let mut operator = resume_with(
+        &listener,
+        json!({"control":"requested", "control_request":"q1", "grant_id":null}),
+    );
+    let response = operator.wait_event("control_response");
+    assert_eq!(
+        (response["request_id"].as_str(), response["allow"].as_bool()),
+        (Some("q1"), Some(true))
+    );
+    operator.send(json!({"type":"control_granted", "request_id":"q1"}));
+    client.wait_for("Remote control granted");
+    assert_eq!(
+        client.text().matches("Allow Remote Control").count(),
+        1,
+        "{}",
+        client.text()
+    );
+    operator.send(json!({"type":"disconnect"}));
+    assert_eq!(client.wait_exit(), 0);
+}
+
+#[test]
+fn an_unanswered_question_survives_a_resume_without_a_second_prompt() {
+    let (client, mut operator, listener) = resumable_session(None);
+    operator.send(json!({"type":"control_request", "request_id":"q2"}));
+    client.wait_for("Allow Remote Control");
+    drop_connection(operator);
+    client.wait_for(LOST);
+    let mut operator = resume_with(
+        &listener,
+        json!({"control":"requested", "control_request":"q2"}),
+    );
+    operator.wait_event("resume");
+    client.wait_for("Reconnected.");
+    client.answer("n");
+    let response = operator.wait_event("control_response");
+    assert_eq!(response["allow"], false);
+    assert_eq!(client.text().matches("Allow Remote Control").count(), 1);
+    operator.send(json!({"type":"disconnect"}));
+    assert_eq!(client.wait_exit(), 0);
+}
+
+#[test]
+fn a_restart_notice_reconnects_and_two_outages_in_a_row_resume() {
+    let (client, mut operator, listener) = resumable_session(None);
+    open_shell(&client, &mut operator);
+    operator.send(json!({"type":"server_restart", "retry_after_ms":1000}));
+    let _ = operator.socket.close(None);
+    let _ = operator.socket.flush();
+    client.wait_for(LOST);
+    let granted = json!({"control":"granted", "grant_id":"grant"});
+    let operator = resume_with(&listener, granted.clone());
+    client.wait_for("Reconnected.");
+    // A second restart right after the first.
+    drop_connection(operator);
+    let mut operator = resume_with(&listener, granted);
+    assert_eq!(operator.wait_event("resume")["pty"]["pty_id"], "shell");
+    let (command, marker) = print_marker();
+    operator.type_into_shell(command);
+    operator.wait_shell_output(marker);
+    assert_eq!(
+        client.text().matches("Reconnected.").count(),
+        2,
+        "{}",
+        client.text()
+    );
+    operator.send(json!({"type":"disconnect"}));
+    assert_eq!(client.wait_exit(), 0);
+}
+
+#[test]
+fn a_newer_connection_with_the_same_token_ends_this_one() {
+    let (client, mut operator, _listener) = resumable_session(None);
+    operator
+        .socket
+        .close(Some(tungstenite::protocol::CloseFrame {
+            code: tungstenite::protocol::frame::coding::CloseCode::from(4409),
+            reason: "".into(),
+        }))
+        .unwrap();
+    let _ = operator.socket.flush();
+    client.wait_for("This session was resumed from another connection.");
+    assert_ne!(client.wait_exit(), 0);
+    assert!(!client.text().contains(LOST));
+}
+
+#[test]
+fn the_client_gives_up_after_its_window_with_a_failure_code() {
+    let (client, operator, listener) =
+        resumable_session(Some(("CLUD_REMOTE_RESUME_WINDOW_SECS", "3")));
+    drop(listener);
+    drop_connection(operator);
+    client.wait_for(LOST);
+    let code = client.wait_exit();
+    assert_eq!(code, 1, "{}", client.text());
+    client.wait_for("could not reconnect to clud.bot in time");
+}
+
+#[test]
+fn a_server_without_resume_ends_the_client_as_before() {
+    let (client, operator, _) = accepted_session();
+    drop_connection(operator);
+    assert_eq!(client.wait_exit(), 1);
+    client.wait_for("remote connection lost");
+    assert!(!client.text().contains(LOST), "{}", client.text());
 }

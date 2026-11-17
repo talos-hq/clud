@@ -15,7 +15,7 @@ use tungstenite::Message;
 use crate::selector::{self, Key, Note, Row, Selector, Step, View};
 use crate::subprocess::ManagedSubprocess;
 
-use super::{proxy, transport};
+use super::{proxy, resume, transport};
 
 const MODEL_RESERVED: &str = "clud connect: --model is reserved for future use and is disabled; \
                               the server chooses the proxied model";
@@ -189,6 +189,13 @@ struct ProxySession {
     proxy: proxy::SessionProxy,
     config: tempfile::TempDir,
     agent: Option<ManagedSubprocess>,
+    base: url::Url,
+    session: transport::Session,
+    /// The server keeps this session through a lost socket (`hello.resume`).
+    resumes: bool,
+    /// Set while the socket is lost and being re-established.
+    reconnect: Option<resume::Reconnector>,
+    heard: Instant,
 }
 
 impl ProxySession {
@@ -222,13 +229,29 @@ impl ProxySession {
 
     /// One bounded socket read. `Some` is the exit code of a session that is over.
     fn pump(&mut self) -> Result<Option<i32>, String> {
-        match self.socket.read() {
+        if self.heard.elapsed() >= resume::HEARTBEAT_TIMEOUT {
+            return Err(super::CONNECTION_LOST.into());
+        }
+        let message = self.socket.read();
+        if message.is_ok() {
+            self.heard = Instant::now();
+        }
+        match message {
             Ok(Message::Text(text)) => {
                 let event: Value =
                     serde_json::from_str(&text).map_err(|_| "invalid remote event")?;
+                if event["type"] == "hello" {
+                    self.resumes = event["resume"].is_object();
+                }
+                if event["type"] == "server_restart" {
+                    return Err(super::CONNECTION_LOST.into());
+                }
                 self.handle(&event)
             }
-            Ok(Message::Close(_)) => Err("remote connection closed".into()),
+            Ok(Message::Close(frame)) => match resume::close_meaning(frame.as_ref()) {
+                resume::Close::Lost => Err(super::CONNECTION_LOST.into()),
+                resume::Close::Final(message) => Err(message.into()),
+            },
             Err(tungstenite::Error::Io(error))
                 if matches!(
                     error.kind(),
@@ -237,10 +260,65 @@ impl ProxySession {
             {
                 Ok(None)
             }
-            Err(_) => Err("remote connection lost".into()),
+            Err(_) => Err(super::CONNECTION_LOST.into()),
             _ => Ok(None),
         }
     }
+
+    /// The socket is gone. A resumable session reconnects in the background
+    /// (the agent keeps working through the HTTPS proxy meanwhile); otherwise
+    /// the old contract: wait for the agent, or end.
+    fn lost(&mut self, error: String) -> Result<Option<i32>, String> {
+        if !self.resumes || error != super::CONNECTION_LOST {
+            return finish_without_socket(self, error).map(Some);
+        }
+        if self.agent.is_none() {
+            println!("{}", resume::LOST_NOTICE);
+        }
+        self.reconnect = Some(resume::Reconnector::new(&self.base, &self.session, false));
+        Ok(None)
+    }
+
+    /// One step of reconnecting; `Some` is the exit code of a session that is over.
+    fn reconnecting(&mut self) -> Result<Option<i32>, String> {
+        let Some(reconnector) = self.reconnect.as_mut() else {
+            return Ok(None);
+        };
+        match reconnector.poll() {
+            resume::Poll::Waiting => {
+                std::thread::sleep(Duration::from_millis(20));
+                Ok(None)
+            }
+            resume::Poll::Connected(socket) => {
+                self.reconnect = None;
+                self.socket = *socket;
+                self.heard = Instant::now();
+                if self.agent.is_none() {
+                    println!("{}", resume::RESUMED_NOTICE);
+                }
+                match self.send(proxy_caps()) {
+                    Ok(()) => Ok(None),
+                    Err(error) => self.lost(error),
+                }
+            }
+            resume::Poll::Ended(message) => {
+                self.reconnect = None;
+                if self.agent.is_none() {
+                    println!("{message}");
+                    return Ok(Some(0));
+                }
+                finish_without_socket(self, message.into()).map(Some)
+            }
+            resume::Poll::GaveUp => {
+                self.reconnect = None;
+                finish_without_socket(self, resume::GAVE_UP.into()).map(Some)
+            }
+        }
+    }
+}
+
+fn proxy_caps() -> Value {
+    json!({"type":"caps", "caps":["proxy", "resume"], "client":concat!("clud/", env!("CARGO_PKG_VERSION"))})
 }
 
 /// The agent is the user's own work: a lost server only refuses its requests.
@@ -290,8 +368,13 @@ fn run_proxy_session(host: &str) -> Result<i32, String> {
         proxy,
         config,
         agent: None,
+        base,
+        session,
+        resumes: false,
+        reconnect: None,
+        heard: Instant::now(),
     };
-    state.send(json!({"type":"caps", "caps":["proxy"], "client":concat!("clud/", env!("CARGO_PKG_VERSION"))}))?;
+    state.send(proxy_caps())?;
     drive(&mut state, &stop)
 }
 
@@ -312,16 +395,27 @@ fn drive(state: &mut ProxySession, stop: &AtomicBool) -> Result<i32, String> {
             }
             None => {}
         }
-        if heartbeat.elapsed() >= Duration::from_secs(20) {
+        if state.reconnect.is_some() {
+            if let Some(code) = state.reconnecting()? {
+                return Ok(code);
+            }
+            continue;
+        }
+        if heartbeat.elapsed() >= resume::HEARTBEAT {
             heartbeat = Instant::now();
             if let Err(error) = state.send(json!({"type":"ping"})) {
-                return finish_without_socket(state, error);
+                if let Some(code) = state.lost(error)? {
+                    return Ok(code);
+                }
+                continue;
             }
         }
-        match state.pump() {
-            Ok(Some(code)) => return Ok(code),
-            Ok(None) => {}
-            Err(error) => return finish_without_socket(state, error),
+        let step = match state.pump() {
+            Err(error) => state.lost(error)?,
+            outcome => outcome?,
+        };
+        if let Some(code) = step {
+            return Ok(code);
         }
     }
 }
