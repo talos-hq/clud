@@ -44,6 +44,8 @@ NUL, and retain multiline bytes exactly. Empty input cannot be submitted.
 
 `clud-askpass` implements the separate askpass protocol: configure it as
 `GIT_ASKPASS`, `SSH_ASKPASS`, or `SUDO_ASKPASS` for the intended operation.
+Agents use `clud sudo` for sudo instead, because sudo-rs rejects `-A`; see
+[secret-catalog.md](secret-catalog.md#sudo).
 It returns the value through stdout to the requesting tool, as required by
 that protocol. It refuses direct agent/tool callers and accepts git/ssh/sudo
 ancestors through a bounded shell-wrapper chain. This is an accidental-exposure

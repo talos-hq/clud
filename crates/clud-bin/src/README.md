@@ -32,6 +32,9 @@ Credential prompt ownership (`secret_prompt.rs`, `secret_prompt/gui.rs`, and
 
 `secrets_catalog.rs` wires lokr into `--allow-secrets` launches; see
 [secret-catalog.md](../../../docs/architecture/secret-catalog.md).
+`clud sudo` (`secret_prompt/sudo.rs`) and its hook rule
+(`block_bad_cmd_sudo.rs`, rule id `sudo-prompt`) are the agent sudo path; see
+[secret-catalog.md](../../../docs/architecture/secret-catalog.md#sudo).
 `managed_lokr.rs` owns the pinned prompt/catalog executable's private
 installation, integrity checks and resolution; see the credential prompt topic.
 

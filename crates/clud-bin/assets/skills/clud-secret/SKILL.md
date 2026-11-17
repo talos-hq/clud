@@ -1,10 +1,42 @@
 ---
 name: clud-secret
-description: Acquire a password, token or SSH private key for an authorized operation using lokr's masked prompt and catalog and direct secret sinks. Use when a task needs credentials; never request or display their values in chat.
+description: The blessed way to get any password, including sudo/root/administrator passwords, tokens and SSH private keys, through lokr's masked prompt. Use whenever a command needs sudo or root (for example after "a terminal is required", "a password is required" or "interactive authentication is required") or a task needs credentials, and run `clud sudo -- <command>` and never request or display a password in chat.
 triggers:
+  - When a command needs sudo, root or administrator privileges, or fails with "a terminal is required" or "a password is required"
   - When an authorized operation requires acquiring a password, token or SSH private key
 ---
 <!-- managed-by: clud -->
+
+## sudo: always `clud sudo`
+
+When a command needs root, run it through `clud sudo` in a single call:
+
+```bash
+clud sudo -- apt-get install -y foo
+clud sudo --reason 'Install the foo build dependency' -- apt-get install -y foo
+clud sudo -- -u postgres psql -c 'select 1'
+```
+
+`clud sudo` first runs `sudo -n -v`. If sudo needs no password, the command
+runs straight away with no prompt. Otherwise clud opens lokr's masked desktop
+prompt (lokr's masked TTY prompt where a controlling terminal exists). It passes the
+password only to sudo's stdin (`sudo -S -v`), then runs
+`sudo -n <command>` and streams the command's output. The password is never in
+argv, the environment, output or the transcript. It allows three password
+attempts. Exit 3 means the user cancelled and nothing ran.
+
+- Use one `clud sudo` per privileged command. A sudo ticket does not carry
+  from one shell tool call to the next, so `sudo -v` followed by `sudo cmd`
+  in a later call still fails.
+- Plain `sudo cmd`, `sudo -S`, `sudo -A`/`SUDO_ASKPASS` and `sudo -v` are
+  refused by clud's hook (`sudo-prompt`), and the refusal names the exact
+  `clud sudo` command. `sudo -n ...`, `sudo -k` and `sudo -K` are allowed.
+- Never ask the user to paste a password in chat, and never tell them to run
+  the command themselves. If no prompt can open (no desktop and no terminal),
+  report that limitation.
+- Check the plan first with `clud sudo --dry-run -- <command>`.
+
+## Other credentials: `clud secret`
 
 If the `mcp__lokr__*` tools are present (`clud --allow-secrets`), call
 `mcp__lokr__secret_status` first: the credential may already exist. It reports
@@ -43,8 +75,9 @@ request uses lokr, which can use a masked controlling TTY with context and warni
 If neither desktop nor TTY is available, report that limitation; do not ask for
 the value in chat. One invocation opens at most one prompt.
 
-`clud-askpass` implements GIT_ASKPASS, SSH_ASKPASS and SUDO_ASKPASS. Configure
-those variables only for the intended git/ssh/sudo operation. Do not invoke
+`clud-askpass` implements GIT_ASKPASS and SSH_ASKPASS. Configure those
+variables only for the intended git/ssh operation. For sudo use `clud sudo`:
+sudo-rs rejects `-A`, so the SUDO_ASKPASS route is not portable. Do not invoke
 the alias directly: its stdout is the authentication protocol for the calling
 tool, and it refuses ordinary agent/tool callers.
 
