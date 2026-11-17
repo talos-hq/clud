@@ -7,6 +7,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc, Arc,
 };
+use std::time::Duration;
 use tungstenite::Message;
 
 const FRAME_BYTES: usize = 16 * 1024;
@@ -111,6 +112,75 @@ fn without_startup_query(chunk: &[u8]) -> Option<Vec<u8>> {
     Some(rest)
 }
 
+/// Frames the session loop may forward per pass: the whole output queue, so a
+/// pass empties it rather than letting the socket's read timeout pace output.
+pub(super) const OUTPUT_DRAIN: usize = OUTPUT_FRAMES;
+/// How often a pump held back by a full output queue rechecks it.
+const BACKPRESSURE_RECHECK: Duration = Duration::from_millis(2);
+
+/// Coalesce output already waiting into `bytes`, up to one frame. A burst of
+/// small writes (a progress bar) otherwise costs a frame per write.
+fn gather(process: &NativePtyProcess, bytes: &mut Vec<u8>) {
+    while bytes.len() < FRAME_BYTES {
+        match process.read_chunk_impl(Some(0.0)) {
+            Ok(Some(more)) => bytes.extend_from_slice(&more),
+            _ => break,
+        }
+    }
+}
+
+/// Queue `message` for the socket, waiting while the queue is full. The wait
+/// holds the PTY reader's lock, so running-process's reader stops draining the
+/// PTY: the kernel buffer fills and the shell's writes block. A burst is slowed
+/// to the socket's pace instead of ending the session, and memory stays at the
+/// queue plus one read. `false` once the terminal is stopped: the receiver is
+/// gone, or `close_impl` has taken the handles and needs this lock to finish.
+fn deliver(process: &NativePtyProcess, tx: &mpsc::SyncSender<Message>, message: Message) -> bool {
+    let mut message = match tx.try_send(message) {
+        Ok(()) => return true,
+        Err(mpsc::TrySendError::Disconnected(_)) => return false,
+        Err(mpsc::TrySendError::Full(message)) => message,
+    };
+    let _reader = process.reader.state.lock();
+    loop {
+        let closing = process
+            .handles
+            .lock()
+            .ok()
+            .is_none_or(|handles| handles.is_none());
+        if closing {
+            return false;
+        }
+        std::thread::sleep(BACKPRESSURE_RECHECK);
+        message = match tx.try_send(message) {
+            Ok(()) => return true,
+            Err(mpsc::TrySendError::Disconnected(_)) => return false,
+            Err(mpsc::TrySendError::Full(message)) => message,
+        };
+    }
+}
+
+fn exit_event(id: &str, code: Option<i32>) -> Message {
+    let event = json!({"type":"pty_exit", "pty_id":id, "code":code, "signal":null});
+    Message::Text(event.to_string().into())
+}
+
+/// Forward one read; `false` once the terminal is stopped.
+fn forward(
+    process: &NativePtyProcess,
+    tx: &mpsc::SyncSender<Message>,
+    paste: &mut OutputTracker,
+    mut bytes: Vec<u8>,
+) -> bool {
+    gather(process, &mut bytes);
+    paste.observe(&bytes);
+    bytes.chunks(FRAME_BYTES).all(|chunk| {
+        let mut frame = vec![0];
+        frame.extend_from_slice(chunk);
+        deliver(process, tx, Message::Binary(frame.into()))
+    })
+}
+
 fn output_pump(
     process: Arc<NativePtyProcess>,
     tx: mpsc::SyncSender<Message>,
@@ -119,20 +189,7 @@ fn output_pump(
     mut paste: OutputTracker,
 ) {
     let mut awaiting_startup_query = crate::platform::host::WINDOWS;
-    loop {
-        // running-process owns the reader. Fail closed if its queue grows ahead
-        // of this bounded pump, rather than retaining an unlimited noisy shell.
-        let overflow = process
-            .reader
-            .state
-            .lock()
-            .expect("PTY reader lock")
-            .chunks
-            .len()
-            > 64;
-        if overflow {
-            break;
-        }
+    let failure = loop {
         match process.read_chunk_impl(Some(0.1)) {
             Ok(Some(mut bytes)) => {
                 if std::mem::take(&mut awaiting_startup_query) {
@@ -141,15 +198,8 @@ fn output_pump(
                         let _ = process.write_impl(CONPTY_STARTUP_REPLY, false);
                     }
                 }
-                paste.observe(&bytes);
-                for chunk in bytes.chunks(FRAME_BYTES) {
-                    let mut frame = vec![0];
-                    frame.extend_from_slice(chunk);
-                    if tx.try_send(Message::Binary(frame.into())).is_err() {
-                        failed.store(true, Ordering::Relaxed);
-                        stop_process(&process);
-                        return;
-                    }
+                if !forward(&process, &tx, &mut paste, bytes) {
+                    break false;
                 }
             }
             // ConPTY keeps its output open after the child exits, so a reader
@@ -158,26 +208,27 @@ fn output_pump(
                 let exited =
                     running_process::pty::poll_pty_process(&process.handles, &process.returncode);
                 if let Ok(Some(code)) = exited {
-                    let event = json!({"type":"pty_exit", "pty_id":id, "code":code, "signal":null});
-                    if tx.try_send(Message::Text(event.to_string().into())).is_ok() {
+                    if deliver(&process, &tx, exit_event(&id, Some(code))) {
                         return;
                     }
-                    break;
+                    break false;
                 }
             }
             Err(_) if process.wait_for_reader_closed_impl(Some(0.0)) => {
                 // Closed-stream is EOF, not a failed session. Preserve shell status.
                 let code = process.wait_impl(Some(2.0)).ok();
-                let event = json!({"type":"pty_exit", "pty_id":id, "code":code, "signal":null});
-                if tx.try_send(Message::Text(event.to_string().into())).is_ok() {
+                if deliver(&process, &tx, exit_event(&id, code)) {
                     return;
                 }
-                break;
+                break false;
             }
-            Err(_) => break,
+            Err(_) => break true,
         }
+    };
+    // A refused delivery means the terminal was stopped, not that the pump failed.
+    if failure {
+        failed.store(true, Ordering::Relaxed);
     }
-    failed.store(true, Ordering::Relaxed);
     stop_process(&process);
 }
 
@@ -343,7 +394,7 @@ impl Terminal {
             return Ok(None);
         }
         if self.failed.load(Ordering::Relaxed) {
-            return Err("remote terminal pump failed or exceeded its output buffer".into());
+            return Err("remote terminal pump failed".into());
         }
         let message = self.output.as_ref().and_then(|rx| rx.try_recv().ok());
         if matches!(message, Some(Message::Text(_))) {
@@ -478,6 +529,123 @@ mod tests {
             !output.contains("033"),
             "paste markers reached the program: {output}"
         );
+    }
+
+    fn proxied_terminal(id: &str, config: &tempfile::TempDir) -> Terminal {
+        let proxy = super::super::proxy::SessionProxy::new(
+            "http://127.0.0.1:1234",
+            "ct_flood_fixture_123456789012345",
+            "m",
+        )
+        .unwrap();
+        let mut terminal = Terminal::default();
+        terminal.environment = Some(proxy.environment(std::env::vars().collect(), config.path()));
+        terminal.open(&json!({"pty_id":id})).unwrap();
+        terminal
+    }
+
+    /// Bytes the pump has pulled from the PTY but not yet queued as frames.
+    /// `None` while the pump holds the reader's lock: it is waiting for room.
+    fn reader_backlog(terminal: &Terminal) -> Option<usize> {
+        let process = terminal.process.as_ref().unwrap();
+        let state = process.reader.state.try_lock().ok()?;
+        Some(state.chunks.iter().map(Vec::len).sum())
+    }
+
+    /// Every byte up to `END\r\n`. Checks only the tail for the marker:
+    /// [`read_until`] rescans all output per frame, quadratic over megabytes.
+    fn drain_until_end(terminal: &mut Terminal) -> String {
+        let deadline = Instant::now() + Duration::from_secs(120);
+        let mut output = Vec::new();
+        while Instant::now() < deadline {
+            match terminal.output().unwrap() {
+                Some(Message::Binary(bytes)) => {
+                    output.extend_from_slice(&bytes[1..]);
+                    let tail = &output[output.len().saturating_sub(64)..];
+                    if tail.windows(5).any(|w| w == b"END\r\n") {
+                        break;
+                    }
+                }
+                Some(_) => {}
+                None => std::thread::sleep(Duration::from_millis(1)),
+            }
+        }
+        String::from_utf8_lossy(&output).into_owned()
+    }
+
+    /// `uv` printing heavy progress output while the session loop was slow to
+    /// forward it ended the session ("exceeded its output buffer"). A full
+    /// queue now slows the shell instead: nothing is lost or reordered, memory
+    /// stays bounded, and the shell's exit is still reported afterwards.
+    #[test]
+    fn an_output_flood_past_a_stalled_consumer_slows_the_shell_and_loses_nothing() {
+        if crate::platform::host::WINDOWS {
+            return;
+        }
+        // ~12 MB through the PTY. `awk`, not `seq`: BSD seq prints 1000000 as 1e+06.
+        const LINES: usize = 1_500_000;
+        let config = tempfile::tempdir().unwrap();
+        let mut terminal = proxied_terminal("flood-test", &config);
+        terminal
+            .input(
+                format!("stty -echo; printf 'BEG%s\\n' IN; awk 'BEGIN {{ for (i = 1; i <= {LINES}; i++) print i }}'; printf 'EN%s\\n' D\n")
+                    .as_bytes(),
+            )
+            .unwrap();
+        // Forward nothing while the shell floods.
+        std::thread::sleep(Duration::from_millis(1500));
+        let pulled = terminal.process.as_ref().unwrap().pty_output_bytes_total();
+        assert!(
+            pulled < 4 * 1024 * 1024,
+            "the shell was not slowed: {pulled} bytes pulled from the PTY while stalled"
+        );
+        if let Some(backlog) = reader_backlog(&terminal) {
+            assert!(backlog <= 1024 * 1024, "reader backlog grew to {backlog}");
+        }
+        let output = drain_until_end(&mut terminal);
+        let body = output
+            .split_once("BEGIN\r\n")
+            .and_then(|(_, rest)| rest.split_once("END\r\n"))
+            .map(|(body, _)| body)
+            .unwrap_or_else(|| {
+                panic!(
+                    "markers missing; tail: {:?}",
+                    &output[output.len().saturating_sub(200)..]
+                )
+            });
+        let mut expected = 1;
+        for line in body.lines() {
+            assert_eq!(line.trim_end_matches('\r'), expected.to_string());
+            expected += 1;
+        }
+        assert_eq!(expected, LINES + 1, "lines missing");
+        terminal.input(b"exit\n").unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut exited = false;
+        while Instant::now() < deadline && !exited {
+            match terminal.output().unwrap() {
+                Some(Message::Text(_)) => exited = true,
+                Some(_) => {}
+                None => std::thread::sleep(Duration::from_millis(5)),
+            }
+        }
+        assert!(exited, "the shell's exit was not reported after the flood");
+    }
+
+    /// Stopping while the pump waits on a full queue neither hangs nor leaves
+    /// the reader's lock held.
+    #[test]
+    fn stop_does_not_hang_on_a_pump_waiting_for_room() {
+        if crate::platform::host::WINDOWS {
+            return;
+        }
+        let config = tempfile::tempdir().unwrap();
+        let mut terminal = proxied_terminal("flood-stop", &config);
+        terminal.input(b"yes flood-output-line\n").unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let started = Instant::now();
+        terminal.stop();
+        assert!(started.elapsed() < Duration::from_secs(8), "stop hung");
     }
 
     #[test]

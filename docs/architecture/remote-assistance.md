@@ -61,10 +61,15 @@ input cannot prevent session cancellation. Operator input waiting for the shell
 is bounded by bytes (1 MiB), not frames: mouse tracking sends a frame per pointer
 move, and an 8-frame queue ended sessions mid-use. Past the budget a frame is
 dropped and the operator gets one `pty_error` `input_dropped` per run of drops;
-the session carries on. Output frames are at most 16 KiB and the forwarding
-queue holds at most 128 frames (2 MiB). An overloaded output pump ends the
-session with an explicit error and closes the shell. This bounds noisy
-or blocked terminals; a sufficiently fast output burst can hit the limit.
+the session carries on. Output frames are at most 16 KiB (the server drops
+larger ones), and output already waiting is coalesced into one frame, so a
+progress bar's many small writes do not cost a frame each. The forwarding
+queue holds at most 128 frames (2 MiB), and the session loop empties it on
+every pass. When it is full the pump waits holding the PTY reader's lock, so
+running-process stops reading the PTY and the shell's own writes block: a
+burst such as `uv` progress output is slowed to the socket's pace, never
+dropped, reordered or allowed to end the session. Stopping the terminal
+closes the PTY, which releases a waiting pump.
 
 The server contract is maintained in `talos-hq/clud.bot`'s `SPEC.md`. This native
 client advertises `pty`, not the legacy exec capability. The session creation
