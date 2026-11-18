@@ -202,13 +202,15 @@ fn a_request_carries_the_line_interval_it_would_print() {
 
 #[test]
 fn the_two_spellings_of_a_home_path_share_one_entry() {
-    let Some(home) = std::env::var_os("HOME") else {
+    let Some(home) = crate::home::user_home() else {
         return;
     };
+    // Built with the host's separator, as a harness passes an absolute path.
+    let absolute = home.join("dev").join("a.py");
     let spelled = request_for("Read", Some(&json!({"file_path": "~/dev/a.py"}))).expect("req");
     let absolute = request_for(
         "Read",
-        Some(&json!({"file_path": format!("{}/dev/a.py", home.to_string_lossy())})),
+        Some(&json!({"file_path": absolute.to_string_lossy()})),
     )
     .expect("req");
     assert_eq!(spelled.path, absolute.path);

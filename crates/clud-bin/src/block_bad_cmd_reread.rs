@@ -187,8 +187,17 @@ fn expand_tilde(raw: &Path) -> PathBuf {
     let Some(rest) = raw.to_str().and_then(|text| text.strip_prefix("~/")) else {
         return raw.to_path_buf();
     };
-    std::env::var_os("HOME")
-        .map_or_else(|| raw.to_path_buf(), |home| PathBuf::from(home).join(rest))
+    // One home resolver (DD-161), and one component per `/` so the result is
+    // spelled with the host's separator: the ledger key hashes the text, and
+    // `C:\Users\x\dev/a.py` must not differ from `C:\Users\x\dev\a.py`.
+    crate::home::user_home().map_or_else(
+        || raw.to_path_buf(),
+        |home| {
+            rest.split('/')
+                .filter(|part| !part.is_empty())
+                .fold(home, |path, part| path.join(part))
+        },
+    )
 }
 
 /// The line interval a `Read` input asks for. `offset` is 1-based; a missing
