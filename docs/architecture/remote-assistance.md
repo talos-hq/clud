@@ -81,6 +81,35 @@ the inference URL from the user-selected origin, never from an arbitrary returne
 URL. Its remote HTTP and WebSocket connectors combine bundled public roots with
 system trust; unrelated HTTP clients keep their existing trust policy.
 
+## `clud` in the operator's shell
+
+`clud` typed into the operator's shell runs the binary serving the session.
+When `remote_connect/terminal.rs` spawns the shell, it puts that binary's
+directory first on the shell's PATH (`shell_environment`). The binary is
+`std::env::current_exe()`. Off Windows, a symlink such as Homebrew's
+`bin/clud` is followed to the real file, so the added directory holds clud
+rather than every tool beside the link. The rest of PATH keeps its order. An
+entry already first is left alone; one later in PATH moves to the front, so
+it is never listed twice. The key is matched case-insensitively, so Windows'
+`Path` is updated in place, and the separator is the host's (`;` or `:`).
+
+The one-liners make this necessary. `connect.ps1` runs a verified copy from
+`%LOCALAPPDATA%\clud-connect-<guid>\bin`, and `connect.sh` one from
+`.clud-connect.XXXXXX/bin`; neither touches PATH. Without the prepend, `clud`
+in the shell was "not recognized", or resolved to some other install. The
+PTY's environment replaces the client's environment rather than overlaying
+it, in running-process on every host, so the list built here is the shell's
+whole environment.
+
+An environment prepend is enough because the shell reads no startup files.
+A session always has its proxy environment, so the shell is `cmd.exe /d`
+(no AutoRun) or `/bin/sh` (no profile or `ENV`). A login shell's
+`/etc/profile` would reset PATH, but none runs. Under
+[Request sudo](#request-sudo), `clud-remote-shell` passes its environment to the
+shell unchanged, so PATH is the same there. The leader's own `sudo` calls keep
+their fixed `SUDO_PATH`, because the operator controls the user's PATH.
+See [DD-221](../DESIGN_DECISIONS.md#dd-221-the-remote-shell-finds-clud-through-the-client-not-the-connect-scripts).
+
 ## Request sudo
 
 The operator can ask for administrator access from the admin console's
@@ -383,6 +412,9 @@ this command never persists an OpenAI key.
 
 `cli::remote_connect_e2e_cli` runs the actual client and a real shell against an
 in-process operator server on every host, without clud.bot or credentials.
+Its private-copy case copies clud to where the one-liners put it, starts it
+with only system directories on PATH, and checks that `clud --version` typed
+by the operator prints this build's version.
 Its terminal-hosted case runs the client in a PTY, so it offers `sudo` and
 starts the shell under `clud-remote-shell`. The leader's own tests
 (`platform::unix::remote_shell::tests`, Linux) drive it in a real PTY session

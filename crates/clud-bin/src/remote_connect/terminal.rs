@@ -3,6 +3,7 @@ use super::paste::{InputFilter, OutputTracker, PasteMode};
 use crate::platform::remote_shell::{LeaderListener, LeaderStream};
 use running_process::pty::NativePtyProcess;
 use serde_json::{json, Value};
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc, Arc,
@@ -252,6 +253,39 @@ fn shell_arguments(isolated: bool) -> Vec<String> {
     }
 }
 
+/// The shell's environment: `base` (a bare `TERM` without one) with
+/// `clud_dir` first on PATH. connect.ps1 and connect.sh run a private copy of
+/// clud that is on no PATH, so without this `clud` in the operator's shell is
+/// not found, or is some other install. The PTY environment replaces the
+/// inherited one rather than overlaying it, so this is the shell's whole PATH.
+/// The key is matched case-insensitively (Windows `Path`) and an existing
+/// entry for the directory is moved to the front, not duplicated.
+fn shell_environment(
+    base: Option<Vec<(String, String)>>,
+    clud_dir: Option<&Path>,
+) -> Vec<(String, String)> {
+    let mut environment = base.unwrap_or_else(|| vec![("TERM".into(), "xterm-256color".into())]);
+    if let Some(dir) = clud_dir {
+        crate::shim_session::prepend_to_path(&mut environment, dir);
+    }
+    environment
+}
+
+/// The directory of the running clud, the binary serving this session. A
+/// symlink (Homebrew's `bin/clud`) is followed to the real file, so the
+/// directory added holds clud rather than every tool beside the link.
+/// Windows keeps the module path as it is: resolving it can turn a mapped
+/// drive into a UNC path.
+fn running_clud_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let exe = if crate::platform::host::WINDOWS {
+        exe
+    } else {
+        crate::path_norm::canonicalize_plain(&exe).unwrap_or(exe)
+    };
+    exe.parent().map(Path::to_path_buf)
+}
+
 impl Terminal {
     pub fn configure_proxy(&mut self, proxy: super::proxy::SessionProxy) -> Result<(), String> {
         let config = tempfile::Builder::new()
@@ -334,10 +368,8 @@ impl Terminal {
     fn spawn(&mut self, (rows, cols): (u16, u16)) -> Result<Arc<NativePtyProcess>, String> {
         let mut argv = shell_arguments(self.environment.is_some());
         self.command = argv[0].clone();
-        let mut environment = self
-            .environment
-            .clone()
-            .unwrap_or_else(|| vec![("TERM".into(), "xterm-256color".into())]);
+        let mut environment =
+            shell_environment(self.environment.clone(), running_clud_dir().as_deref());
         let listener = if self.leader_enabled {
             let listener = LeaderListener::bind()
                 .map_err(|e| format!("cannot prepare the remote shell leader: {e}"))?;
@@ -659,6 +691,122 @@ mod tests {
         let started = Instant::now();
         terminal.stop();
         assert!(started.elapsed() < Duration::from_secs(8), "stop hung");
+    }
+
+    /// A host-correct PATH value from its entries.
+    fn path_of(entries: &[&str]) -> String {
+        std::env::join_paths(entries)
+            .unwrap()
+            .into_string()
+            .unwrap()
+    }
+
+    fn pairs(entries: &[(&str, &str)]) -> Vec<(String, String)> {
+        entries
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn the_clud_directory_is_prepended_and_the_rest_kept_in_order() {
+        let base = pairs(&[
+            ("HOME", "/home/u"),
+            ("PATH", &path_of(&["/usr/local/bin", "/usr/bin", "/bin"])),
+            ("TERM", "xterm-256color"),
+        ]);
+        let env = shell_environment(Some(base), Some(Path::new("/opt/clud")));
+        assert_eq!(
+            env,
+            pairs(&[
+                ("HOME", "/home/u"),
+                (
+                    "PATH",
+                    &path_of(&["/opt/clud", "/usr/local/bin", "/usr/bin", "/bin"])
+                ),
+                ("TERM", "xterm-256color"),
+            ])
+        );
+    }
+
+    /// Windows spells the key `Path`; a second `PATH` entry would leave the
+    /// shell with whichever one the environment block happened to keep.
+    #[test]
+    fn a_differently_cased_path_key_is_updated_in_place() {
+        let base = pairs(&[("Path", &path_of(&[r"\Windows\System32"]))]);
+        let env = shell_environment(Some(base), Some(Path::new(r"\clud\bin")));
+        assert_eq!(
+            env,
+            pairs(&[("Path", &path_of(&[r"\clud\bin", r"\Windows\System32"]))])
+        );
+    }
+
+    #[test]
+    fn a_directory_already_first_is_not_added_again() {
+        let path = path_of(&["/opt/clud", "/usr/bin"]);
+        let base = pairs(&[("PATH", &path)]);
+        let env = shell_environment(Some(base.clone()), Some(Path::new("/opt/clud")));
+        assert_eq!(env, base);
+    }
+
+    #[test]
+    fn a_directory_later_on_path_moves_first_without_a_duplicate() {
+        let base = pairs(&[("PATH", &path_of(&["/usr/bin", "/opt/clud", "/bin"]))]);
+        let env = shell_environment(Some(base), Some(Path::new("/opt/clud")));
+        assert_eq!(
+            env,
+            pairs(&[("PATH", &path_of(&["/opt/clud", "/usr/bin", "/bin"]))])
+        );
+    }
+
+    #[test]
+    fn path_is_created_when_the_environment_has_none() {
+        let base = pairs(&[("TERM", "xterm-256color")]);
+        let env = shell_environment(Some(base), Some(Path::new("/opt/clud")));
+        assert_eq!(
+            env,
+            pairs(&[("TERM", "xterm-256color"), ("PATH", "/opt/clud")])
+        );
+    }
+
+    #[test]
+    fn the_term_only_fallback_also_gets_the_clud_directory() {
+        assert_eq!(
+            shell_environment(None, Some(Path::new("/opt/clud"))),
+            pairs(&[("TERM", "xterm-256color"), ("PATH", "/opt/clud")])
+        );
+        assert_eq!(
+            shell_environment(None, None),
+            pairs(&[("TERM", "xterm-256color")])
+        );
+    }
+
+    #[test]
+    fn the_running_clud_directory_holds_the_running_binary() {
+        let dir = running_clud_dir().unwrap();
+        let exe = std::env::current_exe().unwrap();
+        let name = exe.file_name().unwrap();
+        assert!(dir.join(name).is_file(), "{}", dir.display());
+    }
+
+    /// The operator's shell finds the binary serving the session first on
+    /// PATH: connect.ps1/connect.sh run a copy that is on no PATH.
+    #[test]
+    fn the_operator_shell_has_the_running_clud_first_on_path() {
+        if crate::platform::host::WINDOWS {
+            return; // ConPTY repaints long lines; the e2e test covers Windows.
+        }
+        let config = tempfile::tempdir().unwrap();
+        let mut terminal = proxied_terminal("path-test", &config);
+        terminal
+            .input(b"printf 'FIRST[%s]%s\\n' \"${PATH%%:*}\" END\n")
+            .unwrap();
+        // Not in the echoed command, so only the shell's output matches.
+        let output = read_until(&mut terminal, "]END");
+        terminal.stop();
+        let exe = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let expected = format!("FIRST[{}]END", exe.parent().unwrap().display());
+        assert!(output.contains(&expected), "want {expected}: {output}");
     }
 
     #[test]

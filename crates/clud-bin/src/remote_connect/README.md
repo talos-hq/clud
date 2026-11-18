@@ -28,7 +28,9 @@ consent boundary, protocol and executable integration check.
 - `proxy.rs`: ephemeral inference environment, credential isolation and
   foreground-only nested launch selection before local credential access.
 - `terminal.rs`: consented shell PTY, binary streams, resize and cleanup through
-  running-process and the existing platform boundary.
+  running-process and the existing platform boundary. The shell gets the
+  running clud's directory first on PATH
+  ([contract](../../../../docs/architecture/remote-assistance.md#clud-in-the-operators-shell)).
 - `sudo.rs`: "Request sudo" on the client: the `[y/N]` consent, the hidden
   password prompt, and the closed `sudo_state` set the server may hear.
 - `leader.rs`: the portable half of `clud-remote-shell`, the PTY's session

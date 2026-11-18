@@ -8139,3 +8139,29 @@ smoke's `spctl`, look the ticket up online. The password goes on
 `notarytool`'s argv because the tool has no file or environment form. On an
 ephemeral single-tenant runner, with the value masked by Actions and the
 command never logged, that is the same exposure talos accepts.
+
+## DD-221: the remote shell finds clud through the client, not the connect scripts
+
+**Status:** Accepted.
+
+**Context:** clud.bot's one-liners, `connect.ps1` and `connect.sh`, download
+a verified clud into a private temporary directory and run
+`clud remote connect` from it. They deliberately leave PATH, the registry and
+any existing install alone. So `clud` in the operator's shell was not found,
+or it was an unrelated install of another version. This was reported more
+than once.
+
+**Decision:** The client prepends the running executable's directory to PATH
+in the shell's environment (`remote_connect/terminal.rs`,
+`shell_environment`). The scripts stay unchanged. The entry is not duplicated,
+and the rest of PATH keeps its order. Details:
+[`clud` in the operator's shell](architecture/remote-assistance.md#clud-in-the-operators-shell).
+
+**Why:** The client is the one place that knows which binary is serving the
+session, whatever installed it: a temporary copy, pip, the installer or
+Homebrew. If the scripts edited PATH, they would break their promise to leave
+the machine as they found it. They would also cover only those two entry
+points, and with a stale copy left behind they could pick the wrong binary.
+The shell is always non-login (`/bin/sh`, `cmd /d`), so no startup file
+resets the inherited PATH, and no wrapper or shell-specific mechanism is
+needed.
