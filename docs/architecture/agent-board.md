@@ -51,7 +51,14 @@ indentation — they are parsed, not read (10.2% measured on a 39-message page).
 
 In daemon memory only: a restart forgets the board, the same as session
 flags. At most 1024 messages are kept (oldest dropped); bodies are capped at
-16 KiB. Agents poll; there is no push.
+16 KiB. There is no push, but `board_read(wait_seconds=N)` long-polls: the
+bridge re-reads the page once a second and returns the moment a message
+arrives, so an idle supervisor spends one turn per N seconds instead of one
+turn per poll. Measured 2026-11-08: 173 of 352 `board_read` calls in 24 h
+returned `messages: []`, each one a full model turn. The wait defaults to 0
+(return immediately, the old behaviour) and is capped at 540 s, below the
+client's tool-call deadline; an empty result carries `next_wait_seconds` so
+the caller re-arms with a wait instead of spinning.
 
 The board is the soft channel: the agent reads it only when it polls. To
 put a message in front of a daemon session as a user turn it cannot skip,
