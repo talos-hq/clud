@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
-import stat
 import sys
 from pathlib import Path
 
@@ -55,36 +53,30 @@ def pull(number=42, state="OPEN", draft=False, merge="CLEAN", review="APPROVED",
     }
 
 
-STUB = """#!{python}
-import json, os, sys
-state = json.load(open(os.environ["PR_STATUS_STUB"]))
-argv = sys.argv[1:]
-number = argv[argv.index("view") + 1] if "view" in argv else ""
-record = state.get(number)
-if record is None:
-    sys.stderr.write("GraphQL: no pull request " + number + ".\\n")
-    sys.exit(1)
-if isinstance(record, dict) and "error" in record:
-    sys.stderr.write(record["error"] + "\\n")
-    sys.exit(record.get("code", 1))
-print(json.dumps(record))
-"""
-
-
 @pytest.fixture
-def stub_gh(tmp_path, monkeypatch):
-    bindir = tmp_path / "bin"
-    bindir.mkdir()
-    script = bindir / "gh"
-    script.write_text(STUB.format(python=sys.executable))
-    script.chmod(script.stat().st_mode | stat.S_IEXEC)
-    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")
-    path = tmp_path / "pulls.json"
+def stub_gh(pr_status, monkeypatch):
+    """Answer `gh pr view N` from a dict instead of the network.
 
-    def make(records: dict) -> Path:
-        path.write_text(json.dumps(records))
-        monkeypatch.setenv("PR_STATUS_STUB", str(path))
-        return path
+    The fake replaces the tool's single `gh()` boundary rather than putting a
+    script named `gh` on PATH: Windows cannot execute an extensionless script,
+    so a PATH stub silently fell through to the real gh there.
+    """
+    records: dict = {}
+
+    def fake_gh(*args: str) -> tuple[int, str, str]:
+        number = args[args.index("view") + 1] if "view" in args else ""
+        record = records.get(number)
+        if record is None:
+            return 1, "", f"GraphQL: no pull request {number}.\n"
+        if isinstance(record, dict) and "error" in record:
+            return record.get("code", 1), "", record["error"] + "\n"
+        return 0, json.dumps(record) + "\n", ""
+
+    monkeypatch.setattr(pr_status, "gh", fake_gh)
+
+    def make(new: dict) -> None:
+        records.clear()
+        records.update(new)
 
     return make
 

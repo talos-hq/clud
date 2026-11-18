@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import re
 import stat
 import struct
@@ -245,7 +246,10 @@ def _fake_notary(status: str, code: int = 0):
                 "clud",
                 "clud-webterm",
             ]
-            assert all(p.stat().st_mode & 0o111 for p in staged.rglob("*") if p.is_file())
+            # Windows reports no execute bits for an extensionless file, and
+            # notarization only runs on a macOS runner, so check modes on POSIX.
+            if os.name == "posix":
+                assert all(p.stat().st_mode & 0o111 for p in staged.rglob("*") if p.is_file())
             Path(command[-1]).write_bytes(b"zip")
             return 0, "", ""
         if command[2] == "submit":
