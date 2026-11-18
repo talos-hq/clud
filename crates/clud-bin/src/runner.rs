@@ -958,7 +958,16 @@ pub fn run_plan_subprocess(
         }
 
         iteration += 1;
-        if let Some(code) = check_loop_markers_with_output(plan, iter_num, &captured_output) {
+        if let Some(code) = check_loop_markers_with_output(plan, iter_num, &captured_output)
+            .or_else(|| {
+                runner_execution::pace_between_iterations(
+                    plan,
+                    iteration,
+                    console.as_mut(),
+                    interrupted,
+                )
+            })
+        {
             return code;
         }
     }

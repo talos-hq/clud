@@ -754,6 +754,11 @@ pub struct LoopArgs {
     /// between runs (for example `30s`, `5m`, `1h`).
     #[arg(long = "repeat")]
     pub repeat: Option<String>,
+    /// Wait this long between iterations (for example `30s`, `5m`, `1h`).
+    /// Without it the next iteration starts as soon as the previous one exits,
+    /// which re-pays the whole prompt on every pass.
+    #[arg(long = "interval")]
+    pub interval: Option<String>,
     /// Queue a message for the next loop iteration (delivered via
     /// `.clud/loop/NEXT_MESSAGE.md`). Without a task, queue and exit.
     #[arg(long = "message")]

@@ -30,6 +30,7 @@ fn plan(provider: ModelProvider, harness: Backend) -> LaunchPlan {
         cwd: None,
         graphics: crate::graphics::GraphicsConfig::default(),
         repeat_schedule: None,
+        loop_interval_secs: None,
         task_summary: None,
         loop_markers: None,
         stream_json_progress: false,

@@ -28,6 +28,7 @@ fn cross_route_plan() -> LaunchPlan {
         cwd: None,
         graphics: GraphicsConfig::default(),
         repeat_schedule: None,
+        loop_interval_secs: None,
         task_summary: None,
         loop_markers: None,
         stream_json_progress: false,

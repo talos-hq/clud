@@ -457,7 +457,9 @@ pub fn run_plan_pty(
             return last_exit;
         }
 
-        if let Some(code) = check_loop_markers(plan, iter_num) {
+        if let Some(code) = check_loop_markers(plan, iter_num)
+            .or_else(|| pace_between_iterations(plan, iter_num, None, interrupted))
+        {
             return code;
         }
     }
@@ -536,6 +538,29 @@ pub(super) fn run_with_prompt_summary(
             .returncode()
             .map_or(ProcessOutcome::Error, ProcessOutcome::Exited),
     }
+}
+
+/// Pace the next iteration when `--interval` is set (#2233): print the wait
+/// notice (to the loop console when one is open) and sleep, honouring Ctrl+C.
+/// Returns `Some(130)` when the user interrupted the wait, so the caller stops
+/// instead of launching another child.
+pub(super) fn pace_between_iterations(
+    plan: &command::LaunchPlan,
+    completed_iteration: u32,
+    console: Option<&mut crate::loop_console::LoopConsole>,
+    interrupted: &AtomicBool,
+) -> Option<i32> {
+    if completed_iteration >= plan.iterations {
+        return None;
+    }
+    let next_iteration = completed_iteration + 1;
+    let secs = plan.loop_interval_secs?;
+    let notice = crate::loop_interval::interval_notice(secs, next_iteration, plan.iterations);
+    match console {
+        Some(ui) => ui.line(&notice),
+        None => eprintln!("{notice}"),
+    }
+    (!crate::loop_interval::wait_between_iterations(secs, interrupted)).then_some(130)
 }
 
 pub(super) fn loop_console(

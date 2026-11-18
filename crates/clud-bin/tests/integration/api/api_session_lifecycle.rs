@@ -33,6 +33,7 @@ fn plan(executable: PathBuf, cwd: &Path, args: Vec<String>) -> LaunchPlan {
         cwd: Some(cwd.canonicalize().unwrap().to_string_lossy().into_owned()),
         graphics: GraphicsConfig::default(),
         repeat_schedule: None,
+        loop_interval_secs: None,
         task_summary: None,
         loop_markers: None,
         stream_json_progress: false,
