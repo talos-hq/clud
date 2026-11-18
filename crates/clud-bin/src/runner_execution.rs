@@ -457,13 +457,9 @@ pub fn run_plan_pty(
             return last_exit;
         }
 
-        if let Some(code) = check_loop_markers(plan, iter_num) {
-            return code;
-        }
-
-        // Inter-iteration pacing (#2233): an immediate restart re-pays the
-        // whole system prompt, global CLAUDE.md and task text for every pass.
-        if let Some(code) = pace_between_iterations(plan, iter_num, None, interrupted) {
+        if let Some(code) = check_loop_markers(plan, iter_num)
+            .or_else(|| pace_between_iterations(plan, iter_num, None, interrupted))
+        {
             return code;
         }
     }

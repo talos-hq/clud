@@ -1011,15 +1011,7 @@ fn build_launch_plan_for_target_at(
                 });
             repeat_schedule =
                 repeat_interval_secs.map(|interval_secs| RepeatSchedule { interval_secs });
-            loop_interval_secs = options
-                .interval
-                .as_deref()
-                .map(crate::loop_interval::parse_interval)
-                .transpose()
-                .unwrap_or_else(|err| {
-                    eprintln!("error: invalid loop interval: {err}");
-                    std::process::exit(1);
-                });
+            loop_interval_secs = crate::loop_interval::parse_or_exit(options.interval.as_deref());
             let use_done_markers =
                 options.done.is_some() || (!options.no_done && repeat_schedule.is_none());
             let marker_paths = if use_done_markers {
@@ -1044,13 +1036,8 @@ fn build_launch_plan_for_target_at(
                 } else {
                     String::new()
                 };
-                let interval_contract = options
-                    .interval
-                    .as_deref()
-                    .and_then(|raw| crate::loop_interval::parse_interval(raw).ok())
-                    .map_or_else(String::new, crate::loop_interval::interval_contract);
-                let final_prompt =
-                    format!("{prompt_text}{done_contract}{message_contract}{interval_contract}");
+                let pace = crate::loop_interval::contract_for(loop_interval_secs);
+                let final_prompt = format!("{prompt_text}{done_contract}{message_contract}{pace}");
                 push_prompt(&mut cmd, backend, final_prompt);
             }
             if let Some(markers) = marker_paths {

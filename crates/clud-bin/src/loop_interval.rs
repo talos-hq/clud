@@ -41,6 +41,20 @@ pub fn parse_interval(raw: &str) -> Result<u64, String> {
     Ok(secs)
 }
 
+/// Resolve the CLI/`loop.json` interval for a launch plan, exiting with an
+/// error on an invalid value (the same contract as `--repeat`).
+pub fn parse_or_exit(raw: Option<&str>) -> Option<u64> {
+    raw.map(parse_interval).transpose().unwrap_or_else(|err| {
+        eprintln!("error: invalid loop interval: {err}");
+        std::process::exit(1);
+    })
+}
+
+/// The prompt clause for an optional interval; empty when the loop is unpaced.
+pub fn contract_for(secs: Option<u64>) -> String {
+    secs.map_or_else(String::new, interval_contract)
+}
+
 /// Render seconds the way the loop prints them (`90s`, `5m`, `2h`).
 pub fn format_secs(secs: u64) -> String {
     if secs.is_multiple_of(3600) {
