@@ -215,7 +215,11 @@ fn file_key(path: &Path) -> String {
     let mut hasher = Sha256::new();
     hasher.update(HASH_DOMAIN.as_bytes());
     hasher.update(b"file\0");
-    hasher.update(path.to_string_lossy().as_bytes());
+    // Rebuild from components so mixed separators (`C:\Users\me/dev/a.py`,
+    // from a `~/` expansion on Windows) hash like the native spelling. The
+    // rebuilt text is unchanged on POSIX, so existing keys stay stable.
+    let normalized: PathBuf = path.components().collect();
+    hasher.update(normalized.to_string_lossy().as_bytes());
     hasher
         .finalize()
         .iter()
