@@ -162,7 +162,14 @@ def test_a_build_command_is_never_poll_refused(tmp_path: Path) -> None:
         assert decision(scan(binary, state, "build", command)) is None, index
 
 
-def test_a_different_call_resets_the_poll_count(tmp_path: Path) -> None:
+def test_an_interleaved_call_does_not_reset_the_poll_count(tmp_path: Path) -> None:
+    """The count belongs to the query, not to whatever ran last (#2233).
+
+    Measured 2026-11-08: one session alternated two dressings of one query, the
+    single-slot counter reset on every flip, and 193 polls produced no note at
+    all. A different query in between must not erase an unrelated count — it
+    keeps its own.
+    """
     binary = scanner(tmp_path)
     state = tmp_path / "state"
     state.mkdir()
@@ -170,8 +177,9 @@ def test_a_different_call_resets_the_poll_count(tmp_path: Path) -> None:
     fast_forward(state, 95)
     assert decision(scan(binary, state, "reset", OBS_POLL)) is None
     scan(binary, state, "reset", "git ls-remote origin")
-    output = scan(binary, state, "reset", OBS_POLL)
-    assert decision(output) is None
+    assert decision(scan(binary, state, "reset", OBS_POLL)) == "deny"
+    # The other query was never granted the poll's count.
+    assert decision(scan(binary, state, "reset", "git ls-remote origin")) is None
 
 
 def test_the_poll_limit_env_moves_the_stop(tmp_path: Path) -> None:

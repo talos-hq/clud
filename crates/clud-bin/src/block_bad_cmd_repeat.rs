@@ -48,6 +48,12 @@ pub(super) const POLL_DENY_AT: u32 = 96;
 pub(super) const POLL_LIMIT_ENV: &str = "CLUD_POLL_CALL_LIMIT";
 /// Identical query calls further apart than this start a new poll count.
 pub(super) const POLL_WINDOW_SECS: u64 = 6 * 60 * 60;
+/// Poll queries one session's ledger remembers. One slot was not enough: an
+/// agent that alternated `sleep 60; gh pr list --head X` with `cat
+/// <task>.output; sleep 55; gh pr list --head X` presented a different exact
+/// command on every other call, so the single slot reset on each flip and 197
+/// identical queries produced no note at all (2026-11-08/09).
+pub(super) const MAX_POLL_KEYS: usize = 8;
 const HASH_DOMAIN: &str = "clud-repeat-guard-v1\0";
 const MAX_AGE: Duration = Duration::from_secs(2 * 24 * 60 * 60);
 const MAX_FILES: usize = 500;
@@ -59,12 +65,25 @@ pub(super) struct Streak {
     pub count: u32,
     pub last: u64,
     /// Gap-independent repeat count for one read-only query (#2631). `0` in
-    /// files written before this counter existed.
+    /// files written before this counter existed. Mirrors the entry the call
+    /// just advanced in `polls`, so older readers still see a count.
     #[serde(default)]
     pub steady: u32,
     /// When the steady count last advanced.
     #[serde(default)]
     pub steady_last: u64,
+    /// Every poll query this session has repeated recently, one entry each.
+    /// Empty in files written before this ledger existed.
+    #[serde(default)]
+    pub polls: Vec<PollEntry>,
+}
+
+/// One poll query's gap-independent repeat count.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct PollEntry {
+    pub key: String,
+    pub count: u32,
+    pub last: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +121,7 @@ pub(super) fn decide(
         last: now,
         steady: 0,
         steady_last: 0,
+        polls: Vec::new(),
     };
     let verdict = if limit > 0 && count > limit {
         Verdict::Deny { count }
@@ -111,20 +131,78 @@ pub(super) fn decide(
     (verdict, streak)
 }
 
-/// The gap-independent repeat count for one read-only query. A different call
-/// resets it; a gap shorter than [`POLL_WINDOW_SECS`] does not, because the
-/// whole point is the patient poll the burst guard deliberately ignores.
-pub(super) fn poll_count(previous: Option<&Streak>, key: &str, now: u64) -> (u32, u64) {
-    let continues = previous.is_some_and(|prev| {
-        let last = prev.steady_last.max(prev.last);
-        prev.key == key && now.saturating_sub(last) <= POLL_WINDOW_SECS
-    });
-    let count = if continues {
-        previous.map_or(1, |prev| prev.steady.max(1).saturating_add(1))
-    } else {
-        1
+/// The gap-independent repeat count for one read-only query, read from the
+/// session's poll ledger. A *different* call no longer resets it — only this
+/// query's own last run matters — because a poll an agent dresses differently
+/// on alternate turns (a leading `sleep`, a different background-task read) is
+/// still the same query, and one interleaved call used to erase the count. A
+/// gap longer than [`POLL_WINDOW_SECS`] starts a new count: the point is the
+/// patient poll the burst guard deliberately ignores.
+///
+/// A streak written before the ledger existed is seeded by [`migrated`], so an
+/// upgrade does not restart a live count.
+pub(super) fn poll_count(polls: &[PollEntry], key: &str, now: u64) -> (u32, u64) {
+    polls
+        .iter()
+        .filter(|entry| entry.key == key && now.saturating_sub(entry.last) <= POLL_WINDOW_SECS)
+        .map(|entry| entry.count.max(1))
+        .max()
+        .map_or((1, now), |count| (count.saturating_add(1), now))
+}
+
+/// The ledger a call counts against, with a `steady` slot folded in.
+///
+/// A session file written before the ledger existed holds one slot instead:
+/// the exact `key` plus `steady`. That slot belongs to the call whose exact key
+/// it names, so it is folded into **this** query only when the call being
+/// counted is that same call — attributing it to any other query would grant
+/// one query's count to another.
+fn ledger_for_count(streak: Option<&Streak>, poll_key: &str, exact_key: &str) -> Vec<PollEntry> {
+    let Some(prev) = streak else {
+        return Vec::new();
     };
-    (count, now)
+    let mut ledger = prev.polls.clone();
+    if prev.key != exact_key || prev.steady == 0 {
+        return ledger;
+    }
+    // The single slot mirrors the entry the call just advanced, so it may raise
+    // that entry's count. It may seed the ledger only when the ledger is
+    // otherwise *empty* — a session file written before the ledger existed.
+    // A key the ledger does not know is a new poll (a file that changed or
+    // appeared); inheriting the slot into it would defeat the freshness stamp
+    // and refuse a live read forever.
+    let seed = ledger.is_empty();
+    if let Some(entry) = ledger.iter_mut().find(|entry| entry.key == poll_key) {
+        if prev.steady > entry.count {
+            entry.count = prev.steady;
+            entry.last = entry.last.max(prev.steady_last);
+        }
+    } else if seed {
+        ledger.push(PollEntry {
+            key: poll_key.to_string(),
+            count: prev.steady,
+            last: prev.steady_last.max(prev.last),
+        });
+    }
+    ledger
+}
+
+/// The ledger after this call: upsert `key`, drop entries outside the window,
+/// and keep the newest [`MAX_POLL_KEYS`].
+pub(super) fn ledger_after(polls: &[PollEntry], key: &str, count: u32, now: u64) -> Vec<PollEntry> {
+    let mut entries: Vec<PollEntry> = polls
+        .iter()
+        .filter(|entry| entry.key != key && now.saturating_sub(entry.last) <= POLL_WINDOW_SECS)
+        .cloned()
+        .collect();
+    entries.push(PollEntry {
+        key: key.to_string(),
+        count,
+        last: now,
+    });
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.last));
+    entries.truncate(MAX_POLL_KEYS);
+    entries
 }
 
 /// Words a shell puts in front of a program without changing what runs.
@@ -159,6 +237,56 @@ const REMOTE_READ: &[&str] = &[
     "get",
     "describe",
 ];
+
+/// Verbs of a project task runner (`uv run --project ci errors --since 15m`)
+/// that only read external state. A runner can execute anything, so the verb
+/// is the whole signal; only read verbs are listed.
+const RUNNER_READ: &[&str] = &[
+    "errors", "events", "logs", "log", "status", "list", "ls", "show", "get", "view", "diff",
+    "tail", "results", "report", "ps", "inspect", "describe", "wait",
+];
+
+/// Flags of a project runner that take the next word as their value, so the
+/// value is not mistaken for the verb.
+const RUNNER_VALUE_FLAGS: &[&str] = &[
+    "--project",
+    "-p",
+    "--directory",
+    "-C",
+    "--package",
+    "--python",
+    "--with",
+    "--env-file",
+];
+
+/// Whether the segment from `start` runs a project runner's read-only verb:
+/// `uv run [--project X] <verb> [args...]`. Anything else (a missing `run`, a
+/// non-read verb, a write flag) is not a query.
+fn runner_reads(words: &[String], start: usize) -> bool {
+    let word = |offset: usize| -> &str {
+        words
+            .get(offset)
+            .map_or("", |w| w.trim_matches(&['\'', '"'][..]))
+    };
+    let mut index = start + 1;
+    if word(index) != "run" {
+        return false;
+    }
+    index += 1;
+    while index < words.len() {
+        let flag = word(index);
+        if flag.starts_with('-') {
+            index += if RUNNER_VALUE_FLAGS.contains(&flag) {
+                2
+            } else {
+                1
+            };
+            continue;
+        }
+        return RUNNER_READ.contains(&flag) && !writes(words);
+    }
+    false
+}
 
 /// Flags that make a request write instead of read.
 const WRITE_FLAGS: &[&str] = &[
@@ -202,6 +330,15 @@ fn reads_state(words: &[String]) -> bool {
             index += 1;
             continue;
         }
+        if word == "timeout" {
+            // `timeout [-k D] <duration> <command>`: the duration is not a program.
+            index += 1;
+            while index < words.len() && words[index].starts_with('-') {
+                index += 1;
+            }
+            index += 1;
+            continue;
+        }
         let arg = |offset: usize| -> &str {
             words
                 .get(index + offset)
@@ -218,6 +355,7 @@ fn reads_state(words: &[String]) -> bool {
                 }
                 next == "api" && !writes(words)
             }
+            "uv" => runner_reads(words, index),
             "git" => next == "ls-remote",
             "curl" => !writes(words),
             "ssh" => words
@@ -246,35 +384,392 @@ fn reads_state(words: &[String]) -> bool {
 /// Whether `command` contains a read-only query of external state, split the
 /// way a shell would split it.
 pub(super) fn is_query(command: &str) -> bool {
+    segments(command).iter().any(|text| {
+        let words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
+        reads_state(&words)
+    })
+}
+
+/// Segments that schedule or narrate a wait instead of reading state. A poll
+/// dressed with one of these is the same query: dropping them is what lets an
+/// alternating `sleep N; gh pr list --head X` / `cat <task>.output; sleep N;
+/// gh pr list --head X` loop share one count.
+const SCHEDULING_PROGRAMS: &[&str] = &["sleep", "true", ":", "echo", "printf", "date", "pwd"];
+
+/// Readers of a background task's own output file. The harness delivers that
+/// output when the task ends, so re-reading it on every turn is narration, not
+/// a new query.
+const TASK_OUTPUT_READERS: &[&str] = &["cat", "tail", "head", "less", "wc"];
+
+/// Split a command the way [`is_query`] does, into `;`-separated pieces.
+fn segments(command: &str) -> Vec<String> {
     let mut segment = String::with_capacity(command.len());
-    let mut segments: Vec<String> = Vec::new();
+    let mut out: Vec<String> = Vec::new();
     for ch in command.chars() {
         if ";&|\n(){}".contains(ch) {
             if !segment.trim().is_empty() {
-                segments.push(std::mem::take(&mut segment));
+                out.push(std::mem::take(&mut segment));
             }
         } else {
             segment.push(ch);
         }
     }
     if !segment.trim().is_empty() {
-        segments.push(segment);
+        out.push(segment);
     }
-    segments.iter().any(|text| {
-        let words: Vec<String> = text.split_whitespace().map(str::to_string).collect();
-        reads_state(&words)
-    })
+    out
+}
+
+/// Whether one segment only schedules, narrates or re-reads a background
+/// task's own output.
+fn is_scheduling(words: &[String]) -> bool {
+    let mut words = words.iter();
+    let Some(first) = words.next() else {
+        return true;
+    };
+    let program = crate::block_bad_cmd::block_bad_cmd_shell::program_name(first);
+    if SCHEDULING_PROGRAMS.contains(&program.as_str()) {
+        return true;
+    }
+    TASK_OUTPUT_READERS.contains(&program.as_str())
+        && words.any(|word| word.contains("/tasks/") && word.contains(".output"))
+}
+
+/// Pipeline stages that only present or filter another command's output: they
+/// choose how much of an answer is shown, not which answer it is, so
+/// `| grep -v "ERR 429" | tail -10` must not split one poll into two keys.
+const PRESENTATION_PROGRAMS: &[&str] = &[
+    "grep", "egrep", "fgrep", "rg", "tail", "head", "sed", "cut", "wc", "sort", "uniq", "tr",
+    "column", "fmt", "fold", "jq", "awk", "less", "more",
+];
+
+/// A segment that only sets context for the query — a directory change — never
+/// the query itself.
+fn is_context(words: &[String]) -> bool {
+    let Some(first) = words.first() else {
+        return true;
+    };
+    crate::block_bad_cmd::block_bad_cmd_shell::program_name(first) == "cd"
+}
+
+/// The segment with a leading `timeout [-k D] <duration>` wrapper removed: the
+/// wrapper bounds how long a query may take, not which query it is.
+fn strip_timeout(words: &[String]) -> Vec<String> {
+    let first = words.first().map_or("", String::as_str);
+    if crate::block_bad_cmd::block_bad_cmd_shell::program_name(first) != "timeout" {
+        return words.to_vec();
+    }
+    let mut index = 1;
+    while index < words.len() && words[index].starts_with('-') {
+        index += 1;
+    }
+    words
+        .iter()
+        .skip(index.saturating_add(1))
+        .cloned()
+        .collect()
+}
+
+/// Whether a segment only presents another segment's output.
+fn is_presentation(words: &[String]) -> bool {
+    let Some(first) = words.first() else {
+        return true;
+    };
+    PRESENTATION_PROGRAMS
+        .contains(&crate::block_bad_cmd::block_bad_cmd_shell::program_name(first).as_str())
+}
+
+/// One segment, whitespace-collapsed, its `--json` field list sorted, and its
+/// words sorted: flag order and field order are presentation, so either one
+/// reordered must not split one query into two keys.
+fn canonical_segment(text: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    let raw: Vec<&str> = text.split_whitespace().collect();
+    let mut index = 0;
+    while index < raw.len() {
+        if raw[index] == "--json" && index + 1 < raw.len() {
+            let mut fields: Vec<&str> = raw[index + 1].split(',').collect();
+            fields.sort_unstable();
+            words.push("--json".to_string());
+            words.push(fields.join(","));
+            index += 2;
+            continue;
+        }
+        words.push(raw[index].to_string());
+        index += 1;
+    }
+    words.sort_unstable();
+    words.join(" ")
+}
+
+/// The state-reading core of a command: its query segments, with scheduling
+/// noise dropped. Empty when the command is nothing but noise.
+pub(super) fn poll_core(command: &str) -> String {
+    let kept: Vec<Vec<String>> = segments(command)
+        .iter()
+        .map(|segment| {
+            strip_timeout(
+                &segment
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect::<Vec<String>>(),
+            )
+        })
+        .filter(|words| !words.is_empty())
+        .filter(|words| !is_scheduling(words) && !is_context(words))
+        .collect();
+    // Presentation stages are noise only next to a real query: a lone
+    // `grep -r <pattern>` IS the query, and dropping it would merge unrelated
+    // searches into one count.
+    let has_query = kept.iter().any(|words| !is_presentation(words));
+    kept.iter()
+        .filter(|words| !(has_query && is_presentation(words)))
+        .map(|words| canonical_segment(&words.join(" ")))
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<String>>()
+        .join("; ")
+}
+
+// ---- #2233: a local file is state too ---------------------------------
+//
+// The 2026-11-10 probe's top two repeated-payload families were local file
+// polls, not remote queries: one coordinator loop ran
+// `ls <pool>/NEXT_MESSAGE.md 2>/dev/null; grep manager_session_id <pool>/state.json`
+// 169 times (163 byte-identical answers), and 156 sessions re-read one
+// `.worker-pool/state.json` a second time through a different `head` slice.
+// None of it counted as a query: `reads_state` knew only `gh`/`git`/`curl`/
+// `ssh`/`systemctl`, so `cat <file>` fell through to the burst guard, which
+// resets after [`IDLE_RESET_SECS`] and never spoke.
+
+/// Verbs that print a file's own bytes. A segment that runs one of these on a
+/// resolved path reads local state, exactly as `gh pr view` reads remote state.
+const LOCAL_READ_PROGRAMS: &[&str] = &[
+    "cat",
+    "bat",
+    "head",
+    "tail",
+    "less",
+    "more",
+    "nl",
+    "jq",
+    "grep",
+    "egrep",
+    "fgrep",
+    "rg",
+    "sed",
+    "awk",
+    "cut",
+    "sort",
+    "uniq",
+    "tr",
+    "wc",
+    "stat",
+    "ls",
+    "file",
+    "du",
+    "sha256sum",
+];
+
+/// Flags that make a reader write: an in-place edit is not a poll, and neither
+/// is `sort -o`.
+const IN_PLACE_FLAGS: &[&str] = &["-i", "-o", "--in-place", "--inplace"];
+
+/// Whether a redirect target throws the bytes away instead of writing a file:
+/// `/dev/null` and an fd duplicate (`&1`, `&2`) both leave a read-only command.
+fn diverts(target: &str) -> bool {
+    let target = target.trim_matches(&['\'', '"'][..]);
+    target.is_empty()
+        || target == "1"
+        || target == "2"
+        || target == "&1"
+        || target == "&2"
+        || target.starts_with("/dev/null")
+}
+
+/// The redirect target inside one word, when the word is a redirect operator:
+/// the prefix may only be a filedescriptor (`2>`), and an empty target means
+/// the operand is the next word.
+fn redirect_target(word: &str) -> Option<&str> {
+    let word = word.trim_matches(&['\'', '"'][..]);
+    let index = word.find('>')?;
+    if !word[..index]
+        .chars()
+        .all(|c| c.is_ascii_digit() || c == '&')
+    {
+        return None;
+    }
+    Some(word[index..].trim_start_matches('>'))
+}
+
+/// Whether a segment writes rather than reads (`sed -i`, `sort -o`,
+/// `cat a > b`).
+fn mutates(words: &[String]) -> bool {
+    for (index, word) in words.iter().enumerate() {
+        let bare = word.trim_matches(&['\'', '"'][..]);
+        if IN_PLACE_FLAGS.contains(&bare) {
+            return true;
+        }
+        let Some(target) = redirect_target(bare) else {
+            continue;
+        };
+        if target.is_empty() {
+            // The operator stands alone: its operand is the next word.
+            if !words.get(index + 1).is_some_and(|next| diverts(next)) {
+                return true;
+            }
+        } else if !diverts(target) {
+            return true;
+        }
+    }
+    false
+}
+
+/// The words that name a file, with redirect operators and their operands
+/// skipped: `cat /a 2>/dev/null` reads `/a`, not `/dev/null`.
+fn operands(words: &[String]) -> Vec<&String> {
+    let mut out = Vec::new();
+    let mut skip_next = false;
+    for word in words {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        let bare = word.trim_matches(&['\'', '"'][..]);
+        match redirect_target(bare) {
+            Some(target) => skip_next = target.is_empty(),
+            None => out.push(word),
+        }
+    }
+    out
+}
+
+/// The path a word names, when it is one this helper can resolve without a
+/// shell cwd: absolute or `~/`-relative. A bare `state.json` is left alone —
+/// the hook has no idea which `state.json` the agent meant.
+fn resolvable_path(word: &str) -> Option<PathBuf> {
+    let word = word.trim_matches(&['\'', '"'][..]);
+    if word.is_empty() || word.starts_with('-') {
+        return None;
+    }
+    if let Some(rest) = word.strip_prefix("~/") {
+        let home = std::env::var_os("HOME")?;
+        return Some(PathBuf::from(home).join(rest));
+    }
+    word.starts_with('/').then(|| PathBuf::from(word))
+}
+
+/// The command with the two token shapes the shell splitter would mangle
+/// neutralised: an fd duplicate (`2>&1`, `1>&2`) contains the `&` it splits
+/// commands on, and a `jq` program (`{m:.workers}`) contains the braces it
+/// splits blocks on. Both are presentation, never a different poll.
+fn local_scan_text(command: &str) -> String {
+    command
+        .replace("2>&1", " ")
+        .replace("1>&2", " ")
+        .replace(['{', '}'], " ")
+}
+
+/// An identity for a command that only reads local files: every path it names,
+/// sorted, each with its current `(len, mtime)` fingerprint. `None` when any
+/// segment is not a plain file read (a writer, a bare reader with no path, a
+/// remote query, a path this hook cannot resolve), so those keep the
+/// exact-command behaviour.
+///
+/// The fingerprint is what makes this safe to count: a file that changed is a
+/// different key, so the edit-then-re-read loop re-arms instead of being
+/// refused, and a file that has not changed cannot answer differently.
+fn local_file_poll(command: &str) -> Option<String> {
+    let mut paths: Vec<PathBuf> = Vec::new();
+    for text in segments(&local_scan_text(command)) {
+        let words = strip_timeout(
+            &text
+                .split_whitespace()
+                .map(str::to_string)
+                .collect::<Vec<String>>(),
+        );
+        if words.is_empty() || is_scheduling(&words) || is_context(&words) {
+            continue;
+        }
+        let named: Vec<PathBuf> = operands(&words)
+            .iter()
+            .skip(1)
+            .filter_map(|word| resolvable_path(word))
+            .collect();
+        if named.is_empty() {
+            // A bare `head -60` / `grep -v X` is a pipeline stage, not a read.
+            if is_presentation(&words) {
+                continue;
+            }
+            return None;
+        }
+        let program = crate::block_bad_cmd::block_bad_cmd_shell::program_name(&words[0]);
+        if !LOCAL_READ_PROGRAMS.contains(&program.as_str()) || mutates(&words) {
+            return None;
+        }
+        paths.extend(named);
+    }
+    if paths.is_empty() {
+        return None;
+    }
+    paths.sort();
+    paths.dedup();
+    let mut text = String::new();
+    for path in &paths {
+        text.push_str(&path.display().to_string());
+        match std::fs::metadata(path) {
+            Ok(meta) => {
+                let (secs, nanos) = meta
+                    .modified()
+                    .ok()
+                    .and_then(|stamp| stamp.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map_or((0, 0), |age| (age.as_secs(), age.subsec_nanos()));
+                text.push_str(&format!(":{}:{secs}.{nanos}\n", meta.len()));
+            }
+            // A poll of a file that is not there yet re-arms when it appears.
+            Err(_) => text.push_str(":-\n"),
+        }
+    }
+    Some(text)
+}
+
+/// Whether one command is a read-only poll the steady counter should track:
+/// a remote query in any segment, or a command that only reads local files.
+pub(super) fn poll_query(command: &str) -> bool {
+    is_query(command) || local_file_poll(command).is_some()
+}
+
+/// The poll ledger key: `sha256(domain + "poll" + tool + core)`, so the same
+/// query under a different wait dressing shares one count. Falls back to the
+/// exact [`call_key`] when the command has no readable core.
+pub(super) fn poll_key(tool_name: &str, tool_input: Option<&Value>) -> String {
+    let command = tool_input
+        .and_then(|input| input.get("command"))
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if let Some(files) = local_file_poll(command) {
+        let digest =
+            Sha256::digest(format!("{HASH_DOMAIN}filepoll\0{tool_name}\0{files}").as_bytes());
+        return digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    }
+    let core = poll_core(command);
+    if core.is_empty() {
+        return call_key(tool_name, tool_input);
+    }
+    let digest = Sha256::digest(format!("{HASH_DOMAIN}poll\0{tool_name}\0{core}").as_bytes());
+    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// The one advisory line the poll note carries (#2631).
 pub(super) fn poll_message(count: u32) -> String {
     format!(
-        "[clud poll-note] this exact read-only query has now run {count} times in this session, \
+        "[clud poll-note] this same read-only query has now run {count} times in this session, \
          and every repeat re-sends the whole conversation before the same answer comes back. If \
          you are waiting for external state, block once instead of polling: \
          `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120 --timeout 3600` \
-         returns as soon as its output changes. Otherwise read the last answer and decide. This \
-         note is advisory; identical repeats stop being allowed past {POLL_DENY_AT} in a \
+         returns as soon as its output changes. If the answer has not changed, waiting will not \
+         change it: an empty `gh pr list --head <branch>` means the PR does not exist yet, and \
+         creating it is synchronous (`gh pr create`). Otherwise read the last answer and decide. \
+         This note is advisory; identical repeats stop being allowed past {POLL_DENY_AT} in a \
          session."
     )
 }
@@ -466,16 +961,25 @@ pub(super) enum Outcome {
     PollDeny(String),
 }
 
+/// The poll facts a call carries, as one argument so the burst inputs stay
+/// readable: whether the command reads state, the ledger key of its
+/// state-reading core, and the session's poll limit.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Past<'a> {
+    pub is_query: bool,
+    pub poll_key: &'a str,
+    pub poll_limit: u32,
+}
+
 /// Record this call against the session's ledger in `state_dir` and return
 /// the burst verdict plus the poll-note count. Every failure allows.
 pub(super) fn check_at(
     state_dir: &Path,
     session_id: &str,
     key: &str,
+    past: Past<'_>,
     now: u64,
     limit: u32,
-    is_query: bool,
-    poll_limit: u32,
 ) -> (Verdict, Option<u32>) {
     if limit == 0 || session_id.is_empty() {
         return (Verdict::Allow, None);
@@ -485,14 +989,27 @@ pub(super) fn check_at(
     let previous = existing
         .as_deref()
         .and_then(|bytes| serde_json::from_slice::<Streak>(bytes).ok());
+    let ledger = ledger_for_count(
+        previous.as_ref().filter(|_| past.is_query),
+        past.poll_key,
+        key,
+    );
     let (verdict, mut streak) = decide(previous.as_ref(), key, now, limit);
-    let (steady, steady_last) = if is_query {
-        poll_count(previous.as_ref(), key, now)
+    let (steady, steady_last) = if past.is_query {
+        poll_count(&ledger, past.poll_key, now)
     } else {
         (0, 0)
     };
     streak.steady = steady;
     streak.steady_last = steady_last;
+    streak.polls = if past.is_query {
+        ledger_after(&ledger, past.poll_key, steady, now)
+    } else {
+        previous
+            .as_ref()
+            .map(|prev| prev.polls.clone())
+            .unwrap_or_default()
+    };
     let Ok(bytes) = serde_json::to_vec(&streak) else {
         return (verdict, None);
     };
@@ -506,6 +1023,7 @@ pub(super) fn check_at(
     }
     // The poll guard speaks after the burst guard: a burst deny already stops
     // the call, and its message names the same waiter.
+    let poll_limit = past.poll_limit;
     if verdict == Verdict::Allow && poll_limit > 0 && steady > poll_limit {
         return (Verdict::PollDeny { count: steady }, None);
     }
@@ -534,19 +1052,18 @@ pub(super) fn outcome(
         .and_then(|input| input.get("command"))
         .and_then(Value::as_str)
         .unwrap_or("");
-    let query = is_query(command);
-    let poll_limit = effective_poll_limit();
-    match check_at(
-        &state_dir,
-        session_id,
-        &key,
-        now_secs(),
-        limit,
-        query,
-        poll_limit,
-    ) {
+    let query = poll_query(command);
+    let poll = poll_key(tool_name, tool_input);
+    let past = Past {
+        is_query: query,
+        poll_key: &poll,
+        poll_limit: effective_poll_limit(),
+    };
+    match check_at(&state_dir, session_id, &key, past, now_secs(), limit) {
         (Verdict::Deny { count }, _) => Outcome::Deny(deny_message(tool_name, count, limit)),
-        (Verdict::PollDeny { count }, _) => Outcome::PollDeny(poll_deny_message(count, poll_limit)),
+        (Verdict::PollDeny { count }, _) => {
+            Outcome::PollDeny(poll_deny_message(count, past.poll_limit))
+        }
         (Verdict::Allow, Some(count)) => Outcome::Note(poll_message(count)),
         (Verdict::Allow, None) => Outcome::Allow,
     }
@@ -556,7 +1073,7 @@ pub(super) fn outcome(
 /// any check needs. Names the waiter and the deliberate-repeat override.
 pub(super) fn poll_deny_message(count: u32, limit: u32) -> String {
     format!(
-        "[clud poll-guard] this exact read-only query has now run {count} times in this session \
+        "[clud poll-guard] this same read-only query has now run {count} times in this session \
          (limit {limit}), and every repeat re-sent the whole conversation before the same answer \
          came back. Stop polling and block once instead: \
          `clud tool run wait/until.py -- --cmd '<the same command>' --interval 120 --timeout 3600` \
