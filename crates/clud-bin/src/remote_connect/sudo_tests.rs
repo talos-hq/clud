@@ -96,6 +96,13 @@ impl Harness {
     }
 }
 
+/// The password flow exists only where the shell runs under the session
+/// leader (`sudo::advertised`); elsewhere sudo is never offered, and a
+/// console-less runner cannot hide typing, so these tests do not apply.
+fn password_flow_runs_here() -> bool {
+    crate::platform::remote_shell::SUPPORTED
+}
+
 fn state(event: Option<Value>) -> String {
     event.expect("an event")["state"]
         .as_str()
@@ -164,6 +171,9 @@ fn anything_but_yes_declines_without_asking_for_the_password() {
 
 #[test]
 fn a_correct_password_reaches_only_the_leader_and_activates_sudo() {
+    if !password_flow_runs_here() {
+        return;
+    }
     let mut h = Harness::new();
     h.reach_password_prompt("r1");
     assert_eq!(h.type_line(PASSWORD), None);
@@ -199,6 +209,9 @@ fn a_correct_password_reaches_only_the_leader_and_activates_sudo() {
 
 #[test]
 fn three_wrong_passwords_deny_and_each_attempt_asks_again() {
+    if !password_flow_runs_here() {
+        return;
+    }
     let mut h = Harness::new();
     h.reach_password_prompt("r1");
     for attempt in 1..=3u8 {
@@ -224,6 +237,9 @@ fn three_wrong_passwords_deny_and_each_attempt_asks_again() {
 
 #[test]
 fn an_empty_password_declines() {
+    if !password_flow_runs_here() {
+        return;
+    }
     let mut h = Harness::new();
     h.reach_password_prompt("r1");
     assert_eq!(state(h.type_line("")), "denied");
@@ -270,6 +286,9 @@ fn no_password_needed_and_no_rights_are_reported_without_a_prompt() {
 
 #[test]
 fn drop_and_expiry_end_an_active_ticket() {
+    if !password_flow_runs_here() {
+        return;
+    }
     let mut h = Harness::new();
     h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
@@ -290,6 +309,9 @@ fn drop_and_expiry_end_an_active_ticket() {
 
 #[test]
 fn dropping_while_validating_ignores_the_late_activation() {
+    if !password_flow_runs_here() {
+        return;
+    }
     let mut h = Harness::new();
     h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
@@ -301,6 +323,9 @@ fn dropping_while_validating_ignores_the_late_activation() {
 
 #[test]
 fn shutdown_tells_the_leader_to_drop_and_forgets_the_link() {
+    if !password_flow_runs_here() {
+        return;
+    }
     let mut h = Harness::new();
     h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
@@ -321,6 +346,9 @@ fn shutdown_tells_the_leader_to_drop_and_forgets_the_link() {
 
 #[test]
 fn shutdown_mid_password_releases_the_prompt() {
+    if !password_flow_runs_here() {
+        return;
+    }
     let mut h = Harness::new();
     h.reach_password_prompt("r1");
     h.replies.send(Reply::Dropped).unwrap();
@@ -332,6 +360,9 @@ fn shutdown_mid_password_releases_the_prompt() {
 
 #[test]
 fn the_shell_ending_ends_sudo() {
+    if !password_flow_runs_here() {
+        return;
+    }
     let mut h = Harness::new();
     h.reach_password_prompt("r1");
     h.type_line(PASSWORD);
@@ -342,4 +373,30 @@ fn the_shell_ending_ends_sudo() {
     h.sudo.link.as_mut().unwrap().replies = rx;
     assert_eq!(state(h.sudo.poll(&h.console)), "dropped");
     assert!(h.sudo.link.is_none());
+}
+
+/// A resumed session re-reports where sudo stands, never the password, and
+/// nothing once it is idle (the server's stale view is corrected by `dropped`).
+#[test]
+fn the_report_for_a_resumed_session_follows_the_phase() {
+    if !password_flow_runs_here() {
+        return;
+    }
+    let mut h = Harness::new();
+    assert_eq!(h.sudo.report(), None);
+    h.reach_password_prompt("r1");
+    assert_eq!(
+        h.sudo.report(),
+        Some(json!({"type":"sudo_state", "request_id":"r1", "state":"prompting"}))
+    );
+    h.type_line(PASSWORD);
+    assert_eq!(state(h.sudo.report()), "prompting");
+    h.reply(Reply::Active { until: 77 });
+    assert_eq!(
+        h.sudo.report(),
+        Some(json!({"type":"sudo_state", "request_id":"r1", "state":"active", "until":77}))
+    );
+    assert!(!h.sudo.report().unwrap().to_string().contains(PASSWORD));
+    h.sudo.on_drop(&h.console);
+    assert_eq!(h.sudo.report(), None, "a drop in flight reports nothing");
 }

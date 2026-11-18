@@ -5,7 +5,13 @@ Native client for `clud clud.bot` (the fixed-host alias), `clud remote connect c
 [remote assistance](../../../../docs/architecture/remote-assistance.md) for the
 consent boundary, protocol and executable integration check.
 
-- `mod.rs`: CLI action, foreground session, heartbeat and local consent state.
+- `mod.rs`: CLI action, foreground session (`Link`: connected and
+  reconnecting phases), heartbeat and local consent state, including the
+  consent reconciliation after a resume.
+- `resume.rs`: reconnecting after an unexpected loss: the resume window,
+  jittered backoff, close-code meaning, the bounded outage buffer and the
+  background `Reconnector`. See
+  [session resume](../../../../docs/architecture/remote-assistance.md#session-resume).
 - `console.rs`: the stdout worker: mirrors shell output to the client, prints
   notices and restores the local terminal, never blocking the session loop.
 - `mirror.rs`: what of the shell's output the local terminal may see: drops

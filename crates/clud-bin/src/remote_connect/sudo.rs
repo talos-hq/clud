@@ -161,6 +161,19 @@ impl Sudo {
         self.request = None;
     }
 
+    /// Where this flow stands, for a server that may have missed it (a
+    /// resumed session). `None` when idle or already being dropped.
+    pub fn report(&self) -> Option<Value> {
+        let state = match self.phase {
+            Phase::Idle | Phase::Dropping => return None,
+            Phase::Active(until) => Wire::Active(until),
+            Phase::Probing | Phase::Confirm | Phase::Password(_) | Phase::Validating(_) => {
+                Wire::Prompting
+            }
+        };
+        Some(state_event(self.request.as_deref(), state))
+    }
+
     /// Whether the next typed line belongs to this flow.
     pub fn wants_line(&self) -> bool {
         matches!(self.phase, Phase::Confirm | Phase::Password(_))

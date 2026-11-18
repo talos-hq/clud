@@ -9,7 +9,7 @@ use url::Url;
 
 pub(super) type Socket = WebSocket<MaybeTlsStream<TcpStream>>;
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize)]
 pub(super) struct Session {
     pub keyword: String,
     pub ws_url: String,
@@ -136,47 +136,84 @@ fn validate_socket_url(base: &Url, text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Why a WebSocket connection was not made.
+#[derive(Debug)]
+pub(super) enum ConnectError {
+    /// The server answered the handshake with an HTTP error: the token is no
+    /// longer accepted (the session ended) or the request was refused.
+    Refused,
+    /// The server could not be reached or the handshake did not complete.
+    Unreachable(String),
+}
+
+impl From<ConnectError> for String {
+    fn from(error: ConnectError) -> Self {
+        match error {
+            ConnectError::Refused => "could not connect remote session".into(),
+            ConnectError::Unreachable(reason) => reason,
+        }
+    }
+}
+
+/// The session's socket URL, declaring resume support (`resume=1`): a server
+/// that understands it keeps the session through a lost socket, and lets a
+/// newer connection with this token replace an older one. Others ignore it.
+pub(super) fn socket_url(session: &Session) -> String {
+    format!("{}&resume=1", session.ws_url)
+}
+
 pub(super) fn connect(session: &Session) -> Result<Socket, String> {
+    connect_url(&socket_url(session)).map_err(String::from)
+}
+
+pub(super) fn connect_url(ws_url: &str) -> Result<Socket, ConnectError> {
     let config = tungstenite::protocol::WebSocketConfig::default()
         .max_message_size(Some(128 * 1024))
         .max_frame_size(Some(128 * 1024));
-    let url = Url::parse(&session.ws_url).map_err(|_| "invalid remote WebSocket URL")?;
+    let unreachable = |reason: &str| ConnectError::Unreachable(reason.into());
+    let url = Url::parse(ws_url).map_err(|_| unreachable("invalid remote WebSocket URL"))?;
     let host = url
         .host_str()
-        .ok_or("missing remote host")?
+        .ok_or_else(|| unreachable("missing remote host"))?
         .trim_matches(['[', ']']);
     let addresses = (
         host,
-        url.port_or_known_default().ok_or("missing remote port")?,
+        url.port_or_known_default()
+            .ok_or_else(|| unreachable("missing remote port"))?,
     )
         .to_socket_addrs()
-        .map_err(|_| "cannot resolve remote host")?;
+        .map_err(|_| unreachable("cannot resolve remote host"))?;
     let timeout = Duration::from_secs(15);
     let tcp = addresses
         .take(4)
         .find_map(|address| TcpStream::connect_timeout(&address, timeout).ok())
-        .ok_or("cannot reach remote host")?;
+        .ok_or_else(|| unreachable("cannot reach remote host"))?;
     tcp.set_read_timeout(Some(timeout))
-        .map_err(|_| "cannot set handshake timeout")?;
+        .map_err(|_| unreachable("cannot set handshake timeout"))?;
     tcp.set_write_timeout(Some(timeout))
-        .map_err(|_| "cannot set handshake timeout")?;
+        .map_err(|_| unreachable("cannot set handshake timeout"))?;
     // Unlike connect(), this performs one handshake and never follows redirects.
     let (mut socket, _) = tungstenite::client_tls_with_config(
-        session.ws_url.as_str(),
+        ws_url,
         tcp,
         Some(config),
-        Some(tungstenite::Connector::Rustls(tls_config()?)),
+        Some(tungstenite::Connector::Rustls(
+            tls_config().map_err(ConnectError::Unreachable)?,
+        )),
     )
-    .map_err(|_| "could not connect remote session")?;
+    .map_err(|error| match error {
+        tungstenite::HandshakeError::Failure(tungstenite::Error::Http(_)) => ConnectError::Refused,
+        _ => unreachable("could not connect remote session"),
+    })?;
     let tcp = match socket.get_mut() {
         MaybeTlsStream::Plain(tcp) => tcp,
         MaybeTlsStream::Rustls(tls) => &mut tls.sock,
-        _ => return Err("unsupported remote transport".into()),
+        _ => return Err(unreachable("unsupported remote transport")),
     };
     tcp.set_read_timeout(Some(Duration::from_millis(50)))
-        .map_err(|_| "cannot set remote read timeout")?;
+        .map_err(|_| unreachable("cannot set remote read timeout"))?;
     tcp.set_write_timeout(Some(Duration::from_secs(5)))
-        .map_err(|_| "cannot set remote write timeout")?;
+        .map_err(|_| unreachable("cannot set remote write timeout"))?;
     Ok(socket)
 }
 

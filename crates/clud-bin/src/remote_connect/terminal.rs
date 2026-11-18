@@ -38,6 +38,8 @@ pub(super) struct Terminal {
     leader_enabled: bool,
     /// The connected leader, until the sudo flow takes it.
     leader: Option<LeaderStream>,
+    /// `(rows, cols)` of the open terminal, reported when a session resumes.
+    size: (u16, u16),
 }
 
 fn dimensions(event: &Value) -> (u16, u16) {
@@ -285,7 +287,8 @@ impl Terminal {
             .filter(|s| !s.is_empty() && s.len() <= 128)
             .ok_or("invalid remote terminal ID")?
             .to_owned();
-        let process = self.spawn(dimensions(event))?;
+        let size = dimensions(event);
+        let process = self.spawn(size)?;
         self.failed = Arc::default();
         let (input_tx, input_rx) = mpsc::channel();
         let pending = Arc::new(AtomicUsize::new(0));
@@ -305,6 +308,7 @@ impl Terminal {
             output_pump(reader, output_tx, output_id, output_failed, paste_out);
         });
         self.process = Some(process);
+        self.size = size;
         self.input = Some(InputQueue {
             tx: input_tx,
             pending,
@@ -365,6 +369,14 @@ impl Terminal {
         self.id.as_deref()
     }
 
+    /// The open terminal as a resumed session reports it to the server.
+    pub fn report(&self) -> Option<Value> {
+        let (rows, cols) = self.size;
+        self.id
+            .as_ref()
+            .map(|id| json!({"pty_id":id, "cols":cols, "rows":rows}))
+    }
+
     pub fn matches(&self, event: &Value) -> bool {
         self.id
             .as_deref()
@@ -381,10 +393,11 @@ impl Terminal {
             .map_or(Delivery::Queued, |queue| queue.push(data)))
     }
 
-    pub fn resize(&self, event: &Value) -> Result<(), String> {
+    pub fn resize(&mut self, event: &Value) -> Result<(), String> {
         if let Some(process) = &self.process {
             let (rows, cols) = dimensions(event);
             crate::session::resize_pty(process, rows, cols).map_err(|e| e.to_string())?;
+            self.size = (rows, cols);
         }
         Ok(())
     }

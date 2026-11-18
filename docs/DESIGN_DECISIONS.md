@@ -7990,3 +7990,43 @@ the agent, while secret sinks deliberately suppress output. It also avoids
 `--title`/`--message` boilerplate on the most common credential request.
 Refusing raw `sudo` costs one round trip on NOPASSWD hosts. The refusal
 offers `sudo -n` for them, and `clud sudo` never prompts there.
+
+## DD-218: remote sessions resume after a lost connection with the same token, and local consent stays authoritative
+
+**Status:** Accepted.
+
+**Context:** Every clud.bot deploy ended every live remote-help session. The
+server ended all `accepted`/`connected` sessions at startup and whenever a
+client socket closed, and `clud remote connect` exited on any socket error.
+clud.bot runs one worker with a persistent disk on Render, which cannot deploy
+it with zero downtime, so each deploy is a restart with a gap.
+
+**Decision:** A session outlives its connection. The client keeps the shell,
+holds at most 1 MiB of its output, and reconnects with the client token it
+already holds, with capped jittered backoff, for at most 5 minutes; the server
+keeps the session in its existing state with a `resume_deadline` (5 minutes by
+default) and ends it when that passes. The newest connection presenting the
+token wins and the older one is closed with 4409. After reconnecting, the
+client reconciles its own consent with the server's record (`hello.resume`):
+it keeps control only if it still holds the exact grant the server records,
+and never gains control without the user's local yes. Both sides negotiate it
+(`resume=1` and `caps`; `hello.resume`): an old client or an old server gets
+the old behaviour.
+
+**Why:** The token is already the session's only credential and is never
+shown elsewhere, so reusing it adds no new secret and no new attack surface: a
+holder of the token could always connect while the client was away. Newest
+wins rather than refusing a duplicate because the common duplicate is the
+client's own new connection racing a half-open old one the server has not yet
+noticed; refusing would lock the real client out for up to the server's 60 s
+silence timeout. A client closed with 4409 does not reconnect, so two holders
+cannot ping-pong. Consent is reconciled by request id rather than trusting
+either side's `granted` flag: an operator's revocation while the client was
+away must stick, and a server state the user never agreed to must not open a
+shell. A new `reconnecting` session state was rejected: every existing check
+of `connected` (proxy authorization, operator actions, the status endpoint old
+clients poll) would have needed a second spelling, and the deadline column
+expresses the same thing without changing the state machine. Terminal content
+is still never persisted on the server; the client's held output covers the
+gap instead, and the operator console keeps the screen it already shows.
+

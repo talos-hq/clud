@@ -53,10 +53,10 @@ fn stdin_terminal_check_happens_before_stdin_is_read() {
 #[test]
 fn sudo_is_advertised_only_on_a_terminal_off_windows() {
     let caps = |inline| super::caps(inline)["caps"].clone();
-    assert_eq!(caps(false), serde_json::json!(["pty"]));
+    assert_eq!(caps(false), serde_json::json!(["pty", "resume"]));
     if crate::platform::host::WINDOWS {
-        assert_eq!(caps(true), serde_json::json!(["pty"]));
+        assert_eq!(caps(true), serde_json::json!(["pty", "resume"]));
     } else {
-        assert_eq!(caps(true), serde_json::json!(["pty", "sudo"]));
+        assert_eq!(caps(true), serde_json::json!(["pty", "resume", "sudo"]));
     }
 }

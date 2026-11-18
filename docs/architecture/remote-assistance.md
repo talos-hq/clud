@@ -27,9 +27,11 @@ commands or revoke credentials that an executed command copied elsewhere.
 
 Client output is binary channel 0; server input is channel 1. JSON messages
 carry capability negotiation, consent, terminal dimensions, exit status and
-session state. Heartbeats run every 20 seconds. Control revocation clears local
+session state. Heartbeats run every 10 seconds. Control revocation clears local
 approval and closes the PTY. Disconnect, denial, expiration and Ctrl+C terminate
-the foreground client and close the PTY through its cleanup guard. Client output
+the foreground client and close the PTY through its cleanup guard. An unexpected
+loss of the connection does not: the session resumes (see
+[Session resume](#session-resume)). Client output
 and control events are not written to files by clud.
 
 The shell's output also goes to the client's own terminal, so the person who
@@ -169,6 +171,70 @@ The shell is started through running-process's caller-owned foreground API
 It is reaped with `waitpid`; sudo itself runs through `NativeProcess`.
 [DD-216](../DESIGN_DECISIONS.md#dd-216-remote-sudo-is-validated-by-a-clud-session-leader-inside-the-operator-pty)
 records why.
+
+## Session resume
+
+A clud.bot deploy restarts the server with downtime, and networks drop. Neither
+ends a live session any more ([DD-218](../DESIGN_DECISIONS.md#dd-218-remote-sessions-resume-after-a-lost-connection-with-the-same-token-and-local-consent-stays-authoritative);
+protocol: clud.bot `SPEC.md` §4.2.3; code: `remote_connect/resume.rs` and
+`Link` in `remote_connect/mod.rs`).
+
+**Loss.** The session loop (`Link::online`) ends a connected phase on a socket
+error, a close frame (except 4409 and protocol violations), a `server_restart`
+notice, or a heartbeat timeout: no frame from the server for 35 seconds while
+pinging every 10, which catches a half-open connection with no FIN. Expected
+terminations still end at once with their own messages: `disconnect`,
+`denied`, `expired`, `ended`, and a refused reconnect whose
+`/api/remote/status` is terminal. A server that did not advertise `resume` in
+its `hello` gets the old behaviour: the client exits with
+`remote connection lost`.
+
+**Reconnect.** The client prints `Connection to clud.bot lost; reconnecting…
+(Ctrl+C to end)` once and keeps the shell running. `Reconnector` attempts in a
+background thread so the loop keeps draining the PTY and sees Ctrl+C even
+while a handshake waits on an unreachable host. Backoff is capped exponential
+with jitter: 0.5 s doubling to 15 s, each wait 50-100 % of its step; the first
+attempt after a `server_restart` waits about 2 s. It gives up after
+`RESUME_WINDOW` (5 minutes; `CLUD_REMOTE_RESUME_WINDOW_SECS` may only shorten
+it, for tests) with a non-zero exit. Every connection, the first included, uses
+`ws_url&resume=1` with the same client token; the server lets the newest such
+connection replace an older one and closes the older with 4409, which the
+client treats as final ("This session was resumed from another connection.").
+A deliberate exit closes with 1000 so the server ends the session at once
+rather than waiting out its grace window.
+
+**While disconnected** the PTY's output is still drained at the local
+terminal's pace, mirrored there and held in `Outage`, at most 1 MiB, oldest
+dropped first; the `pty_exit` of a shell that ended offline is never dropped.
+Unlike the connected path, which slows the shell to the socket's pace (see
+above), nothing paces an outage of unknown length, so the operator gets the
+newest output and a `pty_gap` marker for the rest. A consent answer typed
+while offline is remembered, not sent.
+
+**Resync.** On the new `hello`, `State::resume` reconciles with the server's
+record (`hello.resume`). Local consent stays authoritative:
+
+- control continues only if this client holds the grant whose request id the
+  server records (`grant_id`); otherwise the client closes its terminal,
+  prints "Remote control ended while the connection was down.", and sends
+  `control_release` if the server still shows a grant;
+- a grant the server made for the user's own yes, whose `control_granted` was
+  lost with the socket, is taken up; nothing else grants control;
+- a pending question with the same request id is not asked again; an answer
+  typed while offline is sent if that request is still open; a request the
+  operator withdrew clears the question;
+- sudo keeps running in the session leader while the client is away; the
+  client re-reports where it stands (`Sudo::report`: `prompting` or `active`
+  with `until`), or the last `sudo_state` that could not be sent, or
+  `dropped` when the server still shows sudo on and nothing is running here.
+  A server restart forgets sudo state, so this is what restores the console's
+  view; revoking control while away drops sudo with the shell;
+- the client reports the terminal it still holds (`resume`), then sends the
+  held output, preceded by `pty_gap` when output was dropped, and prints
+  `Reconnected.`
+
+**Proxy mode** (`clud connect` → Use Proxy) reconnects the same way in the
+background; the user's agent keeps running and is not interrupted.
 
 ## Choosing a mode: `clud connect`
 
