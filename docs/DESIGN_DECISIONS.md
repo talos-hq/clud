@@ -8030,3 +8030,57 @@ expresses the same thing without changing the state machine. Terminal content
 is still never persisted on the server; the client's held output covers the
 gap instead, and the operator console keeps the screen it already shows.
 
+
+## DD-219: the clud.bot session socket is end-to-end encrypted with an unauthenticated ephemeral exchange inside TLS
+
+**Status:** Accepted.
+
+**Context:** clud.bot runs on Render, whose Cloudflare edge holds the clud.bot
+TLS certificate. It decrypts every request and WebSocket frame and runs a
+firewall over them; that firewall already answers agent prompts containing
+shell text with `403 Blocked` (which is why model requests moved onto the
+session socket, `bridge.rs`). Everything on the socket (PTY input and output,
+consent, sudo state, chat, model prompts and completions) was therefore
+readable at the edge, and could be logged there.
+
+**Decision:** Every connection of `clud remote connect` / `clud connect` runs
+its own key exchange inside the TLS socket (`remote_connect/e2e.rs`): both
+sides make an ephemeral X25519 key pair and a random 32-byte nonce, derive one
+ChaCha20-Poly1305 key per direction with HKDF-SHA256 over the shared secret,
+salted with a SHA-256 hash of the transcript (protocol version, suite, session
+id, both public keys, both nonces), and seal every later frame as one binary
+record whose nonce is an implicit per-direction counter. Any record that fails
+to open closes the socket with 4400 and ends the session (not resumable).
+Every reconnect or resume runs a fresh exchange; keys live only in memory and
+are wiped when the socket's state drops (`zeroize` through the crates). TLS
+stays the outer layer. The client asks with `e2e=1`; it refuses plaintext from
+`clud.bot` (built in), from any server whose creation response said `e2e`,
+with `CLUD_REMOTE_REQUIRE_E2E=1`, and on every reconnect of a session that was
+encrypted; otherwise it warns and continues in plaintext. When it already
+expects encryption it keeps the host name and working directory out of the
+creation request and sends them inside the tunnel (`client_info`). The wire
+format is owned by clud.bot's `SPEC.md` §4.2.4.
+
+**Why:** The owner chose ephemeral keys on both sides and **no long-term
+server identity key**: nothing to generate, store as a Render secret, pin in
+the binary or rotate. That makes the exchange unauthenticated, so the threat
+model is stated plainly: it defeats an edge that *reads or inspects* traffic
+(its firewall, its logs, a passive copy of the WebSocket bytes) and does not
+defeat an edge that *actively* swaps both public keys and relays. The client's
+bearer cannot bind the exchange either, since the edge sees it in the socket
+URL. A signed server key (Ed25519 over the transcript, pinned in clud) is the
+upgrade path if that ever matters; the transcript already covers everything it
+would sign. The downgrade policy is likewise advisory against an active edge
+(it could rewrite the creation response too) but means a new client never
+silently talks plaintext to clud.bot, and an accidental downgrade fails
+closed. Implicit counters rather than explicit sequence numbers: replay,
+reordering and truncation all reduce to one failed tag, with nothing to
+validate separately. ChaCha20-Poly1305 rather than AES-GCM: constant-time in
+software on every target without depending on AES instructions. Rejected:
+replacing or bypassing TLS (the edge is still the only route to the app, and
+double encryption costs 18 bytes a frame); end-to-end to the operator's
+browser now (the server must still terminate model-proxy traffic, which it
+forwards to OpenRouter, and the browser leg is a separate design; see
+`remote-assistance.md#end-to-end-encryption`). New dependencies
+`x25519-dalek`, `chacha20poly1305` and `hkdf` are the RustCrypto / dalek
+implementations (MIT or Apache-2.0); clud.bot uses Python's `cryptography`.

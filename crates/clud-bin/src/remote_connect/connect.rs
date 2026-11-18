@@ -282,6 +282,9 @@ impl ProxySession {
     /// the old contract: wait for the agent, or end.
     fn lost(&mut self, error: String) -> Result<Option<i32>, String> {
         if !self.resumes || error != super::CONNECTION_LOST {
+            // No socket will come back: fail the agent's model requests now
+            // (connection refused) instead of after the bridge's reply timeout.
+            self.bridge = None;
             return finish_without_socket(self, error).map(Some);
         }
         if let Some(bridge) = &self.bridge {
@@ -328,6 +331,10 @@ impl ProxySession {
                 self.reconnect = None;
                 finish_without_socket(self, resume::GAVE_UP.into()).map(Some)
             }
+            resume::Poll::Insecure(message) => {
+                self.reconnect = None;
+                finish_without_socket(self, message).map(Some)
+            }
         }
     }
 }
@@ -343,7 +350,7 @@ fn wait_for_agent(agent: &ManagedSubprocess) -> i32 {
 
 fn run_proxy_session(host: &str) -> Result<i32, String> {
     let base = transport::base_url(host)?;
-    let session = transport::create(&base, Some(Mode::Proxy.wire()))?;
+    let mut session = transport::create(&base, Some(Mode::Proxy.wire()))?;
     if session.mode.as_deref() != Some(Mode::Proxy.wire()) {
         return Err("this server cannot ask for proxy consent; nothing was enabled".into());
     }
@@ -353,7 +360,7 @@ fn run_proxy_session(host: &str) -> Result<i32, String> {
         .prefix("clud-remote-auth-")
         .tempdir()
         .map_err(|_| "cannot isolate remote agent credentials")?;
-    let socket = match transport::connect(&session) {
+    let socket = match transport::connect(&mut session) {
         Ok(socket) => socket,
         Err(error) => {
             // The operator may have decided while the handshake was in flight.

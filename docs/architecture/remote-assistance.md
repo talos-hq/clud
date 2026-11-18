@@ -236,6 +236,59 @@ record (`hello.resume`). Local consent stays authoritative:
 **Proxy mode** (`clud connect` → Use Proxy) reconnects the same way in the
 background; the user's agent keeps running and is not interrupted.
 
+## End-to-end encryption
+
+clud.bot's hosting edge terminates TLS, so TLS alone lets it read every frame
+on the session socket. `remote_connect/e2e.rs` adds a second layer inside it
+([DD-219](../DESIGN_DECISIONS.md#dd-219-the-cludbot-session-socket-is-end-to-end-encrypted-with-an-unauthenticated-ephemeral-exchange-inside-tls));
+the wire format is owned by clud.bot's `SPEC.md` §4.2.4.
+
+- **Exchange.** The client adds `e2e=1` to the socket URL
+  (`transport::socket_url`). A server that offers encryption greets with a
+  plaintext `e2e_offer` (its ephemeral X25519 key and a nonce) instead of
+  `hello`; the client answers `e2e_accept` with its own, and both derive one
+  ChaCha20-Poly1305 key per direction with HKDF-SHA256, salted with the
+  transcript hash (`e2e::transcript`). It runs inside `transport::connect_url`
+  before the socket is handed out, so every first connect and every resume
+  (`resume::Reconnector`) gets fresh keys.
+- **Records.** `transport::Socket` wraps the WebSocket: `send` seals each text
+  or binary message, `read` opens it, so `mod.rs`, `connect.rs` and
+  `bridge.rs` see plaintext and are unchanged. A record that fails to open
+  (altered, replayed, reordered, truncated, or a plaintext frame) makes
+  `read` close with 4400 and return that close; `resume::close_meaning`
+  treats 4400 as final, so the session ends with
+  `an encrypted frame from clud.bot failed authentication` instead of
+  reconnecting. The server does the same for frames from the client.
+- **Downgrade.** `Session::e2e_required` is set before the first connect for
+  `clud.bot` (`ENCRYPTED_HOSTS`), when the creation response carries `e2e`,
+  or with `CLUD_REMOTE_REQUIRE_E2E=1`, and after any encrypted socket. A
+  server that greets in plaintext is then refused
+  (`ConnectError::Insecure`, final on reconnect too). Otherwise the client
+  prints a one-line stderr warning and continues in plaintext, as old servers
+  require.
+- **What stays visible to the edge.** Session timing; the creation request
+  (`clud_version`, `os`, and, unless the client already expects encryption,
+  host name and directory, which otherwise go inside the tunnel as
+  `client_info`); the creation response (keyword, bearer, `ws_url`, model);
+  the bearer in the socket URL; the exchange's public values; every record's
+  size, direction and timing; close codes; and the operator console leg below.
+- **Not defended:** an edge that actively swaps both ephemeral keys. The
+  exchange is unauthenticated by design (no server identity key); see the DD.
+- **The operator leg.** The admin console's WebSocket (browser ↔ server)
+  also crosses the edge in TLS only, so what the operator sees (PTY output,
+  chat) is still readable there. Extending encryption to it means the
+  operator's browser holds its own ephemeral keys and runs the same exchange
+  with this client, with the server relaying sealed PTY and chat frames it
+  cannot open. The client ↔ server channel stays as well, because model-proxy
+  traffic must terminate at the server, which calls OpenRouter.
+
+Tests: `e2e_tests.rs` (known-answer vector shared with clud.bot's
+`tests/test_e2e.py`, tamper at every byte, replay, reorder, truncation,
+transcript binding, strict offer parsing, low-order keys); `transport.rs`
+(policy); clud.bot's `tests/e2e/native_e2e.py` drives this binary through a
+WebSocket-aware tap that captures, tampers, strips the request and cuts the
+link.
+
 ## Choosing a mode: `clud connect`
 
 `clud connect clud.bot` asks first:

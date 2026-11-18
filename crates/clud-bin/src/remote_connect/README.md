@@ -18,6 +18,10 @@ consent boundary, protocol and executable integration check.
   queries, clipboard writes and input-reporting modes, keeps all drawing.
 - `transport.rs`: bounded session creation, same-origin bearer validation and
   HTTP/WebSocket TLS with bundled plus system roots.
+- `e2e.rs`: end-to-end encryption of the session socket inside TLS
+  (ephemeral X25519, HKDF-SHA256, ChaCha20-Poly1305 records); `transport::Socket`
+  seals and opens every frame. See
+  [end-to-end encryption](../../../../docs/architecture/remote-assistance.md#end-to-end-encryption).
 - `bridge.rs`: loopback model endpoint that carries the agent's requests over
   the session socket (channel 2), past the hosting edge's HTTPS body firewall.
   See [model requests ride the session socket](../../../../docs/architecture/remote-assistance.md#model-requests-ride-the-session-socket).

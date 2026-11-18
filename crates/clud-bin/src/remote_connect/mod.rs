@@ -2,6 +2,7 @@
 mod bridge;
 pub mod connect;
 mod console;
+mod e2e;
 // The leader half runs only where `platform::remote_shell` is supported; on
 // hosts with the stub (Windows) only the client half is reachable.
 #[allow(
@@ -82,12 +83,12 @@ fn stdin_lines() -> mpsc::Receiver<String> {
 
 fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let base = transport::base_url(host)?;
-    let session = transport::create(&base, mode.map(connect::Mode::wire))?;
+    let mut session = transport::create(&base, mode.map(connect::Mode::wire))?;
     println!("Connecting to {}connect#k={}", base, session.keyword);
     std::io::stdout()
         .flush()
         .map_err(|_| "cannot print remote keyword")?;
-    let socket = match transport::connect(&session) {
+    let socket = match transport::connect(&mut session) {
         Ok(socket) => socket,
         Err(error) => {
             if let Some(message) = transport::terminal_status(&base, &session.keyword)
@@ -252,6 +253,10 @@ impl Link {
                     return Ok(Err(0));
                 }
                 resume::Poll::GaveUp => return Err(resume::GAVE_UP.into()),
+                resume::Poll::Insecure(message) => {
+                    state.revoke();
+                    return Err(message);
+                }
                 resume::Poll::Waiting if busy => {}
                 resume::Poll::Waiting => std::thread::sleep(Duration::from_millis(5)),
             }
