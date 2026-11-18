@@ -444,6 +444,24 @@ fn operator_denial_ends_the_client_with_its_message() {
     assert_eq!(client.wait_exit(), 0);
 }
 
+/// "Open Address" needs granted control, and even then a `file:` address is
+/// refused before any browser is launched. No accepted address is sent here,
+/// so the test never opens a browser.
+#[test]
+fn open_address_is_refused_without_control_and_for_a_local_file() {
+    let (client, mut operator, _) = accepted_session();
+    operator.send(json!({"type":"open_url", "url":"https://clud.bot/connect"}));
+    client.wait_for("remote control is not granted");
+    assert!(request_control(&client, &mut operator, "grant", "y"));
+    operator.send(json!({"type":"control_granted", "request_id":"grant"}));
+    client.wait_for("Remote control granted");
+    operator.send(json!({"type":"open_url", "url":"file:///etc/passwd"}));
+    client.wait_for("refused to open an address (only https addresses are allowed)");
+    assert!(!client.text().contains("opened in your browser"));
+    operator.send(json!({"type":"disconnect"}));
+    assert_eq!(client.wait_exit(), 0);
+}
+
 /// `clud remote connect` on a terminal: what a user runs. Only then is the
 /// password prompt hideable, so only then does the client offer `sudo`.
 struct TtyClient {

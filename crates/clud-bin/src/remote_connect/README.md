@@ -35,6 +35,9 @@ consent boundary, protocol and executable integration check.
   leader (`platform::remote_shell`): the client <-> leader line protocol,
   sudo output classification, the 60 s keep-alive and the 4-hour cap. See
   [Request sudo](../../../../docs/architecture/remote-assistance.md#request-sudo).
+- `open_url.rs`: "Open Address": opens an operator-sent URL in the user's
+  browser only while remote control is granted, and only `https://` or a
+  loopback `http://` origin; the console reports every open or refusal.
 - `paste.rs`: drops bracketed-paste markers from operator input while the
   remote shell has not enabled the mode, so a console paste never reaches the
   shell as `^[[200~...~`.
