@@ -296,11 +296,13 @@ def main(argv: list[str] | None = None) -> int:
         build, smoke = release_matrix(), wheel_smoke_matrix()
         if args.macos_only:
             build, smoke = macos_only(build), macos_only(smoke)
-        emit({
-            "build": json.dumps(build, separators=(",", ":")),
-            "static_musl": json.dumps(static_musl_matrix(), separators=(",", ":")),
-            "smoke": json.dumps(smoke, separators=(",", ":")),
-        })
+        emit(
+            {
+                "build": json.dumps(build, separators=(",", ":")),
+                "static_musl": json.dumps(static_musl_matrix(), separators=(",", ":")),
+                "smoke": json.dumps(smoke, separators=(",", ":")),
+            }
+        )
         return 0
 
     tier = resolve_tier(

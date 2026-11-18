@@ -208,7 +208,12 @@ def test_notarytool_commands() -> None:
     assert log[:4] == ["xcrun", "notarytool", "log", "sub-1"]
     assert log[log.index("--team-id") + 1] == "ABCDE12345"
     assert sign.ditto_command(Path("d"), Path("u.zip")) == [
-        "ditto", "-c", "-k", "--keepParent", "d", "u.zip",
+        "ditto",
+        "-c",
+        "-k",
+        "--keepParent",
+        "d",
+        "u.zip",
     ]
 
 
