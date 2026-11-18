@@ -646,6 +646,10 @@ fn operands(words: &[String]) -> Vec<&String> {
 /// The path a word names, when it is one this helper can resolve without a
 /// shell cwd: absolute or `~/`-relative. A bare `state.json` is left alone —
 /// the hook has no idea which `state.json` the agent meant.
+///
+/// Absolute means either a `/`-rooted word (POSIX, and Git Bash on Windows)
+/// or whatever the host itself calls absolute, so a Windows drive path
+/// (`C:\...\state.json`, `C:/...`) is a file poll too, not an exact command.
 fn resolvable_path(word: &str) -> Option<PathBuf> {
     let word = word.trim_matches(&['\'', '"'][..]);
     if word.is_empty() || word.starts_with('-') {
@@ -655,7 +659,7 @@ fn resolvable_path(word: &str) -> Option<PathBuf> {
         let home = std::env::var_os("HOME")?;
         return Some(PathBuf::from(home).join(rest));
     }
-    word.starts_with('/').then(|| PathBuf::from(word))
+    (word.starts_with('/') || Path::new(word).is_absolute()).then(|| PathBuf::from(word))
 }
 
 /// The command with the two token shapes the shell splitter would mangle
