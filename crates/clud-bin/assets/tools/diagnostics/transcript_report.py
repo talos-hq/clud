@@ -8,7 +8,8 @@
 
 Usage:
   transcript_report.py <transcript.jsonl> [--json] [--burst-threshold N]
-                       [--jump-threshold TOKENS] [--state-dir DIR]
+                       [--jump-threshold TOKENS] [--context-floor TOKENS]
+                       [--state-dir DIR]
 
 Reads one Claude Code session transcript (JSONL) and reports what drove its
 context usage (issue #1276):
@@ -21,6 +22,13 @@ context usage (issue #1276):
   longest consecutive streak.
 * compaction boundaries (``compact_boundary`` system rows), context jumps
   between consecutive responses, and terminal context errors.
+* the history premium: how many responses held a context above
+  ``--context-floor`` (default 100k) and how many tokens those responses
+  re-sent above that floor. A tool result is paid for once, but the history
+  behind it is re-sent on every later request; on 2026-11-07 five long-lived
+  manager sessions held half of the fleet's 1.33B cache-read tokens while
+  their tool output was under 1 MB each. The premium is derived from usage
+  integers only and is the number to look at before blaming a tool.
 * tool-result byte totals and the largest single result.
 * the effective max-context setting, which a transcript does not record. It
   comes from clud's per-session launch-context record (#1675), joined by a
@@ -94,6 +102,14 @@ def emit_bounded(text: str, name: str, cap: int = STDOUT_CAP_BYTES) -> None:
 
 DEFAULT_BURST_THRESHOLD = 20
 DEFAULT_JUMP_THRESHOLD = 50_000
+#: Context at or above which a response is charged for its history. 100k is
+#: well under every window the fleet launches with (200k..786k), so a session
+#: that stays below it is not paying a measurable premium, and one that lives
+#: above it is.
+DEFAULT_CONTEXT_FLOOR = 100_000
+#: Premium at which the text report names the compaction lever. Below this the
+#: summary line is information; above it the session is the problem.
+PREMIUM_HINT_TOKENS = 5_000_000
 
 # Must match `launch_context::HASH_DOMAIN` in crates/clud-bin/src/launch_context.rs.
 LAUNCH_CONTEXT_HASH_DOMAIN = "clud-launch-context-v1\0"
@@ -224,11 +240,45 @@ def _result_bytes(block: dict[str, Any]) -> int:
     return 0
 
 
+def _percentile(values: list[int], pct: int) -> int:
+    """Nearest-rank percentile of ``values``; ``0`` for an empty list.
+
+    Integer arithmetic only: the report must not depend on float formatting.
+    """
+    ordered = sorted(values)
+    if not ordered:
+        return 0
+    rank = (pct * len(ordered) + 99) // 100
+    return ordered[min(max(rank, 1), len(ordered)) - 1]
+
+
+def sustained_context(contexts: list[int], floor: int) -> dict[str, Any]:
+    """The tokens one session re-sent above ``floor`` (#2233).
+
+    ``premium_tokens`` is ``sum(context - floor)`` over every response that
+    held at least ``floor`` tokens. It is a lower bound on what the session
+    cost: the same history is sent again on every request, and cache reads
+    are billed, not free. Only usage integers go in, so nothing is leaked.
+    """
+    held = [c for c in contexts if c > 0]
+    over = [c for c in held if c >= floor]
+    return {
+        "floor_tokens": floor,
+        "responses": len(held),
+        "responses_over_floor": len(over),
+        "median_context_tokens": _percentile(held, 50),
+        "p90_context_tokens": _percentile(held, 90),
+        "peak_context_tokens": max(held, default=0),
+        "premium_tokens": sum(c - floor for c in over),
+    }
+
+
 def analyze(  # noqa: C901
     rows: list[dict[str, Any]],
     *,
     burst_threshold: int = DEFAULT_BURST_THRESHOLD,
     jump_threshold: int = DEFAULT_JUMP_THRESHOLD,
+    context_floor: int = DEFAULT_CONTEXT_FLOOR,
     salt: bytes | None = None,
     state_dir: Path | None = None,
 ) -> dict[str, Any]:
@@ -374,6 +424,9 @@ def analyze(  # noqa: C901
         "compactions": compactions,
         "context_jumps": jumps,
         "context_errors": errors,
+        "sustained_context": sustained_context(
+            [row["context_tokens"] for row in resp_out], max(0, context_floor)
+        ),
         "tool_results": {
             "count": result_count,
             "total_bytes": result_total,
@@ -394,6 +447,23 @@ def _max_context_line(report: dict[str, Any]) -> str:
     return f"max context: {mc['value']} (source: {mc['source']})"
 
 
+def sustained_context_lines(s: dict[str, Any]) -> list[str]:
+    """The history-premium summary, plus the lever when the premium is large."""
+    lines = [
+        f"sustained context: {s['responses_over_floor']}/{s['responses']} responses at or"
+        f" above {s['floor_tokens'] // 1000}k, median {s['median_context_tokens'] // 1000}k,"
+        f" p90 {s['p90_context_tokens'] // 1000}k, peak {s['peak_context_tokens'] // 1000}k,"
+        f" premium {s['premium_tokens'] / 1e6:.1f}M tokens"
+    ]
+    if s["premium_tokens"] >= PREMIUM_HINT_TOKENS:
+        lines.append(
+            "  that premium is history re-sent on every request, not tool output: a"
+            " long-lived session is cheaper when it compacts earlier"
+            " (CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, e.g. 45), not when it compacts later"
+        )
+    return lines
+
+
 def render_text(report: dict[str, Any]) -> str:
     lines = [
         f"rows: {report['rows']} (malformed: {report['malformed_rows']})",
@@ -405,6 +475,7 @@ def render_text(report: dict[str, Any]) -> str:
         f" {report['tool_results']['total_bytes']} bytes"
         f" (largest {report['tool_results']['max_bytes']})",
         _max_context_line(report),
+        *sustained_context_lines(report["sustained_context"]),
         f"repeated tool-call bursts: {len(report['repeated_call_bursts'])}",
     ]
     for b in report["repeated_call_bursts"]:
@@ -454,6 +525,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--burst-threshold", type=int, default=DEFAULT_BURST_THRESHOLD)
     parser.add_argument("--jump-threshold", type=int, default=DEFAULT_JUMP_THRESHOLD)
     parser.add_argument(
+        "--context-floor",
+        type=int,
+        default=DEFAULT_CONTEXT_FLOOR,
+        help="context size at or above which a response is charged for its history",
+    )
+    parser.add_argument(
         "--state-dir", type=Path, default=None, help="clud state dir holding launch-context/"
     )
     try:
@@ -469,6 +546,7 @@ def main(argv: list[str] | None = None) -> int:
         rows,
         burst_threshold=max(2, args.burst_threshold),
         jump_threshold=args.jump_threshold,
+        context_floor=max(0, args.context_floor),
         state_dir=args.state_dir or default_state_dir(),
     )
     emit_bounded(
