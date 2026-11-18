@@ -642,35 +642,10 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
             return 2;
         }
     }
-    // #2233: `git status` prints part of a checkout's state and every later
-    // request re-sends it. Past a couple of raw reads in one checkout the next
-    // distinct one is refused once with the exact `git/state.py` call, which
-    // prints the whole state capped. Fail-open.
-    if event == PRE_TOOL_USE_EVENT {
-        if block_bad_cmd_gitstate::opts_out(
-            payload
-                .tool_input
-                .as_ref()
-                .and_then(|input| input.get("command"))
-                .and_then(Value::as_str)
-                .unwrap_or_default(),
-        ) {
-            append_log(&format!(
-                "GIT-STATE-GUARD-OVERRIDE: {} in command: git-state guard bypassed for tool_name={:?}",
-                block_bad_cmd_gitstate::ALLOW_TOKEN,
-                payload.tool_name
-            ));
-        } else if let Some(reason) = block_bad_cmd_gitstate::reason(
-            &payload.tool_name,
-            payload.tool_input.as_ref(),
-            payload.session_id.as_deref(),
-            &payload.cwd,
-        ) {
-            append_log(&format!("GIT-STATE-GUARD-BLOCKED: {reason}"));
-            println!("{}", deny_json(&reason));
-            eprintln!("{reason}");
-            return 2;
-        }
+    // #2233: past a couple of raw `git status` reads in one checkout the next
+    // distinct one is refused once with the exact `git/state.py` call.
+    if event == PRE_TOOL_USE_EVENT && git_state_guard_denies(&payload) {
+        return 2;
     }
     // #2233: a multi-range shell read hunt (`sed -n` over several disjoint
     // windows in one call) lands every window in the transcript, where each
@@ -1314,6 +1289,40 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
     }
     append_log("allowed");
     0
+}
+
+/// #2233: `git status` prints part of a checkout's state and every later
+/// request re-sends it. Past a couple of raw reads in one checkout the next
+/// distinct one is refused once with the exact `git/state.py` call, which
+/// prints the whole state capped. Fail-open. Returns `true` when it printed a
+/// denial.
+fn git_state_guard_denies(payload: &HookPayloadView) -> bool {
+    let command = payload
+        .tool_input
+        .as_ref()
+        .and_then(|input| input.get("command"))
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if block_bad_cmd_gitstate::opts_out(command) {
+        append_log(&format!(
+            "GIT-STATE-GUARD-OVERRIDE: {} in command: git-state guard bypassed for tool_name={:?}",
+            block_bad_cmd_gitstate::ALLOW_TOKEN,
+            payload.tool_name
+        ));
+        return false;
+    }
+    let Some(reason) = block_bad_cmd_gitstate::reason(
+        &payload.tool_name,
+        payload.tool_input.as_ref(),
+        payload.session_id.as_deref(),
+        &payload.cwd,
+    ) else {
+        return false;
+    };
+    append_log(&format!("GIT-STATE-GUARD-BLOCKED: {reason}"));
+    println!("{}", deny_json(&reason));
+    eprintln!("{reason}");
+    true
 }
 
 #[cfg(test)]
