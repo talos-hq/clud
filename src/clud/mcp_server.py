@@ -708,10 +708,11 @@ async def _wait_any_payload(
         )
     if not payload["done"]:
         if still:
+            payload["next_wait_seconds"] = _DEFAULT_WAIT_SECONDS
             payload["note"] = (
-                "NO CHILD FINISHED inside the budget. Call session_wait_any again "
-                "with the same ids; do not fall back to session_status polling and "
-                "do not relaunch the work."
+                "NO CHILD FINISHED inside the budget. Re-arm with session_wait_any("
+                f"wait_seconds={_DEFAULT_WAIT_SECONDS}) and the same ids; do not fall "
+                "back to session_status polling and do not relaunch the work."
             )
         else:
             payload["note"] = (
@@ -1051,7 +1052,7 @@ async def session_wait(
 async def session_wait_any(
     session_ids: list[str],
     ctx: Context,
-    wait_seconds: int = 300,
+    wait_seconds: int = _DEFAULT_WAIT_SECONDS,
     include_events: bool = False,
 ) -> str:
     """Block until ANY ONE of several sessions finishes, then report all of them.
@@ -1070,9 +1071,9 @@ async def session_wait_any(
 
     Args:
         session_ids: Session ids returned by `session_start` (1 to 16).
-        wait_seconds: Maximum seconds to block (default 300). Keep it below the
-            client's tool-call deadline so the answer arrives as a result rather
-            than a client-side abandonment.
+        wait_seconds: Maximum seconds to block (default 540, the same budget as
+            `session_wait`, under the 600 s client tool-call deadline). Pass a
+            smaller value only when your client abandons tool calls earlier.
         include_events: Include the normalised event records for the session
             that woke you.
 

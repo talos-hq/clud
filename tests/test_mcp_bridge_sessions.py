@@ -383,7 +383,15 @@ def test_session_wait_any_times_out_cleanly_without_poll_advice(bridge, wired):
     assert "NO CHILD FINISHED" in payload["note"]
     # The re-arm must be another wait, never a status poll.
     assert "session_status" in payload["note"]
+    assert payload["next_wait_seconds"] == bridge._DEFAULT_WAIT_SECONDS
     assert {row["session_id"] for row in payload["still_running"]} == {"sess-x", "sess-y"}
+
+
+def test_session_wait_any_shares_the_session_wait_budget(bridge):
+    import inspect
+
+    default = inspect.signature(bridge.session_wait_any).parameters["wait_seconds"].default
+    assert default == bridge._DEFAULT_WAIT_SECONDS
 
 
 def test_session_wait_any_reports_a_vanished_child_instead_of_failing(bridge, wired):
