@@ -5333,6 +5333,19 @@ mod tests {
     }
 
     #[test]
+    fn run_watch_invocations_are_allowed() {
+        // A workflow_dispatch release dry run has no PR; run_watch is its
+        // fail-fast waiter and must pass in the shapes agents actually write.
+        // A raw `gh run watch` also passes since DD-189.
+        for command in [
+            "clud tool run github/run_watch.py -- 40235357724 --repo FastLED/fbuild --timeout 3000",
+            "\"$CLUD_EXE\" tool run github/run_watch.py -- 40235357724 --repo FastLED/fbuild",
+        ] {
+            assert!(allows(command), "{command} should be allowed");
+        }
+    }
+
+    #[test]
     fn env_prefixed_rust_tools_are_denied() {
         assert!(denies(&format!("FOO=bar {TOOL_RS_BUILD} build")));
         assert!(denies(&format!("env FOO=bar {TOOL_RS_BUILD} build")));

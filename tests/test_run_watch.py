@@ -364,7 +364,6 @@ def test_enterprise_repo_host_is_preserved_explicitly_and_when_inferred(monkeypa
     assert len([args for args in calls if args[0] == "api"]) == 2
 
 
-
 def test_inferred_enterprise_host_preserves_port(monkeypatch) -> None:
     run = {"status": "completed", "conclusion": "success", "attempt": 2}
 
@@ -389,3 +388,71 @@ def test_fetch_rejects_malformed_status(monkeypatch) -> None:
         run = {"status": status, "conclusion": "success", "attempt": 2}
         monkeypatch.setattr(run_watch, "run_metadata", lambda *_, run=run: run)
         assert run_watch.fetch(123, "o/r") is None
+
+
+def test_failed_steps_names_only_the_steps_that_concluded_badly() -> None:
+    job = {
+        "name": "build",
+        "steps": [
+            {"name": "checkout", "conclusion": "success"},
+            {"name": "compile", "conclusion": "failure"},
+            {"name": "upload", "conclusion": "skipped"},
+        ],
+    }
+    assert run_watch.failed_steps(job) == ["compile"]
+    assert run_watch.failed_steps({"name": "x"}) == []
+
+
+def test_log_tail_keeps_the_last_non_empty_lines() -> None:
+    log = "\n".join(f"line {i}" for i in range(100)) + "\n\n"
+    tail = run_watch.log_tail(log, lines=3)
+    assert tail == "line 97\nline 98\nline 99"
+
+
+def test_interval_is_clamped_to_the_minimum() -> None:
+    assert run_watch.parse_args(["1", "--interval", "5"]).interval == run_watch.MIN_INTERVAL
+    assert run_watch.parse_args(["1", "--interval", "90"]).interval == 90.0
+
+
+def test_a_failed_job_report_prints_step_and_log_tail(monkeypatch, capsys) -> None:
+    calls = []
+
+    def fake_gh(*args):
+        calls.append(args)
+        return 0, "noise\nerror: boom\n", ""
+
+    monkeypatch.setattr(run_watch, "gh", fake_gh)
+    job = {
+        "name": "build",
+        "databaseId": 42,
+        "steps": [{"name": "compile", "conclusion": "failure"}],
+    }
+    run_watch.report_failed_job(job, "o/r")
+    out = capsys.readouterr().out
+    assert "FAILED job: build" in out
+    assert "failed step(s): compile" in out
+    assert "error: boom" in out
+    assert calls == [("run", "view", "--job", "42", "--log-failed", "--repo", "o/r")]
+
+
+def test_a_rest_job_report_uses_its_id_and_bounds_each_log_line(monkeypatch, capsys) -> None:
+    calls = []
+
+    def fake_gh(*args):
+        calls.append(args)
+        return 0, "x" * 5000 + "\n", ""
+
+    monkeypatch.setattr(run_watch, "gh", fake_gh)
+    run_watch.report_failed_job({"name": "build", "id": 7, "steps": []}, None)
+    out = capsys.readouterr().out
+    assert calls == [("run", "view", "--job", "7", "--log-failed")]
+    assert max(len(line) for line in out.splitlines()) <= run_watch.LOG_LINE_CHARS
+
+
+def test_a_red_run_reports_at_most_three_failed_jobs(monkeypatch, capsys) -> None:
+    reported = []
+    monkeypatch.setattr(run_watch, "report_failed_job", lambda job, repo: reported.append(job))
+    jobs = [dict(_job(f"job-{i}", "completed", "failure"), id=i + 1) for i in range(5)]
+    run = {"status": "completed", "conclusion": "failure", "jobs": jobs}
+    assert run_watch.report_terminal(1, "o/r", False, run) == run_watch.EXIT_FAILED
+    assert len(reported) == run_watch.MAX_FAILED_REPORTS
