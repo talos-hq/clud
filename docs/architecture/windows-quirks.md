@@ -315,9 +315,12 @@ the codebase stays portable.
   `crates/clud-bin/src/platform/windows/console_title.rs`
   (`spawn_keeper_thread`); `OscTitleStripper` in `console_title_osc.rs`.
 
-- **POSIX behavior**: No-op for the keeper half. `spawn_keeper_thread` and
-  `set_title` in `platform/unix/console_title.rs` are empty stubs. The `OscTitleStripper` is platform-agnostic because the
-  PTY pump runs on every OS.
+- **POSIX behavior**: One-shot stamp, no keeper. `set_title` in
+  `platform/unix/console_title.rs` writes the title as an OSC 2 to stdout
+  when stdout is a terminal, after the shell's preexec title hook has run;
+  `spawn_keeper_thread` returns `false` because POSIX cannot read the title
+  back. The `OscTitleStripper` is platform-agnostic because the PTY pump
+  runs on every OS.
 
 ### (f) `IDropTarget` adapter for terminal drag-drop
 
