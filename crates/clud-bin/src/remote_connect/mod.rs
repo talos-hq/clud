@@ -1,4 +1,5 @@
 //! Native client for the clud.bot operator protocol.
+mod bridge;
 pub mod connect;
 mod console;
 // The leader half runs only where `platform::remote_shell` is supported; on
@@ -115,11 +116,12 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let mut state = State::new(console::Console::stdout());
     state.inline = inline;
     state.terminal.enable_leader(sudo::advertised(inline));
-    state.terminal.configure_proxy(proxy::SessionProxy::new(
+    // Configured on `hello`, which says whether model requests ride the socket.
+    state.proxy = Some(proxy::SessionProxy::new(
         base.as_str(),
         &session.client_token,
         &session.proxy_model,
-    )?)?;
+    )?);
     let link = Link {
         base,
         session,
@@ -191,6 +193,9 @@ impl Link {
                 }
             }
             if !state.forward(socket)? {
+                return lost;
+            }
+            if lost_on(bridge::flush(state.bridge.as_ref(), socket))? {
                 return lost;
             }
             if ping.elapsed() >= resume::HEARTBEAT {
@@ -291,6 +296,10 @@ struct State {
     /// The last `sudo_state` the server did not get, sent when it resumes.
     sudo_held: Option<Value>,
     terminal: terminal::Terminal,
+    /// The agent's model route, configured on the first `hello`.
+    proxy: Option<proxy::SessionProxy>,
+    /// Model requests on the session socket, when `hello` offers channel 2.
+    bridge: Option<bridge::Bridge>,
     connected: bool,
     granted: bool,
     /// The request the user's grant answered; a resumed session keeps control
@@ -320,6 +329,8 @@ impl State {
             sudo: sudo::Sudo::new(),
             sudo_held: None,
             terminal: terminal::Terminal::default(),
+            proxy: None,
+            bridge: None,
             connected: false,
             granted: false,
             grant_id: None,
@@ -497,6 +508,12 @@ impl State {
                     Err(error) => Err(error),
                 }
             }
+            Message::Binary(bytes) if bytes.first() == Some(&bridge::CHANNEL) => {
+                if let Some(bridge) = &self.bridge {
+                    bridge.deliver(&bytes)?;
+                }
+                Ok(None)
+            }
             Message::Binary(bytes) if self.granted && bytes.first() == Some(&1) => {
                 let delivery = self.terminal.input(&bytes[1..])?;
                 let Some(notice) = self.input_notice(delivery) else {
@@ -524,6 +541,9 @@ impl State {
         self.console.settle();
         self.console.line(resume::LOST_NOTICE);
         self.outage.begin(self.terminal.report());
+        if let Some(bridge) = &self.bridge {
+            bridge.reset();
+        }
         self.resuming = true;
     }
 
@@ -644,6 +664,10 @@ impl State {
                 self.connected = matches!(event["state"].as_str(), Some("accepted" | "connected"));
                 self.resumes = event["resume"].is_object();
                 send(socket, caps(self.inline))?;
+                if let Some(mut proxy) = self.proxy.take() {
+                    self.bridge = bridge::offer(event, &mut proxy)?;
+                    self.terminal.configure_proxy(proxy)?;
+                }
                 if let Some(message) = end_message(event["state"].as_str().unwrap_or("")) {
                     self.revoke();
                     self.console.line(message);
