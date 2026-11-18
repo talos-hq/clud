@@ -661,6 +661,26 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(8), "stop hung");
     }
 
+    /// The operator's shell finds the binary serving the session first on
+    /// PATH: connect.ps1/connect.sh run a copy that is on no PATH.
+    #[test]
+    fn the_operator_shell_has_the_running_clud_first_on_path() {
+        if crate::platform::host::WINDOWS {
+            return; // ConPTY repaints long lines; the e2e test covers Windows.
+        }
+        let config = tempfile::tempdir().unwrap();
+        let mut terminal = proxied_terminal("path-test", &config);
+        terminal
+            .input(b"printf 'FIRST[%s]%s\\n' \"${PATH%%:*}\" END\n")
+            .unwrap();
+        // Not in the echoed command, so only the shell's output matches.
+        let output = read_until(&mut terminal, "]END");
+        terminal.stop();
+        let exe = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let expected = format!("FIRST[{}]END", exe.parent().unwrap().display());
+        assert!(output.contains(&expected), "want {expected}: {output}");
+    }
+
     #[test]
     fn isolated_shell_disables_profile_startup() {
         let argv = shell_arguments(true);

@@ -8,6 +8,7 @@ use running_process::{
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tungstenite::{Message, WebSocket};
@@ -81,23 +82,28 @@ struct Client {
 impl Client {
     /// With `env` (added to this process's environment) set for the client.
     fn start_with(origin: &str, env: Option<(&str, &str)>) -> Self {
+        let env = env.map(|(key, value)| {
+            let mut vars: Vec<(String, String)> =
+                std::env::vars().filter(|(name, _)| name != key).collect();
+            vars.push((key.into(), value.into()));
+            vars
+        });
+        let program = exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
+        Self::launch(&program, origin, env)
+    }
+
+    /// `program` with exactly `env`, or this process's environment for `None`.
+    fn launch(program: &Path, origin: &str, env: Option<Vec<(String, String)>>) -> Self {
         let cwd = tempfile::tempdir().unwrap();
         let process = Arc::new(NativeProcess::new(ProcessConfig {
             command: CommandSpec::Argv(vec![
-                exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"))
-                    .to_string_lossy()
-                    .into_owned(),
+                program.to_string_lossy().into_owned(),
                 "remote".into(),
                 "connect".into(),
                 origin.into(),
             ]),
             cwd: Some(cwd.path().to_path_buf()),
-            env: env.map(|(key, value)| {
-                let mut vars: Vec<(String, String)> =
-                    std::env::vars().filter(|(name, _)| name != key).collect();
-                vars.push((key.into(), value.into()));
-                vars
-            }),
+            env,
             capture: true,
             stderr_mode: StderrMode::Stdout,
             creationflags: None,
@@ -420,6 +426,83 @@ fn shell_output_reaches_the_server_and_the_client_terminal() {
     // Only now: ConPTY positions text without newlines, and this harness reads lines.
     let shown = client.text();
     assert!(shown.contains(marker), "client terminal missed it: {shown}");
+}
+
+/// What connect.ps1 and connect.sh do: a clud copied into a private directory
+/// on no PATH, `%LOCALAPPDATA%\clud-connect-<guid>\bin` on Windows and
+/// `.clud-connect.XXXXXX/bin` elsewhere, run from there. Returns the
+/// directory's owner and the copy.
+fn private_clud_copy() -> (tempfile::TempDir, PathBuf) {
+    let source = exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
+    let (parent, prefix) = match std::env::var_os("LOCALAPPDATA") {
+        Some(local) if clud::platform::host::WINDOWS => (PathBuf::from(local), "clud-connect-"),
+        _ => (std::env::temp_dir(), ".clud-connect."),
+    };
+    let work = tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir_in(parent)
+        .unwrap();
+    let bin = work.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let copy = bin.join(source.file_name().unwrap());
+    std::fs::copy(&source, &copy).unwrap();
+    (work, copy)
+}
+
+/// This process's environment with PATH cut down to system directories, none
+/// holding a clud, so only the session's own binary can answer `clud`.
+fn system_only_environment(clud_file_name: &std::ffi::OsStr) -> Vec<(String, String)> {
+    let dirs: Vec<PathBuf> = if clud::platform::host::WINDOWS {
+        let root =
+            PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into()));
+        vec![
+            root.join("System32"),
+            root.join("System32").join("Wbem"),
+            root,
+        ]
+    } else {
+        vec!["/usr/bin".into(), "/bin".into()]
+    };
+    for dir in &dirs {
+        let other = dir.join(clud_file_name);
+        assert!(!other.exists(), "{} would hide the bug", other.display());
+    }
+    let path = std::env::join_paths(&dirs).unwrap();
+    let mut env: Vec<(String, String)> = std::env::vars()
+        .filter(|(key, _)| !key.eq_ignore_ascii_case("PATH"))
+        .collect();
+    env.push(("PATH".into(), path.to_string_lossy().into_owned()));
+    env
+}
+
+/// `clud` typed into the operator's shell is the clud serving the session,
+/// even when that clud was never installed: the one-liners run a private copy.
+#[test]
+fn the_operator_shell_runs_the_session_clud_from_a_private_copy() {
+    let (_work, copy) = private_clud_copy();
+    let env = system_only_environment(copy.file_name().unwrap());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let client = Client::launch(&copy, &origin, Some(env));
+    serve_session_creation(&listener);
+    let (mut operator, _) = Operator::accept_path(&listener);
+    client.wait_for(KEYWORD);
+    operator.send(json!({"type":"hello", "state":"pending"}));
+    operator.wait_event("caps");
+    operator.send(json!({"type":"state", "state":"accepted"}));
+    client.wait_for("Operator accepted the connection.");
+    open_shell(&client, &mut operator);
+    operator.type_into_shell(if clud::platform::host::WINDOWS {
+        "clud --version & echo AFTER_^VERSION"
+    } else {
+        "clud --version; printf 'AFTER_%s\\n' VERSION"
+    });
+    operator.wait_shell_output("AFTER_VERSION");
+    let shown = String::from_utf8_lossy(&operator.shell_output).into_owned();
+    let version = format!("clud {}", env!("CARGO_PKG_VERSION"));
+    assert!(shown.contains(&version), "shell did not run clud: {shown}");
+    operator.send(json!({"type":"disconnect"}));
+    assert_eq!(client.wait_exit(), 0);
 }
 
 #[test]
