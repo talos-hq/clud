@@ -7869,6 +7869,10 @@ job is skipped, while only the main-only tagging job executes with contents writ
 
 ## DD-214: macOS release binaries are signed and notarized on Linux with rcodesign
 
+**Status:** Accepted; the notarization half is superseded by
+[DD-219](#dd-219-macos-notarization-uses-notarytool-with-an-apple-id-on-a-macos-runner).
+Signing stays on Linux with rcodesign.
+
 **Context:** clud's macOS wheels cross-build on Linux (soldr) and were shipped
 with only the linker's ad-hoc signature, which Macs that only run notarized
 Developer ID software refuse. Apple's `codesign` and `notarytool` exist only
@@ -8096,3 +8100,42 @@ forwards to OpenRouter, and the browser leg is a separate design; see
 `remote-assistance.md#end-to-end-encryption`). New dependencies
 `x25519-dalek`, `chacha20poly1305` and `hkdf` are the RustCrypto / dalek
 implementations (MIT or Apache-2.0); clud.bot uses Python's `cryptography`.
+
+
+## DD-220: macOS notarization uses notarytool with an Apple ID on a macOS runner
+
+**Status:** Accepted. Amends DD-214.
+
+**Context:** DD-214 notarized on Linux with rcodesign's `notary-submit`, which
+authenticates only with an App Store Connect API key. The owner has no such
+key. They notarize with an Apple ID and an app-specific password, which
+talos-hq/talos already uses, and they authorized reusing it for clud. Only
+Apple's `xcrun notarytool` accepts that credential, and it runs only on macOS.
+
+**Decision:** `sign-macos` still signs on Linux with the pinned rcodesign and
+re-uploads the wheel. A new `notarize-macos` job on `macos-15`, one per macOS
+wheel, re-checks the signature structure. It then `ditto`-zips the signed
+Mach-O files and runs `notarytool submit --apple-id --password --team-id
+--wait`. It fails unless the status is `Accepted`, and prints `notarytool log`
+when it fails. It reads the signed artifact and uploads nothing.
+`macos-signature-smoke` and both publish jobs need it. The secrets are
+`APPLE_NOTARY_USER`, `APPLE_NOTARY_PASSWORD` and `APPLE_TEAM_ID`. They live in
+the `release-signing` environment, which only the sign, notarize and smoke jobs
+declare. A missing secret fails the job by name. `APPLE_TEAM_ID` must match
+the team in `MACOS_SIGNING_IDENTITY`. The `APPLE_API_*` path is removed rather
+than kept as an alternative, because nothing holds that key. A
+`notarize_only` dispatch input runs build, sign, notarize and smoke for the
+macOS wheels on any ref. It skips the CI gate and every publishing job, so the
+chain can be proven before a tag.
+Details: [CI architecture](architecture/ci.md#developer-id-signing-and-notarization-of-macos-release-wheels).
+
+**Why:** Notarization does not change the bytes. Apple records the signed
+files' code-directory hashes, so signing can stay on the faster Linux runner.
+Only the network submission moves to macOS. Keeping it a separate job, rather
+than signing on macOS too, preserves DD-214's byte guarantee: one job writes
+the published wheel and every later job only reads it. A bare executable
+cannot carry a stapled ticket, so nothing is stapled. Gatekeeper, and the
+smoke's `spctl`, look the ticket up online. The password goes on
+`notarytool`'s argv because the tool has no file or environment form. On an
+ephemeral single-tenant runner, with the value masked by Actions and the
+command never logged, that is the same exposure talos accepts.

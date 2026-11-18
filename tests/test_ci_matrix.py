@@ -361,6 +361,20 @@ def test_release_matrix_ships_exactly_one_sdist():
     assert sdists[0]["target"] == SDIST_TARGET
 
 
+def test_macos_only_release_matrix_keeps_both_darwin_wheels(capsys, monkeypatch):
+    """Auto Release's notarize_only proof run builds and smokes only macOS wheels."""
+    from ci import ci_matrix
+
+    monkeypatch.delenv("GITHUB_OUTPUT", raising=False)
+    assert ci_matrix.main(["--release", "--macos-only"]) == 0
+    outputs = dict(line.split("=", 1) for line in capsys.readouterr().out.splitlines())
+    darwin = {"aarch64-apple-darwin", "x86_64-apple-darwin"}
+    for key in ("build", "smoke"):
+        assert {row["target"] for row in json.loads(outputs[key])["include"]} == darwin
+    build = json.loads(outputs["build"])["include"]
+    assert {row["artifact"] for row in build} == {"wheels-macos-arm", "wheels-macos-x86"}
+
+
 def test_release_matrix_artifact_names_are_unique_and_complete():
     include = release_matrix()["include"]
     artifacts = [entry["artifact"] for entry in include]

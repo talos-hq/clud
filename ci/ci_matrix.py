@@ -250,6 +250,15 @@ def static_musl_matrix() -> dict[str, list[dict[str, str]]]:
     }
 
 
+def macos_only(matrix: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Keep the ``*-apple-darwin`` rows (the notarize_only proof run builds nothing else)."""
+    return {
+        "include": [
+            entry for entry in matrix["include"] if str(entry["target"]).endswith("-apple-darwin")
+        ]
+    }
+
+
 def emit(outputs: dict[str, str]) -> None:
     path = os.environ.get("GITHUB_OUTPUT")
     lines = [f"{key}={value}" for key, value in outputs.items()]
@@ -276,14 +285,24 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Emit the release matrix (all triples, wheel artifacts, no test bundle).",
     )
+    parser.add_argument(
+        "--macos-only",
+        action="store_true",
+        help="With --release: only the macOS wheels (Auto Release's notarize_only proof run).",
+    )
     args = parser.parse_args(argv)
 
     if args.release:
-        emit({
-            "build": json.dumps(release_matrix(), separators=(",", ":")),
-            "static_musl": json.dumps(static_musl_matrix(), separators=(",", ":")),
-            "smoke": json.dumps(wheel_smoke_matrix(), separators=(",", ":")),
-        })
+        build, smoke = release_matrix(), wheel_smoke_matrix()
+        if args.macos_only:
+            build, smoke = macos_only(build), macos_only(smoke)
+        emit(
+            {
+                "build": json.dumps(build, separators=(",", ":")),
+                "static_musl": json.dumps(static_musl_matrix(), separators=(",", ":")),
+                "smoke": json.dumps(smoke, separators=(",", ":")),
+            }
+        )
         return 0
 
     tier = resolve_tier(
