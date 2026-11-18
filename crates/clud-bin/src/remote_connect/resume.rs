@@ -103,6 +103,8 @@ pub(super) fn close_meaning(frame: Option<&CloseFrame>) -> Close {
         Some(4409) => Close::Final(SUPERSEDED),
         // Protocol violations: reconnecting would repeat them.
         Some(1008 | 1009) => Close::Final("remote connection closed"),
+        // An encrypted record failed authentication, on either side.
+        Some(super::e2e::FAILED_CLOSE) => Close::Final(super::e2e::FAILED),
         _ => Close::Lost,
     }
 }
@@ -192,6 +194,8 @@ pub(super) enum Attempt {
     /// The server refused the token and reports the session over.
     Ended(&'static str),
     Failed,
+    /// Not end-to-end encrypted as required, or the key exchange failed.
+    Insecure(String),
 }
 
 /// The status the server reports for a refused token, as the end message.
@@ -218,6 +222,8 @@ pub(super) enum Poll {
     Connected(Box<Socket>),
     Ended(&'static str),
     GaveUp,
+    /// Final: the new socket would not be safely encrypted.
+    Insecure(String),
 }
 
 impl Reconnector {
@@ -244,6 +250,7 @@ impl Reconnector {
             match pending.try_recv() {
                 Ok(Attempt::Connected(socket)) => return Poll::Connected(socket),
                 Ok(Attempt::Ended(message)) => return Poll::Ended(message),
+                Ok(Attempt::Insecure(message)) => return Poll::Insecure(message),
                 Ok(Attempt::Failed) | Err(mpsc::TryRecvError::Disconnected) => {
                     self.pending = None;
                     self.next = Instant::now() + self.backoff.next();
@@ -264,15 +271,18 @@ impl Reconnector {
     fn start(&self) -> mpsc::Receiver<Attempt> {
         let (tx, rx) = mpsc::sync_channel(1);
         let url = transport::socket_url(&self.session);
+        let session = self.session.clone();
         let (base, keyword) = (self.base.clone(), self.session.keyword.clone());
         // Detached: an abandoned attempt ends at its own handshake timeout.
         std::thread::spawn(move || {
-            let outcome = match transport::connect_url(&url) {
+            // A fresh exchange: every socket has its own ephemeral keys.
+            let outcome = match transport::connect_url(&url, &session) {
                 Ok(socket) => Attempt::Connected(Box::new(socket)),
                 Err(ConnectError::Refused) => {
                     ended(&base, &keyword).map_or(Attempt::Failed, Attempt::Ended)
                 }
                 Err(ConnectError::Unreachable(_)) => Attempt::Failed,
+                Err(ConnectError::Insecure(message)) => Attempt::Insecure(message),
             };
             let _ = tx.send(outcome);
         });

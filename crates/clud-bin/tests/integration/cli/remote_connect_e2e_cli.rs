@@ -292,9 +292,10 @@ fn session_with(hello: Value, env: Option<(&str, &str)>) -> (Client, Operator, V
     let client = Client::start_with(&origin, env);
     let created = serve_session_creation(&listener);
     let (mut operator, path) = Operator::accept_path(&listener);
+    assert!(path.contains("&resume=1"), "client declares resume: {path}");
     assert!(
-        path.ends_with("&resume=1"),
-        "client declares resume: {path}"
+        path.ends_with("&e2e=1"),
+        "client asks for encryption: {path}"
     );
     client.wait_for(KEYWORD);
     operator.send(hello);
@@ -648,7 +649,7 @@ fn drop_connection(operator: Operator) {
 fn resume_with(listener: &TcpListener, record: Value) -> Operator {
     let (mut operator, path) = Operator::accept_path(listener);
     assert!(path.contains(&format!("token={TOKEN}")), "{path}");
-    assert!(path.ends_with("&resume=1"), "{path}");
+    assert!(path.ends_with("&resume=1&e2e=1"), "{path}");
     operator.send(json!({"type":"hello", "state":"connected", "resume":record}));
     operator.wait_event("caps");
     operator
@@ -866,4 +867,36 @@ fn a_server_without_resume_ends_the_client_as_before() {
     assert_eq!(client.wait_exit(), 1);
     client.wait_for("remote connection lost");
     assert!(!client.text().contains(LOST), "{}", client.text());
+}
+
+/// This mock is an old server: it ignores `e2e=1` and greets in plaintext.
+#[test]
+fn a_server_without_encryption_is_used_with_a_warning() {
+    let (client, mut operator, created) = accepted_session();
+    // Not expected to encrypt (a loopback host), so the description is sent as before.
+    assert!(created["client"].get("cwd").is_some(), "{created}");
+    client.wait_for("does not offer end-to-end encryption");
+    operator.send(json!({"type":"disconnect"}));
+    client.wait_for("clud.bot has ended a connection");
+    assert_eq!(client.wait_exit(), 0);
+}
+
+#[test]
+fn a_server_without_encryption_is_refused_when_encryption_is_required() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let client = Client::start_with(&origin, Some(("CLUD_REMOTE_REQUIRE_E2E", "1")));
+    let created = serve_session_creation(&listener);
+    // Kept for the encrypted socket, never sent where TLS ends at the edge.
+    assert!(created["client"].get("cwd").is_none(), "{created}");
+    assert!(created["client"].get("host").is_none(), "{created}");
+    let (mut operator, path) = Operator::accept_path(&listener);
+    assert!(
+        path.contains("&e2e=1"),
+        "client asks for encryption: {path}"
+    );
+    operator.send(json!({"type":"hello", "state":"pending"}));
+    client.wait_for("did not offer end-to-end encryption; refusing");
+    assert_eq!(client.wait_exit(), 1);
+    assert!(!client.text().contains("Keyword:"), "{}", client.text());
 }
