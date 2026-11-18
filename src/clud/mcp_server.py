@@ -1264,7 +1264,7 @@ _board_first_read_done = False
 #: abandoned client-side — the agent pays the turn and gets nothing, the exact
 #: waste this removes. So the wait is capped below the common deadline and the
 #: payload says it was capped rather than silently shortening.
-BOARD_MAX_WAIT_SECONDS = 540
+BOARD_MAX_WAIT_SECONDS = _DEFAULT_WAIT_SECONDS
 
 #: Wait suggested to a caller that polled with no budget and found nothing.
 #: Short enough that a truly empty board still returns promptly, long enough
