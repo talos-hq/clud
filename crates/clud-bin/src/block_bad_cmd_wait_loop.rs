@@ -69,6 +69,37 @@ fn powershell_sleep_seconds(arguments: &[String]) -> Option<f64> {
     value.map(|seconds| seconds * scale)
 }
 
+/// A whole command that returns before anything can have changed: `true`,
+/// `:`, an `echo` of a waiting word, or a sleep of zero seconds (#1880).
+///
+/// A no-op is the most expensive wait there is. It cannot advance the work it
+/// waits for, so the agent asks again at once and pays a full context re-send
+/// per attempt: on 2026-11-09 one workflow sub-agent spent 17 minutes and
+/// 1,388 `true` calls (65 M billed input tokens) waiting for a merge to land,
+/// each turn reporting only that it was still waiting. `hand-written-wait`
+/// already refused `sleep 120`; the model routed around it with a zero-cost
+/// command. Refusing both closes the evasion.
+fn noop_wait(words: &[String]) -> Option<&'static str> {
+    let head = program_name(words.first()?);
+    match head.as_str() {
+        "true" => Some("a bare `true`, which returns at once and waits for nothing"),
+        ":" => Some("a bare `:`, which returns at once and waits for nothing"),
+        "echo" => {
+            let said = words[1..].join(" ").to_ascii_lowercase();
+            let said = said
+                .trim()
+                .trim_matches(|c: char| c == '.' || c == '!')
+                .trim();
+            matches!(said, "waiting" | "still waiting" | "waiting for completion")
+                .then_some("`echo waiting`, which reports a wait instead of waiting")
+        }
+        "sleep" | "start-sleep" => {
+            (sleep_seconds(words) == Some(Some(0.0))).then_some("`sleep 0`, which is not a wait")
+        }
+        _ => None,
+    }
+}
+
 /// `tail -f`/`-F`/`--follow` and PowerShell `Get-Content -Wait`. A
 /// `timeout`-wrapped follow has `timeout` as its head and never reaches here.
 fn follows_output(words: &[String]) -> bool {
@@ -101,6 +132,8 @@ pub(super) struct Finding {
     pub(super) what: &'static str,
     /// It reads or blocks on GitHub PR, check or run state.
     pub(super) poll: bool,
+    /// A no-op command: the refusal explains why re-asking cannot help.
+    pub(super) noop: bool,
 }
 
 /// What a scan may look at beyond the command text.
@@ -128,6 +161,10 @@ struct Facts {
     raw_native: bool,
     /// Some command reads GitHub PR, check or run state.
     gh_read: bool,
+    /// Commands in the script; a no-op rule only judges a lone command.
+    invocations: usize,
+    /// A bare no-op dressed as a wait (`true`, `:`, `echo waiting`, `sleep 0`).
+    noop: Option<&'static str>,
 }
 
 /// The shim's own `gh pr checks --watch`, routed to the fail-fast waiter.
@@ -150,6 +187,7 @@ impl Facts {
                     LoopKind::ForEach | LoopKind::CStyle { infinite: false }
                 )
             }),
+            invocations: script.invocations.len(),
             ..Self::default()
         }
     }
@@ -170,6 +208,9 @@ impl Facts {
             .words
             .first()
             .is_some_and(|word| program_name(word) == "watch");
+        if self.noop.is_none() {
+            self.noop = noop_wait(&peeled.words);
+        }
         if native_gh_waiter(&peeled.words) {
             self.any_native = true;
             self.raw_native |= !canonical_shimmed_watch(&peeled.words, scan.shim_active);
@@ -181,7 +222,17 @@ impl Facts {
         peeled
     }
 
-    fn verdict(&self, native_gate: bool) -> Option<Finding> {
+    fn verdict(&self, native_gate: bool, top_level: bool) -> Option<Finding> {
+        let lone = top_level && self.invocations == 1 && !self.unbounded && !self.bounded;
+        if lone {
+            if let Some(what) = self.noop {
+                return Some(Finding {
+                    what,
+                    poll: false,
+                    noop: true,
+                });
+            }
+        }
         let looping = self.unbounded || self.bounded;
         let has_sleep = !self.sleeps.is_empty();
         let poll = self.any_native || ((self.unbounded || has_sleep) && self.gh_read);
@@ -208,7 +259,11 @@ impl Facts {
         } else {
             return None;
         };
-        Some(Finding { what, poll })
+        Some(Finding {
+            what,
+            poll,
+            noop: false,
+        })
     }
 }
 
@@ -256,6 +311,7 @@ fn script_wait(
         ScriptKind::Python => python_wait(script).map(|poll| Finding {
             what: "a Python loop that sleeps",
             poll,
+            noop: false,
         }),
     }
 }
@@ -272,7 +328,7 @@ fn scan_script(script: &Script, scan: ScanContext<'_>, depth: usize) -> Option<F
             return Some(finding);
         }
     }
-    facts.verdict(scan.native_gate)
+    facts.verdict(scan.native_gate, depth == 0)
 }
 
 /// How to run the blessed PR watcher, named in every PR/CI refusal.
@@ -286,7 +342,7 @@ pub(super) fn hand_written_wait_reason(
     scan: ScanContext<'_>,
     evaluation: &mut CommandEvaluation,
 ) -> Option<String> {
-    let Finding { what, poll } = scan_script(script, scan, 0)?;
+    let Finding { what, poll, noop } = scan_script(script, scan, 0)?;
     if let Some(override_reason) = accepted_override_reason(WAIT_LOOP_RULE_ID) {
         evaluation.log_messages.push(format!(
             "BAD_CMD_OVERRIDE accepted rule={WAIT_LOOP_RULE_ID} reason={override_reason:?} command={command_text:?}"
@@ -298,7 +354,14 @@ pub(super) fn hand_written_wait_reason(
     } else {
         String::new()
     };
+    // A no-op cannot advance what it waits for, so name the only two answers:
+    // a real blocker, or ending the turn and letting the notification wake it.
+    let noop_hint = if noop {
+        " Nothing changed while it ran, so asking again returns the same answer at the price of one more full turn. If a background task is already running, ending the turn is the wait: its completion notification wakes you."
+    } else {
+        ""
+    };
     Some(format!(
-        "[{WAIT_LOOP_RULE_ID}] Refused {what} (#1880). {WAIT_REPLACEMENT}{pr_hint} Override: real env {BAD_CMD_OVERRIDE_ENV}=\"{WAIT_LOOP_RULE_ID}:<reason>\"."
+        "[{WAIT_LOOP_RULE_ID}] Refused {what} (#1880). {WAIT_REPLACEMENT}{noop_hint}{pr_hint} Override: real env {BAD_CMD_OVERRIDE_ENV}=\"{WAIT_LOOP_RULE_ID}:<reason>\"."
     ))
 }
