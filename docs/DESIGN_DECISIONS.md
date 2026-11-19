@@ -8207,3 +8207,54 @@ through to ghd.
 prompts and then polls at 3 s, which is the exact cost being removed.
 Relaying the untranslatable forms would leave a budget leak open on a
 spelling.
+
+## DD-223: release workflows never depend on an external package manager
+
+**Status:** Accepted. Fleet rule REL-009 in forge-ci/ci.yml
+`docs/policy-general.md`.
+
+**Context:** Auto Release ran a `publish-homebrew` job after
+`released-acceptance-gate`. It rendered `Formula/clud.rb` and pushed it to
+talos-hq/homebrew-tap with a token from the clud-refresh GitHub App. On 2.8.67
+and 2.8.68 that App was not installed on the tap repo, so the token lookup
+returned 404. Both release runs went red after the GitHub Release, PyPI and the
+installer Pages catalog had all been published and accepted, and both times the
+formula had to be pushed by hand. A downstream channel had made a complete
+release look failed, and it could not be retried without the release run.
+
+**Decision:** No auto-release workflow may depend on an external package
+manager: Homebrew, Scoop, winget, Chocolatey, an apt PPA, the AUR, nixpkgs,
+npm or any other registry or tap that clud does not run. That covers a job in
+Auto Release, a job in a reusable workflow or composite action it reaches, a
+`needs:` on such a job and any status gate on one. Each channel runs in its
+own workflow, started after the stable release exists and by
+`workflow_dispatch` for repair, and never affects the release's status. The
+Homebrew tap is `.github/workflows/homebrew-tap.yml`
+([Homebrew tap](architecture/installer-pages.md#homebrew-tap)).
+`tests/test_release_package_channels.py` walks the release workflows and fails
+on any job that references a known external channel.
+
+PyPI and the GitHub Release are not downstream channels. They are the
+release's primary artifacts: every installer, the Pages catalog and the tap
+formula are derived from their bytes and `SHA256SUMS`, so the release gate
+must cover them. Runner tooling installed with a system package manager to
+run acceptance (`apt-get`, `brew install fish`, distro images, the Nix VM
+harness) publishes nothing and is out of scope.
+
+A package manager the organization operates itself may be admitted later, but
+only by an explicit policy decision recorded as a new DD and an entry in the
+test's `OWNED_CHANNEL_ALLOWLIST` citing it. External package managers are
+never eligible.
+
+**Why a separate workflow and not `continue-on-error`:** a tolerated failure
+still runs inside the release, still holds the release's concurrency group, and
+still needs the whole release run to retry. A separate workflow is retried
+alone and its status is its own.
+
+**Why `workflow_run` and not only `release: released`:** Auto Release promotes
+the prerelease with `GITHUB_TOKEN`, and GitHub starts no workflow for an event
+that token makes. The tap workflow therefore starts when an Auto Release run
+completes and reads the current latest stable release itself. A proof run, a
+failed run or a release that `rollback-public` demoted leaves the tap
+unchanged. `release: released` stays as a trigger for a promotion made by a
+person, and drafts and prereleases are refused on every path.

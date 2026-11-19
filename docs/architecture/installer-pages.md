@@ -171,11 +171,25 @@ serialized concurrency group with both Pages publishers.
 pinned by the release's `SHA256SUMS`. Homebrew puts its own prefix on PATH, so
 a brew install needs no startup-file edits. `installer/homebrew_formula.py`
 renders `Formula/clud.rb` and refuses an unstable version or a missing
-platform asset. The `publish-homebrew` job in `auto-release.yml` runs it after
-`released-acceptance-gate`, so a release that `rollback-public` demotes never
-reaches the tap. The job then pushes to `talos-hq/homebrew-tap` with a
-one-hour token from the clud-refresh GitHub App. That App must have the tap
-repo in its selected repositories. clud's alias shims live in
+platform asset.
+
+The tap is not part of the release
+([DD-223](../DESIGN_DECISIONS.md#dd-223-release-workflows-never-depend-on-an-external-package-manager)).
+`.github/workflows/homebrew-tap.yml` runs on its own, so a tap failure never
+turns a completed Auto Release red and can be retried alone. It starts when an
+Auto Release run completes (the promotion uses `GITHUB_TOKEN`, which starts no
+`release` workflow), when a stable release is `released` by anyone else, or by
+`workflow_dispatch` with a `tag` for repair. The automatic paths read the
+current latest stable release after the run has finished, so a proof run, a
+failed run or a release that `rollback-public` demoted leaves the tap as it is.
+Drafts and prereleases are refused. The job checks out the tag, renders the
+formula from that release's `SHA256SUMS` and compares it with the public tap.
+An unchanged formula is a no-op that needs no credential. Otherwise it pushes
+to `talos-hq/homebrew-tap` with a one-hour token from the clud-refresh GitHub
+App, which must have the tap repo in its selected repositories. When the token
+cannot be minted, the job fails with an error naming that installation.
+`tests/test_release_package_channels.py` covers the triggers and fails if any
+release job references an external package channel. clud's alias shims live in
 `~/.clud/state/shims/` and are relinked on the next launch, so `brew upgrade`
 replacing the Cellar binary is safe. `tests/test_homebrew_formula.py` covers
 the renderer.
