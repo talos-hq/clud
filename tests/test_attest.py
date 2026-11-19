@@ -124,6 +124,16 @@ def test_exec_lane_sets_and_unsets_environment(tmp_path: Path) -> None:
     assert json.loads(out.read_text(encoding="utf-8")) == {"A": "set", "B": None}
 
 
+def test_lanes_never_inherit_soldr_porcelain_or_replay_verdicts() -> None:
+    """Porcelain mode made a local Dylint pass lint nothing and still exit 0,
+    and soldr's verdict cache then replayed that hollow pass."""
+    for steps in attest.lanes().values():
+        for step in steps:
+            env = step.environment({"SOLDR_PORCELAIN": "1", "PATH": "/bin"})
+            assert "SOLDR_PORCELAIN" not in env, step.argv
+            assert env["SOLDR_VERDICTS"] == "off", step.argv
+
+
 def test_unknown_lane_is_a_usage_error() -> None:
     assert attest.main(["no-such-lane"]) == 2
     assert attest.main(["--exec", "no-such-lane"]) == 2

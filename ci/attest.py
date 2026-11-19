@@ -32,6 +32,15 @@ LINUX = "x86_64-unknown-linux-gnu"
 DYLINT_TOOLCHAIN = "nightly-2026-08-15"
 DYLINT_CROSS_TARGETS = ("x86_64-pc-windows-msvc", "aarch64-apple-darwin")
 DYLINT_CRATES = ("dylints/ban_manual_slash_normalize", "dylints/enforce_platform_boundary")
+# Never inherited by a lane: hosted jobs do not set them, and they change what
+# a nested tool sees. SOLDR_PORCELAIN replaces the stdout of the `cargo
+# metadata` cargo-dylint runs through soldr's shim, so Dylint finds "No
+# libraries" and exits 0 without linting anything.
+HOST_ONLY_ENV = ("SOLDR_PORCELAIN",)
+# A trailer says the lane ran. soldr's verdict cache would replay an earlier
+# local result instead, and it recorded the hollow porcelain Dylint run above
+# as a pass, so every lane forces a real run.
+LANE_ENV = (("SOLDR_VERDICTS", "off"),)
 _DYLINT_ENV = (
     ("SOLDR_FORCE_MANAGED_CARGO_SUBCOMMANDS", "1"),
     ("SOLDR_DYLINT_TOOLCHAIN", DYLINT_TOOLCHAIN),
@@ -48,7 +57,9 @@ class Step:
     unset: tuple[str, ...] = field(default=())
 
     def environment(self, base: dict[str, str]) -> dict[str, str]:
-        env = {key: value for key, value in base.items() if key not in self.unset}
+        dropped = {*HOST_ONLY_ENV, *self.unset}
+        env = {key: value for key, value in base.items() if key not in dropped}
+        env.update(LANE_ENV)
         env.update(self.env)
         return env
 

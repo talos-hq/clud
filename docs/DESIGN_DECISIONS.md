@@ -8339,7 +8339,12 @@ trust-surface paths. Its merge queue never consumes client attestations.
   (formatting, Ruff, repo guards) stay hosted: they take under a minute and
   are not slow lanes. `python -m ci.attest` is the producer. It runs each
   lane through `prooft run`, using the lane's hosted commands
-  (`tests/test_attest.py` pins them to the workflows).
+  (`tests/test_attest.py` pins them to the workflows). Lanes drop
+  `SOLDR_PORCELAIN`, which hosted jobs never set. Under it, cargo-dylint's
+  nested `cargo metadata` returned soldr's report instead of metadata, so a
+  local Dylint pass found "No libraries", linted nothing and exited 0. soldr's
+  verdict cache then recorded that run as a pass, so lanes also set
+  `SOLDR_VERDICTS=off`: a trailer means the lane really ran.
 - *Verification.* On a same-repo `pull_request` only, the `CI mode` job
   installs the hash-pinned prooft 0.2.0 wheel and runs `prooft plan` under
   `python -I`, so no head code is imported. The policy comes from the PR
