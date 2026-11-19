@@ -642,8 +642,18 @@ REUSE_SKIP_JOBS = (
 WRITER_JOBS = ("dylint", "build-linux-x64")
 
 
+def _job_block(text: str, job: str) -> str:
+    return re.split(r"\n  [a-z][a-z0-9-]*:\n", text.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
+
+
 def test_hosted_pr_checks_do_not_require_local_bosn_receipts() -> None:
-    """A stamp-free PR runs real hosted checks; local receipts cannot waive them."""
+    """A stamp-free PR runs real hosted checks; Bosn receipts cannot waive them.
+
+    DD-225 adds exactly one consumer of local evidence: prooft trailers may
+    reduce Clippy and the Dylint legs IN PLACE (the job still runs and
+    reports). No routine job is skipped at the job level by local evidence,
+    and the final gate never reads it.
+    """
     root = CI_YML.parent.parent.parent
     text = CI_YML.read_text(encoding="utf-8")
     config = (root / "local-gate.toml").read_text(encoding="utf-8")
@@ -653,17 +663,33 @@ def test_hosted_pr_checks_do_not_require_local_bosn_receipts() -> None:
     for section in ("gate", "gate.trust"):
         body = config.split(f"[{section}]\n", 1)[1].split("\n[", 1)[0]
         assert re.findall(r'^mode\s*=\s*"([^"]+)"', body, re.MULTILINE) == ["shadow"]
-    gate = re.split(r"\n  [a-z][a-z0-9-]*:\n", text.split("\n  ci-ok:\n", 1)[1], maxsplit=1)[0]
+    gate = _job_block(text, "ci-ok")
     assert "--attested-workflow" not in gate
     assert "--workflow-plan ci.yml --needs needs.json" in gate
-    assert "continue-on-error" not in static + gate
+    assert "attested" not in gate
+    assert "continue-on-error" not in gate
     assert "|| true" not in static + gate
+    # The prooft verifier is the only step allowed to fail open (it reduces
+    # nothing when it fails), and it is the only continue-on-error here.
+    prooft_step = static.split("- name: Judge prooft attestations", 1)[1].split(
+        "\n      - name:", 1
+    )[0]
+    assert static.count("continue-on-error") == 1
+    assert "continue-on-error: true" in prooft_step
     for job in ROUTINE_PR_JOBS:
+        block = _job_block(text, job)
+        condition = (
+            block.split("\n    if:", 1)[1].split("\n    uses:", 1)[0]
+            if "\n    if:" in block
+            else ""
+        )
+        assert "attested" not in condition, job
+        assert "steps.prooft" not in condition, job
         if job in REUSE_SKIP_JOBS:
             output = f"skip_{job}: ${{{{ steps.reuse_skip.outputs.skip_{job} }}}}"
             assert output in static, job
         else:
-            assert f"skip_{job}" not in text, job
+            assert f"needs.static.outputs.skip_{job} " not in text, job
         assert f"- {job}" in gate, job
         assert f"skip_{job}" not in gate, job
 

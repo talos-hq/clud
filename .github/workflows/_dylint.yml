@@ -12,6 +12,14 @@ on:
         description: Exact source commit for the full CI run.
         required: false
         type: string
+      attested_passes:
+        description: >-
+          DD-225: comma-delimited legs (`,host,aarch64-apple-darwin,`) that a
+          valid prooft trailer proves on this same-repo PR head. A listed leg
+          reports success without setting up or running its checks.
+        required: false
+        type: string
+        default: ""
   workflow_dispatch: {}
 
 permissions:
@@ -87,25 +95,36 @@ jobs:
           path: .pass-marker
           key: ${{ steps.pass-key.outputs.key }}
           lookup-only: true
+      # DD-225: a leg also reduces when ci.yml's CI mode job found a valid
+      # prooft trailer for it (same-repo PRs only).
       - name: Skip unchanged inputs
+        id: skip
         env:
           CACHE_HIT: ${{ steps.pass.outputs.cache-hit }}
+          ATTESTED: ${{ contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}
         run: |
-          [ "$CACHE_HIT" = "true" ] || { echo "no pass marker; running the leg"; exit 0; }
-          echo "::notice::Dylint ${{ matrix.pass }} already passed for ${{ steps.pass-key.outputs.key }}; skipping"
+          if [ "$CACHE_HIT" = "true" ]; then
+            echo "::notice::Dylint ${{ matrix.pass }} already passed for ${{ steps.pass-key.outputs.key }}; skipping"
+          elif [ "$ATTESTED" = "true" ]; then
+            echo "::notice::Dylint ${{ matrix.pass }} proven by a prooft Ci-Attestation on this head (DD-225); skipping"
+          else
+            echo "no pass marker or attestation; running the leg"
+            exit 0
+          fi
+          echo "reduced=true" >> "$GITHUB_OUTPUT"
       # A cold Dylint build needs more than the ~6 GiB a hosted ubuntu-24.04
       # runner leaves free; soldr refuses to build below 5 GiB. Drop the
       # preinstalled SDKs this job never uses (Android, .NET, GHC, CodeQL).
       - name: Free runner disk
         env:
-          CACHE_HIT: ${{ steps.pass.outputs.cache-hit }}
+          REDUCED: ${{ steps.skip.outputs.reduced }}
         run: |
-          [ "$CACHE_HIT" != "true" ] || { echo "pass marker hit; nothing to build"; exit 0; }
+          [ "$REDUCED" != "true" ] || { echo "pass marker or attestation; nothing to build"; exit 0; }
           df -h / | tail -1
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h / | tail -1
       - name: Set up soldr
-        if: steps.pass.outputs.cache-hit != 'true'
+        if: steps.skip.outputs.reduced != 'true'
         uses: forge-ci/setup-soldr@v0
         env:
           # Remote S3 build cache credentials; absent secrets disable it.
@@ -145,7 +164,7 @@ jobs:
       # the UI tests) fails. Drop such incomplete extractions so cargo
       # re-unpacks them from the `.crate` archive. Same repair as fbuild.
       - name: Repair registry sources missing packaged files
-        if: steps.pass.outputs.cache-hit != 'true'
+        if: steps.skip.outputs.reduced != 'true'
         run: |
           for src in "$HOME"/.cargo/registry/src/*/dylint_internal-*; do
             [ -d "$src" ] || continue
@@ -155,19 +174,19 @@ jobs:
             fi
           done
       - name: Prepare verified Dylint prebuilts
-        if: steps.pass.outputs.cache-hit != 'true'
+        if: steps.skip.outputs.reduced != 'true'
         run: |
           env -u RUSTUP_TOOLCHAIN soldr dylint prepare 2>&1 | tee "$RUNNER_TEMP/dylint-prepare.log"
           sed -n 's/^soldr: dylint prepare: tool bin dir //p' "$RUNNER_TEMP/dylint-prepare.log" >> "$GITHUB_PATH"
       - name: Check dylint formatting
-        if: steps.pass.outputs.cache-hit != 'true'
+        if: steps.skip.outputs.reduced != 'true'
         run: |
           [ "$DYLINT_PASS" = "host" ] || { echo "not the host leg"; exit 0; }
           soldr rustup component add --toolchain nightly-2026-08-15 rustfmt
           (cd dylints/ban_manual_slash_normalize && soldr --no-cache cargo fmt --all -- --check)
           (cd dylints/enforce_platform_boundary && soldr --no-cache cargo fmt --all -- --check)
       - name: Test dylint crate
-        if: steps.pass.outputs.cache-hit != 'true'
+        if: steps.skip.outputs.reduced != 'true'
         run: |
           [ "$DYLINT_PASS" = "host" ] || { echo "not the host leg"; exit 0; }
           # Run from the crate so its .cargo/config.toml applies (RUST-016).
@@ -190,7 +209,7 @@ jobs:
             RUSTUP_TOOLCHAIN=nightly-2026-08-15 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/dylint-tests" \
             soldr cargo test)
       - name: Run dylint over workspace
-        if: steps.pass.outputs.cache-hit != 'true'
+        if: steps.skip.outputs.reduced != 'true'
         run: |
           [ "$DYLINT_PASS" = "host" ] || { echo "not the host leg"; exit 0; }
           env -u RUSTUP_TOOLCHAIN soldr dylint --all -- --workspace --all-targets
@@ -199,7 +218,7 @@ jobs:
       # code. These check-only passes cover it from Linux with the same
       # prebuilt driver; soldr installs the nightly's target `rust-std`.
       - name: Run dylint for x86_64-pc-windows-msvc
-        if: steps.pass.outputs.cache-hit != 'true'
+        if: steps.skip.outputs.reduced != 'true'
         # Scoped to the check-only cross passes: a warning only this target
         # sees (an import unused off-Linux, #1837) must fail here (#1849).
         env:
@@ -209,7 +228,7 @@ jobs:
           env -u RUSTUP_TOOLCHAIN soldr dylint prepare --target x86_64-pc-windows-msvc
           env -u RUSTUP_TOOLCHAIN soldr dylint --all -- --workspace --all-targets --target x86_64-pc-windows-msvc
       - name: Run dylint for aarch64-apple-darwin
-        if: steps.pass.outputs.cache-hit != 'true'
+        if: steps.skip.outputs.reduced != 'true'
         # Scoped to the check-only cross passes: a warning only this target
         # sees (an import unused off-Linux, #1837) must fail here (#1849).
         env:
@@ -231,7 +250,7 @@ jobs:
           env -u RUSTUP_TOOLCHAIN soldr dylint prepare --target aarch64-apple-darwin
           env -u RUSTUP_TOOLCHAIN soldr dylint --all -- --workspace --all-targets --target aarch64-apple-darwin
       - name: Record pass marker
-        if: success() && steps.pass.outputs.cache-hit != 'true'
+        if: success() && steps.skip.outputs.reduced != 'true'
         env:
           RECORD: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
@@ -240,7 +259,7 @@ jobs:
           touch .pass-marker/ok
       - name: Save pass marker
         if: >-
-          success() && steps.pass.outputs.cache-hit != 'true'
+          success() && steps.skip.outputs.reduced != 'true'
           && github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@v4
         with:

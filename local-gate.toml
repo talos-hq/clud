@@ -1,5 +1,7 @@
-# clud's local gate (zackees/ci.yml GATE-001..010). See
-# docs/architecture/ci.md#attested-skip-gate-008010.
+# clud's retired Bosn local gate (zackees/ci.yml GATE-001..010, DD-190).
+# Its receipts grant nothing. Hosted credit for Clippy and Dylint comes only
+# from prooft trailers (ci-attestations.yml, `python -m ci.attest`); see
+# docs/architecture/ci.md#attested-clippy-and-dylint-prooft-dd-225.
 #
 # Optional local diagnostic run, from a clean, committed tree:
 #

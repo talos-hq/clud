@@ -64,7 +64,7 @@ triples, Dylint, unit and integration) exactly as a manual dispatch does, and
 publisher starts until it succeeds. A version bump on `main` starts this release
 through the [post-merge tag handoff](#automatic-version-tags-2764).
 
-A release consults no earlier evidence: no local-gate attestation, no
+A release consults no earlier evidence: no local-gate or prooft attestation, no
 default-branch reuse decision, and no earlier CI run. The reuse steps in
 `ci.yml` key only on a `main` push; a call from a tag push or tag-ref dispatch is not one,
 and `tests/test_release_gate.py` pins that. This
@@ -395,20 +395,38 @@ raising the timeout.
 If Docker or Bosn is unavailable, use focused host checks and hosted CI.
 Do not auto-install tools or prune Docker resources. See the bundled `clud-bosn` skill for prerequisites.
 
-### Attested skip (GATE-008/010)
+### Attested Clippy and Dylint (prooft, DD-225)
 
-**Disabled as a hosted CI prerequisite and skip mechanism.** An unstamped PR
-runs every selected hosted job. `CI OK` still uses the pinned shared verifier
-to check actual job outcomes and independently verify default-branch reuse.
-Missing, failed or unjustifiably skipped required jobs remain failures.
+A same-repo PR may prove `Clippy linux-x64` and any of the three Dylint legs
+locally with [forge-ci/prooft](https://github.com/forge-ci/prooft); every
+other hosted job always runs. Design and trust model:
+[DD-225](../DESIGN_DECISIONS.md#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them).
 
-`local-gate.toml` and `ci-attestations.yml` remain available for optional
-local diagnostics. Both gate modes are `shadow`; CI does not invoke
-`local-gate verify`, consume local skip outputs, or pass `--attested-workflow`
-to its final verifier. Local receipts do not waive hosted checks. The
-historical enrollment measurements below describe the retired behavior.
+```bash
+git commit ...                # prooft attests commits, never a dirty tree
+.venv/bin/python -m ci.attest # or: ci.attest clippy dylint-aarch64-apple-darwin
+git push                      # after a pushed head: git push --force-with-lease
+```
 
-#### Validation evidence (2026-10-03)
+`ci/attest.py` runs each lane in `ci-attestations.yml` with the hosted
+commands (`--list` prints them). Each lane that passes adds one
+`Ci-Attestation:` trailer per gate, bound to the tree and parents. The
+`CI mode` job's "Judge prooft attestations" step runs the hash-pinned prooft
+`plan` against the base's policy and prints its decision to the run summary.
+A proven job or leg then logs `proven by a prooft Ci-Attestation on this head
+(DD-225); skipping` and passes without setup. Anything else runs it in full:
+no trailer, an edit or rebase after attesting, more than 24 hours, a fork, a
+`[ci-full]`/`[no-attest]` title, or a PR touching `.github/`,
+`ci-attestations.yml`, `ci.toml` or `local-gate.toml`. Merge groups (which
+run every lane on the merged tree), `main`, nightly and release runs never
+read trailers.
+
+The Windows MSVC Dylint leg may not run on a Linux host until
+forge-ci/soldr#4016; that lane then fails locally, stamps nothing, and runs
+hosted. Bosn `local-gate` receipts (`local-gate.toml`, retired by DD-190)
+still grant nothing.
+
+#### Retired local-gate skip: validation evidence (2026-10-03)
 
 The warm local gate on tree `586af3c573ea` completed in **419 s** using
 bosn 0.1.10 and act2 `0.2.89-act2.2` (run
@@ -444,8 +462,9 @@ associated PR head and requires a successful PR run no older than 12 hours
 containing all ten routine check cells: static checks, three Dylint passes,
 Clippy, build, and four unit shards. A green `merge_group` run on the pushed
 commit itself can also prove reuse when the queue's merged tree differs from
-the PR head. Attested PR jobs that were skipped do not count as successful
-executed jobs for this probe.
+the PR head. A PR Clippy job reduced by a prooft attestation (DD-225)
+reports success; the merge group's own hosted Clippy run covers the merged
+tree.
 
 A verified decision skips only Static checks, Clippy and the Linux unit
 caller. Dylint and Build linux-x64 still run as default-branch cache writers.

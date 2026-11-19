@@ -172,6 +172,7 @@ dev = [
     { name = "cmake" },
     { name = "maturin" },
     { name = "mcp", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "prooft" },
     { name = "psutil" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -190,6 +191,7 @@ dev = [
 ]
 test = [
     { name = "mcp", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'" },
+    { name = "prooft" },
     { name = "psutil" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -215,6 +217,7 @@ dev = [
     { name = "cmake", specifier = ">=3.26" },
     { name = "maturin", specifier = ">=1.7,<2" },
     { name = "mcp", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=2.1" },
+    { name = "prooft", specifier = "==0.2.0" },
     { name = "psutil", specifier = ">=5.9" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-cov", specifier = ">=6.0.0" },
@@ -233,6 +236,7 @@ dev = [
 ]
 test = [
     { name = "mcp", marker = "platform_machine != 'ARM64' or sys_platform != 'win32'", specifier = ">=2.1" },
+    { name = "prooft", specifier = "==0.2.0" },
     { name = "psutil", specifier = ">=5.9" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-cov", specifier = ">=6.0.0" },
@@ -655,6 +659,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/f9/e2/3e91f31a7d2b083fe6ef3fa267035b518369d9511ffab804f839851d2779/pluggy-1.6.0.tar.gz", hash = "sha256:7dcc130b76258d33b90f61b658791dede3486c3e6bfb003ee5c9bfb396dd22f3", size = 69412, upload-time = "2025-05-15T12:30:07.975Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/54/20/4d324d65cc6d9205fabedc306948156824eb9f0ee1633355a8f7ec5c66bf/pluggy-1.6.0-py3-none-any.whl", hash = "sha256:e920276dd6813095e9377c0bc5566d94c932c33b27a3e3945d8389c374dd4746", size = 20538, upload-time = "2025-05-15T12:30:06.134Z" },
+]
+
+[[package]]
+name = "prooft"
+version = "0.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/79/1d/9ed0df1989cdd55aaa68b7a963fd23bbce223d17e7c5c00fc7fa5373cebb/prooft-0.2.0.tar.gz", hash = "sha256:9f79c650b928e6b70caebc97f35149378a29a9c73d4210b71e86cd19d65b0ae8", size = 31386, upload-time = "2026-11-10T00:25:56.979Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/96/a2/0a0fdadb623eff993e09de28f4e066d1b25e4a174aa7f157d3c101fa4bdb/prooft-0.2.0-py3-none-any.whl", hash = "sha256:4571ead6be9e2c770c051245cd021cd9738091c65bc158e63bace0c791e1d733", size = 36775, upload-time = "2026-11-10T00:25:55.847Z" },
 ]
 
 [[package]]
