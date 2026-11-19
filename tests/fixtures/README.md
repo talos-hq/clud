@@ -37,3 +37,9 @@ Python tests also exercise real hook caps, task separators and offline waiter
 resumption, with a fork/upstream command-target fixture. An optional `script` maps label prefixes to ordered replies (with
 `delay_ms`), which `tests/test_grind_editor_integrator_chaperones.py` uses to drive the
 merge-queue enqueue, chaperone and fixup paths (#2467).
+
+`windows_sensitive/` holds the Python snippets `tests/test_windows_sensitive.py`
+feeds the Windows content check in `ci/windows_sensitive.py` (DD-224): the
+#2683 PATH stub, the #2827 execute-bit assertion, and portable negatives. They
+are `.txt` so the check, which reads changed `tests/**/*.py` files, never
+flags the test that exercises it.

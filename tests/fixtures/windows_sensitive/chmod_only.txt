@@ -1,0 +1,1 @@
+path.chmod(0o755)

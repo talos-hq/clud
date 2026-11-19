@@ -1,0 +1,1 @@
+assert all(p.stat().st_mode & 0o111 for p in staged.rglob("*") if p.is_file())
