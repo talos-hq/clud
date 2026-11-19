@@ -1,4 +1,5 @@
 //! Repeated-identical-call guard (#1674, parent #1276).
+//! (scratch: DD-224 auto-lane proof, never merged)
 //!
 //! In #1276 one MiMo response emitted 294 (then 371) identical Bash calls,
 //! and every result went back into context. This guard denies a PreToolUse
