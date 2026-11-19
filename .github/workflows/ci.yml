@@ -131,6 +131,16 @@ jobs:
       skip_lint-linux-x64: ${{ steps.reuse_skip.outputs.skip_lint-linux-x64 }}
       skip_test-linux-x64-unit: ${{ steps.reuse_skip.outputs.skip_test-linux-x64-unit }}
       skip_static-checks: ${{ steps.reuse_skip.outputs.skip_static-checks }}
+      # DD-225: a same-repo PR head whose prooft trailers prove a lane runs
+      # that job (or Dylint leg) reduced: it starts and reports success but
+      # skips its checks. Consumers compare to 'true'/a pass name, so an
+      # absent or failed verifier reduces nothing.
+      attested_clippy: ${{ steps.prooft.outputs['skip_lint-linux-x64'] }}
+      attested_dylint: >-
+        ${{ format(',{0},{1},{2},',
+            steps.prooft.outputs['skip_dylint-host'] == 'true' && 'host' || '',
+            steps.prooft.outputs['skip_dylint-x86_64-pc-windows-msvc'] == 'true' && 'x86_64-pc-windows-msvc' || '',
+            steps.prooft.outputs['skip_dylint-aarch64-apple-darwin'] == 'true' && 'aarch64-apple-darwin' || '') }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -193,6 +203,29 @@ jobs:
           git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
           echo "CHANGED_FILES=$RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
           wc -l < "$RUNNER_TEMP/changed-files.txt"
+      # DD-225: judge the head's Ci-Attestation trailers with the pinned,
+      # hash-checked prooft release against the BASE's ci-attestations.yml
+      # (`prooft plan` reads the policy from --base). No head code is
+      # imported: -I plus an explicit path to the installed release. Same-repo
+      # PRs only; prooft itself refuses heads that touch the policy,
+      # .github/, ci.toml or local-gate.toml, or carry a [ci-full] title tag.
+      # A verifier failure is never a CI failure: it reduces nothing.
+      - name: Judge prooft attestations (Clippy, Dylint)
+        id: prooft
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          set -euo pipefail
+          lib="$RUNNER_TEMP/prooft-lib"
+          printf 'prooft==0.2.0 --hash=sha256:4571ead6be9e2c770c051245cd021cd9738091c65bc158e63bace0c791e1d733\n' > "$RUNNER_TEMP/prooft.txt"
+          python -m pip install --quiet --no-deps --require-hashes --only-binary :all: --target "$lib" -r "$RUNNER_TEMP/prooft.txt"
+          python -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from prooft.cli import main; sys.exit(main(sys.argv[1:]))' \
+            "$lib" -C . plan --base "$BASE_SHA" --head "$HEAD_SHA" --title "$PR_TITLE" --github-output | tee "$RUNNER_TEMP/prooft-plan.txt"
+          { echo '### prooft attestations (DD-225)'; echo; echo '```'; cat "$RUNNER_TEMP/prooft-plan.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Resolve CI mode and candidate SHA
         id: mode
         env:
@@ -433,6 +466,8 @@ jobs:
     uses: ./.github/workflows/_dylint.yml
     with:
       source_ref: ${{ needs.static.outputs.source_ref }}
+      # DD-225: legs proven by a valid prooft trailer on a same-repo PR head.
+      attested_passes: ${{ needs.static.outputs.attested_dylint }}
     # Reusable workflows get no secrets by default; the remote S3 build cache
     # in _dylint.yml needs SOLDR_S3_CACHE_ACCESS_KEY / _SECRET_KEY.
     secrets: inherit
@@ -471,6 +506,9 @@ jobs:
       # Doc-tests ride here, beside the build rather than ahead of the unit
       # lanes (_build-target.yml's Doc tests step).
       doctest: true
+      # DD-225: true only when a valid prooft trailer proves Clippy and
+      # doc-tests on this same-repo PR head.
+      attested: ${{ needs.static.outputs.attested_clippy == 'true' }}
       save-cache: "false"
 
   build-linux-x64:

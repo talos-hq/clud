@@ -34,6 +34,15 @@ on:
         required: false
         type: boolean
         default: true
+      attested:
+        description: >-
+          DD-225: a valid prooft trailer on this same-repo PR head proves this
+          lint-only call's Clippy and doc-tests. The job then reports success
+          without setting up or running them. Ignored unless the call is
+          lint-only.
+        required: false
+        type: boolean
+        default: false
       doctest:
         description: >-
           Run the workspace doc-tests (x86_64-unknown-linux-gnu only). CI runs
@@ -175,16 +184,27 @@ jobs:
 
       # Runs unconditionally and branches inside: the local-gate replay proof
       # needs every declared step executed (zackees/ci.yml#415).
+      # DD-225: a lint-only call also reduces when the caller says a valid
+      # prooft trailer proves it (ci.yml's CI mode job, same-repo PRs only).
       - name: Skip unchanged inputs
+        id: skip
         shell: bash
         env:
           CACHE_HIT: ${{ steps.pass.outputs.cache-hit }}
+          ATTESTED: ${{ inputs.attested && steps.pass-key.outputs.eligible == 'true' }}
         run: |
-          [ "$CACHE_HIT" = "true" ] || { echo "no pass marker; running the job"; exit 0; }
-          echo "::notice::Clippy inputs unchanged since a passing main run; skipping."
+          if [ "$CACHE_HIT" = "true" ]; then
+            echo "::notice::Clippy inputs unchanged since a passing main run; skipping."
+          elif [ "$ATTESTED" = "true" ]; then
+            echo "::notice::Clippy and doc-tests proven by a prooft Ci-Attestation on this head (DD-225); skipping."
+          else
+            echo "no pass marker or attestation; running the job"
+            exit 0
+          fi
+          echo "reduced=true" >> "$GITHUB_OUTPUT"
 
       - name: Set up build
-        if: ${{ steps.pass.outputs.cache-hit != 'true' }}
+        if: ${{ steps.skip.outputs.reduced != 'true' }}
         uses: ./.github/actions/setup-build
         with:
           target: ${{ inputs.target }}
@@ -207,7 +227,7 @@ jobs:
       # full PEP 517 maturin build of a HOST wheel before the TARGET build even
       # starts. See lint:8-24 for the pre-existing workaround this follows.
       - name: Clippy
-        if: ${{ inputs.clippy && steps.pass.outputs.cache-hit != 'true' }}
+        if: ${{ inputs.clippy && steps.skip.outputs.reduced != 'true' }}
         run: '"$VENV_PY" -m ci.xbuild clippy --target ${{ inputs.target }} --strategy ${{ inputs.strategy }}'
 
       - name: Build binaries and test harnesses
@@ -269,11 +289,11 @@ jobs:
       # finishes over a minute before it, so this moves ~7 s off the PR's
       # critical path at no wall-clock cost.
       - name: Doc tests
-        if: ${{ steps.pass.outputs.cache-hit != 'true' && inputs.doctest && inputs.target == 'x86_64-unknown-linux-gnu' && runner.os == 'Linux' }}
+        if: ${{ steps.skip.outputs.reduced != 'true' && inputs.doctest && inputs.target == 'x86_64-unknown-linux-gnu' && runner.os == 'Linux' }}
         run: '"$VENV_PY" -m ci.xbuild doctest --target ${{ inputs.target }} --strategy ${{ inputs.strategy }}'
 
       - name: Record pass marker
-        if: ${{ success() && steps.pass.outputs.cache-hit != 'true' }}
+        if: ${{ success() && steps.skip.outputs.reduced != 'true' }}
         shell: bash
         env:
           RECORD: ${{ steps.pass-key.outputs.eligible == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -283,7 +303,7 @@ jobs:
           touch .pass-marker/ok
 
       - name: Save pass marker
-        if: ${{ success() && steps.pass-key.outputs.eligible == 'true' && steps.pass.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        if: ${{ success() && steps.pass-key.outputs.eligible == 'true' && steps.skip.outputs.reduced != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v4
         with:
           path: .pass-marker

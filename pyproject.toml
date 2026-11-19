@@ -65,6 +65,9 @@ test = [
     "pywinpty>=3.0.5; sys_platform == 'win32'",
     "psutil>=5.9",
     "running-process==4.10.1",
+    # The attestation producer (`ci/attest.py`) and its tests; hosted CI
+    # installs the same pinned release by hash (DD-225).
+    "prooft==0.2.0",
     # `tests/test_outline_tool.py` parses fixtures with the same grammars the
     # bundled `code/outline.py` script pins.
     "tree-sitter==0.26.0",

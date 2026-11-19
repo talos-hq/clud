@@ -1,31 +1,35 @@
-# ci-attestations (zackees/ci.yml GATE-010). See
-# docs/architecture/ci.md#attested-skip-gate-008010.
+# prooft attestation policy (forge-ci/prooft 0.2.0, GATE-010 format). See
+# docs/architecture/ci.md#attested-clippy-and-dylint-prooft-dd-225 and DD-225.
 #
-# Optional local diagnostic mappings. Hosted CI does not consume local
-# receipts or waive PR jobs; every selected hosted PR check executes.
-# Each gate is one check a routine PR lane runs, named
-# <ecosystem>/<platform>/<check>. `lane` is the local-gate.toml lane whose
-# pass proves it: `ci-lint local-gate run` writes one `Ci-Attestation:`
-# trailer per gate into the commit message (never into the tree). A gate
-# with no trailer was not run locally.
+# `python -m ci.attest` runs each lane locally on a clean, committed HEAD
+# and, when the lane passes, amends the commit message with one
+# `Ci-Attestation:` trailer per gate (never a tracked file). The trailer is
+# bound to the commit's tree and parents: a changed byte, a rebase or a new
+# merge of main invalidates it. It is an honesty contract, not a signature.
 #
-# `jobs` maps hosted jobs to optional local checks. These declarations do
-# not grant a hosted skip. Main-push reuse uses separate verified CI evidence.
+# Hosted CI reads THIS FILE FROM THE PR BASE (a PR cannot loosen it) through
+# the hash-pinned prooft release in ci.yml's `CI mode` job. Only same-repo
+# `pull_request` runs consult it. A PR that edits this file, .github/,
+# ci.toml or local-gate.toml, a fork, or a `[ci-full]`/`[no-attest]` title
+# tag runs everything. A gate without a valid, fresh (24 h) trailer runs
+# hosted. Merge groups, main pushes, nightlies and releases never consult it.
+#
+# A job entry reduces that job (or Dylint leg) in place: it still starts and
+# reports success, but skips its setup and checks. Dylint legs are the
+# `matrix.pass` entries of `_dylint.yml:dylint`, one entry per leg, so a
+# host that cannot run one cross pass still earns the others.
 version: 1
+mode: shadow
 gates:
-  general/all/static: {lane: static}                       # ci/lint.py --static-only
-  rust/x86_64-unknown-linux-gnu/clippy: {lane: clippy}     # clippy + doc-tests
-  rust/x86_64-unknown-linux-gnu/dylint: {lane: dylint}     # host pass
-  rust/x86_64-pc-windows-msvc/dylint: {lane: dylint}       # cross-target pass
-  rust/aarch64-apple-darwin/dylint: {lane: dylint}         # cross-target pass
-  rust/x86_64-unknown-linux-gnu/build: {lane: build}      # bins, harnesses, wheel
-  rust/x86_64-unknown-linux-gnu/unit: {lane: unit}       # rust + both pytest shards
+  rust/x86_64-unknown-linux-gnu/clippy: {lane: clippy}    # xbuild clippy (workspace, all targets)
+  rust/x86_64-unknown-linux-gnu/doctest: {lane: clippy}   # xbuild doctest, same job
+  rust/x86_64-unknown-linux-gnu/dylint: {lane: dylint}    # host leg: crate fmt/tests + workspace pass
+  rust/x86_64-pc-windows-msvc/dylint: {lane: dylint-x86_64-pc-windows-msvc}
+  rust/aarch64-apple-darwin/dylint: {lane: dylint-aarch64-apple-darwin}
 jobs:
-  ci.yml:static-checks: [general/all/static]
-  ci.yml:dylint:
-    - rust/x86_64-unknown-linux-gnu/dylint
-    - rust/x86_64-pc-windows-msvc/dylint
-    - rust/aarch64-apple-darwin/dylint
-  ci.yml:lint-linux-x64: [rust/x86_64-unknown-linux-gnu/clippy]
-  ci.yml:build-linux-x64: [rust/x86_64-unknown-linux-gnu/build]
-  ci.yml:test-linux-x64-unit: [rust/x86_64-unknown-linux-gnu/unit]
+  ci.yml:lint-linux-x64:
+    - rust/x86_64-unknown-linux-gnu/clippy
+    - rust/x86_64-unknown-linux-gnu/doctest
+  _dylint.yml:dylint-host: [rust/x86_64-unknown-linux-gnu/dylint]
+  _dylint.yml:dylint-x86_64-pc-windows-msvc: [rust/x86_64-pc-windows-msvc/dylint]
+  _dylint.yml:dylint-aarch64-apple-darwin: [rust/aarch64-apple-darwin/dylint]
