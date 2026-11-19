@@ -8258,3 +8258,46 @@ completes and reads the current latest stable release itself. A proof run, a
 failed run or a release that `rollback-public` demoted leaves the tap
 unchanged. `release: released` stays as a trigger for a promotion made by a
 person, and drafts and prereleases are refused on every path.
+
+## DD-224: a path-sensitive PR gets the Windows lanes without a label
+
+**Status:** Accepted (#2844).
+
+**Context:** Routine PR CI and the merge queue run Linux x64 only; native
+lanes come from labels, which are set when a PR is created (adding one later
+cancels the run it replaces). On 2026-11-18 three Windows regressions merged
+that way. #2737's `resolvable_path` accepted only `/`-rooted words, #2788's
+`file_key` hashed raw path text, and #2683 and #2827 added Python tests with an
+extensionless `gh` stub on `PATH` and a POSIX execute-bit assertion. The
+release's exact-SHA full CI caught each of them, 2.8.66 was abandoned, and
+#2831 fixed them. None of the authors chose `ci-windows`.
+
+**Decision:** On `pull_request`, `ci/ci_matrix.py` classifies the PR's
+changed files with `ci/windows_sensitive.py` and upgrades `minimal` to
+`windows` (and `macos` to `full`) when any of them matches. The module owns
+one path list (`WINDOWS_SENSITIVE_PATHS`: the `block_bad_cmd*` guards, hook
+dispatch, the rm guard/tool, home and path utilities, shims and multicall
+names, every `src/platform/`) and one content check for changed Python tests
+that put an executable on `PATH` or test execute bits. The upgrade is the
+ordinary `mode` output, so `CI OK` requires the Windows jobs exactly as it
+does for the label. Merge groups and `main` pushes are never upgraded.
+Details: [Automatic Windows lanes](architecture/ci.md#automatic-windows-lanes-for-path-sensitive-changes-dd-224).
+
+**Why a lane trigger and not a lint for the Python patterns:** about fourteen
+existing tests match the patterns, many correctly (skipped on Windows, or
+writing `.cmd` shims). A lint would need either a parser that understands
+those guards or an allowlist of the existing files, and both go wrong
+quietly. Running the Windows suite gives the real answer and costs only
+runner time on the PRs that touch such a test.
+
+**Why not on the merge queue:** a Windows lane on every group would make each
+merge wait on the slowest native build for the minority of PRs that need it.
+The PR run has already required Windows on the head SHA. The gap that remains
+is a stale PR merged onto a newer `main`; the nightly full run and release
+validation still cover it.
+
+**Why classify paths and not leave it to labels:** the label rule ("inspect
+the changed implementation") still governs everything else. These areas are
+the ones where shared, cfg-free code behaves differently on Windows, so the
+author cannot tell from the diff that a native lane is needed, which is how
+all three incidents got through.

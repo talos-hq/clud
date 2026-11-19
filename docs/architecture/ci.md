@@ -21,7 +21,9 @@ six build targets. A manual run requires a reachable
 branch's workflow revision, so the same candidate can be retried after
 unrelated `main` changes. Every checkout uses that SHA. The required `CI OK`
 check verifies every job selected by the mode. Adding or removing a label
-reruns selection on the PR head SHA.
+reruns selection on the PR head SHA. An unlabeled PR whose diff touches a
+path-sensitive area also runs the `windows` mode; see
+[Automatic Windows lanes](#automatic-windows-lanes-for-path-sensitive-changes-dd-224).
 
 Linux x64 Clippy runs as its own job (`lint-linux-x64`) beside the build, not
 inside it: it produces nothing the unit lane consumes, so as a step of the
@@ -641,7 +643,7 @@ every push needs all six targets.
 | --- | --- | --- |
 | `minimal` | Linux Dylint (host + Windows/macOS cross-target) + `x86_64-unknown-linux-gnu` build and unit suite | ordinary PR and `main` push |
 | `extended` | minimal + Linux x64 integration + harness + `x86_64-pc-windows-msvc` | PR labeled `ci-test` |
-| `windows` | minimal + `x86_64-pc-windows-msvc` build, unit and integration | PR labeled `ci-windows` |
+| `windows` | minimal + `x86_64-pc-windows-msvc` build, unit and integration | PR labeled `ci-windows`, or an unlabeled PR touching a path-sensitive area (DD-224) |
 | `macos` | minimal + both Darwin triples' build, unit and integration | PR labeled `ci-macos` |
 | `full` | extended + `aarch64-unknown-linux-gnu`, `aarch64-pc-windows-msvc`, both Darwin triples | PR labeled `ci-full` or legacy `ci:full`, source-pinned manual dispatch, the nightly `schedule` run |
 
@@ -671,8 +673,54 @@ PR #1769's shared pump helper extraction is the negative example: it called
 existing platform code and preserved OS branches, so it should have used
 routine CI. Changing termios, ConPTY, native console handling or the OS
 contract itself is a positive example. Release/candidate full validation
-is unchanged. The matrix script honors explicit labels; it does not classify
-source diffs, so agents and reviewers apply this selection rule.
+is unchanged. The matrix script honors explicit labels and classifies the
+diff for one case only: path-sensitive areas get the Windows lanes
+automatically (below). Every other selection is the author's.
+
+### Automatic Windows lanes for path-sensitive changes (DD-224)
+
+On 2026-11-18 three Windows regressions merged through Linux-only PR CI and
+the Linux-only merge queue, and each was first caught by a release's
+exact-SHA full CI, which cost a release attempt (2.8.66 was abandoned; fix
+#2831). They were #2737 (`resolvable_path` accepted only `/`-rooted words),
+#2788 (`file_key` hashed raw path text), #2683 (an extensionless `gh` stub on
+`PATH`) and #2827 (an assertion on POSIX execute bits). A label can only be
+chosen when the PR is created, and nobody chose `ci-windows` for any of them.
+
+So on `pull_request` (#2844) the `static` job lists the PR's changed files
+(`git diff --name-only base...head`, fetching a fork's base from this
+repository) and `ci/ci_matrix.py` asks `ci/windows_sensitive.py` whether any
+of them needs Windows:
+
+- **Path list.** `WINDOWS_SENSITIVE_PATHS` is the single list: the
+  `block_bad_cmd*` guards, hook dispatch (`clud_hooks*`, `clud_hook_roots*`,
+  `hook_payload_guard.rs`), `rm_guard.rs`/`rm_tool*`, `home.rs`,
+  `path_norm.rs`, `safe_mktemp*`, `fs_private.rs`, `shim_*`, `multicall.rs`,
+  `alias_link.rs`, and every crate's `src/platform/`. A test fails if a
+  pattern stops matching a tracked file.
+- **Content check.** A changed `tests/**/*.py` file that both makes a file
+  executable (`chmod` with an execute bit) and edits `PATH`, or that tests
+  execute bits (`st_mode & 0o111`, `stat.S_IX*`, `os.X_OK`), also selects
+  Windows. This is a lane trigger, not a lint: about fourteen existing tests
+  match, many correctly (Windows-skipped or `.cmd` shims), so a lint would
+  need a guard-aware parser or an allowlist, while the Windows suite is the
+  ground truth. A portable test fakes the tool's call boundary in-process
+  instead of putting a script on `PATH` (#2831's `stub_gh`).
+
+A match turns `minimal` into `windows`, exactly the lanes `ci-windows` adds,
+and `ci-macos` into `full` (the only mode with both native sets).
+`ci-test`/`ci-full`/`ci-windows` already include Windows. Each reason is a
+`::notice` annotation on the `CI mode` job and the `auto_windows` output.
+Because the result is the ordinary `mode` output, `CI OK`'s workflow-plan
+gate requires the Windows jobs exactly as it does for the label.
+
+The merge queue and `main` pushes never classify files and stay `minimal`:
+the PR run on the head SHA already required Windows. A queue group that
+merges a stale PR onto a newer `main` is the remaining gap, covered by the
+nightly run and release validation as before. Routine PRs pay one `git diff`
+in the `static` job. Over the 400 commits before this change about a quarter
+touched a listed area, mostly `block_bad_cmd*`; each such PR adds one Linux
+cross-build of the Windows target and the two Windows suites.
 
 ### What protects `main` today
 
@@ -683,7 +731,8 @@ admins can bypass the queue. So:
 
 - PR CI tests the PR head SHA; the queue then tests the merged tree in a
   `merge_group` run before it lands.
-- The label picks the PR's lanes. Every mode, `ci-windows` included, requires
+- The label picks the PR's lanes, and a path-sensitive diff adds the
+  Windows lanes ([DD-224](#automatic-windows-lanes-for-path-sensitive-changes-dd-224)). Every mode, `ci-windows` included, requires
   the routine Linux x64 lanes on the head SHA before `CI OK` is green
   (#1652); macOS runs only under `ci-full`.
 - A PR's superseded run (opened and labeled events firing together,
