@@ -46,8 +46,12 @@ Install soldr: `./install` (puts it in this repo's `.venv`) or `./install --glob
 ### Validation before merging
 
 GitHub Actions is the CI of record. Push the change and require `CI OK`
-before merging. PRs execute every selected hosted check; neither publication
-nor CI requires a Bosn run or a `Local-Gate`/`Ci-Attestation` trailer.
+before merging. Neither publication nor CI requires a Bosn run or a
+`Local-Gate` receipt. One exception reduces hosted work: a same-repo PR head
+carrying valid prooft `Ci-Attestation` trailers (`python -m ci.attest` after
+committing) runs Clippy and the proven Dylint legs reduced. Every other job,
+and every merge-queue run, still executes in full
+([DD-225](docs/DESIGN_DECISIONS.md#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them)).
 
 Use targeted local tests and lint for the edit loop. Rust commands still go
 through soldr. An optional `bosn ci run --workspace . --trigger pr` or

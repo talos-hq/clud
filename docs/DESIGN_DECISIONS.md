@@ -8301,3 +8301,93 @@ the changed implementation") still governs everything else. These areas are
 the ones where shared, cfg-free code behaves differently on Windows, so the
 author cannot tell from the diff that a native lane is needed, which is how
 all three incidents got through.
+
+## DD-225: prooft attestations reduce PR Clippy and Dylint in place; the merge queue still runs them
+
+**Status:** Accepted. Partly supersedes [DD-190](#dd-190-hosted-pr-validation-does-not-require-a-local-bosn-receipt):
+a local proof may again stand in for hosted PR work, for Clippy and Dylint only.
+
+**Context:** the owner decided "we want prooft attestation" for Clippy and
+Dylint, with obs-rust/obs-studio as the model. Those are the slow lint
+lanes on every PR: Clippy linux-x64 takes about 3 minutes, and the three
+Dylint legs 4 to 15 runner-minutes (the Windows MSVC leg alone reached 8.5).
+DD-190 removed the earlier `ci-lint local-gate` skip, which needed a full
+Bosn replay of the PR plan and a `Local-Gate:` receipt. A failed local run
+blocked a PR whose hosted run had passed.
+
+[forge-ci/prooft](https://github.com/forge-ci/prooft) is the shared tool
+that replaced that path in obs-studio. `prooft run LANE -- CMD` runs a
+command on a clean HEAD and, on success, amends the message with one
+`Ci-Attestation:` trailer per gate. The trailer is byte-compatible with
+ci-lint GATE-010, stamped with `sha256(tree, parents, record)`, and bound to
+the commit's exact tree and parents. `prooft plan --base B --head H` reads
+the policy from the base and decides which jobs a PR may skip. It needs no
+server, key or artifact. obs-studio adds its own wrapper
+(`ci/pr_attestation.py`): it requires a GitHub-verified commit signature and
+org membership for the author and signer, and it rejects a wider list of
+trust-surface paths. Its merge queue never consumes client attestations.
+
+**Decision:**
+
+- *What is attested.* `ci-attestations.yml` declares five gates in four
+  lanes: Clippy and doc-tests for x86_64 Linux (lane `clippy`, the two
+  commands the hosted `Clippy linux-x64` job runs), the host Dylint leg
+  (lane `dylint`: crate formatting and tests, then the workspace pass), and
+  the two cross Dylint legs (`dylint-x86_64-pc-windows-msvc`,
+  `dylint-aarch64-apple-darwin`). Each leg is its own lane, so a host that
+  cannot run one cross pass still earns the others. Static checks
+  (formatting, Ruff, repo guards) stay hosted: they take under a minute and
+  are not slow lanes. `python -m ci.attest` is the producer. It runs each
+  lane through `prooft run`, using the lane's hosted commands
+  (`tests/test_attest.py` pins them to the workflows).
+- *Verification.* On a same-repo `pull_request` only, the `CI mode` job
+  installs the hash-pinned prooft 0.2.0 wheel and runs `prooft plan` under
+  `python -I`, so no head code is imported. The policy comes from the PR
+  base. prooft refuses any trailer with a changed tree, new parents (a
+  rebase or a merge of main), an edited record, a missing gate, or an age
+  over 24 hours. It refuses the whole head when the PR touches
+  `ci-attestations.yml`, `.github/`, `ci.toml` or `local-gate.toml`, or when
+  the title carries `[ci-full]`, `[ci-remote]` or `[no-attest]`.
+- *Reduction, not skip.* A proven job still starts and reports success.
+  It skips setup and checks through the same branch the
+  pass markers (#2078) use, and it posts a
+  `::notice` naming the attestation. `CI OK`, `ci-lint gate` and the
+  required-check list do not change.
+- *Fallback.* A missing, invalid, stale or untrusted proof, a fork, a
+  verifier crash (the step is `continue-on-error`, and consumers compare to
+  `'true'`), or any other event runs the hosted job in full.
+- *Merge queue and later.* Merge groups, `main` pushes, the nightly run and
+  releases never consult attestations. Every merge group runs Clippy and all
+  three Dylint legs hosted on the merged tree, and `main` requires the
+  queue. A false trailer can therefore shorten only its own PR run; it
+  cannot land unchecked code.
+
+**Trust model:** a trailer is an honesty contract, not a signature. Only
+someone who can push a branch to talos-hq/clud can earn a reduction, and
+forks are excluded. The stamp makes an edit visible, and the merge queue
+re-checks every merge. That last point is why clud does not copy
+obs-studio's commit-signature and org-membership checks: in obs-studio a
+client proof can defer heavy work to the queue, while in clud it never
+replaces queue work. If the queue is bypassed (an admin merge), main-push
+reuse may treat a reduced PR Clippy job as passed. This is the same trust
+the bypass already places in the PR's other results. Dylint still runs on
+every `main` push as a cache writer.
+
+**Alternatives considered:**
+
+| Approach | Why not |
+|---|---|
+| Revive `ci-lint local-gate` (`--attested-workflow`) | It needs a `Local-Gate:` receipt from a full Bosn replay, which is the prerequisite DD-190 removed. prooft attests one lane at a time with the hosted commands. |
+| Skip at the job level (`if:`), like prooft's own CI | `ci-lint gate` refuses a skip it cannot re-derive. Teaching it prooft would mean a change to the shared verifier, or rewriting needs results before the gate reads them. Reducing in place keeps `CI OK` unchanged. |
+| Credit attestations in the merge queue (`prooft queue`) | The queue is the backstop that makes an unsigned trailer safe. obs-studio also keeps client proofs out of its queue. |
+| Copy obs-studio's `pr_attestation.py` | It is obs-specific (signature and membership reads, obs paths and jobs) and vendors its own verifier pin. The released prooft CLI already does what clud needs. |
+
+**Consequences:** a PR whose author ran `python -m ci.attest` on the pushed
+head saves about 3 runner-minutes of Clippy and 4 to 15 of Dylint, and gets
+a green result sooner when Dylint is the slowest lane. Its wall time to
+`CI OK` is still bounded by Build linux-x64 and the unit shards. Amending
+trailers changes the commit SHA, so attest before the first push or push
+with `--force-with-lease`. Bumping prooft means updating the version and
+wheel hash in `ci.yml` and the `pyproject.toml` pin together;
+`tests/test_attest.py` checks they agree. Details:
+[Attested Clippy and Dylint](architecture/ci.md#attested-clippy-and-dylint-prooft-dd-225).
