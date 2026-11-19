@@ -348,9 +348,9 @@ def test_reduction_is_in_place_and_only_for_the_lint_only_call() -> None:
     clippy_job = CI_YML.split("\n  lint-linux-x64:\n", 1)[1].split("\n  build-linux-x64:\n", 1)[0]
     assert "attested: ${{ needs.static.outputs.attested_clippy == 'true' }}" in clippy_job
     assert "attested_passes: ${{ needs.static.outputs.attested_dylint }}" in CI_YML
-    assert (
-        "ATTESTED: ${{ inputs.attested && steps.pass-key.outputs.eligible == 'true' }}" in BUILD_YML
-    )
+    # DD-226: the attested decision is made before checkout (it needs only
+    # the caller's inputs); tests/test_attest_noop.py walks the steps.
+    assert "ATTESTED: ${{ inputs.attested && inputs.clippy && !inputs.compile" in BUILD_YML
     assert (
         "ATTESTED: ${{ contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}"
         in DYLINT_YML
@@ -360,6 +360,7 @@ def test_reduction_is_in_place_and_only_for_the_lint_only_call() -> None:
         # on the raw pass-marker hit, which would ignore the attestation.
         assert "steps.pass.outputs.cache-hit != 'true'" not in text
         assert "steps.skip.outputs.reduced != 'true'" in text
+        assert "PROVEN: ${{ steps.attested.outputs.proven }}" in text
         assert "Ci-Attestation on this head (DD-225); skipping" in text
     # Compilation is never gated on the reduction.
     build_step = BUILD_YML.split("- name: Build binaries and test harnesses", 1)[1].split(
