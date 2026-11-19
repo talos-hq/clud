@@ -1,0 +1,21 @@
+# Merge-queue forwarding of prooft attestations (DD-227). Not a workflow.
+#
+# The merge_group run of ci.yml reads THIS FILE FROM THE QUEUE'S BASE commit
+# (main), never from the queued PR, and runs ci/attest_queue.py from that base
+# too. A PR that edits this file is untrusted for its own queue entry.
+#
+#   "off"    (default) every merge group runs Clippy and all Dylint legs hosted;
+#   "shadow" the queue computes and prints the decision but reduces nothing;
+#   "on"     a queue entry reduces a job its PR head proved, but only when the
+#            entry is the first of its group, its tree equals the PR head's
+#            tree, and GitHub verified the head's signature by a login below.
+#
+# Turning it on removes the queue's re-run as the backstop against a false
+# trailer: the signer's word replaces it for the forwarded jobs. Dylint still
+# runs hosted on every main push (cache writer) and the nightly runs
+# everything. See docs/DESIGN_DECISIONS.md#dd-227.
+forward = "off"
+
+# GitHub logins whose verified commit signature may carry trailers into the
+# queue. The signature covers the commit message, so it binds the trailers.
+signers = ["zackees"]

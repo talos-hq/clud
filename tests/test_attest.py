@@ -320,9 +320,15 @@ def _static_block() -> str:
 def test_ci_consumes_every_policy_job_output() -> None:
     static = _static_block()
     for job in _policy().jobs:
-        assert f"steps.prooft.outputs['skip_{job.split(':', 1)[1]}']" in static, job
+        name = job.split(":", 1)[1]
+        for step in ("prooft", "prooft_queue"):
+            assert f"steps.{step}.outputs['skip_{name}']" in static, (step, job)
     for leg in DYLINT_PASSES:
-        assert f"steps.prooft.outputs['skip_dylint-{leg}'] == 'true' && '{leg}'" in static, leg
+        either = (
+            f"(steps.prooft.outputs['skip_dylint-{leg}'] || "
+            f"steps.prooft_queue.outputs['skip_dylint-{leg}']) == 'true' && '{leg}'"
+        )
+        assert either in static, leg
 
 
 def test_verifier_is_pinned_base_judged_same_repo_and_fail_open() -> None:
@@ -369,32 +375,60 @@ def test_reduction_is_in_place_and_only_for_the_lint_only_call() -> None:
     assert "reduced" not in build_step
 
 
-@pytest.mark.parametrize(
-    ("outputs", "expected"),
-    [
-        ({}, set()),
-        ({"skip_dylint-host": "true"}, {"host"}),
-        (
-            {"skip_dylint-host": "false", "skip_dylint-aarch64-apple-darwin": "true"},
-            {"aarch64-apple-darwin"},
-        ),
-        ({f"skip_dylint-{p}": "true" for p in DYLINT_PASSES}, set(DYLINT_PASSES)),
-    ],
-)
+_DYLINT_CASES = [
+    ({}, set()),
+    ({"skip_dylint-host": "true"}, {"host"}),
+    (
+        {"skip_dylint-host": "false", "skip_dylint-aarch64-apple-darwin": "true"},
+        {"aarch64-apple-darwin"},
+    ),
+    ({f"skip_dylint-{p}": "true" for p in DYLINT_PASSES}, set(DYLINT_PASSES)),
+]
+
+
+@pytest.mark.parametrize("judge", ["prooft", "prooft_queue"])
+@pytest.mark.parametrize(("outputs", "expected"), _DYLINT_CASES)
 def test_attested_dylint_expression_selects_only_proven_legs(
-    outputs: dict[str, str], expected: set[str]
+    judge: str, outputs: dict[str, str], expected: set[str]
 ) -> None:
-    """Evaluate the format() output the way Actions does, then each leg's contains()."""
+    """Evaluate the format() output the way Actions does, then each leg's contains().
+
+    Exactly one judge runs per event (PR or merge group); the other step's
+    outputs are empty strings, which `||` passes over.
+    """
     expr = _static_block().split("attested_dylint: >-", 1)[1].split("    steps:", 1)[0]
     legs = re.findall(
-        r"steps\.prooft\.outputs\['skip_dylint-([^']+)'\] == 'true' && '([^']+)'", expr
+        r"\(steps\.prooft\.outputs\['skip_dylint-([^']+)'\] \|\| "
+        r"steps\.prooft_queue\.outputs\['skip_dylint-\1'\]\) == 'true' && '([^']+)'",
+        expr,
     )
     assert [leg for leg, _ in legs] == list(DYLINT_PASSES)
-    value = (
-        ","
-        + ",".join(
-            name if outputs.get(f"skip_dylint-{leg}") == "true" else "" for leg, name in legs
-        )
-        + ","
+    steps = {"prooft": {}, "prooft_queue": {}}
+    steps[judge] = outputs
+    value = []
+    for leg, name in legs:
+        key = f"skip_dylint-{leg}"
+        either = steps["prooft"].get(key, "") or steps["prooft_queue"].get(key, "")
+        value.append(name if either == "true" else "")
+    joined = "," + ",".join(value) + ","
+    assert {leg for leg in DYLINT_PASSES if f",{leg}," in joined} == expected
+
+
+def test_queue_judge_runs_only_in_merge_groups_from_the_base() -> None:
+    step = (
+        _static_block()
+        .split("- name: Judge merge-queue attestation forwarding", 1)[1]
+        .split("\n      - name:", 1)[0]
     )
-    assert {leg for leg in DYLINT_PASSES if f",{leg}," in value} == expected
+    assert "if: github.event_name == 'merge_group'" in step
+    assert "continue-on-error: true" in step
+    # The judge and its policy come from the queue's base, never the PR.
+    assert 'git archive "$BASE_SHA" ci' in step
+    assert "python -I -c" in step
+    assert "from ci.attest_queue import main" in step
+    # The same hash-pinned prooft the PR judge installs.
+    pin = re.search(r"prooft==([0-9.]+) --hash=sha256:([0-9a-f]{64})", step)
+    pr_pin = re.search(r"prooft==([0-9.]+) --hash=sha256:([0-9a-f]{64})", _static_block())
+    assert pin is not None
+    assert pr_pin is not None
+    assert pin.groups() == pr_pin.groups()

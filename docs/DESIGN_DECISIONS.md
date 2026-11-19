@@ -8455,3 +8455,97 @@ pass marker. A PR's wall time to `CI OK` is still bounded by Build
 linux-x64 and the unit shards (469 s + 148 s in the attested run), which
 attestation does not cover. Details:
 [Attested Clippy and Dylint](architecture/ci.md#attested-clippy-and-dylint-prooft-dd-225).
+
+## DD-227: a merge-queue entry may inherit its PR head's attestations, behind a base-owned switch that ships off
+
+**Status:** Accepted (mechanism); the switch ships `off`, pending the
+owner's trust decision. Amends the "merge queue and later" clause of
+[DD-225](#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them).
+
+**Context:** with DD-226 a fully attested PR's lint jobs are near no-ops,
+but its merge-group run still rebuilds Clippy and every Dylint leg hosted
+on the merged tree: 691 s, 280 s, 304 s and 238 s in #2849's queue run
+([44623262588](https://github.com/talos-hq/clud/actions/runs/44623262588)).
+prooft stamps `sha256(tree, parents, record)`, so a PR head's trailer can
+never verify on the squash commit the queue builds (new parents). But when
+the PR branch already contains the main tip and the entry is first in its
+group, the squash commit's tree *is* the PR head's tree. #2849's entry
+`c5807188` had tree `a4153496`, identical to its PR head `a4ff4188`, on a
+single parent equal to the base. In that case the attestation covers exactly
+the bytes the queue would test. prooft 0.2.0's `Repo.queue` already
+encodes this: a depth-1 entry with an equal tree is judged by the PR head's
+own trailers. Any other entry is credited only through lane input keys,
+which clud's policy does not declare, so it falls through to hosted.
+
+**Decision:**
+
+- `ci-attestations-queue.toml` (repo root, not a workflow) holds
+  `forward = "off" | "shadow" | "on"` and a `signers` allowlist. A separate
+  file because prooft rejects unknown keys in `ci-attestations.yml`. It
+  ships `off`.
+- In a `merge_group` run the `CI mode` job extracts the **base** commit's
+  `ci/` package and runs `ci/attest_queue.py` from it under `python -I`,
+  beside the same hash-pinned prooft as the PR judge. The switch and the
+  attestation policy are read from the base too, so a PR cannot loosen the
+  rules for its own entry. The PR number comes from the queue ref
+  (`ci.cancel_superseded.queue_pr`); the PR head is fetched from
+  `refs/pull/N/head`.
+- The entry reduces a job only when all of these hold; any other case, a
+  missing fact or a crash (`continue-on-error`) runs it hosted:
+  1. the base switch is `on` (`shadow` prints the decision and reduces
+     nothing);
+  2. GitHub GraphQL reports that PR's live head equals the fetched commit
+     and that the head repository is this one;
+  3. GitHub verified the head commit's signature, and its signer is in
+     `signers`. The trailers are part of the signed message, so this binds
+     who wrote them. The check needs only the workflow token
+     (`contents`/`pull-requests: read`), no secret;
+  4. the queue commit's only parent is the base (first group entry) and its
+     tree equals the PR head's tree; batched entries and branches behind
+     main run hosted;
+  5. `prooft queue` agrees: valid stamps under 24 h, no trust surface
+     touched (prooft's list plus `ci-attestations-queue.toml`).
+- The outputs reuse the PR path's: `attested_clippy` and `attested_dylint`
+  take whichever judge ran, so DD-226's in-place reduction applies
+  unchanged and `CI OK` and `ci-lint gate` do not change.
+
+**Trust model (the open decision):** today the queue's hosted re-run is the
+backstop that makes an unsigned trailer harmless (DD-225). Turning
+forwarding on removes that backstop for the forwarded jobs; the trailer's
+honesty then rests on the signer. Options:
+
+| Option | PR path | Queue | Risk |
+|---|---|---|---|
+| (a) any same-repo push | trailers count | trailers count | anyone with push access can land unlinted code by writing a false trailer |
+| (b) GitHub-verified signature by an allowlisted signer (obs-studio's model) | trailers count | trailers count if signed | a trusted signer's mistake or a stolen signing key; nothing stops a deliberate false trailer by a signer |
+| (c) untrusted authors count on PRs only | trailers count | never | the status quo before this DD |
+
+Recommended: PR path stays (a), since the queue still covers it, and the
+queue requires (b). That is what this DD implements; it is inert until the
+base switch reads `on`. Backstops that remain after turning it on: Dylint
+runs hosted on every `main` push as a cache writer, so a false Dylint
+trailer turns `main` red after the merge; the nightly full run covers
+Clippy. When the PR head and the merged tree are identical, main-push
+reuse (GEN-021) credits the PR run, so a forwarded Clippy can reach `main`
+without a hosted Clippy run until that nightly.
+
+**Turning it on:** change `forward = "off"` to `forward = "on"` in
+`ci-attestations-queue.toml` and merge it. The change takes effect for queue
+entries built on the commit that contains it.
+
+**Alternatives considered:**
+
+| Approach | Why not |
+|---|---|
+| Accept parents-mismatched trailers through prooft lane input keys | Declaring `lanes: inputs:` widens credit to entries whose tree differs (main moved), which needs a reviewed input set per lane; tree equality needs no such list. |
+| Rebase and re-attest automatically in `pr_merge.py` before enqueueing | Re-attesting takes minutes of local lint work and a fresh signed amend, and the queue's own base can still move before the entry builds. Left to the author: `git rebase origin/main && python -m ci.attest` before enqueueing maximises hits. |
+| Credit batched entries | An entry above another one tests a tree the PR head never had. |
+| Copy obs-studio's org-membership read | clud's GITHUB_TOKEN cannot read private org membership; an explicit allowlist in the base is simpler and reviewable. |
+
+**Consequences:** with the switch `on`, a signed, attested PR whose branch
+is up to date with main and which enters an empty queue reduces its
+merge-group Clippy and proven Dylint legs to about 5 s each. Everything
+else is unchanged. `tests/test_attest_queue.py` covers the positive case
+and each fallback: a tree mismatch, a batched entry, an untrusted or
+missing signature, a fork or moved head, an unattested head, a head that
+edits the switch, and shadow mode.

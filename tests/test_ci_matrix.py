@@ -669,13 +669,13 @@ def test_hosted_pr_checks_do_not_require_local_bosn_receipts() -> None:
     assert "attested" not in gate
     assert "continue-on-error" not in gate
     assert "|| true" not in static + gate
-    # The prooft verifier is the only step allowed to fail open (it reduces
-    # nothing when it fails), and it is the only continue-on-error here.
-    prooft_step = static.split("- name: Judge prooft attestations", 1)[1].split(
-        "\n      - name:", 1
-    )[0]
-    assert static.count("continue-on-error") == 1
-    assert "continue-on-error: true" in prooft_step
+    # The prooft verifiers (PR, DD-225; merge queue, DD-227) are the only
+    # steps allowed to fail open (each reduces nothing when it fails), and
+    # they are the only continue-on-error here.
+    assert static.count("continue-on-error") == 2
+    for name in ("Judge prooft attestations", "Judge merge-queue attestation forwarding"):
+        step = static.split(f"- name: {name}", 1)[1].split("\n      - name:", 1)[0]
+        assert "continue-on-error: true" in step, name
     for job in ROUTINE_PR_JOBS:
         block = _job_block(text, job)
         condition = (
