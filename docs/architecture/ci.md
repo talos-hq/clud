@@ -186,6 +186,33 @@ solely to exercise this automation. `tests/test_auto_tag.py` covers the guards,
 races and interrupted handoff; the isolated scratch proof exercises real GitHub
 default-token suppression, tag-ref dispatch, advancing main and reusable CI.
 
+### Package channels are outside the release (DD-223)
+
+Auto Release ends at its primary artifacts: the GitHub Release (assets and
+`SHA256SUMS`), PyPI and the installer Pages catalog. No job in it, in a
+reusable workflow it calls or in a composite action those use may publish to
+or install clud through an external package manager (Homebrew, Scoop, winget,
+Chocolatey, an apt PPA, the AUR, nixpkgs, npm and similar). No release job may
+`need` one or gate on one. Each channel runs in its own workflow after the
+stable release exists, with a `workflow_dispatch` for repair, so a channel
+failure never turns a completed release red and is retried alone. The Homebrew
+tap is `homebrew-tap.yml`
+([Homebrew tap](installer-pages.md#homebrew-tap)). Because promotion uses
+`GITHUB_TOKEN`, which starts no `release` workflow, an automatic channel
+triggers on Auto Release's completion and reads the current latest stable
+release itself. A failed, proof-only or rolled-back run therefore publishes
+nothing new.
+
+`tests/test_release_package_channels.py` walks Auto Release and every local
+workflow and action it reaches. It fails on any job that references a known
+external channel. Runner tooling installed with a system package manager
+(`apt-get`, `brew install fish`, distro test images, the Nix VM harness) does
+not publish clud and is not matched. A package manager the organization runs
+itself may be admitted later only through an explicit entry in that test's
+`OWNED_CHANNEL_ALLOWLIST` that cites its decision; external package managers
+are never eligible. This is fleet rule REL-009 in forge-ci/ci.yml
+`docs/policy-general.md`.
+
 ## Local validation before remote CI
 
 GitHub Actions is the CI of record. Run focused tests or lint locally when
@@ -1390,7 +1417,7 @@ gh workflow run auto-release.yml --ref <branch> -f notarize_only=true
 is skipped. `release-matrix` emits only the macOS wheels
 (`ci_matrix --release --macos-only`). The run then executes `build`,
 `sign-macos`, `notarize-macos`, `macos-signature-smoke` and `wheel-smoke`,
-in its own concurrency group. Every snapshot, publish, promote, Homebrew,
+in its own concurrency group. Every snapshot, publish, promote,
 Pages and rollback job is skipped; `tests/test_sign_macos_release.py`
 checks each job's `if:`. It uses real secrets and Apple's notary service. A
 dispatch from a branch can read them only while the `release-signing`

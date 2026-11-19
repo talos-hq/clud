@@ -1,0 +1,138 @@
+name: Homebrew tap
+
+# A downstream package channel, deliberately outside Auto Release (DD-223):
+# a tap failure must never turn a completed release red, and it must be
+# retryable on its own. This workflow only reads the release; it never gates,
+# re-runs or changes it.
+on:
+  # Auto Release promotes with GITHUB_TOKEN, and GitHub starts no workflow for
+  # a release event made by that token. Completion of the release run is the
+  # automatic trigger; the job then reads the current stable release, so a
+  # proof run, a failed run or a rolled-back release renders the formula that
+  # is already in the tap and exits as a no-op.
+  workflow_run:
+    workflows: [Auto Release]
+    types: [completed]
+  # A promotion to stable made by a person or a non-GITHUB_TOKEN credential.
+  # `released` never fires for a prerelease, and the job re-checks the state.
+  release:
+    types: [released]
+  # Manual repair: render and push the formula for one stable tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Stable release tag whose formula the tap should carry (e.g. 2.8.68)."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: homebrew-tap
+  cancel-in-progress: false
+
+jobs:
+  update-tap:
+    name: Update the Homebrew tap formula
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Resolve the stable release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          case "$EVENT" in
+            workflow_dispatch) tag="$DISPATCH_TAG" ;;
+            release) tag="$EVENT_TAG" ;;
+            *) tag="$latest" ;;
+          esac
+          test -n "$tag" || { echo "::error::no release tag to publish"; exit 1; }
+          state=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '"\(.draft) \(.prerelease)"')
+          if [ "$state" != "false false" ]; then
+            echo "::error::$tag is not a published stable release (draft prerelease = $state); the tap only carries stable releases"
+            exit 1
+          fi
+          # Only an explicit repair may point the tap at anything but the
+          # current latest stable release (for example after a rollback).
+          if [ "$EVENT" != workflow_dispatch ] && [ "$tag" != "$latest" ]; then
+            echo "$tag is no longer the latest stable release ($latest); nothing to publish"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      # The formula generator is read at the release tag, not at main.
+      - uses: actions/checkout@v4
+        if: steps.tag.outputs.skip == 'false'
+        with:
+          ref: refs/tags/${{ steps.tag.outputs.tag }}
+      - uses: actions/setup-python@v5
+        if: steps.tag.outputs.skip == 'false'
+        with:
+          python-version: "3.13"
+      - name: Render Formula/clud.rb from the tag's SHA256SUMS
+        if: steps.tag.outputs.skip == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern SHA256SUMS --dir "$RUNNER_TEMP/release-sums"
+          python -m installer.homebrew_formula "$RELEASE_TAG" "$RUNNER_TEMP/release-sums/SHA256SUMS" > "$RUNNER_TEMP/clud.rb"
+          cat "$RUNNER_TEMP/clud.rb"
+
+      # The tap is public: an unchanged formula needs no write credential, so a
+      # no-op succeeds even while the App is not installed on the tap.
+      - name: Compare with the published tap formula
+        id: diff
+        if: steps.tag.outputs.skip == 'false'
+        env:
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          git clone --depth 1 https://github.com/talos-hq/homebrew-tap.git "$RUNNER_TEMP/tap"
+          if cmp -s "$RUNNER_TEMP/clud.rb" "$RUNNER_TEMP/tap/Formula/clud.rb"; then
+            echo "Formula already at $RELEASE_TAG; nothing to push"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Same clud-refresh App as the catalog refresh jobs: a token that lives
+      # at most an hour, scoped to the tap repo, and no PAT to rotate.
+      - name: Mint tap App token
+        id: tap-app
+        if: steps.diff.outputs.changed == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v3.3.0
+        with:
+          app-id: ${{ vars.CLUD_REFRESH_APP_ID }}
+          private-key: ${{ secrets.CLUD_REFRESH_APP_PRIVATE_KEY }}
+          owner: talos-hq
+          repositories: homebrew-tap
+      - name: Explain a missing tap credential
+        if: steps.diff.outputs.changed == 'true' && steps.tap-app.outcome != 'success'
+        run: |
+          echo "::error title=Homebrew tap credential::Could not mint a token for talos-hq/homebrew-tap. Install the clud-refresh GitHub App on talos-hq/homebrew-tap (org settings > GitHub Apps > clud-refresh > Repository access), and check that vars.CLUD_REFRESH_APP_ID and secrets.CLUD_REFRESH_APP_PRIVATE_KEY are set on talos-hq/clud. Then re-run this workflow or dispatch it with the tag. The release itself is unaffected."
+          exit 1
+
+      - name: Push the formula to talos-hq/homebrew-tap
+        if: steps.diff.outputs.changed == 'true' && steps.tap-app.outcome == 'success'
+        env:
+          TAP_TOKEN: ${{ steps.tap-app.outputs.token }}
+          RELEASE_TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          cd "$RUNNER_TEMP/tap"
+          mkdir -p Formula
+          cp "$RUNNER_TEMP/clud.rb" Formula/clud.rb
+          git add Formula/clud.rb
+          git config user.name "clud-refresh-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "clud $RELEASE_TAG"
+          git push "https://x-access-token:${TAP_TOKEN}@github.com/talos-hq/homebrew-tap.git" HEAD:main

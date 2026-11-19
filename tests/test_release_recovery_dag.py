@@ -13,7 +13,6 @@ PUBLICATION = (
     "verify-candidate-installer",
     "verify-prior-public",
     "promote-release",
-    "publish-homebrew",
     "build-install-site",
     "deploy-install-site",
     "verify-promoted-public",
