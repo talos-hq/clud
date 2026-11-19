@@ -8165,3 +8165,45 @@ points, and with a stale copy left behind they could pick the wrong binary.
 The shell is always non-login (`/bin/sh`, `cmd /d`), so no startup file
 resets the inherited PATH, and no wrapper or shell-specific mechanism is
 needed.
+
+## DD-222: the read broker sits in front of the ghd backend, and `gh run watch` is upgraded
+
+**Status:** Accepted. Amends the #2352 routing in
+[gh-read-broker.md](architecture/gh-read-broker.md#ghbackend--ghd-2352) and,
+for the in-session alias only, DD-189.
+
+**Context:** With `gh.backend = "ghd"` the gh shim ran every call as
+`ghd gh ARGS` and returned before the session read broker
+([DD-150](#dd-150-the-session-gh-read-broker-reruns-the-real-gh-over-a-loopback-replay))
+ran. ghd 0.2.1 caches only `pr view --json <scalar fields>` and
+`api graphql`. It relays every REST read to the real gh uncached and without
+an ETag. So picking the ghd backend turned off the only REST cache. Several
+agents polling CI then drained the account's 5,000/h REST core limit to 0
+and blocked work in every repo. Separately, `gh run watch` re-reads its run
+over REST every 3 seconds for the whole run. It is a bounded waiter
+(DD-189), but not a cheap one.
+
+**Decision:** `gh_shim::plan` decides once per call. A `gh api` GET the
+classifier accepts goes to the broker first on either backend. Anything else,
+and any broker miss, goes to the configured backend. A call that may write
+invalidates the broker after it runs, on either backend. The in-session
+alias upgrades `gh run watch <id>` to `github/run_watch.py`: a 30 s floor,
+ETag revalidation, and a resumable 124 timeout. A run watch it cannot
+translate is refused with exit 2 and the two sanctioned waiters named, and is
+never relayed. DD-189's command guard is unchanged, so `gh run watch`
+outside a shim session still falls through.
+
+**Why not leave REST caching to ghd:** it does not cache REST yet
+([forge-ci/ghd#10](https://github.com/forge-ci/ghd/issues/10),
+[forge-ci/ghd#9](https://github.com/forge-ci/ghd/issues/9)), and a backend
+choice should never remove a budget protection. Offering the broker first
+costs at most one loopback request per REST GET. GraphQL, porcelain and every
+form the classifier rejects still reach ghd unchanged, so ghd keeps
+everything it caches natively. Once ghd revalidates REST itself, the broker
+still answers repeats inside its TTL for free, and a broker miss still falls
+through to ghd.
+
+**Why refuse instead of relay:** a relayed `gh run watch` with no run id
+prompts and then polls at 3 s, which is the exact cost being removed.
+Relaying the untranslatable forms would leave a budget leak open on a
+spelling.

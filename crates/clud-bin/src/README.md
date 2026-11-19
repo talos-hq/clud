@@ -1065,8 +1065,10 @@ Agent deletion (`safe-rm`, trash, roots, the hook redirect): [rm tools](../../..
   `version_dir.rs` owns the per-build alias directories and their GC (DD-203).
   `alias_link.rs` creates an alias: hardlink, then symlink, then copy, never
   failing a launch, with a freshness check that relinks after an upgrade.
-- `shim_main.rs` also owns the session-local GitHub CLI relay and PR-watch translation;
-  see [gh-watch-shim.md](../../../docs/architecture/gh-watch-shim.md).
+- `shim_main.rs` also owns the session-local GitHub CLI relay, the PR-watch and
+  run-watch translations, and `gh_shim::plan` (read broker in front of either
+  `gh.backend`; tests in `shim_main/gh_relay_tests.rs`); see
+  [gh-watch-shim.md](../../../docs/architecture/gh-watch-shim.md).
 - `gh_broker/` — the session `gh api` read broker (#1743): `classify.rs`
   (which argv is a brokerable read or a possible write), `client.rs` (shim
   side and loopback replay), `service.rs` (daemon side: TTL, single-flight,

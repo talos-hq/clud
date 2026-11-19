@@ -299,3 +299,86 @@ def test_a_session_without_the_key_follows_the_setting(tmp_path: Path) -> None:
     assert Path(str(world.log) + ".replayed").read_bytes() == BODY
     assert [read["endpoint"] for read in daemon.reads] == ["repos/o/r"]
     assert world.calls()[-2:] == ["api repos/o/r/off", "api repos/o/r/explicit-off"]
+
+
+FAKE_GHD = """#!/bin/sh
+printf '%s\\n' "$*" >> {log!r}
+printf '%s\\n' "$GHD_REAL_GH" >> {log!r}.real
+exit 0
+"""
+
+
+def _ghd_world(tmp_path: Path) -> tuple[World, Path]:
+    """A repo whose `.clud/settings.json` sets `gh.backend = "ghd"`, with a
+    recording ghd on PATH."""
+    world = World(tmp_path)
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".clud").mkdir()
+    (tmp_path / ".clud" / "settings.json").write_text(
+        json.dumps({"gh": {"backend": "ghd"}}), encoding="utf-8"
+    )
+    bin_dir = tmp_path / "ghd-bin"
+    bin_dir.mkdir()
+    ghd_log = tmp_path / "ghd-calls"
+    ghd = bin_dir / "ghd"
+    ghd.write_text(FAKE_GHD.format(log=str(ghd_log)), encoding="utf-8")
+    ghd.chmod(0o755)
+    world.env["PATH"] = os.pathsep.join((str(bin_dir), world.env.get("PATH", "")))
+    return world, ghd_log
+
+
+def _lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+
+def test_ghd_backend_still_brokers_rest_gets(tmp_path: Path) -> None:
+    """ghd 0.2.1 relays REST uncached, so with `gh.backend = "ghd"` a
+    `gh api` GET must still go through the broker (an authorised 304 is free
+    against the 5,000/h REST limit). Before the fix ghd got every call."""
+    world, ghd_log = _ghd_world(tmp_path)
+    daemon = FakeDaemon(world.state)
+    try:
+        result = world.run("api", "repos/o/r/actions/runs/1", "--jq", ".name")
+    finally:
+        daemon.close()
+    assert result.returncode == 0, result
+    assert [read["endpoint"] for read in daemon.reads] == ["repos/o/r/actions/runs/1"]
+    assert Path(str(world.log) + ".replayed").read_bytes() == BODY
+    assert _lines(ghd_log) == []
+
+
+def test_ghd_backend_gets_graphql_porcelain_and_broker_misses(tmp_path: Path) -> None:
+    world, ghd_log = _ghd_world(tmp_path)
+    daemon = FakeDaemon(world.state, status=409)
+    try:
+        for argv in (
+            ("api", "graphql", "-f", "query={viewer{login}}"),
+            ("pr", "view", "12", "--json", "state"),
+            ("api", "repos/o/r/pulls/9"),
+        ):
+            assert world.run(*argv).returncode == 0
+    finally:
+        daemon.close()
+    # Only the REST GET reached the broker; its miss then ran on ghd.
+    assert [read["endpoint"] for read in daemon.reads] == ["repos/o/r/pulls/9"]
+    assert _lines(ghd_log) == [
+        "gh api graphql -f query={viewer{login}}",
+        "gh pr view 12 --json state",
+        "gh api repos/o/r/pulls/9",
+    ]
+    assert set(_lines(Path(str(ghd_log) + ".real"))) == {str(world.gh)}
+    assert world.calls() == []
+
+
+def test_ghd_backend_writes_still_invalidate_the_broker(tmp_path: Path) -> None:
+    world, ghd_log = _ghd_world(tmp_path)
+    world.env.pop("GH_REPO", None)
+    daemon = FakeDaemon(world.state)
+    try:
+        result = world.run("run", "rerun", "99")
+    finally:
+        daemon.close()
+    assert result.returncode == 0, result
+    assert _lines(ghd_log) == ["gh run rerun 99"]
+    assert daemon.reads == []
+    assert daemon.invalidate_bodies == [{"tags": ["run:99", "*#runs", "*#checks", "other"]}]
