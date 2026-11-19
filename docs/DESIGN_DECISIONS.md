@@ -8396,3 +8396,62 @@ with `--force-with-lease`. Bumping prooft means updating the version and
 wheel hash in `ci.yml` and the `pyproject.toml` pin together;
 `tests/test_attest.py` checks they agree. Details:
 [Attested Clippy and Dylint](architecture/ci.md#attested-clippy-and-dylint-prooft-dd-225).
+
+## DD-226: a proven Clippy job or Dylint leg decides in its first step and does nothing else
+
+**Status:** Accepted. Extends [DD-225](#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them):
+the trust model and the in-place reduction are unchanged; what a proven job
+still pays is not.
+
+**Context:** DD-225's proof run
+([#2849](https://github.com/talos-hq/clud/actions/runs/44621213305)) cut
+Clippy from 718 s to 10 s, but the Dylint legs only from 255 s to 118 s
+(Windows) and 264 s to 199 s (darwin). Per-step timings show why: the
+first step of every leg was an ungated "Free runner disk" that deleted
+preinstalled SDKs for 96-180 s *before* the attestation was read.
+#2605 and #2608 had each added that cleanup on the same day; the copy
+#2608 placed after the decision already ran before setup-soldr restored any
+cache, so the first copy was redundant. On the hosted path it was the
+largest single step of each leg after the checks themselves.
+
+| Step (attested run 44621213305) | Clippy | Dylint host | Dylint Windows | Dylint darwin |
+|---|---|---|---|---|
+| Set up job | 3 s | 2 s | 3 s | 5 s |
+| Free runner disk (ungated) | — | 96 s | 107 s | 180 s |
+| Checkout + pass-key lookup | 3 s | 2 s | 5 s | 8 s |
+| Job total | 10 s | 296 s (host was not attested) | 118 s | 199 s |
+
+**Decision:** the attested decision is the first step of the job. It reads
+only the caller's inputs (`attested`, `attested_passes`) that ci.yml's
+`CI mode` job set after `prooft plan`, so it needs no checkout. Checkout,
+the pass-key computation and its cache lookup are gated on it; the
+existing `Skip unchanged inputs` step still produces the one `reduced`
+flag every later step reads. The redundant ungated disk cleanup is removed;
+the gated one keeps its #2605 rationale and becomes best effort (`sudo -n`)
+so a local replay without sudo still runs. A proven job therefore executes
+two shell steps and no action. `tests/test_attest_noop.py` walks each
+reusable workflow's real step list with an evaluator for its `if:`
+expressions and asserts exactly that, for Clippy and every Dylint leg, and
+that another leg's proof or a missing proof still runs the full job.
+
+**Why not skip at the job level:** `ci-lint gate` builds the required-job
+list from ci.yml's own `if:` guards, but its plan builder
+(`ci_lint/workflow_gate.py`) deliberately refuses `skip_*`, `reuse` and
+local-gate outputs as evidence: "Reuse and skip outputs never excuse
+required coverage; the runtime gate owns their proof". A job-level
+`if: needs.static.outputs.attested_clippy != 'true'` would pass today only
+because `attested_clippy` is declared as `steps.prooft.outputs['skip_…']`,
+whose bracket syntax escapes the gate's decision-output pattern. Relying on
+that would hide a skip from the verifier designed to audit skips, and a
+fix to the pattern upstream would turn every attested PR red. The Dylint
+legs are also matrix entries of one reusable-workflow call, which has no
+per-leg job-level `if:`. A reduced job costs runner start plus about 3 s,
+which is within the 10-20 s target; the gate stays unchanged.
+
+**Consequences:** a fully attested PR's lint jobs each take about the
+runner start plus 3 s, instead of 10 s (Clippy) and 118-199 s (Dylint).
+The cleanup removal also saves 55-180 s on every unattested leg that hits a
+pass marker. A PR's wall time to `CI OK` is still bounded by Build
+linux-x64 and the unit shards (469 s + 148 s in the attested run), which
+attestation does not cover. Details:
+[Attested Clippy and Dylint](architecture/ci.md#attested-clippy-and-dylint-prooft-dd-225).

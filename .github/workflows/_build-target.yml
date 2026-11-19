@@ -144,7 +144,25 @@ jobs:
           echo '::error::A PR candidate must be one dev-profile direct executable.'
           exit 1
 
+      # DD-226: a lint-only call that ci.yml's CI mode job already proved
+      # from a valid prooft trailer decides that first, before checkout or
+      # setup. Every later step is gated on it (or on an input that is false
+      # for a lint-only call), so a proven job is this one shell step.
+      - name: Proven by a prooft attestation
+        id: attested
+        shell: bash
+        env:
+          ATTESTED: ${{ inputs.attested && inputs.clippy && !inputs.compile && !inputs.bundle && inputs.wheel-artifact == '' && inputs.standalone-artifact == '' && inputs.candidate-artifact == '' }}
+        run: |
+          if [ "$ATTESTED" = "true" ]; then
+            echo "::notice::Clippy and doc-tests proven by a prooft Ci-Attestation on this head (DD-225); skipping."
+            echo "proven=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no attestation for this call"
+          fi
+
       - name: Checkout source
+        if: ${{ steps.attested.outputs.proven != 'true' }}
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
@@ -158,12 +176,14 @@ jobs:
       # (tests/test_pass_keys.py).
       - name: Compute pass key
         id: pass-key
+        if: ${{ steps.attested.outputs.proven != 'true' }}
         shell: bash
         env:
           LINT_ONLY: ${{ inputs.clippy && !inputs.compile && !inputs.bundle && inputs.wheel-artifact == '' && inputs.standalone-artifact == '' && inputs.candidate-artifact == '' }}
-        # Every job computes a key so the lookup below always executes, which
-        # the local-gate replay proof requires (zackees/ci.yml#415). A job that
-        # is not lint-only gets a per-run key that never hits and never saves.
+        # Every unproven job computes a key so the lookup below executes, which
+        # the local-gate replay proof requires (zackees/ci.yml#415; a replay
+        # never carries an attestation). A job that is not lint-only gets a
+        # per-run key that never hits and never saves.
         run: |
           if [ "$LINT_ONLY" != "true" ]; then
             echo "key=pass-v1-none-${{ github.run_id }}-${{ github.run_attempt }}" >> "$GITHUB_OUTPUT"
@@ -176,27 +196,27 @@ jobs:
 
       - name: Look up pass marker
         id: pass
+        if: ${{ steps.attested.outputs.proven != 'true' }}
         uses: actions/cache/restore@v4
         with:
           path: .pass-marker
           key: ${{ steps.pass-key.outputs.key }}
           lookup-only: true
 
-      # Runs unconditionally and branches inside: the local-gate replay proof
-      # needs every declared step executed (zackees/ci.yml#415).
-      # DD-225: a lint-only call also reduces when the caller says a valid
-      # prooft trailer proves it (ci.yml's CI mode job, same-repo PRs only).
+      # Runs unconditionally and branches inside: the one decision every
+      # later step reads. A pass-marker hit or the attestation above
+      # (DD-225/DD-226) reduces a lint-only call.
       - name: Skip unchanged inputs
         id: skip
         shell: bash
         env:
           CACHE_HIT: ${{ steps.pass.outputs.cache-hit }}
-          ATTESTED: ${{ inputs.attested && steps.pass-key.outputs.eligible == 'true' }}
+          PROVEN: ${{ steps.attested.outputs.proven }}
         run: |
-          if [ "$CACHE_HIT" = "true" ]; then
+          if [ "$PROVEN" = "true" ]; then
+            echo "proven by attestation; nothing to set up"
+          elif [ "$CACHE_HIT" = "true" ]; then
             echo "::notice::Clippy inputs unchanged since a passing main run; skipping."
-          elif [ "$ATTESTED" = "true" ]; then
-            echo "::notice::Clippy and doc-tests proven by a prooft Ci-Attestation on this head (DD-225); skipping."
           else
             echo "no pass marker or attestation; running the job"
             exit 0

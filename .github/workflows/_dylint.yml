@@ -57,18 +57,24 @@ jobs:
       run:
         shell: bash
     steps:
-      # The merge_group run restores the full build cache, which left the
-      # host leg under soldr's 5 GiB build-volume block threshold and failed
-      # the enforce_platform_boundary UI build (#2605). Drop SDKs no lane
-      # here uses. Best effort: a local replay without them or sudo skips.
-      - name: Free runner disk
+      # DD-226: a leg that ci.yml's CI mode job already proved from a valid
+      # prooft trailer decides that here, first, before checkout, disk
+      # cleanup or any setup. Every later step is gated on it, so a proven
+      # leg is this one shell step (~5 s with runner start) instead of the
+      # 2-3 minutes the ungated disk cleanup alone used to cost.
+      - name: Proven by a prooft attestation
+        id: attested
+        env:
+          ATTESTED: ${{ contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}
         run: |
-          df -h / | tail -1
-          for dir in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
-            [ -d "$dir" ] && { sudo -n rm -rf "$dir" || true; }
-          done
-          df -h / | tail -1
+          if [ "$ATTESTED" = "true" ]; then
+            echo "::notice::Dylint ${{ matrix.pass }} proven by a prooft Ci-Attestation on this head (DD-225); skipping"
+            echo "proven=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "no attestation for this leg"
+          fi
       - name: Checkout source
+        if: steps.attested.outputs.proven != 'true'
         uses: actions/checkout@v4
         with:
           repository: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name || github.repository }}
@@ -85,28 +91,30 @@ jobs:
       # not in the key.
       - name: Compute pass key
         id: pass-key
+        if: steps.attested.outputs.proven != 'true'
         run: |
           digest=$(git ls-files -s | awk -F'\t' -v keep='.github/workflows/_dylint.yml' 'BEGIN { n = split(keep, k, " "); for (i = 1; i <= n; i++) want[k[i]] = 1 } ($2 in want) || $2 ~ /^tests\/fixtures\// || ($2 !~ /^(docs|bench|tests|ci|\.github)\// && $2 !~ /^[^\/]*\.md$/ && $2 !~ /^(ci|local-gate|bosn)\.toml$/)' | sha256sum | cut -c1-16)
           echo "key=pass-v1-dylint-${{ matrix.pass }}-${digest}" >> "$GITHUB_OUTPUT"
       - name: Look up pass marker
         id: pass
+        if: steps.attested.outputs.proven != 'true'
         uses: actions/cache/restore@v4
         with:
           path: .pass-marker
           key: ${{ steps.pass-key.outputs.key }}
           lookup-only: true
-      # DD-225: a leg also reduces when ci.yml's CI mode job found a valid
-      # prooft trailer for it (same-repo PRs only).
+      # The one decision every later step reads: a pass-marker hit or the
+      # attestation above (DD-225/DD-226) reduces the leg.
       - name: Skip unchanged inputs
         id: skip
         env:
           CACHE_HIT: ${{ steps.pass.outputs.cache-hit }}
-          ATTESTED: ${{ contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}
+          PROVEN: ${{ steps.attested.outputs.proven }}
         run: |
-          if [ "$CACHE_HIT" = "true" ]; then
+          if [ "$PROVEN" = "true" ]; then
+            echo "proven by attestation; nothing to set up"
+          elif [ "$CACHE_HIT" = "true" ]; then
             echo "::notice::Dylint ${{ matrix.pass }} already passed for ${{ steps.pass-key.outputs.key }}; skipping"
-          elif [ "$ATTESTED" = "true" ]; then
-            echo "::notice::Dylint ${{ matrix.pass }} proven by a prooft Ci-Attestation on this head (DD-225); skipping"
           else
             echo "no pass marker or attestation; running the leg"
             exit 0
@@ -115,13 +123,17 @@ jobs:
       # A cold Dylint build needs more than the ~6 GiB a hosted ubuntu-24.04
       # runner leaves free; soldr refuses to build below 5 GiB. Drop the
       # preinstalled SDKs this job never uses (Android, .NET, GHC, CodeQL).
+      # This runs before setup-soldr restores any cache, so it also covers
+      # the merge_group restore that once left the host leg under soldr's
+      # 5 GiB threshold (#2605); an earlier ungated copy of it was redundant.
+      # Best effort: a local replay without these directories or sudo skips.
       - name: Free runner disk
-        env:
-          REDUCED: ${{ steps.skip.outputs.reduced }}
+        if: steps.skip.outputs.reduced != 'true'
         run: |
-          [ "$REDUCED" != "true" ] || { echo "pass marker or attestation; nothing to build"; exit 0; }
           df -h / | tail -1
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          for dir in /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL; do
+            [ -d "$dir" ] && { sudo -n rm -rf "$dir" || true; }
+          done
           df -h / | tail -1
       - name: Set up soldr
         if: steps.skip.outputs.reduced != 'true'

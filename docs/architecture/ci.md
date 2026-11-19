@@ -414,7 +414,12 @@ commands (`--list` prints them). Each lane that passes adds one
 `CI mode` job's "Judge prooft attestations" step runs the hash-pinned prooft
 `plan` against the base's policy and prints its decision to the run summary.
 A proven job or leg then logs `proven by a prooft Ci-Attestation on this head
-(DD-225); skipping` and passes without setup. Anything else runs it in full:
+(DD-225); skipping` and passes without setup. That decision is its first
+step, ahead of checkout and disk cleanup, so a proven job runs two shell
+steps and no action: runner start plus about 3 s
+([DD-226](../DESIGN_DECISIONS.md#dd-226-a-proven-clippy-job-or-dylint-leg-decides-in-its-first-step-and-does-nothing-else);
+`tests/test_attest_noop.py`). It is not skipped at the job level, because
+`ci-lint gate` does not accept a skip output as coverage. Anything else runs it in full:
 no trailer, an edit or rebase after attesting, more than 24 hours, a fork, a
 `[ci-full]`/`[no-attest]` title, or a PR touching `.github/`,
 `ci-attestations.yml`, `ci.toml` or `local-gate.toml`. Merge groups (which
