@@ -345,3 +345,73 @@ def test_windows_gh_alias_dispatches_watch_and_relay(tmp_path: Path) -> None:
     assert json.loads(recorded.read_text(encoding="utf-8")) == [
         "tool", "run", "github/pr_merge_watch.py", "123", "--cancel-on", "fail",
     ]
+
+
+def _run_watch_world(tmp_path: Path) -> tuple[Path, dict[str, str], Path, Path]:
+    alias = _alias(tmp_path)
+    real_gh_log = tmp_path / "real-gh-args"
+    real_gh = tmp_path / "real-gh"
+    real_gh.write_text(
+        '#!/bin/sh\nprintf "%s\\n" "$@" > "$REAL_GH_LOG"\nexit 93\n', encoding="utf-8"
+    )
+    real_gh.chmod(0o755)
+    clud_log = tmp_path / "clud-args"
+    fake_clud = tmp_path / "fake-clud"
+    fake_clud.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$CLUD_LOG"\nexit 6\n', encoding="utf-8")
+    fake_clud.chmod(0o755)
+    env = os.environ.copy() | _session(alias)
+    env.update(
+        CLUD_GH_SHIM_TARGET=str(real_gh),
+        CLUD_EXE=str(fake_clud),
+        REAL_GH_LOG=str(real_gh_log),
+        CLUD_LOG=str(clud_log),
+    )
+    return alias, env, real_gh_log, clud_log
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX recording fixtures")
+@pytest.mark.parametrize("fail_fast", ["1", "0"])
+def test_run_watch_routes_to_the_bundled_run_watcher(tmp_path: Path, fail_fast: str) -> None:
+    """`gh run watch` re-polls REST every 3 s for the whole run; the alias
+    hands it to `github/run_watch.py` (30 s floor, ETag revalidation)
+    whatever the PR fail-fast setting says, and keeps the watcher's exit."""
+    alias, env, real_gh_log, clud_log = _run_watch_world(tmp_path)
+    env["CLUD_GH_SHIM_FAIL_FAST"] = fail_fast
+    result = process.run(
+        [str(alias), "run", "watch", "4242", "--exit-status", "-R", "o/r", "-i", "5"],
+        env=env, cwd=tmp_path, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 6, result
+    assert not real_gh_log.exists()
+    assert clud_log.read_text(encoding="utf-8").splitlines() == [
+        "tool", "run", "github/run_watch.py", "4242", "--repo", "o/r", "--interval", "5",
+    ]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX recording fixtures")
+@pytest.mark.parametrize(
+    "argv", [["run", "watch"], ["run", "watch", "4242", "--bogus"]], ids=["no-id", "unknown-flag"]
+)
+def test_run_watch_that_cannot_be_upgraded_is_refused(tmp_path: Path, argv: list[str]) -> None:
+    alias, env, real_gh_log, clud_log = _run_watch_world(tmp_path)
+    result = process.run(
+        [str(alias), *argv], env=env, cwd=tmp_path, capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 2, result
+    assert "github/run_watch.py" in result.stderr
+    assert "github/pr_merge_watch.py" in result.stderr
+    assert not real_gh_log.exists()
+    assert not clud_log.exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX recording fixtures")
+def test_run_watch_without_clud_exe_is_refused_not_relayed(tmp_path: Path) -> None:
+    alias, env, real_gh_log, _ = _run_watch_world(tmp_path)
+    del env["CLUD_EXE"]
+    result = process.run(
+        [str(alias), "run", "watch", "4242"],
+        env=env, cwd=tmp_path, capture_output=True, text=True, timeout=15,
+    )
+    assert result.returncode == 2, result
+    assert "github/run_watch.py" in result.stderr
+    assert not real_gh_log.exists()

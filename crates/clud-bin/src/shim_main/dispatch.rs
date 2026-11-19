@@ -26,15 +26,16 @@ const SELF_NAME: &str = "clud-shim";
 
 pub struct GhSession {
     pub target: PathBuf,
-    /// `CLUD_EXE`, for the `pr checks --watch` upgrade. Without it the
-    /// upgrade is skipped and the real `gh` runs the command unchanged.
+    /// `CLUD_EXE`, for the `pr checks --watch` and `run watch` upgrades.
+    /// Without it a PR-checks watch runs unchanged and a run watch is
+    /// refused.
     pub watcher: Option<PathBuf>,
     pub fail_fast: bool,
     /// #1743: the daemon read broker for `gh api` GETs, when the session
     /// enabled it (`git.gh_read_broker`). `None` runs every call on the
     /// real `gh`.
     pub read_broker: Option<crate::gh_broker::client::BrokerClient>,
-    /// #2352: where calls go after the watch upgrade.
+    /// #2352: where calls go after the watch upgrades and a read-broker miss.
     pub route: GhRoute,
 }
 

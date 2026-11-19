@@ -400,18 +400,38 @@ stays off. So after an upgrade such a session's next statusline tick or
 
 A repo (or the user) can make [ghd](https://github.com/forge-ci/ghd) the
 mandatory substitute for gh: `{"gh": {"backend": "ghd"}}` in clud's
-layered settings (`repo_clud_config`, repo over user). The gh shim then
-runs `ghd gh ARGS` for every call after the `pr checks --watch` upgrade.
+layered settings (`repo_clud_config`, repo over user). After the watch
+upgrades, the gh shim still offers a `gh api` GET to this broker first
+when the broker is enabled. Only a call the broker does not answer runs
+as `ghd gh ARGS`: GraphQL, porcelain such as `gh pr view`, every flag the
+classifier rejects, and every broker miss. A call that
+[may write](#write-invalidation) still invalidates the broker after ghd
+runs it. `gh_shim::plan` makes that decision once per call.
+
+The broker comes first because ghd 0.2.1 caches only `pr view --json
+<scalar fields>` and `api graphql`. It relays every REST call to the real
+gh uncached and without a validator. When ghd preceded the broker, picking
+the ghd backend switched off the only REST cache, and agents polling CI
+drained the 5,000/h core limit
+([DD-222](../DESIGN_DECISIONS.md#dd-222-the-read-broker-sits-in-front-of-the-ghd-backend-and-gh-run-watch-is-upgraded)).
+ghd's REST caching is tracked in
+[forge-ci/ghd#10](https://github.com/forge-ci/ghd/issues/10) and
+[forge-ci/ghd#9](https://github.com/forge-ci/ghd/issues/9). A brokered
+read is replayed on the real gh, never on ghd, because the replay URL is
+local.
+
 `GHD_REAL_GH` names the real gh, so ghd's relay never resolves back to the
-shim. ghd serves what it parses natively and relays the rest to that gh.
-This broker is not consulted, because ghd keeps its own cache. The backend
-is read from the call's cwd on every call, so a running session follows
-the setting without a restart. With no ghd on PATH, dispatch prints one
-line and exits 127; there is no silent fallback to gh. The contract is
-pinned by the `shim_main::dispatch` test
+shim. The backend is read from the call's cwd on every call, so a running
+session follows the setting without a restart. With no ghd on PATH,
+dispatch prints one line and exits 127; there is no silent fallback to gh.
+The contract is pinned by the `shim_main::dispatch` test
 `gh_backend_ghd_routes_to_ghd_and_fails_closed_without_it` (routing and the
-missing-ghd refusal) and by `ghd_argv_prefixes_gh_and_preserves_every_arg`
-(the `ghd gh ARGS` argv and the `GHD_REAL_GH` name).
+missing-ghd refusal), by `ghd_argv_prefixes_gh_and_preserves_every_arg`
+(the `ghd gh ARGS` argv and the `GHD_REAL_GH` name), by
+`shim_main/gh_relay_tests.rs` (broker before ghd, GraphQL and porcelain on
+ghd, write invalidation) and by the `test_ghd_backend_*` cases in
+`tests/test_gh_read_broker.py`, which run the real alias against a
+recording ghd.
 
 ## Code
 
@@ -427,7 +447,7 @@ missing-ghd refusal) and by `ghd_argv_prefixes_gh_and_preserves_every_arg`
 | `crates/clud-bin/src/gh_broker/scope.rs` | invalidation tags of reads and writes |
 | `crates/clud-bin/src/gh_broker/store.rs` | redb tables |
 | `crates/clud-bin/src/gh_broker/upstream.rs` | `gh api -i` transport and parser |
-| `crates/clud-bin/src/shim_main.rs` | `gh_shim::brokered_read`, invalidation after writes |
+| `crates/clud-bin/src/shim_main.rs` | `gh_shim::plan` (broker, backend, invalidation per call), `gh_shim::brokered_read` |
 | `crates/clud-bin/src/shim_main/dispatch.rs` | builds the `BrokerClient` from the session env, or from the setting when the key is absent |
 | `crates/clud-bin/src/daemon/http.rs` | `/gh/read` and `/gh/watch` (own threads), `/gh/invalidate` and `/gh/ledger` routes |
 | `crates/clud-bin/assets/tools/github/pr_merge_watch.py` | `BrokerSubscription`, `broker_watch_keys`, `api_get`: the watcher's subscription and conditional reads |

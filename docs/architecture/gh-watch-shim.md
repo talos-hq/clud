@@ -42,7 +42,25 @@ that are not intercepted.
 
 Ordinary commands are relayed with one exception. When `git.gh_read_broker`
 is on (`CLUD_GH_READ_BROKER=1`), a `gh api` GET may be answered by the
-daemon's read broker. The real `gh` still formats the brokered body, and
+daemon's read broker, also when `gh.backend = "ghd"`. The real `gh` still formats the brokered body, and
 any miss relays the call unchanged. After a call that may write, the alias
 also asks the broker to revalidate its cache; see
 [gh-read-broker.md](gh-read-broker.md).
+
+## `gh run watch`
+
+`gh run watch <id>` re-reads the run over REST every 3 seconds (`-i`) for
+as long as the run lasts, with no ETag. A few agents watching runs this way
+drained the shared 5,000/h core limit. The alias therefore hands it to
+`CLUD_EXE tool run github/run_watch.py <id> [--repo R] [--interval N]`.
+The bundled watcher polls at least 30 s apart, revalidates with ETags, and
+exits 124 on a resumable timeout. This upgrade does not depend on
+`git.pr_wait_fail_fast`, because it exists for the budget. `--exit-status`
+is implied (the watcher exits 1 when the run fails) and `--compact` is
+dropped. A run watch the watcher cannot take is refused with exit 2 and a
+message naming `github/run_watch.py` and `github/pr_merge_watch.py`. That
+covers no run id (gh would prompt), an unknown flag, non-UTF-8 arguments,
+and a session without `CLUD_EXE`. It is never relayed to the real `gh`
+([DD-222](../DESIGN_DECISIONS.md#dd-222-the-read-broker-sits-in-front-of-the-ghd-backend-and-gh-run-watch-is-upgraded)).
+`gh_shim::run_watch_argv` is the translation. `shim_main/gh_relay_tests.rs`
+and `tests/test_gh_shim.py` pin it.

@@ -160,9 +160,10 @@ mod rm_shim {
 }
 
 pub(crate) mod gh_shim {
-    //! In-session `gh` relay. `pr checks --watch` is upgraded to the bundled
-    //! watcher, and `gh api` GETs may be answered by the daemon read broker
-    //! (#1743, docs/architecture/gh-read-broker.md).
+    //! In-session `gh` relay. `pr checks --watch` and `run watch` are
+    //! upgraded to the bundled watchers, and `gh api` GETs may be answered by
+    //! the daemon read broker on either backend (#1743,
+    //! docs/architecture/gh-read-broker.md).
 
     use std::ffi::OsString;
     use std::path::Path;
@@ -175,43 +176,218 @@ pub(crate) mod gh_shim {
     }
 
     fn relay(session: &GhSession, args: &[OsString], recorder: &Recorder) -> i32 {
-        if let (true, Some(watcher)) = (session.fail_fast, session.watcher.as_deref()) {
-            match watch_words(args) {
-                Ok(Some(words)) => return watch(watcher, &words, recorder),
-                Ok(None) => {}
-                Err(code) => return code,
+        if let Some(code) = upgrade_watch(session, args, recorder) {
+            return code;
+        }
+        let broker = session.read_broker.as_ref();
+        let plan = plan(&session.route, broker.is_some(), args);
+        if let (Some(broker), Some(read)) = (broker, plan.read.as_ref()) {
+            if let Some(code) = brokered_read(&session.target, broker, read, args, recorder) {
+                return code;
             }
         }
         // #2352: dispatch already refused a missing ghd (`GhdMissing`).
-        if let GhRoute::Ghd(ghd) = &session.route {
-            return via_ghd(ghd, &session.target, args, recorder);
-        }
-        let Some(broker) = session.read_broker.as_ref() else {
-            return exec(&session.target, args, recorder);
+        let code = match plan.ghd {
+            Some(ghd) => via_ghd(ghd, &session.target, args, recorder),
+            None => exec(&session.target, args, recorder),
         };
-        if let Some(code) = brokered_read(&session.target, broker, args, recorder) {
-            return code;
-        }
-        let code = exec(&session.target, args, recorder);
-        if crate::gh_broker::classify::may_write(args) {
+        if let (Some(broker), true) = (broker, plan.invalidate) {
             let tags = crate::gh_broker::scope::write_tags(args, broker.gh_repo.as_deref());
             broker.invalidate(tags.as_deref());
         }
         code
     }
 
+    /// What one call does after the watch upgrades.
+    #[derive(Debug)]
+    pub(crate) struct Plan<'a> {
+        /// A `gh api` GET to try on the read broker first.
+        pub read: Option<crate::gh_broker::classify::ApiRead>,
+        /// `gh.backend = "ghd"`: a call the broker did not answer runs on ghd.
+        pub ghd: Option<&'a Path>,
+        /// The call may write, so the broker revalidates its cache after it.
+        pub invalidate: bool,
+    }
+
+    /// The broker sits in front of both backends. ghd 0.2.1 caches only
+    /// `pr view --json <scalars>` and `api graphql` and relays every REST
+    /// call uncached, so skipping the broker for ghd switched off the only
+    /// REST cache. GraphQL, porcelain and anything else the broker does not
+    /// classify as a GET still goes to ghd unchanged.
+    pub(crate) fn plan<'a>(route: &'a GhRoute, broker: bool, args: &[OsString]) -> Plan<'a> {
+        Plan {
+            read: broker
+                .then(|| crate::gh_broker::classify::api_read(args))
+                .flatten(),
+            ghd: match route {
+                GhRoute::Ghd(ghd) => Some(ghd.as_path()),
+                GhRoute::Gh | GhRoute::GhdMissing => None,
+            },
+            invalidate: broker && crate::gh_broker::classify::may_write(args),
+        }
+    }
+
+    /// The PR-checks upgrade (fail-fast setting) and the run-watch upgrade
+    /// (always: it exists for the REST budget). `None` relays the call.
+    fn upgrade_watch(session: &GhSession, args: &[OsString], recorder: &Recorder) -> Option<i32> {
+        if let (true, Some(watcher)) = (session.fail_fast, session.watcher.as_deref()) {
+            match watch_words(args) {
+                Ok(Some(words)) => return Some(watch(watcher, &words, recorder)),
+                Ok(None) => {}
+                Err(code) => return Some(code),
+            }
+        }
+        let lossy: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
+        let lossy: Vec<&str> = lossy.iter().map(|word| word.as_ref()).collect();
+        if !is_run_watch(&lossy) {
+            return None;
+        }
+        let Some(words) = args
+            .iter()
+            .map(|arg| arg.to_str())
+            .collect::<Option<Vec<_>>>()
+        else {
+            return Some(refuse_run_watch("non-UTF8 arguments"));
+        };
+        Some(match (run_watch_argv(&words), session.watcher.as_deref()) {
+            (Ok(Some(argv)), Some(clud)) => exec(clud, &argv, recorder),
+            (Ok(Some(_)), None) => {
+                refuse_run_watch("this session names no clud executable to run the bundled watcher")
+            }
+            (Ok(None), _) => return None,
+            (Err(reason), _) => refuse_run_watch(&reason),
+        })
+    }
+
+    fn refuse_run_watch(reason: &str) -> i32 {
+        eprintln!("{}", run_watch_refusal(reason));
+        2
+    }
+
+    pub(crate) fn run_watch_refusal(reason: &str) -> String {
+        format!(
+            "clud gh shim: refused `gh run watch` ({reason}). It re-polls the GitHub REST \
+             API every few seconds for the whole run and drains the shared 5,000/h limit. \
+             Start a budget-safe waiter in the background instead: \
+             `clud tool run github/run_watch.py -- <run-id> [--repo OWNER/REPO]` for a run, \
+             or `clud tool run github/pr_merge_watch.py <PR>` for a PR."
+        )
+    }
+
+    fn is_run_watch(words: &[&str]) -> bool {
+        positionals(words).starts_with(&["run", "watch"])
+    }
+
+    /// `gh run watch <id>` as `clud tool run github/run_watch.py` argv:
+    /// `Ok(None)` for any other command, `Err` for a run watch the bundled
+    /// watcher cannot take (no run id, an unknown flag). `--exit-status` is
+    /// implied (the watcher exits 1 on failure) and `--compact` is moot.
+    pub(crate) fn run_watch_argv(words: &[&str]) -> Result<Option<Vec<OsString>>, String> {
+        if !is_run_watch(words) {
+            return Ok(None);
+        }
+        let mut run_id = None;
+        let mut repo = None;
+        let mut interval = None;
+        let mut command = 0;
+        let mut i = 0;
+        while i < words.len() {
+            let word = words[i];
+            if let Some((name, inline)) = run_watch_value_flag(word) {
+                let value = match inline {
+                    Some(value) => value,
+                    None => {
+                        i += 1;
+                        words.get(i).copied().unwrap_or_default()
+                    }
+                };
+                if value.is_empty() || value.starts_with('-') {
+                    return Err(format!("{word} needs a value"));
+                }
+                if name == "--repo" {
+                    repo = Some(value);
+                } else {
+                    interval = Some(value);
+                }
+            } else if (word, command) == ("run", 0) || (word, command) == ("watch", 1) {
+                command += 1;
+            } else if matches!(word, "--exit-status" | "--compact") {
+                // Implied (the watcher exits 1 on failure) and moot.
+            } else if word.starts_with('-') {
+                return Err(format!("unsupported flag {word}"));
+            } else if run_id.is_none() && is_run_id(word) {
+                run_id = Some(word);
+            } else {
+                return Err(format!("unexpected argument {word}"));
+            }
+            i += 1;
+        }
+        let run_id = run_id.ok_or("no run id; gh would prompt for one")?;
+        let mut argv: Vec<OsString> = ["tool", "run", "github/run_watch.py", run_id]
+            .map(OsString::from)
+            .to_vec();
+        for (flag, value) in [("--repo", repo), ("--interval", interval)] {
+            if let Some(value) = value {
+                argv.extend([OsString::from(flag), value.into()]);
+            }
+        }
+        Ok(Some(argv))
+    }
+
+    fn is_run_id(word: &str) -> bool {
+        !word.is_empty() && word.bytes().all(|byte| byte.is_ascii_digit())
+    }
+
+    /// A `gh run watch` flag that takes a value: its long name and, for the
+    /// attached spellings (`--repo=x`, `-Rx`), the value.
+    fn run_watch_value_flag(word: &str) -> Option<(&'static str, Option<&str>)> {
+        match word {
+            "--repo" | "-R" => return Some(("--repo", None)),
+            "--interval" | "-i" => return Some(("--interval", None)),
+            _ => {}
+        }
+        let attached = [
+            ("--repo=", "--repo"),
+            ("--interval=", "--interval"),
+            ("-R", "--repo"),
+            ("-i", "--interval"),
+        ];
+        attached.into_iter().find_map(|(prefix, name)| {
+            word.strip_prefix(prefix)
+                .filter(|_| !word.starts_with("--") || prefix.starts_with("--"))
+                .map(|value| (name, Some(value)))
+        })
+    }
+
+    /// The command words of a `gh` argv, skipping flags and the values of
+    /// the flags that take one.
+    fn positionals<'a>(words: &[&'a str]) -> Vec<&'a str> {
+        let mut positionals = Vec::new();
+        let mut skip_value = false;
+        for word in words {
+            if skip_value {
+                skip_value = false;
+            } else if matches!(*word, "--repo" | "-R" | "--interval" | "-i" | "--hostname") {
+                skip_value = true;
+            } else if !word.starts_with('-') {
+                positionals.push(*word);
+            }
+        }
+        positionals
+    }
+
     /// #1743: answer a `gh api` GET from the daemon's read broker. The real
     /// `gh` still formats the output: it reruns the caller's argv with the
     /// endpoint swapped for a one-shot loopback URL serving the brokered
-    /// body. `None` (not a read, no daemon, any miss) runs the real `gh`.
+    /// body. `None` (no daemon, any miss) runs the call on its backend.
     fn brokered_read(
         target: &Path,
         broker: &crate::gh_broker::client::BrokerClient,
+        read: &crate::gh_broker::classify::ApiRead,
         args: &[OsString],
         recorder: &Recorder,
     ) -> Option<i32> {
-        let read = crate::gh_broker::classify::api_read(args)?;
-        let response = broker.read(&read)?;
+        let response = broker.read(read)?;
         let url = crate::gh_broker::client::serve_replay(response).ok()?;
         let mut replay = args.to_vec();
         replay[read.endpoint_index] = url.into();
@@ -234,24 +410,10 @@ pub(crate) mod gh_shim {
     }
 
     fn is_watch(words: &[&str]) -> bool {
-        if !words
+        words
             .iter()
             .any(|w| *w == "--watch" || w.starts_with("--watch="))
-        {
-            return false;
-        }
-        let mut positionals = Vec::new();
-        let mut skip_value = false;
-        for word in words {
-            if skip_value {
-                skip_value = false;
-            } else if matches!(*word, "--repo" | "-R" | "--interval" | "-i" | "--hostname") {
-                skip_value = true;
-            } else if !word.starts_with('-') {
-                positionals.push(*word);
-            }
-        }
-        positionals.starts_with(&["pr", "checks"])
+            && positionals(words).starts_with(&["pr", "checks"])
     }
 
     fn watch(clud: &Path, words: &[&str], recorder: &Recorder) -> i32 {
@@ -452,3 +614,6 @@ fn ghd_argv_prefixes_gh_and_preserves_every_arg() {
     );
     assert_eq!(gh_shim::GHD_REAL_GH, "GHD_REAL_GH");
 }
+
+#[cfg(test)]
+mod gh_relay_tests;
