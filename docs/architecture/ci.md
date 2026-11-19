@@ -421,9 +421,9 @@ no trailer, an edit or rebase after attesting, more than 24 hours, a fork, a
 run every lane on the merged tree), `main`, nightly and release runs never
 read trailers.
 
-The Windows MSVC Dylint leg may not run on a Linux host until
-forge-ci/soldr#4016; that lane then fails locally, stamps nothing, and runs
-hosted. Bosn `local-gate` receipts (`local-gate.toml`, retired by DD-190)
+A lane that cannot run on the local host fails, stamps nothing, and runs
+hosted. Lanes drop `SOLDR_PORCELAIN` and set `SOLDR_VERDICTS=off`, so a
+trailer always records a real run. Bosn `local-gate` receipts (`local-gate.toml`, retired by DD-190)
 still grant nothing.
 
 #### Retired local-gate skip: validation evidence (2026-10-03)

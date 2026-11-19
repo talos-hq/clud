@@ -31,8 +31,9 @@ too_many_lines = "warn"
 [workspace.metadata.soldr]
 # Cross targets `soldr lint` and `bash lint` clippy on top of the host, so
 # cfg(windows) / cfg(target_os = "macos") code fails at lint, not in a native
-# lane (RUST-033, #2370). Keep in step with the remote build lanes. Dylint stays
-# host-only locally until forge-ci/soldr#4016 (MSVC env under the Dylint nightly).
+# lane (RUST-033, #2370). Keep in step with the remote build lanes. `bash lint`
+# runs Dylint on the host only; `python -m ci.attest` runs the hosted cross
+# Dylint passes locally too (DD-225; forge-ci/soldr#4016 is fixed).
 targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu"]
 
 [workspace.metadata.soldr.lint]
