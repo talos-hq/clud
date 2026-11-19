@@ -1,0 +1,8 @@
+@pytest.fixture
+def stub_gh(tmp_path, monkeypatch):
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    script = bindir / "gh"
+    script.write_text(STUB.format(python=sys.executable))
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setenv("PATH", f"{bindir}{os.pathsep}{os.environ['PATH']}")

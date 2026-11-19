@@ -381,6 +381,8 @@ runtime contracts. Name that change and what the extra native lanes prove in
 the PR body; choose the smallest tier covering the affected platforms
 (`ci-windows` for Windows-only implementation changes, `ci-macos` for
 macOS-only ones, `ci-full` when the full platform set is affected). Release validation remains full.
+A PR touching a path-sensitive area (`ci/windows_sensitive.py`) gets the
+Windows lanes automatically; no label is needed for those ([DD-224](docs/DESIGN_DECISIONS.md#dd-224-a-path-sensitive-pr-gets-the-windows-lanes-without-a-label)).
 See [label selection](docs/architecture/ci.md#when-to-add-native-ci-labels).
 
 | File | Role |

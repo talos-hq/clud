@@ -1,0 +1,7 @@
+@pytest.fixture
+def stub_gh(pr_status, monkeypatch):
+    def fake_gh(*args):
+        return 0, "{}", ""
+    monkeypatch.setattr(pr_status, "gh", fake_gh)
+    monkeypatch.setenv("PR_STATUS_STUB", "1")
+    path.chmod(0o644)

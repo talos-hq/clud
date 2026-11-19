@@ -14,7 +14,10 @@ import json
 import os
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Literal
+
+from ci.windows_sensitive import windows_reasons
 
 # `zigbuild` is gone: the strategy was retired when soldr took ownership of
 # the Linux cross (#859); `ci/xbuild.py::cargo_argv` refuses it structurally.
@@ -138,6 +141,37 @@ def resolve_tier(  # noqa: C901
     return "minimal"
 
 
+def with_auto_windows(tier: Mode, event_name: str, reasons: list[str]) -> Mode:
+    """Add the Windows x64 lanes a path-sensitive PR needs (DD-224).
+
+    `reasons` is `ci.windows_sensitive.windows_reasons` for the PR's changed
+    files. Only a pull request is upgraded: the merge queue and `main` pushes
+    stay `minimal`, because the PR run on the head SHA already proved Windows
+    and `CI OK` there required it. `macos` becomes `full`, the one mode with
+    both native sets (the same rule as `ci-windows` + `ci-macos`).
+    """
+    if event_name != "pull_request" or not reasons:
+        return tier
+    if tier == "minimal":
+        return "windows"
+    if tier == "macos":
+        return "full"
+    return tier
+
+
+def changed_file_reasons(changed_files: str) -> list[str]:
+    """Read the workflow's changed-file list and classify it from the checkout."""
+    listed = Path(changed_files).read_text(encoding="utf-8").splitlines()
+
+    def read(path: str) -> str | None:
+        try:
+            return Path(path).read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return None
+
+    return windows_reasons([line for line in listed if line.strip()], read)
+
+
 def selected(tier: Mode | TargetTier) -> list[Target]:
     if tier == "full":
         return list(TARGETS)
@@ -259,6 +293,18 @@ def macos_only(matrix: dict[str, list[dict]]) -> dict[str, list[dict]]:
     }
 
 
+def auto_windows_reasons(event_name: str, changed_files: str) -> list[str]:
+    """Classify a pull request's diff; fail closed when the list is missing."""
+    if event_name != "pull_request":
+        return []
+    if not changed_files:
+        raise ValueError("a pull_request run needs --changed-files (CHANGED_FILES)")
+    reasons = changed_file_reasons(changed_files)
+    for reason in reasons:
+        print(f"::notice title=Windows lanes auto-selected::{reason}")
+    return reasons
+
+
 def emit(outputs: dict[str, str]) -> None:
     path = os.environ.get("GITHUB_OUTPUT")
     lines = [f"{key}={value}" for key, value in outputs.items()]
@@ -279,6 +325,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--provenance-verified",
         default=os.environ.get("PROVENANCE_VERIFIED", "false"),
+    )
+    parser.add_argument(
+        "--changed-files",
+        default=os.environ.get("CHANGED_FILES", ""),
+        help="File listing the PR's changed paths, one per line (pull_request only).",
     )
     parser.add_argument(
         "--release",
@@ -313,10 +364,13 @@ def main(argv: list[str] | None = None) -> int:
         args.event_sha,
         args.provenance_verified == "true",
     )
+    reasons = auto_windows_reasons(args.event_name, args.changed_files)
+    tier = with_auto_windows(tier, args.event_name, reasons)
     targets = selected(tier)
     emit(
         {
             "tier": tier,
+            "auto_windows": json.dumps(reasons, separators=(",", ":")),
             "build": json.dumps(build_matrix(targets), separators=(",", ":")),
             "test": json.dumps(exec_matrix(targets), separators=(",", ":")),
         }

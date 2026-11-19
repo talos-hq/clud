@@ -175,6 +175,24 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      # DD-224: a PR whose diff touches a path-sensitive area runs the
+      # Windows x64 lanes without a label (ci/windows_sensitive.py). The
+      # three-dot diff is the PR's own change against its base; a fork's
+      # checkout may lack the base commit, so fetch it from this repository.
+      # Merge groups and main pushes never list files: they stay minimal.
+      - name: List the pull request's changed files
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            git fetch --no-tags --quiet "https://github.com/$GITHUB_REPOSITORY" "$BASE_SHA"
+          fi
+          git diff --name-only --no-renames "$BASE_SHA...$HEAD_SHA" > "$RUNNER_TEMP/changed-files.txt"
+          echo "CHANGED_FILES=$RUNNER_TEMP/changed-files.txt" >> "$GITHUB_ENV"
+          wc -l < "$RUNNER_TEMP/changed-files.txt"
       - name: Resolve CI mode and candidate SHA
         id: mode
         env:
