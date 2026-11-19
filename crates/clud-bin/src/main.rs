@@ -1007,6 +1007,7 @@ fn resolve_launch(args: &mut args::Args) -> LaunchResolution {
             args,
             io::stdin().is_terminal(),
             io::stderr().is_terminal(),
+            global_launch_preferences.model_provider,
         ) {
         pick_installed_harness(args)
     } else {

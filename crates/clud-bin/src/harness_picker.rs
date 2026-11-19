@@ -187,10 +187,26 @@ fn status_command(argv: Vec<String>) -> Result<(i32, Vec<u8>), ()> {
     Ok((exit, output))
 }
 
+/// Whether some picker row launches `provider` (the row's harness's own provider).
+fn picker_reaches(provider: ModelProvider) -> bool {
+    Backend::ALL
+        .into_iter()
+        .any(|backend| backend.as_model_provider() == provider)
+}
+
 pub const DEFAULT_COUNTDOWN: Duration = Duration::from_secs(3);
 
-pub fn should_select(args: &Args, stdin_is_terminal: bool, stderr_is_terminal: bool) -> bool {
-    stdin_is_terminal
+/// Whether a bare launch offers the installed-harness picker. A saved
+/// provider that no picker row reaches (OpenRouter, Kimi) already names the
+/// route, so the picker would only replace it with a harness's own provider.
+pub fn should_select(
+    args: &Args,
+    stdin_is_terminal: bool,
+    stderr_is_terminal: bool,
+    saved_provider: Option<ModelProvider>,
+) -> bool {
+    saved_provider.is_none_or(picker_reaches)
+        && stdin_is_terminal
         && stderr_is_terminal
         && !args.dry_run
         && args.command.is_none()
@@ -536,7 +552,7 @@ mod tests {
 
     #[test]
     fn only_bare_interactive_launches_offer_the_picker() {
-        assert!(should_select(&parse(&["clud"]), true, true));
+        assert!(should_select(&parse(&["clud"]), true, true, None));
         for argv in [
             vec!["clud", "--codex"],
             vec!["clud", "--harness", "deepseek"],
@@ -546,10 +562,32 @@ mod tests {
             vec!["clud", "--experimental-daemon-centralized"],
             vec!["clud", "loop", "task"],
         ] {
-            assert!(!should_select(&parse(&argv), true, true), "argv={argv:?}");
+            assert!(
+                !should_select(&parse(&argv), true, true, None),
+                "argv={argv:?}"
+            );
         }
-        assert!(!should_select(&parse(&["clud"]), false, true));
-        assert!(!should_select(&parse(&["clud"]), true, false));
+        assert!(!should_select(&parse(&["clud"]), false, true, None));
+        assert!(!should_select(&parse(&["clud"]), true, false, None));
+    }
+
+    /// A saved provider no picker row can reach (OpenRouter, Kimi) is the bare
+    /// launch's route: the picker would replace it with the chosen harness's
+    /// own provider, so `clud` after `clud setup` would not be `clud --openrouter`.
+    #[test]
+    fn a_saved_provider_without_a_picker_row_skips_the_picker() {
+        let bare = parse(&["clud"]);
+        for saved in [ModelProvider::OpenRouter, ModelProvider::Kimi] {
+            assert!(!should_select(&bare, true, true, Some(saved)), "{saved:?}");
+        }
+        for saved in [
+            None,
+            Some(ModelProvider::Claude),
+            Some(ModelProvider::Codex),
+            Some(ModelProvider::DeepSeek),
+        ] {
+            assert!(should_select(&bare, true, true, saved), "{saved:?}");
+        }
     }
 
     #[test]

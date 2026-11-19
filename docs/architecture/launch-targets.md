@@ -64,7 +64,11 @@ The confirmed choice is stored as `launcher.last_harness` in
 `harness.default`, provider profiles, or routing policy. An absent saved
 harness falls back to the first installed row. Explicit provider/harness
 intent, prompts, non-TTY launches, dry runs, subcommands, and daemon-style
-launches bypass discovery and remain deterministic.
+launches bypass discovery and remain deterministic. So does a saved provider
+that no picker row launches (OpenRouter, Kimi, as `clud setup` saves them):
+the picker's choice becomes the CLI provider, so it would replace the saved
+route with the chosen harness's own provider (#2850). A saved Claude, Codex or
+DeepSeek provider keeps the picker.
 
 Before this picker, a bare live direct launch with no saved route checks for
 the one unambiguous credential-backed route: a validly shaped stored DeepSeek
