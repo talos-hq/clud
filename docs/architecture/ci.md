@@ -907,6 +907,13 @@ and [DD-205](../DESIGN_DECISIONS.md#dd-205-grind-is-one-editor-one-integrator-an
   chaperone (which waits for checks and enqueues again); these queue ahead of new work and run as an ordinary worker once
   the checkout is free. On `STUCK` it reports what remains. Review may run in
   parallel on the PR diff.
+- **Branch retirement (DD-230):** a chaperone has no checkout, so on `MERGED`
+  the agent holding the checkout runs `"$CLUD_EXE" gc branches --retire`
+  there: back to the default branch, fast-forwarded, the landed branch
+  deleted locally and on `origin`. `pr_merge_watch.py` already deletes the
+  `origin` head when the repository's `delete_branch_on_merge` is off and
+  prints `RETIRE-LOCAL`. See
+  [gc-and-registry.md](gc-and-registry.md#local-branches-clud-gc-branches-dd-230).
 
 macOS ARM is part of full coverage. `soldr prepare --target aarch64-apple-darwin`
 provisions the target-shaped Apple SDK on the Linux builder, so the old

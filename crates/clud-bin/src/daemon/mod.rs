@@ -63,6 +63,7 @@ pub use entry::{experimental_enabled, handle_special_command, run_centralized_se
 /// Issue #1606: `--clean-worktrees` shares the daemon's repo-worktree
 /// verdict, probe and reclaim executor through this one bridge.
 pub(crate) use gc_service::repo_worktree_cli;
+pub(crate) use gc_service::{repo_branch, repo_branch_exec, repo_branch_probe};
 pub use http::{
     dashboard_url_from_info, fetch_state_json, read_api_info, read_dashboard_info,
     read_dashboard_port, DashboardInfo,

@@ -168,15 +168,36 @@ pub fn handle(args: &HookArgs, payload: &Value) -> Option<String> {
             text("model"),
         );
     }
-    recovery.map(|recovery| {
+    // DD-230: a checkout parked on a branch that already landed is told so
+    // before the first prompt, so the next task does not start on it.
+    let nudge = (args.event == "SessionStart" && branch_nudge_enabled())
+        .then(|| text("cwd"))
+        .flatten()
+        .and_then(|cwd| crate::gc::branches::session_nudge(Path::new(&cwd)));
+    session_start_context(recovery.map(|r| r.context), nudge).map(|context| {
         serde_json::json!({
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
-                "additionalContext": recovery.context,
+                "additionalContext": context,
             }
         })
         .to_string()
     })
+}
+
+/// Env: set to `0` to turn the SessionStart branch nudge off (DD-230).
+pub const BRANCH_NUDGE_ENV: &str = "CLUD_BRANCH_NUDGE";
+
+fn branch_nudge_enabled() -> bool {
+    std::env::var(BRANCH_NUDGE_ENV).map_or(true, |v| v.trim() != "0")
+}
+
+/// The recovery context and the branch nudge, joined; `None` when neither.
+fn session_start_context(recovery: Option<String>, nudge: Option<String>) -> Option<String> {
+    match (recovery, nudge) {
+        (Some(recovery), Some(nudge)) => Some(format!("{recovery}\n\n{nudge}")),
+        (recovery, nudge) => recovery.or(nudge),
+    }
 }
 
 /// Read and delete a recovery file. Deleting on read keeps the payload (which

@@ -194,12 +194,20 @@ for review purposes; run the source gates.
     Repository rules, required checks/reviews and merge queues override the
     immediate admin-merge shortcut above; never bypass protections. In those
     repositories use the [shared landing contract](https://github.com/talos-hq/clud/blob/main/docs/architecture/launch-plan.md#landing-preference).
-11. **Surface result.** One-line summary: commit SHA on the target
+11. **Retire the branch once its PR merged** (PR path only). In this
+    checkout run `"$CLUD_EXE" gc branches --retire`. It switches back to
+    the default branch, fast-forwards it and deletes the landed branch
+    locally and on `origin`. A squash merge makes the branch look
+    unmerged to git, so do not judge it by hand
+    ([DD-230](https://github.com/talos-hq/clud/blob/main/docs/DESIGN_DECISIONS.md#dd-230-a-landed-branch-is-retired-from-the-primary-checkout-too-and-nudged-at-session-start)).
+    If it warns that `delete_branch_on_merge` is off, pass that on to
+    the user.
+12. **Surface result.** One-line summary: commit SHA on the target
     branch, push mode (`direct` or `pr-admin-merged-<pr-num>`), and
     any non-default test/lint/review notes. A recovered push race is
     reported as a note (`push: direct after rebase onto <sha>`), not
     as a blocker.
-12. **Release this run's checkout claim** with `clud claim release-own`.
+13. **Release this run's checkout claim** with `clud claim release-own`.
 
 ## Push-Race Recovery
 

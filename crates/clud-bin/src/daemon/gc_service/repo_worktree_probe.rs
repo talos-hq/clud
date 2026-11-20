@@ -143,7 +143,7 @@ pub(crate) fn normalize_diff(raw: &str) -> String {
         .join("\n")
 }
 
-fn git(cwd: &Path, args: &[&str]) -> Option<String> {
+pub(super) fn git(cwd: &Path, args: &[&str]) -> Option<String> {
     match probe_cmd("git", cwd, args, GIT_TIMEOUT)? {
         (0, out) => Some(out),
         _ => None,
@@ -187,7 +187,7 @@ pub(crate) fn lookup_prs_with_timeout(
     serde_json::from_str(&out).ok()
 }
 
-fn default_ref(cwd: &Path) -> Option<String> {
+pub(super) fn default_ref(cwd: &Path) -> Option<String> {
     if let Some(name) = git(
         cwd,
         &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
@@ -204,7 +204,7 @@ fn default_ref(cwd: &Path) -> Option<String> {
 }
 
 /// `(dirty, untracked)` from one porcelain status call.
-fn work_tree_status(cwd: &Path) -> (Option<bool>, Option<bool>) {
+pub(super) fn work_tree_status(cwd: &Path) -> (Option<bool>, Option<bool>) {
     let Some(out) = git(
         cwd,
         &[
@@ -230,7 +230,7 @@ fn work_tree_status(cwd: &Path) -> (Option<bool>, Option<bool>) {
 
 /// Whether `tip` is `head` or an ancestor of it. `None` when git cannot say
 /// (for example `head` is not present locally).
-fn tip_covered_by(cwd: &Path, tip: &str, head: &str) -> Option<bool> {
+pub(super) fn tip_covered_by(cwd: &Path, tip: &str, head: &str) -> Option<bool> {
     if tip == head {
         return Some(true);
     }
@@ -251,7 +251,7 @@ fn tip_covered_by(cwd: &Path, tip: &str, head: &str) -> Option<bool> {
 /// `Some(false)` for a branch with no commits of its own.
 /// `(upstream, merge-base, commits ahead)` of `tip` against the default
 /// branch. `None` when any query fails.
-fn ahead_of_default(cwd: &Path, tip: &str) -> Option<(String, String, u64)> {
+pub(super) fn ahead_of_default(cwd: &Path, tip: &str) -> Option<(String, String, u64)> {
     let upstream = default_ref(cwd)?;
     let base = git(cwd, &["merge-base", &upstream, tip])?
         .trim()
@@ -262,6 +262,33 @@ fn ahead_of_default(cwd: &Path, tip: &str) -> Option<(String, String, u64)> {
 }
 
 fn patch_landed(cwd: &Path, tip: &str) -> Option<bool> {
+    patch_landed_with(cwd, tip, &mut |commit| commit_diff(cwd, commit))
+}
+
+/// One default-branch commit's change, normalized for [`patch_landed_with`].
+pub(super) fn commit_diff(cwd: &Path, commit: &str) -> Option<String> {
+    git(
+        cwd,
+        &[
+            "diff",
+            "-U0",
+            "--no-color",
+            "--no-ext-diff",
+            &format!("{commit}^"),
+            commit,
+        ],
+    )
+    .map(|diff| normalize_diff(&diff))
+}
+
+/// [`patch_landed`] with the per-commit diff injected, so a caller judging
+/// many branches against one default branch (`repo_branch_probe`) diffs each
+/// candidate commit once instead of once per branch.
+pub(super) fn patch_landed_with(
+    cwd: &Path,
+    tip: &str,
+    commit_diff: &mut dyn FnMut(&str) -> Option<String>,
+) -> Option<bool> {
     let (upstream, base, ahead) = ahead_of_default(cwd, tip)?;
     let base = base.as_str();
     if ahead == 0 {
@@ -284,25 +311,11 @@ fn patch_landed(cwd: &Path, tip: &str) -> Option<bool> {
             &format!("{base}..{upstream}"),
         ],
     )?;
-    for commit in candidates.split_whitespace() {
-        let Some(diff) = git(
-            cwd,
-            &[
-                "diff",
-                "-U0",
-                "--no-color",
-                "--no-ext-diff",
-                &format!("{commit}^"),
-                commit,
-            ],
-        ) else {
-            continue;
-        };
-        if normalize_diff(&diff) == branch_diff {
-            return Some(true);
-        }
-    }
-    Some(false)
+    Some(
+        candidates
+            .split_whitespace()
+            .any(|commit| commit_diff(commit).is_some_and(|diff| diff == branch_diff)),
+    )
 }
 
 fn canonical(path: &Path) -> PathBuf {

@@ -4702,6 +4702,7 @@ def follow_merge(pr: int, repo: str | None, log: WatchLog | None) -> int:
             print(f"{_UNTIL_MERGED_LABELS[code]}  #{pr} {why}")
             if code == EXIT_GREEN and repo:
                 print(f"MERGED-AT  #{pr} {fetch_merged_at(repo, pr) or 'unknown'}")
+                after_merge_branch(repo, pr)
             _finish_exit(code, why.split(":")[0], log)
         wait_interval = min(interval, max(0.0, deadline - started))
         _sleep_remaining_interval(started, wait_interval)
@@ -4711,6 +4712,73 @@ def follow_merge(pr: int, repo: str | None, log: WatchLog | None) -> int:
         print(f"TIMEOUT  #{pr} not merged yet (queued={seen.enqueued})")
     _finish_exit(EXIT_TIMEOUT, "timeout", log)
     return EXIT_TIMEOUT
+
+
+# DD-230: what to do with a merged PR's head branch. `--keep-branch` (or a
+# `keep-branch` label on the PR) leaves it alone.
+KEEP_BRANCH = False
+KEEP_BRANCH_LABEL = "keep-branch"
+RETIRE_LOCAL_COMMAND = '"$CLUD_EXE" gc branches --retire'
+ENABLE_DELETE_ON_MERGE = "gh api -X PATCH repos/{repo} -F delete_branch_on_merge=true"
+
+
+def head_branch_decision(view: dict, setting: object, ref_sha: str | None,
+                         stacked: list[int], keep: bool) -> tuple[str, str]:
+    """Pure: ("delete" | "keep" | "gone", reason) for a merged PR's head branch.
+
+    Deletes only a same-repo head that still points at the merged head commit,
+    with no open PR stacked on it, when GitHub will not delete it itself."""
+    branch = view.get("headRefName") or ""
+    labels = {(lbl or {}).get("name") for lbl in view.get("labels") or []}
+    if keep or KEEP_BRANCH_LABEL in labels:
+        return "keep", "kept on request (--keep-branch / keep-branch label)"
+    if view.get("isCrossRepository"):
+        return "keep", "head is in a fork"
+    if ref_sha is None:
+        return "gone", "not found (already deleted)"
+    if setting is True:
+        return "keep", "GitHub deletes it (delete_branch_on_merge on)"
+    if ref_sha != view.get("headRefOid"):
+        return "keep", f"moved after the merge ({ref_sha[:12]}); holds unmerged work"
+    if stacked:
+        return "keep", "base of open PR " + ", ".join(f"#{n}" for n in stacked)
+    if not branch:
+        return "keep", "head branch unknown"
+    return "delete", "merged at its exact head"
+
+
+def after_merge_branch(repo: str, pr: int) -> None:
+    """DD-230: once merged, delete the head branch on GitHub when the repo's
+    own `delete_branch_on_merge` is off, and name the local cleanup. Best
+    effort: it never changes the watch's exit code."""
+    if os.environ.get("CLUD_PR_MERGE_WATCH_NO_BRANCH_CLEANUP") == "1":
+        return
+    try:
+        view = gh_json("pr", "view", str(pr), "--repo", repo, "--json",
+                       "headRefName,headRefOid,isCrossRepository,labels")  # ci-lint: allow GHAPI-001 once per merge, after the watch ended
+        if not isinstance(view, dict) or not view.get("headRefName"):
+            return
+        branch = view["headRefName"]
+        info = gh_json("api", f"repos/{repo}")  # ci-lint: allow GHAPI-001 once per merge, after the watch ended
+        setting = info.get("delete_branch_on_merge") if isinstance(info, dict) else None
+        ref = gh_json("api", f"repos/{repo}/git/ref/heads/{branch}")  # ci-lint: allow GHAPI-001 once per merge, after the watch ended
+        ref_sha = ((ref or {}).get("object") or {}).get("sha") if isinstance(ref, dict) else None
+        stacked_raw = gh_json("pr", "list", "--repo", repo, "--state", "open", "--base", branch,
+                              "--json", "number")  # ci-lint: allow GHAPI-001 once per merge, after the watch ended
+        stacked = [p.get("number") for p in stacked_raw or [] if isinstance(p, dict)]
+        action, why = head_branch_decision(view, setting, ref_sha, stacked, KEEP_BRANCH)
+        if action == "delete":
+            res = gh("api", "-X", "DELETE", f"repos/{repo}/git/refs/heads/{branch}")  # ci-lint: allow GHAPI-001 once per merge, after the watch ended
+            action, why = ("deleted", why) if res.ok else ("keep", f"delete failed: "
+                                                            f"{res.stderr.strip()[:200]}")
+        print(f"HEAD-BRANCH  #{pr} {branch} {action}: {why}")
+        if setting is False:
+            print(f"WARN  {repo} has delete_branch_on_merge off; every merged PR leaves its "
+                  f"branch. Enable it: {ENABLE_DELETE_ON_MERGE.format(repo=repo)}")
+        print(f"RETIRE-LOCAL  #{pr} in the checkout holding {branch}, run "
+              f"{RETIRE_LOCAL_COMMAND} (switches back to the default branch, deletes it)")
+    except Exception as exc:  # best effort: never changes the verdict
+        print(f"HEAD-BRANCH  #{pr} not handled: {exc}")
 
 
 def _env_int(name: str, default: int) -> int:
@@ -4819,6 +4887,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         "--merge-method", choices=["squash", "merge", "rebase"], default=None,
         help="direct strategy only: force this method (refused if the repo disallows it); "
         "default squash when allowed, else the only allowed method, else history convention",
+    )
+    p.add_argument(
+        "--keep-branch", action="store_true",
+        help="after a merge, leave the head branch on GitHub (default: delete it when the "
+        "repo's delete_branch_on_merge is off and it still points at the merged head; a "
+        "keep-branch label on the PR does the same)",
     )
     p.add_argument(
         "--max-enqueues", type=int, default=3,
@@ -4962,7 +5036,7 @@ def _print_triggers(repo: str | None, base: str) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     global FOLLOW, MERGE_WAIT, EXPLICIT_MERGE_WAIT, QUIET, ENQUEUE_WHEN_READY, MAX_ENQUEUES
-    global LAND_WHEN_READY, MERGE_METHOD
+    global LAND_WHEN_READY, MERGE_METHOD, KEEP_BRANCH
     ns = parse_args(argv if argv is not None else sys.argv[1:])
     QUIET = ns.quiet
     if ns.triggers_for_base is not None:
@@ -4994,6 +5068,7 @@ def main(argv: list[str] | None = None) -> int:
         EXPLICIT_MERGE_WAIT = ns.until == "merged" or LAND_WHEN_READY
         ENQUEUE_WHEN_READY = ns.enqueue_when_ready
         MAX_ENQUEUES = ns.max_enqueues
+        KEEP_BRANCH = ns.keep_branch
         if EXPLICIT_MERGE_WAIT:
             return follow_merge(pr_number, repo, log)
         code = watch(

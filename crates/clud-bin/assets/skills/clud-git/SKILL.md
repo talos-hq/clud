@@ -1,8 +1,9 @@
 ---
 name: clud-git
-description: Worktree, branch, process-audit, and quarantine playbook. Single source of truth reusable by /clud-fix-quick, /clud-issue-triage, and /goal runs. Use this when the user asks for worktree cleanup, stale-branch teardown, or a process audit on a leftover dir.
+description: Worktree, branch, process-audit, and quarantine playbook. Single source of truth reusable by /clud-fix-quick, /clud-issue-triage, and /goal runs. Use this when the user asks for worktree cleanup, stale-branch teardown, retiring a merged (including squash-merged) branch, or a process audit on a leftover dir.
 triggers:
   - When the user asks to clean up worktrees, leftover .claude/worktrees/ directories, or stale feature branches
+  - When a PR merged and its branch is still checked out, or the session context says the checkout is parked on a landed branch
   - When the user reports "shells appear stuck" or worktree removal failing with file-lock errors on Windows
   - When the user invokes "/clud-git"
   - When another skill needs the worktree-create + teardown + audit playbook (delegated from /clud-fix-quick, /clud-issue-triage, or a /goal run)
@@ -71,6 +72,36 @@ already has a warm target. The measurement and limits are in
 6. **`git worktree prune`** + verify `git worktree list` no longer mentions the path.
 7. **Delete the local branch** if it was created for the worktree: `git branch -D <branch>` for already-merged work; `git branch -d` for non-merged (which will refuse and force you to confirm). Never delete a `grind/*` branch (local or remote) that has an open PR (`gh pr list --head <branch> --state open`): it is a `/grind` feature branch holding landed goals until its feature PR merges. Push a worktree's branch before removing the worktree; a merged PR's commits stay reachable at `refs/pull/<n>/head`, unpushed commits do not.
 
+## Branch retirement playbook (DD-230)
+
+A merged PR's branch must not stay checked out or pile up. Squash merges
+rewrite the commit, so `git branch --merged`, `git cherry` ahead counts and
+"ahead 1" upstream status all report a merged branch as unmerged. Do not
+judge landed-ness by hand; use the squash-aware report:
+
+1. **Report.** `"$CLUD_EXE" gc branches` fetches with `--prune`, then marks
+   each local branch `retire` (merged PR head covers the tip, patch match, or
+   no commits of its own), `follow-up` (commits after its merged PR: unmerged
+   work), or `keep` (open PR, no PR, uncommitted changes, a worktree, doubt).
+2. **Retire.** `"$CLUD_EXE" gc branches --retire` switches a landed current
+   branch back to the default branch, fast-forwards it, and deletes every
+   landed branch locally and on `origin` (leased; never a branch that is the
+   base of an open PR). `--keep-remote` keeps `origin` copies;
+   `--sweep-remote` also clears `origin` branches whose merged PR head is
+   their exact tip.
+3. **Follow-up rows are work, not clutter.** Open a new PR for them, or tell
+   the user why not. Never delete one.
+4. **Repository setting.** When the report warns that
+   `delete_branch_on_merge` is off, tell the user. GitHub then never deletes
+   merged head branches. Enabling it (`gh api -X PATCH repos/{owner}/{repo}
+   -F delete_branch_on_merge=true`) needs repo admin and is the user's call;
+   do not change it unasked.
+
+When to run it: right after a PR you own reports `MERGED` (the
+`pr_merge_watch.py` `RETIRE-LOCAL` line), when the `SessionStart` context
+says the checkout is parked on a landed branch, and before starting new
+work on a non-default branch.
+
 ## Process-audit playbook (standalone)
 
 When the user reports "my shell appears stuck" or `git` commands hang on a Windows path:
@@ -86,7 +117,7 @@ When the user reports "my shell appears stuck" or `git` commands hang on a Windo
 | `git worktree remove` → "Access is denied" | Process audit → stop specific holders → retry. If still failing → `"$CLUD_EXE" trash`. |
 | 10+ leftover dirs under `.claude/worktrees/` (made before #1962) or `~/.clud/worktrees/` | Batch `git worktree remove --force` for each git-tracked one, then `"$CLUD_EXE" trash` for the orphan dirs. Delete the merged branches with `git branch -D` afterward. |
 | "Shells appear stuck" after a teardown | Bash cwd is anchored on a deleted dir. Cd to absolute path. PowerShell tracks cwd independently and is usually the safer escape. |
-| Local branch list cluttered with old feature branches | `git branch --merged main \| grep feat/` to find merged ones; `git branch -D` to delete. Non-merged branches need explicit `git branch -D` after confirming the work landed via squash. |
+| Local branch list cluttered with old feature branches | `"$CLUD_EXE" gc branches` (report), then `"$CLUD_EXE" gc branches --retire`. Never use `git branch --merged` here: a squash merge leaves every merged branch looking unmerged to git. |
 
 ## Delegation contract
 
@@ -106,7 +137,7 @@ When called from `/clud-fix-quick`, `/clud-issue-triage`, or any other skill:
 4. **RED -> GREEN** for any code edits made inside a worktree.
 5. **Never kill unrelated processes** during a stale-holder cleanup.
 6. **Cd to absolute path** before running git commands when shell behavior gets weird.
-7. **Delete merged branches after squash-merge** so the local branch list doesn't accumulate.
+7. **Retire merged branches with `"$CLUD_EXE" gc branches --retire`**, never with `git branch --merged`, so the checkout returns to the default branch and the branch list doesn't accumulate.
 
 ## When NOT to use this
 

@@ -185,6 +185,9 @@ fn normalize(sub: GcSubcommand) -> GcAction {
         }
         GcSubcommand::Reconcile => GcAction::Reconcile,
         GcSubcommand::Keep(_) => unreachable!("gc keep is dispatched before normalize"),
+        GcSubcommand::Branches(_) => {
+            unreachable!("gc branches is dispatched before normalize")
+        }
     }
 }
 
@@ -202,6 +205,9 @@ pub fn run(args: &Args, sub: Option<GcSubcommand>) -> i32 {
             (None, false) => Some(std::path::PathBuf::from(".")),
         };
         return super::keep_list::run_cli(path.as_deref(), *remove, *list);
+    }
+    if let GcSubcommand::Branches(options) = &sub {
+        return super::branches::run_cli(options);
     }
     let action = normalize(sub);
 
