@@ -422,6 +422,10 @@ def test_queue_judge_runs_only_in_merge_groups_from_the_base() -> None:
     )
     assert "if: github.event_name == 'merge_group'" in step
     assert "continue-on-error: true" in step
+    # The shipped "off" costs no fetch or install: the base switch is read
+    # first, and only on/shadow continues.
+    gate = step.index('git show "$BASE_SHA:ci-attestations-queue.toml"')
+    assert gate < step.index("git fetch") < step.index("pip install")
     # The judge and its policy come from the queue's base, never the PR.
     assert 'git archive "$BASE_SHA" ci' in step
     assert "python -I -c" in step

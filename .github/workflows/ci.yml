@@ -246,6 +246,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          # Fast path for the shipped default: no fetch or install unless the
+          # base switch says on/shadow (the judge re-reads and validates it).
+          if ! git show "$BASE_SHA:ci-attestations-queue.toml" 2>/dev/null | grep -Eq '^forward *= *"(on|shadow)"'; then
+            echo "forwarding off at the base; the queue runs every lane"
+            exit 0
+          fi
           pr=$(printf '%s\n' "$QUEUE_REF" | sed -n 's#^refs/heads/gh-readonly-queue/[^/]*/pr-\([0-9][0-9]*\)-[0-9a-f]*$#\1#p')
           [ -n "$pr" ] || { echo "not a merge-queue ref: $QUEUE_REF"; exit 0; }
           git fetch --no-tags --quiet origin "+refs/pull/$pr/head:refs/prooft/pr-head"
