@@ -360,17 +360,38 @@ def installer_env(home: Path) -> dict[str, str]:
     }
 
 
+RESULT_SCHEMA = "clud-installer-result/v1"
+
+
+def installer_result(output: str, schema: str = RESULT_SCHEMA) -> dict:
+    """The ``--installer-json`` (or plan) line with ``schema``. The captured output interleaves
+    stderr progress with stdout, so the result is not always the last line."""
+    for line in reversed(output.splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and value.get("schema") == schema:
+            return value
+    raise SigningError(f"no {schema} line in the installer output:\n{output}")
+
+
 def install_from_app(clud: Path, version: str, home: Path) -> None:
     """The app's clud plans read-only, installs, and resolves by name."""
     env = installer_env(home)
     base = [str(clud), "--installer", "--install-current"]
-    plan = json.loads(_require([*base, "--installer-plan-json"], "plan", env=env, timeout=120))
-    if plan.get("schema") != PLAN_SCHEMA or plan.get("version") != version:
+    plan = installer_result(
+        _require([*base, "--installer-plan-json"], "plan", env=env, timeout=120), PLAN_SCHEMA
+    )
+    if plan.get("version") != version:
         raise SigningError(f"unexpected installer plan: {plan}")
     if Path(plan["destination"]).exists():
         raise SigningError("--installer-plan-json wrote the destination")
     output = _require([*base, "--yes", "--installer-json"], "install", env=env, timeout=300)
-    result = json.loads(output.strip().splitlines()[-1])
+    result = installer_result(output)
     if result.get("status") != "complete" or result.get("version") != version:
         raise SigningError(f"app install was not complete: {result}")
     lookup = _require(

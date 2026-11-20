@@ -116,3 +116,12 @@ def test_offline_block_restarts_the_ticket_daemons_before_the_gate_runs(monkeypa
     assert kills == list(pkg.TICKET_DAEMONS)
     assert inside.index(["sudo", "tee", "-a", "/etc/hosts"]) < inside.index(
         ["sudo", "killall", "-9", "syspolicyd"])
+
+
+def test_installer_result_is_found_among_interleaved_progress_lines() -> None:
+    """Proof run 44829402554 (arm64): stderr progress followed the result."""
+    result = '{"schema":"clud-installer-result/v1","status":"complete","version":"2.8.70"}'
+    output = f"Selected version: 2.8.70\n{result}\n# >>> clud installer PATH >>>\nnot json {{\n"
+    assert pkg.installer_result(output)["status"] == "complete"
+    with pytest.raises(pkg.SigningError, match="no clud-installer-result/v1 line"):
+        pkg.installer_result('{"schema":"other"}\nprogress\n')
