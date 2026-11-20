@@ -444,9 +444,22 @@ recommendation:
 [DD-227](../DESIGN_DECISIONS.md#dd-227-a-merge-queue-entry-may-inherit-its-pr-heads-attestations-behind-a-base-owned-switch-that-ships-off).
 
 A lane that cannot run on the local host fails, stamps nothing, and runs
-hosted. Lanes drop `SOLDR_PORCELAIN` and set `SOLDR_VERDICTS=off`, so a
-trailer always records a real run. Bosn `local-gate` receipts (`local-gate.toml`, retired by DD-190)
-still grant nothing.
+hosted. All four lanes run at once (`--serial` runs them one at a time);
+each writes `target/attest/<lane>.log`, and a failing lane prints its tail.
+When every lane has finished on an unchanged HEAD and clean tree, each
+passing lane is stamped in turn. The host Dylint lane exports the verified
+driver root (`DYLINT_DRIVER_PATH`) that setup-soldr exports on a runner, so
+the `enforce_platform_boundary` UI test passes locally. The cross Dylint
+lanes check in their own `target/attest-cross/<triple>` directories, so
+they do not wait on one cargo lock. Lanes drop `SOLDR_PORCELAIN` and keep
+soldr's verdict ledger on, so a lane whose inputs already passed replays in
+seconds; the host Dylint workspace pass is the same command `bash lint`
+runs. Every Dylint pass must show each `dylints/*` library being built and
+the `Checking with toolchain` line, real or replayed; a hollow replay is
+rerun with the ledger off
+([DD-228](../DESIGN_DECISIONS.md#dd-228-local-attestation-runs-lanes-at-once-keeps-soldrs-verdicts-and-checks-dylints-output);
+forge-ci/soldr#4175). Bosn `local-gate` receipts (`local-gate.toml`, retired
+by DD-190) still grant nothing.
 
 #### Retired local-gate skip: validation evidence (2026-10-03)
 
