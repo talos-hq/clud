@@ -505,6 +505,78 @@ jobs:
           MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
         run: python -m ci.sign_macos_release smoke --dist-dir wheels --version '${{ needs.preflight.outputs.version }}'
 
+  # #2863: one universal clud plus a stapled `Install clud.app` on a stapled
+  # disk image. A bare Mach-O cannot carry a ticket, so only these two
+  # stapled containers pass Gatekeeper offline. lipo keeps each notarized
+  # slice byte-identical (the job proves it); the app and the image are
+  # signed from a throwaway keychain, notarized and stapled here.
+  package-macos:
+    name: Package macOS universal binary and installer disk image
+    needs: [preflight, notarize-macos]
+    if: always() && !cancelled() && needs.preflight.result == 'success' && needs.notarize-macos.result == 'success'
+    runs-on: macos-15
+    environment: release-signing
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-macos-*
+          path: dist
+          merge-multiple: true
+      - name: Install signing-script dependency
+        run: python -m pip install running-process==4.10.1
+      - name: Build, sign, notarize and staple the universal installer
+        env:
+          MACOS_SIGNING_CERT: ${{ secrets.MACOS_SIGNING_CERT }}
+          MACOS_SIGNING_CERT_PASSWORD: ${{ secrets.MACOS_SIGNING_CERT_PASSWORD }}
+          MACOS_SIGNING_IDENTITY: ${{ secrets.MACOS_SIGNING_IDENTITY }}
+          APPLE_NOTARY_USER: ${{ secrets.APPLE_NOTARY_USER }}
+          APPLE_NOTARY_PASSWORD: ${{ secrets.APPLE_NOTARY_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: python -m ci.macos_package build --dist-dir dist --out-dir macos-installer --version '${{ needs.preflight.outputs.version }}'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installer
+          path: macos-installer/*
+          if-no-files-found: error
+
+  # Offline Gatekeeper acceptance on both architectures: Apple's ticket
+  # service is blocked and the files are quarantined like a browser download.
+  # The bare universal binary must NOT assess as notarized (negative control:
+  # proves the block works, and is why the bare binary alone is not enough);
+  # the stapled image and app must, and the app installs clud by name.
+  macos-installer-gate:
+    name: Verify macOS installer offline (${{ matrix.runs-on }})
+    needs: [preflight, package-macos]
+    if: always() && !cancelled() && needs.preflight.result == 'success' && needs.package-macos.result == 'success'
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        runs-on: [macos-15, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.preflight.outputs.candidate_sha }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-installer
+          path: macos-installer
+      - name: Install gate dependency
+        run: python -m pip install running-process==4.10.1
+      - name: Stapled disk image and app pass Gatekeeper offline and install clud
+        run: python -m ci.macos_package gate --dir macos-installer --version '${{ needs.preflight.outputs.version }}'
+
   build-static-musl:
     name: Build static musl clud
     needs: [preflight, full-ci-gate, release-matrix]
@@ -547,12 +619,13 @@ jobs:
 
   publish-pypi:
     name: Publish to PyPI
-    needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, sign-macos, notarize-macos, macos-signature-smoke, candidate-acceptance-gate, verify-prior-public]
+    needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, sign-macos, notarize-macos, macos-signature-smoke, package-macos, macos-installer-gate, candidate-acceptance-gate, verify-prior-public]
     if: >-
       always() && !cancelled() && !inputs.notarize_only && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
       needs.candidate-acceptance-gate.result == 'success' && needs.verify-prior-public.result == 'success' &&
       (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success' &&
-      needs.sign-macos.result == 'success' && needs.notarize-macos.result == 'success' && needs.macos-signature-smoke.result == 'success'))
+      needs.sign-macos.result == 'success' && needs.notarize-macos.result == 'success' && needs.macos-signature-smoke.result == 'success' &&
+      needs.package-macos.result == 'success' && needs.macos-installer-gate.result == 'success'))
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -579,12 +652,13 @@ jobs:
 
   publish-release:
     name: Publish final bytes as public prerelease
-    needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, sign-macos, notarize-macos, macos-signature-smoke, build-static-musl, verify-static-musl-arm64]
+    needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, windows-signature-smoke, sign-macos, notarize-macos, macos-signature-smoke, package-macos, macos-installer-gate, build-static-musl, verify-static-musl-arm64]
     if: >-
       always() && !cancelled() && !inputs.notarize_only && needs.preflight.result == 'success' && needs.full-ci-gate.result == 'success' &&
       needs.snapshot-public.result == 'success' &&
       (inputs.resume_run_id || (needs.build.result == 'success' && needs.wheel-smoke.result == 'success' && needs.windows-signature-smoke.result == 'success' &&
       needs.sign-macos.result == 'success' && needs.notarize-macos.result == 'success' && needs.macos-signature-smoke.result == 'success' &&
+      needs.package-macos.result == 'success' && needs.macos-installer-gate.result == 'success' &&
       needs.build-static-musl.result == 'success' && needs.verify-static-musl-arm64.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
@@ -611,6 +685,14 @@ jobs:
           path: standalone
           merge-multiple: true
 
+      # #2863: the universal macOS binary and the stapled installer disk image.
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-installer
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
+          path: standalone
+
       # Sidecar debug info for the released binaries (Linux `.dwp`; see
       # Cargo.toml [profile.release]). Downloaded into its own directory --
       # never dist/ -- and only here, so it can never reach publish-pypi's
@@ -626,10 +708,10 @@ jobs:
           path: debuginfo
           merge-multiple: true
 
-      - name: Extract Windows and macOS clud executables from release wheels
+      - name: Extract Windows clud executables from release wheels
         run: python -m installer.release_assets '${{ needs.preflight.outputs.version }}' dist standalone
 
-      - name: Verify six native download assets
+      - name: Verify the native download assets
         run: python -m installer.verify_native_assets '${{ needs.preflight.outputs.version }}' standalone
 
       # #1016: each Linux build job staged a one-line `clud-<triple>.build-id`
@@ -681,6 +763,8 @@ jobs:
           generate_release_notes: true
           body: |
             ## Install
+
+            **macOS (double-click):** download `clud-${{ needs.preflight.outputs.version }}-macos.dmg`, open it and double-click **Install clud**. The disk image is notarized and stapled, so it opens without a warning, even offline. `clud-${{ needs.preflight.outputs.version }}-universal-apple-darwin` is the same universal (Apple Silicon + Intel) binary on its own.
 
             **macOS / Linux:**
 
@@ -772,6 +856,14 @@ jobs:
           github-token: ${{ github.token }}
           path: standalone
           merge-multiple: true
+
+      # #2863: the universal macOS binary and the stapled installer disk image.
+      - uses: actions/download-artifact@v4
+        with:
+          name: macos-installer
+          run-id: ${{ needs.preflight.outputs.artifact_run }}
+          github-token: ${{ github.token }}
+          path: standalone
       - uses: actions/download-artifact@v4
         with:
           pattern: wheels-*
@@ -779,7 +871,7 @@ jobs:
           github-token: ${{ github.token }}
           path: dist
           merge-multiple: true
-      - name: Reconstruct exact six final native files
+      - name: Reconstruct the exact final native files
         env:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: python -m installer.release_assets "$RELEASE_VERSION" dist standalone

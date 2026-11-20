@@ -81,6 +81,11 @@ impl Outcome {
         self.exit_code
     }
 
+    /// The stable reason code, when the outcome carries one.
+    pub(super) fn reason(&self) -> Option<&'static str> {
+        self.reason
+    }
+
     pub(super) fn is_complete(&self) -> bool {
         self.status == Status::Complete
     }

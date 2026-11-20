@@ -284,6 +284,10 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
                 .to_options(),
         ));
     }
+    // #2863: a double-clicked `Install clud.app` (no argv, no terminal).
+    if let Some(code) = self_install::app_bundle::run(args) {
+        return Some(code);
+    }
     if let Some(code) = self_install::entry::run_explicit(args) {
         return Some(code);
     }

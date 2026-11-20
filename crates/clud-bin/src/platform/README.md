@@ -47,6 +47,10 @@ The persistence contract is documented in
 
 `stdio::output_is_utf8` supplies native console capability to [foreground print output](../../../../docs/architecture/prompt-output.md).
 
+`app_dialog` is `Install clud.app`'s native surface (#2863): `osascript`
+dialogs with the text passed as argv and the Terminal hand-off through
+`open -a Terminal`. Windows has a stub; the bundle exists only on macOS.
+
 `remote_shell` is `clud-remote-shell`, the remote-assistance PTY's session
 leader that shares a sudo ticket with the operator's shell, plus the client's
 private socket to it; `console_echo` hides the sudo password while it is typed.

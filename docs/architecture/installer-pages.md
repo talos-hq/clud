@@ -66,6 +66,18 @@ Open Anyway guidance for macOS. The verifier checks those links, the dropdown
 entries, the inlined detection script, and root/install page identity against
 the generated catalog.
 
+From #2863 the release's macOS download is the stapled installer disk image,
+`clud-<v>-macos.dmg` (Apple Silicon and Intel in one file; see
+[native-installer.md](native-installer.md#macos-disk-image-and-install-cludapp)).
+The catalog cannot name it, so `site.macos_installer` reads it from the
+`latest-stable` release's assets, rechecks the API digest and size against the
+bytes and requires the UDIF `koly` trailer. It is linked at its release URL,
+not copied to Pages (it is a `.dmg`, so the `download` filename trick is not
+needed, and it keeps the Pages artifact under the per-file limit). The page
+lists it first, tells the visitor to double-click **Install clud**, and says
+the image opens without a warning even offline. A release from before #2863
+has no image, and its page keeps the per-architecture macOS rows.
+
 ### Download page detection
 
 `installer/download.js` is inlined into the page. It reads
@@ -76,7 +88,10 @@ platform at `MacIntel`, so without client hints (Safari, Firefox) the CPU is
 unknowable. The page then assumes Apple Silicon and says so: "Detected: macOS ·
 assuming Apple Silicon (aarch64) — most Macs since 2020." followed by a
 "Switch to Intel." button that swaps the recommendation to
-`x86_64-apple-darwin`. The guess is always labelled, never silent; WebGL is not
+`x86_64-apple-darwin`. When the page lists the universal disk image, every Mac
+gets it with no guess at all ("This download runs on Apple Silicon and
+Intel"), so neither the assumption nor the switch is shown. The guess is
+always labelled, never silent; WebGL is not
 consulted because Safari reports `Apple GPU` on Intel Macs too. A real
 client-hint answer is used as-is with no override. Phones, tablets (including
 desktop-mode iPadOS), Chrome OS, 32-bit hosts and unknown agents get no
@@ -109,8 +124,10 @@ plain `clud` keeps its normal behavior. Setup run instructions use that name.
 `sh -s --`). It maps `uname -s`/`uname -m` to one of the four macOS/Linux
 assets (Linux uses static musl; a Rosetta shell on Apple Silicon gets aarch64),
 resolves the latest release tag from the `releases/latest` redirect unless
-`--version <tag>` is given, downloads the asset and the release's
-`SHA256SUMS`, and then hands the verified binary to itself. The asset download
+`--version <tag>` is given, downloads the release's `SHA256SUMS` and then the
+asset, and then hands the verified binary to itself. On macOS it installs
+`clud-<v>-universal-apple-darwin` when `SHA256SUMS` lists it (#2863) and the
+per-architecture binary otherwise, so a pinned older `--version` still works. The asset download
 draws curl's progress bar on stderr when that is a terminal, or on the device
 `CLUD_INSTALL_PROGRESS` names (clud.bot's `connect.sh` logs the script's output
 and passes `/dev/tty`); set but empty, it is silent, so a slow link never looks
@@ -167,8 +184,9 @@ serialized concurrency group with both Pages publishers.
 ### Homebrew tap
 
 `brew install talos-hq/tap/clud` installs the same direct release assets as
-`install.sh`: macOS arm64/x86_64 and static musl Linux arm64/x86_64, each
-pinned by the release's `SHA256SUMS`. Homebrew puts its own prefix on PATH, so
+`install.sh`: the universal macOS binary (one `on_macos` block; releases from
+before #2863 get the arm64/x86_64 pair) and static musl Linux arm64/x86_64,
+each pinned by the release's `SHA256SUMS`. Homebrew puts its own prefix on PATH, so
 a brew install needs no startup-file edits. `installer/homebrew_formula.py`
 renders `Formula/clud.rb` and refuses an unstable version or a missing
 platform asset.

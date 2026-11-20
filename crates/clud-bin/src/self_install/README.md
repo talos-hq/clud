@@ -60,6 +60,14 @@ alone is insufficient to distinguish complete installation from install-only
 or a user declining the original confirmation. Invalid requests also receive
 a structured failure when the installer reporting flag parsed successfully.
 
+`app_bundle.rs` is `Install clud.app`, the macOS disk image's double-click
+installer (#2863): a bare launch from `<x>.app/Contents/MacOS/clud` runs the
+current-executable plan and transaction through native dialogs
+(`platform::app_dialog`), and any outcome but `complete` offers **Fix in
+Terminal** (`clud --installer`); tests in `app_bundle_tests.rs` drive it with a
+scripted fake. `--installer-plan-json` prints `summary.rs::Facts::report`.
+See [native-installer.md](../../../../docs/architecture/native-installer.md#macos-disk-image-and-install-cludapp).
+
 `catalog.rs` parses the bounded, duplicate-key rejecting v1 Catalog published
 at the Pages installer endpoint. `Catalog::compatible_releases` lists complete
 versions for a host, and `Catalog::resolve` chooses an exact version or the

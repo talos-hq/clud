@@ -8730,3 +8730,33 @@ wired), so for them the landing contract's standing instruction (check
 rather than a bare `git switch`) carries the correction. A live Codex test
 on this repository switched back to `main` but deleted nothing until that
 wording said `--retire` is the action.
+
+---
+
+## DD-231: macOS ships one universal binary inside a stapled disk image, and the catalog keeps the wheels
+
+**Context:** #2863. Since DD-214/DD-220 every macOS Mach-O is Developer ID signed and notarized, but the release still shipped two bare per-architecture binaries. A bare Mach-O cannot carry a notarization ticket (`stapler` accepts only `.app`, `.dmg` and `.pkg`), so a browser download passed Gatekeeper only when the Mac could reach Apple, double-clicking it opened a Terminal whose first-run offer defaults to **Not now**, and the download page had to guess the CPU because Safari reports Intel on Apple Silicon.
+
+**Decision:** the release `lipo`s the two notarized thin executables into one `clud-<v>-universal-apple-darwin` (slices byte-identical, so already notarized) and ships `clud-<v>-macos.dmg`: a signed, notarized, stapled image holding a signed, notarized, stapled `Install clud.app` whose main executable is that universal clud. The app drives the existing plan and transaction through native dialogs and hands every non-`complete` outcome to the interactive installer in Terminal. `macos-installer-gate` proves offline acceptance on both CPUs with a negative control. The thin direct macOS assets are no longer published; the Pages catalog keeps resolving macOS to the per-architecture wheels.
+
+**Rationale:**
+- Stapling is the only way to pass Gatekeeper offline, and only containers staple. The image and the app are each stapled, so either works offline even when the app is copied out.
+- A universal binary removes the architecture choice the page could not make reliably, at roughly twice the size.
+- Every installed clud parses the whole catalog strictly: an asset name it does not know (such as `universal-apple-darwin`) fails the parse for every release, and its header check accepts only a thin Mach-O. The macOS wheels are rows every version already accepts and extracts, so the catalog changes nothing for them; the universal file and the image are release assets read directly by `install.sh`, Homebrew and the page.
+- The app reuses the self-installer instead of adding a second install path: consent, transaction, activation proof and repair keep one owner.
+
+**Alternatives Considered:**
+
+| Approach | Why not |
+|---|---|
+| A signed, notarized `.pkg` | Installs for all users and runs scripts as root, which conflicts with the per-user install (`~/.local/bin`, the user's own startup files, fresh-shell proof) and hides the consent and repair screens behind Installer.app. Revisit only for managed fleets. |
+| A universal catalog row | Breaks every installed clud's catalog parse (strict filename check), not just macOS. |
+| Keep publishing the thin binaries next to the universal one | Two equivalent downloads per Mac and the CPU guess stays; the wheels already serve the catalog. |
+| A separate launcher executable or `.command` script in the bundle | A second signed program to keep in step; the universal clud is already the installer. A script as the bundle executable signs poorly. |
+| Drive Terminal with AppleScript (`tell application "Terminal"`) | Triggers the Automation (TCC) permission prompt; `open -a Terminal <file>.command` does not. |
+
+**Consequences:**
+- `transaction::validate_macho_header` accepts a universal Mach-O with a host slice. `installer/verify_native_assets.py` requires the universal binary (exactly an x86_64 and an arm64 slice) and the image (UDIF `koly` trailer) instead of the thin pair.
+- `install.sh` reads `SHA256SUMS` first and prefers the universal binary; older pinned versions still get their thin binary. The Homebrew formula emits one `on_macos` block when the universal binary exists.
+- The public-host acceptance lane installs macOS from the catalog's wheel row and records the wheel digest as the asset digest.
+- Release recovery (`ci/release_resume.py`) requires the two new jobs, so a run from before this change cannot be resumed under it.

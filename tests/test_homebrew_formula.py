@@ -76,3 +76,23 @@ def test_cli_writes_the_formula_and_reports_errors(tag, tmp_path, capsys) -> Non
     assert f"releases/download/{tag}/clud-2.8.62-" in capsys.readouterr().out
     assert hf.main(["2.8.62", str(tmp_path / "missing")]) == 1
     assert hf.main(["2.8.62"]) == 2
+
+
+def test_a_universal_macos_binary_replaces_the_per_cpu_blocks() -> None:
+    """#2863: the release ships one universal macOS binary; brew uses it on both CPUs."""
+    linux_only = "".join(
+        line + "\n" for line in sums("2.8.70").splitlines() if "apple-darwin" not in line
+    )
+    text = hf.render("2.8.70", linux_only + f"{'f' * 64}  ./clud-2.8.70-universal-apple-darwin\n")
+    macos = text.split("  on_macos do\n", 1)[1].split("\n  end\n", 1)[0]
+    assert [line.strip() for line in macos.strip().splitlines()] == [
+        'url "https://github.com/talos-hq/clud/releases/download/2.8.70/'
+        'clud-2.8.70-universal-apple-darwin"',
+        f'sha256 "{"f" * 64}"',
+    ]
+    linux = text.split("  on_linux do\n", 1)[1]
+    assert "on_arm do" in linux
+    assert "on_intel do" in linux
+    # A release with neither the universal nor the thin binaries cannot render.
+    with pytest.raises(ValueError, match="missing"):
+        hf.render("2.8.70", linux_only)

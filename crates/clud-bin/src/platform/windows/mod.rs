@@ -1,6 +1,7 @@
 //! Windows implementations of the `crate::platform` areas.
 
 pub mod alias_link;
+pub mod app_dialog;
 pub mod attach_input;
 pub mod block_bad_cmd_io;
 pub mod block_bad_cmd_repeat;

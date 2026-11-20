@@ -396,6 +396,48 @@ fn current_arch() -> Arch {
     }
 }
 
+const MACHO_CPU_X86_64: u32 = 0x0100_0007;
+const MACHO_CPU_ARM64: u32 = 0x0100_000c;
+const FAT_MAGIC: &[u8; 4] = b"\xca\xfe\xba\xbe";
+const FAT_ARCH_SIZE: usize = 20;
+
+/// A thin 64-bit Mach-O for `arch`, or a universal (fat) Mach-O with an
+/// `arch` slice: the macOS release ships one universal binary (#2863), and
+/// the `Install clud.app` bundle installs that same file.
+pub(crate) fn validate_macho_header(data: &[u8], arch: Arch) -> Result<(), String> {
+    let wanted = if arch == Arch::Aarch64 {
+        MACHO_CPU_ARM64
+    } else {
+        MACHO_CPU_X86_64
+    };
+    let word = |at: usize, big: bool| -> Option<u32> {
+        let bytes: [u8; 4] = data.get(at..at + 4)?.try_into().ok()?;
+        Some(if big {
+            u32::from_be_bytes(bytes)
+        } else {
+            u32::from_le_bytes(bytes)
+        })
+    };
+    if data.get(..4) == Some(FAT_MAGIC.as_slice()) {
+        let count = word(4, true).ok_or("short universal Mach-O header")? as usize;
+        if count == 0 || 8 + count * FAT_ARCH_SIZE > data.len() {
+            return Err("invalid universal Mach-O header".into());
+        }
+        return if (0..count).any(|index| word(8 + index * FAT_ARCH_SIZE, true) == Some(wanted)) {
+            Ok(())
+        } else {
+            Err("universal Mach-O has no slice for this architecture".into())
+        };
+    }
+    if data.get(..4) != Some(b"\xcf\xfa\xed\xfe".as_slice()) {
+        return Err("expected Mach-O 64-bit executable".into());
+    }
+    if word(4, false).ok_or("short Mach-O header")? != wanted {
+        return Err("Mach-O architecture mismatch".into());
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_native_header(
     file: &mut File,
     os: Os,
@@ -421,21 +463,7 @@ pub(crate) fn validate_native_header(
                 super::catalog::verify_static_elf_file(file, arch)?;
             }
         }
-        Os::Darwin => {
-            if data.len() < 8 || &data[..4] != b"\xcf\xfa\xed\xfe" {
-                return Err("expected Mach-O 64-bit executable".into());
-            }
-            let cpu = u32::from_le_bytes(data[4..8].try_into().map_err(|_| "short Mach-O header")?);
-            if cpu
-                != if arch == Arch::Aarch64 {
-                    0x0100_000c
-                } else {
-                    0x0100_0007
-                }
-            {
-                return Err("Mach-O architecture mismatch".into());
-            }
-        }
+        Os::Darwin => validate_macho_header(data, arch)?,
         Os::Windows => {
             if data.len() < 64 || &data[..2] != b"MZ" {
                 return Err("expected PE executable".into());
@@ -893,6 +921,51 @@ mod tests {
         assert!(
             validate_native_header(&mut file, Os::Linux, Arch::X86_64, Flavor::Native).is_err()
         );
+    }
+
+    fn thin_macho(cpu: u32) -> Vec<u8> {
+        let mut bytes = b"\xcf\xfa\xed\xfe".to_vec();
+        bytes.extend_from_slice(&cpu.to_le_bytes());
+        bytes.resize(32, 0);
+        bytes
+    }
+
+    fn fat_macho(cpus: &[u32]) -> Vec<u8> {
+        let mut bytes = FAT_MAGIC.to_vec();
+        bytes.extend_from_slice(&u32::try_from(cpus.len()).unwrap().to_be_bytes());
+        for cpu in cpus {
+            let mut entry = [0_u8; FAT_ARCH_SIZE];
+            entry[..4].copy_from_slice(&cpu.to_be_bytes());
+            bytes.extend_from_slice(&entry);
+        }
+        bytes
+    }
+
+    #[test]
+    fn macho_header_accepts_thin_and_universal_binaries_with_the_host_slice() {
+        for arch in [Arch::Aarch64, Arch::X86_64] {
+            let (own, other) = if arch == Arch::Aarch64 {
+                (MACHO_CPU_ARM64, MACHO_CPU_X86_64)
+            } else {
+                (MACHO_CPU_X86_64, MACHO_CPU_ARM64)
+            };
+            assert!(validate_macho_header(&thin_macho(own), arch).is_ok());
+            assert!(validate_macho_header(&thin_macho(other), arch).is_err());
+            assert!(
+                validate_macho_header(&fat_macho(&[MACHO_CPU_X86_64, MACHO_CPU_ARM64]), arch)
+                    .is_ok()
+            );
+            assert_eq!(
+                validate_macho_header(&fat_macho(&[other]), arch).unwrap_err(),
+                "universal Mach-O has no slice for this architecture"
+            );
+        }
+        // A fat header claiming more slices than the bytes hold is refused.
+        let mut truncated = fat_macho(&[MACHO_CPU_ARM64]);
+        truncated[4..8].copy_from_slice(&9_u32.to_be_bytes());
+        assert!(validate_macho_header(&truncated, Arch::Aarch64).is_err());
+        assert!(validate_macho_header(&fat_macho(&[]), Arch::Aarch64).is_err());
+        assert!(validate_macho_header(b"\x7fELF", Arch::Aarch64).is_err());
     }
 
     #[test]

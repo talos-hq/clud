@@ -26,6 +26,8 @@ TARGETS = (
     ("on_linux", "on_arm", "aarch64-unknown-linux-musl"),
     ("on_linux", "on_intel", "x86_64-unknown-linux-musl"),
 )
+# #2863: one universal macOS binary replaces the two thin ones when present.
+UNIVERSAL_MACOS = "universal-apple-darwin"
 VERSION = re.compile(r"\d+\.\d+\.\d+")
 DIGEST = re.compile(r"[0-9a-f]{64}")
 
@@ -44,22 +46,31 @@ def parse_sums(text: str) -> dict[str, str]:
     return sums
 
 
+def _source(tag: str, asset: str, digest: str, indent: str) -> str:
+    return (
+        f'{indent}url "https://github.com/{REPO}/releases/download/{tag}/{asset}"\n'
+        f'{indent}sha256 "{digest}"\n'
+    )
+
+
 def render(tag: str, sums_text: str) -> str:
     version = tag.removeprefix("v")
     if not VERSION.fullmatch(version):
         raise ValueError(f"not a stable release version: {tag!r}")
     sums = parse_sums(sums_text)
+    universal = f"clud-{version}-{UNIVERSAL_MACOS}"
     blocks: dict[str, list[str]] = {}
     for os_block, cpu_block, triple in TARGETS:
+        if os_block == "on_macos" and universal in sums:
+            if os_block not in blocks:
+                blocks[os_block] = [_source(tag, universal, sums[universal], "    ")]
+            continue
         asset = f"clud-{version}-{triple}"
         digest = sums.get(asset)
         if digest is None:
             raise ValueError(f"{asset} is missing from SHA256SUMS")
         blocks.setdefault(os_block, []).append(
-            f"    {cpu_block} do\n"
-            f'      url "https://github.com/{REPO}/releases/download/{tag}/{asset}"\n'
-            f'      sha256 "{digest}"\n'
-            "    end\n"
+            f"    {cpu_block} do\n" + _source(tag, asset, digest, "      ") + "    end\n"
         )
     platforms = "\n".join(
         f"  {os_block} do\n" + "".join(cpu) + "  end\n" for os_block, cpu in blocks.items()
