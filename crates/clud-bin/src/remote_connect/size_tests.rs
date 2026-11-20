@@ -94,15 +94,20 @@ fn the_shell_sees_the_local_terminal_size_not_the_operators() {
         return;
     }
     let (mut size, tx) = following(Some(LOCAL));
+    // The fallback environment has only the running clud on PATH.
     let mut terminal = Terminal::default();
     terminal.open(&size.applied(&operator_open())).unwrap();
-    terminal.input(b"stty size; echo SIZE_\"ONE\"\n").unwrap();
+    terminal
+        .input(b"/bin/stty size; echo SIZE_\"ONE\"\n")
+        .unwrap();
     let first = read_until(&mut terminal, "SIZE_ONE");
     tx.send((33, 111)).unwrap();
     let resized = size.changed().expect("local resize applies");
     terminal.resize_to(resized).unwrap();
     let announced = terminal.size_event().unwrap();
-    terminal.input(b"stty size; echo SIZE_\"TWO\"\n").unwrap();
+    terminal
+        .input(b"/bin/stty size; echo SIZE_\"TWO\"\n")
+        .unwrap();
     let second = read_until(&mut terminal, "SIZE_TWO");
     terminal.stop();
     assert!(first.contains("40 120"), "{first}");
