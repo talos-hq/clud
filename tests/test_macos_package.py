@@ -100,3 +100,19 @@ def test_app_installs_from_a_pristine_helper_beside_the_bound_main_executable(tm
     assert (contents / "MacOS" / "clud").read_bytes() == universal.read_bytes()
     assert (contents / "Helpers" / "clud").read_bytes() == universal.read_bytes()
     assert "Contents/Helpers/clud\" --installer" in pkg.README
+
+
+def test_offline_block_restarts_the_ticket_daemons_before_the_gate_runs(monkeypatch) -> None:
+    """A CloudKit connection opened before /etc/hosts changed would not
+    re-resolve, letting the bare binary assess as notarized (seen on arm64)."""
+    calls: list[list[str]] = []
+    monkeypatch.setattr(pkg, "_require", lambda command, *a, **k: calls.append(command) or "")
+    monkeypatch.setattr(pkg, "_quiet", lambda command, **k: calls.append(command) or (0, ""))
+    monkeypatch.setattr(pkg.socket, "getaddrinfo",
+                        lambda host, port: [(None, None, None, "", ("127.0.0.1", port))])
+    with pkg.ticket_service_blocked():
+        inside = list(calls)
+    kills = [c[-1] for c in inside if c[:3] == ["sudo", "killall", "-9"]]
+    assert kills == list(pkg.TICKET_DAEMONS)
+    assert inside.index(["sudo", "tee", "-a", "/etc/hosts"]) < inside.index(
+        ["sudo", "killall", "-9", "syspolicyd"])

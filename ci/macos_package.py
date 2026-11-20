@@ -324,12 +324,21 @@ def hosts_lines() -> str:
     )
 
 
+TICKET_DAEMONS = ("syspolicyd", "cloudd")
+
+
 @contextlib.contextmanager
 def ticket_service_blocked():
     """Make Gatekeeper's ticket lookup unreachable, and prove it is."""
     _require(["sudo", "tee", "-a", "/etc/hosts"], "block hosts", input=hosts_lines())
     _quiet(["sudo", "dscacheutil", "-flushcache"])
     _quiet(["sudo", "killall", "-HUP", "mDNSResponder"])
+    # The ticket lookup goes through CloudKit daemons whose connections,
+    # opened before the block, never re-resolve; launchd restarts them on
+    # demand, so the next lookup must resolve through /etc/hosts. Without
+    # this the negative control saw a notarized verdict on an arm64 runner.
+    for daemon in TICKET_DAEMONS:
+        _quiet(["sudo", "killall", "-9", daemon])
     try:
         for host in TICKET_HOSTS:
             addresses = {info[4][0] for info in socket.getaddrinfo(host, 443)}
