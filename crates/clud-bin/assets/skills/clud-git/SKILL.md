@@ -83,7 +83,7 @@ judge landed-ness by hand; use the squash-aware report:
    each local branch `retire` (merged PR head covers the tip, patch match, or
    no commits of its own), `follow-up` (commits after its merged PR: unmerged
    work), or `keep` (open PR, no PR, uncommitted changes, a worktree, doubt).
-2. **Retire.** `"$CLUD_EXE" gc branches --retire` switches a landed current
+2. **Retire — this is the action, not a bare `git switch`.** Whenever the report shows a `retire` row, run `--retire`: a manual `git switch <default>` leaves every landed branch behind, which is the pile-up this playbook exists to stop. Retiring is safe by construction (each branch is re-verified at its tip just before deletion; `origin` deletes are leased). `"$CLUD_EXE" gc branches --retire` switches a landed current
    branch back to the default branch, fast-forwards it, and deletes every
    landed branch locally and on `origin` (leased; never a branch that is the
    base of an open PR). `--keep-remote` keeps `origin` copies;

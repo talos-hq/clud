@@ -8724,3 +8724,9 @@ instead of lingering unnoticed. A branch whose PR is beyond the 3000
 most recent, or that was squash-merged with conflict edits and has no
 PR, stays `keep` (DD-122's cost-is-disk rule). Remote deletion runs only
 with a PR lookup.
+Codex launches get no `SessionStart` hook from clud (only `PreToolUse` is
+wired), so for them the landing contract's standing instruction (check
+`gc branches` before new work on a non-default branch, and `--retire`
+rather than a bare `git switch`) carries the correction. A live Codex test
+on this repository switched back to `main` but deleted nothing until that
+wording said `--retire` is the action.

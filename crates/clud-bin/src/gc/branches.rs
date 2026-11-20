@@ -177,7 +177,8 @@ fn summary(report: &BranchReport, retired: bool, remote_ok: usize) -> String {
     if !retired && (retire > 0 || remote_ok > 0) {
         out.push_str(&format!(
             "{retire} landed local branch(es){}. Run `{RETIRE_COMMAND}{}` to switch back to {} \
-             and delete them.\n",
+             and delete them. It re-verifies each branch at its tip before deleting it and leases \
+             every origin delete; a bare `git switch` leaves them behind.\n",
             if remote_ok > 0 {
                 format!(" and {remote_ok} merged origin-only branch(es)")
             } else {
