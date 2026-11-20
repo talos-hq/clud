@@ -191,6 +191,36 @@ and SSH/OS administration afterward. iDRAC access does not unlock encrypted
 disks. Do not claim installation, virtual-media boot, or a firmware upgrade was
 tested merely because its API is advertised.
 
+## Hand the installed server to its role
+
+An installer that writes GRUB only to the removable path (`EFI/BOOT/BOOTX64.EFI`)
+leaves the firmware without an entry for the new disks. Add one per ESP from
+the installer (`efibootmgr -c -d <disk> -p 1 -L <label> -l '\EFI\BOOT\BOOTX64.EFI'`)
+and put them first. Then eject the virtual media, disable the boot override,
+and prove a disk-only cold boot before calling the host independent. On an
+R640 with BIOS 2.8.2 that order booted a btrfs RAID 1 system from either ESP
+with no keyboard input.
+
+When the server joins a fleet that a repository describes (for example a
+NixOS flake of self-hosted CI runners), follow that repository's bring-up
+document instead of improvising. Record the host there (inventory entry,
+pinned iDRAC certificate, keyring service name, never a password), build the
+host's configuration before installing it, and check that the copy on the
+installer belongs to root (`rsync --chown=root:root`): Nix refuses a flake
+whose git checkout another user owns. Register CI runners only with a short
+lived registration token delivered over ssh stdin, scope the runner group to
+the repositories that will use it, delete the token once every runner holds
+an identity, and confirm each runner is online with the expected labels
+through the GitHub API. A first container image pull onto spinning disks
+can take 20 to 40 minutes; let a background waiter with a deadline report it
+rather than restarting the units.
+
+Route work to new self-hosted runners behind an explicit switch whose unset
+state keeps the hosted runners (a repository variable read by the workflow),
+keep fork pull requests and release builds on hosted runners, and verify one
+real job passes on the new host before reporting it in service. Removing the
+switch is the rollback.
+
 Deliver a short status report with verified controls, faults, remaining physical
 requirements, and the non-secret local profile/tool locations. Separate control
 readiness from a completed OS installation. For code fixes discovered during
