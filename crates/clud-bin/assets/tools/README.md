@@ -111,7 +111,7 @@ the attempt changed, jobs remain active, or those reads fail (#2512). See
 queue, or performs a normal squash merge when no queue applies. It requires
 `--repo OWNER/REPO` and `--match-head-commit` with the full head SHA; it never
 uses admin bypass. A successful enqueue is not a merged PR: follow it with
-`github/pr_merge_watch.py`. See [CI merge queue](../../../../docs/architecture/ci.md#merge-queue-2048-decided).
+`github/pr_merge_watch.py`. See [CI merge queue](../../../../docs/architecture/ci.md#merge-queue-2048-decided). On `MERGED` it also deletes the PR's head branch on GitHub when the repository's `delete_branch_on_merge` is off (`--keep-branch` or a `keep-branch` label opts out) and prints `RETIRE-LOCAL` with `clud gc branches --retire` (DD-230).
 
 `voice/transcribe.py` transcribes a 16 kHz mono WAV through the external
 `talos-vox` or `voxtype` CLI and prints only the transcript:

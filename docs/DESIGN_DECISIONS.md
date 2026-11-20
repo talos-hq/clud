@@ -8674,3 +8674,59 @@ user's view is untouched. A local terminal outside the protocol's bounds
 Users get the fix with a clud release; the server side is backward
 compatible with older clients and must be deployed for new clients to take
 over the size.
+
+## DD-230: a landed branch is retired from the primary checkout too, and nudged at session start
+
+**Context:** PR #2859 squash-merged through the merge queue while the
+session that pushed it stayed on `feat/dell-idrac-skill-evolve` in the
+primary checkout. The chaperone had no checkout and nobody else ran the
+worker's "return the checkout to the clean default branch" step. Hours later
+the session saw that the branch matched `main` and still left it checked
+out. The repository had GitHub's `delete_branch_on_merge` off, so `origin`
+kept the branch too. One audit found 29 local and 160 `origin` branches of
+merged PRs. `git branch --merged` reports none of them because squash merges
+create new commits (DD-122). The DD-122 worktree reclaimer did not cover
+them either: it pins the primary checkout and judges only branches that have
+a worktree.
+
+**Decision:** The DD-122 evidence (a merged PR whose head covers the tip, or
+a patch-equivalent default-branch commit) now also judges every local branch
+(`repo_branch_verdict`). `clud gc branches` reports `retire`, `keep` or
+`follow-up` for each branch. With `--retire` it switches the primary
+checkout off a landed current branch, fast-forwards the default branch
+(`--ff-only`), and deletes each landed branch after re-probing it at its
+verified tip. It also deletes the `origin` copy under `--force-with-lease`,
+but only when the remote tip is the merged PR's exact head or the verified
+local tip, and no open PR uses the branch as its head or base.
+Commits after a merged PR's head are `follow-up`: unmerged work that needs
+a new PR, never deleted. The `SessionStart` hook adds one paragraph to the
+agent's context when the checkout is parked on a landed or follow-up
+branch (`CLUD_BRANCH_NUDGE=0` turns it off). `pr_merge_watch.py` deletes a
+merged PR's head branch on GitHub when the repository's own setting is off,
+under the same exact-head and no-stacked-PR rules, and prints the local
+retire command. Both `pr_merge_watch.py` and `clud gc branches` warn when
+`delete_branch_on_merge` is off.
+
+**Why not only the repository setting:** GitHub's setting is the best fix
+for `origin`, and the tools recommend it, but it never touches a local
+clone, and clud also works in repositories whose settings the user cannot
+change.
+**Why not retire automatically from the hook:** switching a checkout's
+branch is visible to the user and their editor. The hook only reads state
+and adds context. The agent acts, so it can tell the user when it keeps a
+branch on purpose.
+**Why `follow-up` and not `keep`:** the dangerous case is a branch reused
+after its PR merged. Naming it gets that work a PR instead of leaving it
+looking like clutter.
+
+**Consequences:** A merged branch gets a nudge in the next session
+instead of lingering unnoticed. A branch whose PR is beyond the 3000
+most recent, or that was squash-merged with conflict edits and has no
+PR, stays `keep` (DD-122's cost-is-disk rule). Remote deletion runs only
+with a PR lookup.
+Codex launches get no `SessionStart` hook from clud (only `PreToolUse` is
+wired), so for them the landing contract's standing instruction (check
+`gc branches` before new work on a non-default branch, and `--retire`
+rather than a bare `git switch`) carries the correction. A live Codex test
+on this repository switched back to `main` but deleted nothing until that
+wording said `--retire` is the action.

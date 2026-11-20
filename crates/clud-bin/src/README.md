@@ -947,6 +947,7 @@ Quick lookup, which file owns a given subcommand:
   adds `--plugin-dir` and the seed prompt (#1851).
 - `clud --detach`, `clud attach`, `clud list`, `clud kill`, `clud logs` -> all
   in `daemon/` (dispatched from `daemon::handle_special_command`).
+- `clud gc branches [--retire]` -> `gc/branches.rs` (report, retire, `SessionStart` nudge; DD-230) over `daemon/gc_service/repo_branch*.rs`.
 - `clud gc list` / `prune` / `purge` / `all` / `reconcile` -> `gc/cli.rs` (CLI handlers) talking to
   `daemon/gc_service.rs` (registry owner inside the always-on `__daemon`).
 - `clud grind [url]` -> `grind.rs` resolves the repo's `origin` remote to its

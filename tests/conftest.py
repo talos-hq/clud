@@ -27,6 +27,9 @@ scrub_clud_session_env(os.environ)
 scrub_clud_session_path(os.environ)
 # Test children may only use fake secret acquisition, never the user's desktop.
 os.environ["CLUD_TEST_NO_SECRET_UI"] = "1"
+# pr_merge_watch's post-merge step deletes a real head branch through gh
+# (DD-230); tests that follow a fake PR to MERGED must never reach GitHub.
+os.environ["CLUD_PR_MERGE_WATCH_NO_BRANCH_CLEANUP"] = "1"
 for _display_variable in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET"):
     os.environ.pop(_display_variable, None)
 

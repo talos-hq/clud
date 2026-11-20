@@ -1418,6 +1418,28 @@ pub struct GcKeepArgs {
     pub list: bool,
 }
 
+/// `clud gc branches` (DD-230).
+#[derive(clap::Args, Debug, Clone)]
+pub struct GcBranchesArgs {
+    /// Switch off a landed current branch, fast-forward the default branch,
+    /// and delete every landed local branch (and its `origin` copy).
+    #[arg(long = "retire")]
+    pub retire: bool,
+    /// With `--retire`, leave the `origin` copies alone.
+    #[arg(long = "keep-remote")]
+    pub keep_remote: bool,
+    /// Also judge `origin` branches that have no local branch; with
+    /// `--retire`, delete the ones a merged PR's exact head proves landed.
+    #[arg(long = "sweep-remote")]
+    pub sweep_remote: bool,
+    /// Do not `git fetch --prune origin` first.
+    #[arg(long = "no-fetch")]
+    pub no_fetch: bool,
+    /// Emit JSON instead of the table.
+    #[arg(long = "json")]
+    pub json: bool,
+}
+
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
     /// Compare backend latency with isolated, validated samples.
@@ -2173,6 +2195,10 @@ pub enum GcSubcommand {
     /// Issue #2101: pin a worktree (default: the current directory) so the
     /// daemon never reclaims it. Bare `--list` prints the kept paths.
     Keep(Box<GcKeepArgs>),
+    /// DD-230: judge this checkout's local branches with squash-aware
+    /// evidence (merged PR head or patch match) and, with `--retire`,
+    /// switch back to the default branch and delete the landed ones.
+    Branches(Box<GcBranchesArgs>),
 }
 
 const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[

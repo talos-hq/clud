@@ -598,6 +598,45 @@ the default branch, so ancestry-based checks call them live work forever
   and `ensure_worktree_root()` return `None` under `cfg(test)`, and tests
   inject a tempdir root.
 
+## Local branches: `clud gc branches` (DD-230)
+
+The worktree verdict above pins the primary checkout and ignores branches
+that have no worktree. Squash-merged branches parked in the main clone, or
+left behind after `git switch`, therefore piled up, and `git branch --merged`
+cannot see them. `clud gc branches` applies the same DD-122 evidence to every
+local branch:
+
+| verdict | meaning |
+|---|---|
+| `retire` | merged via a PR whose head covers the tip, landed by patch match, or holding no commits of its own (not current) |
+| `follow-up` | commits after a merged PR's head: unmerged work that needs a new PR, never deleted |
+| `keep` | open PR, no PR, closed PR, uncommitted changes on the current branch, a linked worktree, or doubt |
+
+- `--retire` switches a landed current branch back to the default branch,
+  fast-forwards it (`--ff-only`), and deletes each landed branch only after
+  re-probing it at the same tip (`repo_branch_exec`). The `origin` copy goes
+  under `--force-with-lease`, only when its tip is the merged PR's exact head
+  or the verified local tip and no open PR has it as head or base.
+  `--keep-remote` keeps every `origin` copy.
+- `--sweep-remote` also judges `origin` branches with no local twin, and
+  with `--retire` deletes those whose tip is a merged PR's exact head.
+- The report warns when GitHub's `delete_branch_on_merge` is off and prints
+  the `gh api` command that enables it.
+- The `SessionStart` hook (`session_history::hook`) runs the one-branch
+  probe for the checkout's current branch: one `gh pr list --head` call,
+  no fetch, skipped on the default branch. When the branch is `retire` or
+  `follow-up`, it adds a paragraph to the agent's context.
+  `CLUD_BRANCH_NUDGE=0` turns it off.
+- `pr_merge_watch.py` (on `MERGED`) deletes the head branch on GitHub when
+  that setting is off and the ref is still the merged head, then prints
+  `RETIRE-LOCAL` with the command above. The chaperone has no checkout, so
+  the agent that owns the checkout runs the local half.
+
+Code: `daemon/gc_service/repo_branch.rs` (pure verdict and decision table),
+`repo_branch_probe.rs` (facts, PR lookups, remote decision),
+`repo_branch_exec.rs` (re-verify and retire), `gc/branches.rs` (CLI and
+nudge).
+
 ## Filesystem sweeps (non-registry)
 
 Alongside the redb-tracked kinds, the daemon's periodic tick

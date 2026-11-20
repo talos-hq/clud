@@ -17,6 +17,7 @@
 //! daemon. The daemon owns one deduplicated OS watcher per root plus a bounded
 //! fallback reconciliation schedule; it inserts only previously unseen rows.
 
+pub mod branches;
 mod cli;
 pub mod delete_audit;
 pub mod keep_list;
