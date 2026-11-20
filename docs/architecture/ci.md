@@ -422,9 +422,26 @@ steps and no action: runner start plus about 3 s
 `ci-lint gate` does not accept a skip output as coverage. Anything else runs it in full:
 no trailer, an edit or rebase after attesting, more than 24 hours, a fork, a
 `[ci-full]`/`[no-attest]` title, or a PR touching `.github/`,
-`ci-attestations.yml`, `ci.toml` or `local-gate.toml`. Merge groups (which
-run every lane on the merged tree), `main`, nightly and release runs never
-read trailers.
+`ci-attestations.yml`, `ci.toml` or `local-gate.toml`. `main`, nightly and
+release runs never read trailers. Merge groups run every lane on the merged
+tree unless the forwarding switch below is on.
+
+#### Merge-queue forwarding (DD-227, ships off)
+
+`ci-attestations-queue.toml` at the repo root holds `forward = "off" |
+"shadow" | "on"` and a `signers` allowlist. In a `merge_group` run, the
+`CI mode` job's "Judge merge-queue attestation forwarding" step extracts the
+**base** commit's `ci/` and runs `ci/attest_queue.py` from it, so the switch,
+the policy and the judge all come from `main`, never from the queued PR. With
+`on`, an entry reduces Clippy or a Dylint leg in place (exactly like a PR,
+DD-226) only when it is the first entry of its group, its tree equals its PR
+head's tree (the branch already contained the main tip), GitHub verified the
+head's signature by an allowlisted signer, and `prooft queue` accepts the
+head's trailers. Anything else runs hosted, and `shadow` only prints the
+decision to the run summary. To maximise hits, rebase onto `origin/main`
+and run `ci.attest` just before enqueueing. Trust options and the
+recommendation:
+[DD-227](../DESIGN_DECISIONS.md#dd-227-a-merge-queue-entry-may-inherit-its-pr-heads-attestations-behind-a-base-owned-switch-that-ships-off).
 
 A lane that cannot run on the local host fails, stamps nothing, and runs
 hosted. Lanes drop `SOLDR_PORCELAIN` and set `SOLDR_VERDICTS=off`, so a
