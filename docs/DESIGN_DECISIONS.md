@@ -8549,3 +8549,72 @@ else is unchanged. `tests/test_attest_queue.py` covers the positive case
 and each fallback: a tree mismatch, a batched entry, an untrusted or
 missing signature, a fork or moved head, an unattested head, a head that
 edits the switch, and shadow mode.
+
+## DD-228: local attestation runs lanes at once, keeps soldr's verdicts, and checks Dylint's output
+
+**Status:** Accepted. Revises the producer half of
+[DD-225](#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them)
+(its `SOLDR_VERDICTS=off` rule); the hosted verifier is unchanged.
+
+**Context:** the first `python -m ci.attest` run took 55.6 minutes at load
+~160, and its host Dylint lane could not pass locally. Three causes:
+
+- *The host lane failed.* `enforce_platform_boundary`'s UI test launches
+  nested Cargo through `dylint_testing`, outside soldr's Dylint front door.
+  On a runner, setup-soldr exports `DYLINT_DRIVER_PATH` job-wide; locally
+  nothing does, so `dylint_testing` tried to build `dylint_driver` from
+  crates.io and failed with `Could not parse toolchain: nightly-2026-08-15`.
+  soldr itself keeps the verified driver under `$SOLDR_HOME/dylint/drivers`
+  (`dylint_driver.rs::driver_root`), staged under both channel names.
+- *Everything was sequential and nothing was reused.* Four lanes ran one
+  after another, and `SOLDR_VERDICTS=off` forced every pass to run even when
+  `bash lint` had just run the identical host Dylint command.
+- *Cold target directories.* A fresh worktree has an empty `target/`; even
+  with ~1,000 zccache hits the Clippy lane spent 454 s in clippy and 439 s
+  in doc-tests at load 66-158. Measured on one host (16 threads),
+  sequential, fresh clone: Clippy 893 s, host Dylint 931 s, Windows Dylint
+  741 s, darwin Dylint 885 s; 3,450 s in all. The same code on the then-warm
+  tree took 394 s (38 + 91 + 159 + 106) at load ~100.
+
+DD-225 turned verdicts off because a `SOLDR_PORCELAIN=1` Dylint run linted
+nothing, exited 0, and was recorded as a passing verdict that later runs
+replayed. This is filed as
+[forge-ci/soldr#4175](https://github.com/forge-ci/soldr/issues/4175): one
+porcelain run poisoned the ledger for every clone on the machine, and a
+plain `soldr dylint --all` in a pristine clone "passed" in 1 s.
+
+**Decision:**
+
+- The host lane exports `DYLINT_DRIVER_PATH` (the caller's value, else
+  soldr's driver root) to the UI test and runs `ci.attest --check-driver`,
+  the local form of the workflow's `test -f` on the short-name driver.
+- Lanes run concurrently. prooft's `run` amends HEAD per lane, so
+  `ci.attest` applies its rules around the batch instead: a clean tree
+  before, the same HEAD and a clean tree after, and then one
+  `LaneRun.record` per passing lane (same tree and parents for every
+  stamp). The cross Dylint lanes get their own `CARGO_TARGET_DIR`, because
+  cargo-dylint's `--target` checks would otherwise serialise on the host
+  layout's build lock.
+- The verdict ledger stays on, so a lane whose exact inputs already passed
+  replays. The empty-pass bug is handled by checking the output, not by
+  disabling the cache: every `soldr dylint --all` pass, real or replayed
+  (a replay re-prints the recorded output), must show a
+  ``Building workspace metadata entry `<lib>` `` line for every
+  `dylints/*` library and the ``Checking with toolchain`` line, and must not
+  say `No libraries were found`. A replay that fails the check is rerun
+  once with `SOLDR_VERDICTS=off`; a real run that fails it stamps nothing.
+
+**Consequences:** on the same warm tree and load (~100), all four lanes
+finished in 107 s wall (lanes 54-103 s) against 394 s sequential, and that
+run also exercised the guard: the host lane replayed the poisoned porcelain
+record, was rejected ("a hollow pass") and rerun, and the cross lanes'
+replays carried no output and were rerun too. soldr 0.9.54 records no
+output for a normal Dylint run (`output_captured: false`), so a Dylint
+replay can never be verified and always costs a real warm run; Clippy and
+doc-test replays are used as they are. A fresh worktree still pays the cold
+compile once (about 15 minutes per lane at load 100+, now in parallel). The
+Clippy lane cannot share `bash lint`'s outputs: the hosted job runs
+`ci.xbuild clippy --target x86_64-unknown-linux-gnu` with soldr's prepared
+target env, while `soldr lint rust` checks the host without `--target`, and
+the lane must run the hosted command (`tests/test_attest.py` pins it). It
+reuses a previous attest's target directory in the same checkout.

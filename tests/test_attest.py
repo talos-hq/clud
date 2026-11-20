@@ -17,6 +17,7 @@ import json
 import re
 import shutil
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -94,10 +95,43 @@ def test_dylint_lanes_run_the_hosted_commands() -> None:
             if step.argv[:2] == ("soldr", "dylint"):
                 assert step.unset == ("RUSTUP_TOOLCHAIN",)
                 assert f"env -u RUSTUP_TOOLCHAIN {command}" in DYLINT_YML, command
+            elif step.argv[1:] == ("-m", "ci.attest", "--check-driver"):
+                # The local form of the workflow's driver `test -f`.
+                check = f'test -f "$DYLINT_DRIVER_PATH/{attest.DYLINT_TOOLCHAIN}/dylint-driver"'
+                assert check in DYLINT_YML
             else:
                 assert command in DYLINT_YML, command
     for target in attest.DYLINT_CROSS_TARGETS:
         assert all(("RUSTFLAGS", "-D warnings") in s.env for s in table[f"dylint-{target}"])
+
+
+def test_host_lane_points_nested_cargo_at_the_verified_driver(tmp_path: Path) -> None:
+    """The UI test's nested Cargo needs DYLINT_DRIVER_PATH, which only setup-soldr
+    exports on a runner; without it dylint_testing builds the driver from
+    crates.io and fails ("Could not parse toolchain")."""
+    root = tmp_path / "drivers"
+    steps = attest.lanes(environ={"DYLINT_DRIVER_PATH": str(root)})["dylint"]
+    ui = next(s for s in steps if s.cwd == attest.DYLINT_CRATES[1] and "test" in s.argv)
+    assert ("DYLINT_DRIVER_PATH", str(root)) in ui.env
+    check = [s for s in steps if s.argv[-1] == "--check-driver"]
+    assert len(check) == 1
+    assert steps.index(check[0]) < steps.index(ui)
+
+
+def test_driver_path_follows_soldr_precedence(tmp_path: Path) -> None:
+    explicit = {"DYLINT_DRIVER_PATH": "/x", "SOLDR_HOME": "/s"}
+    assert attest.dylint_driver_path(explicit) == Path("/x")
+    assert attest.dylint_driver_path({"SOLDR_HOME": "/s"}) == Path("/s/dylint/drivers")
+    assert attest.dylint_driver_path({}) == Path.home() / ".soldr" / "dylint" / "drivers"
+
+
+def test_driver_check_needs_the_short_channel_name(tmp_path: Path) -> None:
+    env = {"DYLINT_DRIVER_PATH": str(tmp_path)}
+    assert attest.check_dylint_driver(env) == 1
+    driver = tmp_path / attest.DYLINT_TOOLCHAIN / "dylint-driver"
+    driver.parent.mkdir()
+    driver.write_bytes(b"")
+    assert attest.check_dylint_driver(env) == 0
 
 
 # ── the producer's lane runner ───────────────────────────────────────────────
@@ -124,14 +158,92 @@ def test_exec_lane_sets_and_unsets_environment(tmp_path: Path) -> None:
     assert json.loads(out.read_text(encoding="utf-8")) == {"A": "set", "B": None}
 
 
-def test_lanes_never_inherit_soldr_porcelain_or_replay_verdicts() -> None:
-    """Porcelain mode made a local Dylint pass lint nothing and still exit 0,
-    and soldr's verdict cache then replayed that hollow pass."""
+def test_lanes_never_inherit_soldr_porcelain() -> None:
+    """Porcelain mode made a local Dylint pass lint nothing and still exit 0
+    (forge-ci/soldr#4175). The verdict ledger stays on (DD-228): the Dylint
+    guard reads replayed output too."""
     for steps in attest.lanes().values():
         for step in steps:
             env = step.environment({"SOLDR_PORCELAIN": "1", "PATH": "/bin"})
             assert "SOLDR_PORCELAIN" not in env, step.argv
-            assert env["SOLDR_VERDICTS"] == "off", step.argv
+            assert "SOLDR_VERDICTS" not in env, step.argv
+
+
+# What soldr 0.9.54 printed under SOLDR_PORCELAIN=1 (exit 0, status ok), and
+# the evidence lines of a real hosted pass (run 44612037074, Dylint host).
+HOLLOW_DYLINT = [
+    "Warning: failed to interpret `cargo metadata`'s json: missing field `packages`",
+    "Warning: No libraries were found.",
+]
+LIBS = frozenset({"ban_dirs_home_dir", "ban_manual_slash_normalize", "enforce_platform_boundary"})
+REAL_DYLINT = [
+    *(f"    0.20 Building workspace metadata entry `{lib}`" for lib in sorted(LIBS)),
+    "   10.63 Checking with toolchain `nightly-2026-08-15-x86_64-unknown-linux-gnu`",
+    "   11.21     0.33     Checking cfg-if v1.0.4",
+]
+
+
+def test_real_dylint_output_is_evidence() -> None:
+    assert attest.dylint_pass_problem(REAL_DYLINT, LIBS) is None
+
+
+@pytest.mark.parametrize(
+    ("lines", "needle"),
+    [
+        (HOLLOW_DYLINT, "hollow pass"),
+        ([], "did not load"),
+        (REAL_DYLINT[1:], "did not load ban_dirs_home_dir"),
+        ([line for line in REAL_DYLINT if "Checking with" not in line], "never ran the check"),
+    ],
+)
+def test_empty_pass_guard_rejects_a_dylint_run_that_linted_nothing(
+    lines: list[str], needle: str
+) -> None:
+    problem = attest.dylint_pass_problem(lines, LIBS)
+    assert problem is not None
+    assert needle in problem
+
+
+def test_guard_libraries_are_the_workspace_dylint_libraries() -> None:
+    cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
+    assert 'libraries = [{ path = "dylints/*" }]' in cargo
+    assert attest.dylint_libraries() >= {Path(c).name for c in attest.DYLINT_CRATES}
+
+
+def test_a_hollow_dylint_pass_that_exits_zero_fails_its_lane(tmp_path: Path) -> None:
+    script = "; ".join(f"print({line!r})" for line in HOLLOW_DYLINT)
+    step = attest.Step((sys.executable, "-c", script), dylint_guard=True)
+    assert attest.exec_lane("dylint", (step,), libraries=LIBS) == 1
+    real = "; ".join(f"print({line!r})" for line in REAL_DYLINT)
+    step = attest.Step((sys.executable, "-c", real), dylint_guard=True)
+    assert attest.exec_lane("dylint", (step,), libraries=LIBS) == 0
+
+
+def test_a_rejected_replay_is_rerun_with_the_ledger_off(tmp_path: Path) -> None:
+    """A poisoned verdict (the hollow porcelain record) must cost a real run,
+    not a failed lane: the rerun sees SOLDR_VERDICTS=off and real output."""
+    replay = [*HOLLOW_DYLINT, "soldr: dylint skipped: inputs match a passing run (verdict k)"]
+    script = (
+        "import os\n"
+        f"lines = {REAL_DYLINT!r} if os.environ.get('SOLDR_VERDICTS') == 'off' else {replay!r}\n"
+        "print('\\n'.join(lines))\n"
+    )
+    step = attest.Step((sys.executable, "-c", script), dylint_guard=True)
+    assert attest.exec_lane("dylint", (step,), libraries=LIBS) == 0
+    # A hollow pass that was not a replay is not retried.
+    hollow = "; ".join(f"print({line!r})" for line in HOLLOW_DYLINT)
+    step = attest.Step((sys.executable, "-c", hollow), dylint_guard=True)
+    assert attest.exec_lane("dylint", (step,), libraries=LIBS) == 1
+
+
+def test_every_workspace_dylint_pass_is_guarded() -> None:
+    for name, steps in attest.lanes().items():
+        if not name.startswith("dylint"):
+            continue
+        passes = [s for s in steps if s.argv[:3] == ("soldr", "dylint", "--all")]
+        assert passes, name
+        assert all(s.dylint_guard for s in passes), name
+        assert not any(s.dylint_guard for s in steps if s not in passes), name
 
 
 def test_unknown_lane_is_a_usage_error() -> None:
@@ -196,6 +308,44 @@ def test_a_passing_lane_stamps_its_gates_and_reduces_its_job(repo: Path) -> None
     plan = _plan(repo)
     assert plan[CLIPPY_JOB] is True
     assert not any(skip for job, skip in plan.items() if job != CLIPPY_JOB)
+
+
+@pytestmark_git
+def test_parallel_attest_stamps_only_the_lanes_that_passed(repo: Path) -> None:
+    barrier = threading.Barrier(2, timeout=30)
+
+    def run(name: str) -> attest.LaneResult:
+        barrier.wait()  # both lanes must be in flight at once
+        return attest.LaneResult(name, 0 if name == "clippy" else 1, 1)
+
+    assert attest.attest(["clippy", "dylint"], root=repo, run=run) == 1
+    gates = {a.gate for a in Trailers.parse(_git(repo, "log", "-1", "--format=%B")).attestations}
+    assert gates == {
+        "rust/x86_64-unknown-linux-gnu/clippy",
+        "rust/x86_64-unknown-linux-gnu/doctest",
+    }
+    plan = _plan(repo)
+    assert plan[CLIPPY_JOB] is True
+    assert plan["_dylint.yml:dylint-host"] is False
+
+
+@pytestmark_git
+def test_parallel_attest_stamps_every_passing_lane_on_one_tree(repo: Path) -> None:
+    tree = _git(repo, "rev-parse", "HEAD^{tree}")
+    names = list(attest.lanes())
+    assert attest.attest(names, root=repo, run=lambda n: attest.LaneResult(n, 0, 1)) == 0
+    assert _git(repo, "rev-parse", "HEAD^{tree}") == tree
+    assert all(_plan(repo).values())
+
+
+@pytestmark_git
+def test_a_lane_that_dirties_the_tree_stamps_nothing(repo: Path) -> None:
+    def run(name: str) -> attest.LaneResult:
+        (repo / "src" / "lib.rs").write_text("pub fn changed() {}\n", encoding="utf-8")
+        return attest.LaneResult(name, 0, 1)
+
+    assert attest.attest(["clippy"], root=repo, run=run) == 1
+    assert not Trailers.parse(_git(repo, "log", "-1", "--format=%B")).attestations
 
 
 @pytestmark_git
