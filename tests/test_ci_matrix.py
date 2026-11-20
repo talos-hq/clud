@@ -742,3 +742,26 @@ def test_preprune_is_ordered_before_writers_and_only_deletes_on_main_pushes() ->
         assert "needs.static.result == 'success'" in block
         assert "needs.cache-maint.result == 'success'" in block
         assert "needs.cache-maint.result == 'skipped'" in block
+
+
+def test_self_hosted_linux_build_routing_stays_guarded():
+    """The Dell build pool takes only CI's own same-repo Linux x64 dev builds.
+
+    `_build-target.yml` routes to the repo variable CLUD_LINUX_X64_BUILD_RUNNER.
+    Every guard below keeps untrusted or release work off a persistent
+    self-hosted runner; the hosted label stays the fallback.
+    """
+    text = BUILD_YML.read_text(encoding="utf-8")
+    match = re.search(r"^    runs-on: >-\n((?:      .*\n)+)", text, re.MULTILINE)
+    assert match, "_build-target.yml build job must compute runs-on"
+    expr = " ".join(match.group(1).split())
+    for guard in (
+        "vars.CLUD_LINUX_X64_BUILD_RUNNER != ''",
+        "inputs.target == 'x86_64-unknown-linux-gnu'",
+        "inputs.profile != 'release'",
+        "startsWith(github.workflow_ref, "
+        "format('{0}/.github/workflows/ci.yml@', github.repository))",
+        "github.event.pull_request.head.repo.full_name == github.repository",
+    ):
+        assert guard in expr, f"self-hosted routing lost its guard: {guard}"
+    assert expr.endswith("&& vars.CLUD_LINUX_X64_BUILD_RUNNER || inputs.runs-on }}")

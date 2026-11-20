@@ -98,7 +98,20 @@ on:
 jobs:
   build:
     name: ${{ inputs.target }}
-    runs-on: ${{ inputs.runs-on }}
+    # The self-hosted Dell build pool (forge-ci/gh-runner host dell-jw22zc3,
+    # talos-hq runner group Dell-NixOS, clud only) takes the Linux x64 dev
+    # build when the repo variable CLUD_LINUX_X64_BUILD_RUNNER names its
+    # label. Only CI's own dev builds of same-repo code go there: release
+    # builds, other callers and fork PRs keep the hosted label. Unset the
+    # variable to fall back to hosted runners at once.
+    runs-on: >-
+      ${{ (vars.CLUD_LINUX_X64_BUILD_RUNNER != ''
+           && inputs.target == 'x86_64-unknown-linux-gnu'
+           && inputs.profile != 'release'
+           && startsWith(github.workflow_ref, format('{0}/.github/workflows/ci.yml@', github.repository))
+           && (github.event_name != 'pull_request'
+               || github.event.pull_request.head.repo.full_name == github.repository))
+          && vars.CLUD_LINUX_X64_BUILD_RUNNER || inputs.runs-on }}
     timeout-minutes: 60
     env:
       RUST_BACKTRACE: "1"
