@@ -19,6 +19,10 @@ every backend's skills dir on launch. `clud-loop` was retired once
 
 - [clud-secret/](clud-secret/SKILL.md) - Masked credential acquisition with
   direct sinks and optional full-value regex validation.
+- [clud-dell-idrac/](clud-dell-idrac/SKILL.md) - Dell PowerEdge/VxRail access
+  recovery, live hardware reports, and verified agent console control through
+  iDRAC/Redfish. Uses local profiles and credential sinks without bundling
+  machine-specific data.
 
 - [grind/](grind/SKILL.md) - Router for the `/grind` DAG: intake, mode,
   per-role models and local-CI questions, then the bundled `grind-run` workflow.

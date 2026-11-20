@@ -379,6 +379,13 @@ fn bundled_includes_all_known_skills() {
     assert!(names.contains(&"clud-preloop"));
 }
 
+#[test]
+fn bundled_includes_dell_idrac_skill() {
+    assert!(BUNDLED_SKILLS
+        .iter()
+        .any(|skill| skill.name == "clud-dell-idrac"));
+}
+
 /// Issue #531: the Docker-recovery skill must trigger on the failure
 /// modes from the incident (engine pipe absent, WSL/Docker startup
 /// failures, Docker VM disk/memory questions) and must carry the
