@@ -379,13 +379,13 @@ def gate(directory: Path, version: str) -> None:
             _require(["hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen",
                       "-mountpoint", str(mount), str(dmg)], "hdiutil attach")
             try:
-                gate_mounted(mount, version, scratch)
+                gate_mounted(mount, version)
             finally:
                 _quiet(["hdiutil", "detach", "-force", str(mount)])
     print(f"offline Gatekeeper gate passed for {dmg_name(version)}")
 
 
-def gate_mounted(mount: Path, version: str, scratch: Path) -> None:
+def gate_mounted(mount: Path, version: str) -> None:
     app = mount / APP_NAME
     if not (mount / README_NAME).is_file():
         raise SigningError(f"the disk image lacks {README_NAME!r}")
@@ -396,9 +396,14 @@ def gate_mounted(mount: Path, version: str, scratch: Path) -> None:
     clud = app / "Contents" / "MacOS" / "clud"
     if lipo_archs(clud) != set(UNIVERSAL_ARCHS):
         raise SigningError(f"{APP_NAME}'s clud is not universal")
-    home = scratch / "home"
-    home.mkdir(mode=0o700)
-    install_from_app(clud, version, home)
+    # The installer refuses a HOME reached through a symlinked ancestor, and
+    # macOS's temporary directory is under /var -> /private/var. A scratch
+    # home under the runner's real home is what a user's home looks like.
+    home = Path(tempfile.mkdtemp(prefix="clud-gate-home-", dir=Path.home().resolve()))
+    try:
+        install_from_app(clud, version, home)
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
 
 
 def main(argv: list[str] | None = None) -> int:
