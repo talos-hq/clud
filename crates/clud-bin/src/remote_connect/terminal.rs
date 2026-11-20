@@ -426,12 +426,24 @@ impl Terminal {
     }
 
     pub fn resize(&mut self, event: &Value) -> Result<(), String> {
+        self.resize_to(dimensions(event))
+    }
+
+    /// Resize the open terminal to `(rows, cols)`, within the protocol's bounds.
+    pub fn resize_to(&mut self, (rows, cols): (u16, u16)) -> Result<(), String> {
+        let size = dimensions(&json!({"rows":rows, "cols":cols}));
         if let Some(process) = &self.process {
-            let (rows, cols) = dimensions(event);
-            crate::session::resize_pty(process, rows, cols).map_err(|e| e.to_string())?;
-            self.size = (rows, cols);
+            crate::session::resize_pty(process, size.0, size.1).map_err(|e| e.to_string())?;
+            self.size = size;
         }
         Ok(())
+    }
+
+    /// `pty_size`: the open terminal's size, for a server that renders it.
+    pub fn size_event(&self) -> Option<Value> {
+        let mut event = self.report()?;
+        event["type"] = "pty_size".into();
+        Some(event)
     }
 
     pub fn output(&mut self) -> Result<Option<Message>, String> {

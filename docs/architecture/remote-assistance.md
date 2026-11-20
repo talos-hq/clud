@@ -43,10 +43,15 @@ local terminal type into the client's stdin: queries (DA, DSR, XTVERSION,
 DECRQM, XTWINOPS reports, colour/`?` OSCs, XTGETTCAP, DECRQSS), OSC 52 clipboard
 access, the mouse/focus/bracketed-paste modes and keyboard protocols (kitty,
 modifyOtherKeys). Forwarded, a mouse-tracking TUI made Konsole send a report per
-pointer move into the client and, after it exited, into the user's shell. The
-PTY keeps the
-operator's dimensions, so a differently sized local terminal can wrap a
-full-screen program oddly. When the shell ends or control is revoked the client
+pointer move into the client and, after it exited, into the user's shell.
+Because the mirror is byte for byte, the PTY takes the local terminal's size
+when the client has one and the server advertises `hello.pty_sizing:"client"`:
+it ignores the operator's `pty_resize`, follows the user's window and announces
+each size as `pty_size`, and the console renders that grid
+(`remote_connect/size.rs`,
+[DD-229](../DESIGN_DECISIONS.md#dd-229-the-consenting-users-terminal-sets-the-remote-sessions-size)).
+Without a local terminal or against an older server the operator's size is
+used. When the shell ends or control is revoked the client
 undoes what the program left on (alternate screen, cursor, input modes) before
 printing anything else, and turns every input-reporting mode off. A single worker owns stdout: past 2 MiB waiting
 on a stalled local terminal, mirrored output is dropped and the gap is reported,
