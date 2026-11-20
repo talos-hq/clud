@@ -123,5 +123,8 @@ def test_installer_result_is_found_among_interleaved_progress_lines() -> None:
     result = '{"schema":"clud-installer-result/v1","status":"complete","version":"2.8.70"}'
     output = f"Selected version: 2.8.70\n{result}\n# >>> clud installer PATH >>>\nnot json {{\n"
     assert pkg.installer_result(output)["status"] == "complete"
+    # Proof run 44832773691: no newline after the JSON, stderr glued on.
+    glued = f"{result}Selected version: 2.8.70\ncase \"$PATH\" in {{\n"
+    assert pkg.installer_result(glued)["version"] == "2.8.70"
     with pytest.raises(pkg.SigningError, match="no clud-installer-result/v1 line"):
         pkg.installer_result('{"schema":"other"}\nprogress\n')

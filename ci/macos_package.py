@@ -364,18 +364,19 @@ RESULT_SCHEMA = "clud-installer-result/v1"
 
 
 def installer_result(output: str, schema: str = RESULT_SCHEMA) -> dict:
-    """The ``--installer-json`` (or plan) line with ``schema``. The captured output interleaves
-    stderr progress with stdout, so the result is not always the last line."""
-    for line in reversed(output.splitlines()):
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
+    """The ``--installer-json`` (or plan) object with ``schema``. The captured
+    output interleaves stderr with stdout, and the JSON has no trailing
+    newline, so decode at each ``{`` rather than per line."""
+    decoder = json.JSONDecoder()
+    start = output.rfind("{")
+    while start != -1:
         try:
-            value = json.loads(line)
+            value, _ = decoder.raw_decode(output, start)
         except json.JSONDecodeError:
-            continue
+            value = None
         if isinstance(value, dict) and value.get("schema") == schema:
             return value
+        start = output.rfind("{", 0, start)
     raise SigningError(f"no {schema} line in the installer output:\n{output}")
 
 
