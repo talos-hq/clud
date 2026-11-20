@@ -84,36 +84,97 @@ fn read_until(terminal: &mut Terminal, needle: &str) -> String {
     output
 }
 
+/// The shell's own report of its terminal size, followed by `marker`. The
+/// marker is split in the typed command so the echoed command never matches.
+fn size_query(marker: &str) -> Vec<u8> {
+    let (head, tail) = marker.split_at(marker.len() - 1);
+    if crate::platform::host::WINDOWS {
+        // cmd.exe behind ConPTY. The fallback environment has no `SystemRoot`,
+        // so `mode.com` is found through this process's.
+        let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        format!("{root}\\System32\\mode.com con & echo {head}^{tail}\r").into_bytes()
+    } else {
+        // The fallback environment has only the running clud on PATH.
+        format!("/bin/stty size; echo {head}\"{tail}\"\n").into_bytes()
+    }
+}
+
+/// Whether `output` reports a `rows` x `cols` terminal. ConPTY may draw
+/// `mode con`'s padding as cursor moves, so escapes and blanks are dropped
+/// before matching.
+fn reports_size(output: &str, (rows, cols): (u16, u16)) -> bool {
+    if crate::platform::host::WINDOWS {
+        let text = strip_escapes(output);
+        let text: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        text.contains(&format!("Lines:{rows}")) && text.contains(&format!("Columns:{cols}"))
+    } else {
+        output.contains(&format!("{rows} {cols}"))
+    }
+}
+
+fn strip_escapes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            // CSI: parameters, then one final byte in @..~.
+            Some('[') => {
+                for c in chars.by_ref() {
+                    if ('@'..='~').contains(&c) {
+                        break;
+                    }
+                }
+            }
+            // OSC: up to BEL or ST.
+            Some(']') => {
+                while let Some(c) = chars.next() {
+                    if c == '\x07' || (c == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
 /// The reported corruption: the user's 228x65 terminal mirrored a PTY sized
 /// to the operator's browser, so Claude Code's redraws landed on the wrong
 /// rows. The shell must see the local terminal's size however the operator
-/// opens or resizes it, and follow the local window when it changes.
+/// opens or resizes it, and follow the local window when it changes. On
+/// Windows that is a ConPTY resized through the platform layer (#2864).
 #[test]
 fn the_shell_sees_the_local_terminal_size_not_the_operators() {
-    if crate::platform::host::WINDOWS {
-        return;
-    }
     let (mut size, tx) = following(Some(LOCAL));
-    // The fallback environment has only the running clud on PATH.
     let mut terminal = Terminal::default();
     terminal.open(&size.applied(&operator_open())).unwrap();
-    terminal
-        .input(b"/bin/stty size; echo SIZE_\"ONE\"\n")
-        .unwrap();
+    terminal.input(&size_query("SIZE_ONE")).unwrap();
     let first = read_until(&mut terminal, "SIZE_ONE");
     tx.send((33, 111)).unwrap();
     let resized = size.changed().expect("local resize applies");
     terminal.resize_to(resized).unwrap();
     let announced = terminal.size_event().unwrap();
-    terminal
-        .input(b"/bin/stty size; echo SIZE_\"TWO\"\n")
-        .unwrap();
+    terminal.input(&size_query("SIZE_TWO")).unwrap();
     let second = read_until(&mut terminal, "SIZE_TWO");
     terminal.stop();
-    assert!(first.contains("40 120"), "{first}");
-    assert!(second.contains("33 111"), "{second}");
+    assert!(reports_size(&first, LOCAL), "{first:?}");
+    let after = second
+        .rsplit_once("SIZE_TWO")
+        .map_or("", |(before, _)| before);
+    assert!(reports_size(after, (33, 111)), "{second:?}");
     assert_eq!(
         announced,
         json!({"type":"pty_size", "pty_id":"size-test", "cols":111, "rows":33})
     );
+}
+
+#[test]
+fn strip_escapes_keeps_text_and_drops_csi_and_osc() {
+    let raw = "\x1b[?25l    Columns:\x1b[8C120\x1b]0;title\x07 x\x1b]8;;u\x1b\\y";
+    assert_eq!(strip_escapes(raw), "    Columns:120 xy");
 }
