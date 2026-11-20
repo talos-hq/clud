@@ -213,7 +213,7 @@ with no arguments and no terminal; `self_install/app_bundle.rs` recognizes that
 launch from the executable's place in a `.app` bundle (no argv, or one
 `-psn_…`) before any other dispatch and runs
 `Contents/Helpers/clud --installer-app`, a byte-identical copy that keeps the
-binary's own notarized signature. Signing the app binds the main
+binary's own standalone signature. Signing the app binds the main
 executable's signature to the bundle's Info.plist, so a copy of
 `Contents/MacOS/clud` taken out of the bundle is invalid and macOS kills it
 (SIGKILL on `--version`, first seen in the proof run); the helper is what the

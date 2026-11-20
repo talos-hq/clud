@@ -10,9 +10,12 @@ Gatekeeper only when the Mac can reach Apple. The disk image fixes that:
 Release's ``package-macos`` job on a macOS runner, after ``notarize-macos``:
 
 1. ``lipo`` the two signed, notarized thin ``clud`` executables from the macOS
-   wheels into ``clud-X-universal-apple-darwin``. Each slice keeps its own
-   signature, so the universal file is the notarized bytes; the job proves the
-   slices are byte-identical to the wheel executables.
+   wheels into ``clud-X-universal-apple-darwin`` and prove the slices are
+   byte-identical to the wheel executables, then sign the universal file as
+   one (identifier ``clud``, hardened runtime). Per-slice signatures from
+   ``lipo`` run standalone but ``codesign --verify`` rejects them as nested
+   code in the app ("nested code is modified"). The re-signed file is the
+   published asset and the app's helper, so the app's notarization covers it.
 2. Assemble ``Install clud.app``: ``Contents/MacOS/clud`` is the universal
    binary, which recognizes the Finder launch and hands off to
    ``Contents/Helpers/clud`` (see ``self_install/app_bundle.rs``). The helper
@@ -221,10 +224,13 @@ def signing_keychain(config: SigningConfig, scratch: Path):
         p12.unlink(missing_ok=True)
 
 
-def codesign(target: Path, identity: str, keychain: Path, *, runtime: bool) -> None:
+def codesign(target: Path, identity: str, keychain: Path, *, runtime: bool,
+             identifier: str | None = None) -> None:
     command = ["codesign", "--force", "--timestamp", "--keychain", str(keychain)]
     if runtime:
         command += ["--options", "runtime"]
+    if identifier:
+        command += ["--identifier", identifier]
     _require([*command, "--sign", identity, str(target)], f"codesign {target.name}")
     _require(["codesign", "--verify", "--strict", "--deep", "--verbose=2", str(target)],
              f"codesign --verify {target.name}")
@@ -284,6 +290,12 @@ def build(dist_dir: Path, out_dir: Path, version: str, env: dict[str, str]) -> N
         scratch = Path(scratch_dir)
         make_universal(thin_executables(dist_dir), universal, scratch)
         with signing_keychain(signing, scratch) as keychain:
+            # The lipo'd per-slice signatures run standalone but fail as
+            # nested code in the app ("nested code is modified"), so sign the
+            # universal file as one; the app's notarization covers it.
+            codesign(universal, signing.identity, keychain, runtime=True, identifier="clud")
+            if lipo_archs(universal) != set(UNIVERSAL_ARCHS):
+                raise SigningError(f"signing {universal.name} dropped a slice")
             app = assemble_app(universal, scratch, version)
             codesign(app, signing.identity, keychain, runtime=True)
             notarize_app(app, notary, scratch)

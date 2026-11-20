@@ -1515,8 +1515,10 @@ Three jobs in `auto-release.yml` run one leg per macOS wheel:
 4. **`package-macos`** (`macos-15`, after `notarize-macos`; #2863) runs
    `python -m ci.macos_package build`. It `lipo`s the two notarized thin
    `clud` executables into `clud-<v>-universal-apple-darwin` and proves each
-   slice is byte-identical to its wheel executable (so the universal file is
-   already notarized bytes). It assembles `Install clud.app` with that
+   slice is byte-identical to its wheel executable, then signs the universal
+   file as one (identifier `clud`, hardened runtime): `lipo`'s per-slice
+   signatures run standalone but fail `codesign --verify` as nested code in
+   the app. The app's notarization covers that file. It assembles `Install clud.app` with that
    universal binary as `Contents/MacOS/clud` and, unchanged, as
    `Contents/Helpers/clud` (the copy that gets installed: the bundle
    signature binds the main executable to the app), signs it from a throwaway
