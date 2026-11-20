@@ -8618,3 +8618,59 @@ Clippy lane cannot share `bash lint`'s outputs: the hosted job runs
 target env, while `soldr lint rust` checks the host without `--target`, and
 the lane must run the hosted command (`tests/test_attest.py` pins it). It
 reuses a previous attest's target directory in the same checkout.
+
+## DD-229: the consenting user's terminal sets the remote session's size
+
+**Status:** Accepted.
+
+**Context:** a user ran `clud remote connect clud.bot` in a 228x65 macOS
+Terminal while the operator watched the same session in the clud.bot
+console. The console rendered Claude Code cleanly; the user's own terminal
+showed redraws overlapping, stale highlight bars, and the status line smeared
+over several rows. The client sized the PTY only from the operator's
+`pty_open` / `pty_resize` (`remote_connect/terminal.rs`, `dimensions`), never
+read its own terminal's size, and mirrors the shell's output byte for byte
+into that terminal (`remote_connect/console.rs`). A full-screen program moves
+the cursor and wraps for the PTY's grid, so any terminal of another size
+replays those moves onto the wrong cells. Reproduced against a local server:
+with the client in a 24x80 terminal and the operator console at 100x30,
+`stty size` in the shell printed `30 100` on both sides.
+
+**Decision:** when the client's stdout is a terminal and the server says it
+follows (`hello.pty_sizing == "client"`), that terminal sets the PTY's size.
+The client opens the PTY at the local size whatever `pty_open` asked for,
+ignores operator `pty_resize`, resizes the PTY when the user's window changes
+(the platform resize watcher: `SIGWINCH`, or polling on Windows), and
+announces each size as `pty_size{pty_id,cols,rows}` after `pty_opened`,
+after every local resize and after `resume`. The server records
+`pty.sized_by:"client"` and stops relaying operator resizes; the console
+renders exactly that grid and scales its font to fit (scrolling below 8px).
+A client without a terminal, or a server that does not advertise
+`pty_sizing`, keeps the operator's size, so neither side changes behaviour
+until both have the change. The rule lives in `remote_connect/size.rs`; the
+protocol is clud.bot SPEC §9 "Terminal size".
+
+**Alternatives rejected:**
+
+- *tmux's rule, the minimum of all attached sizes.* The PTY would usually be
+  smaller than the user's terminal, and a raw byte mirror is wrong at any size
+  but the PTY's: wider, autowrap happens at the wrong column; taller, relative
+  cursor moves and scrolling stop matching. Making that safe needs a terminal
+  emulator in the client that redraws the local view from a virtual screen,
+  as tmux does, which is a large new layer between the shell and the user's
+  terminal and costs the user's native scrollback.
+- *The operator's size (the old behaviour).* Corrupts the user's view, which
+  is the view the consent model exists to protect: the user must be able to
+  see what the operator does.
+- *Resizing the user's terminal to the operator's grid* (`CSI 8 ; r ; c t`).
+  Many terminals ignore it, it would move the user's window, and a
+  maximized or tiled window cannot change size.
+
+**Consequences:** the operator sees the user's grid, at a smaller font when
+the user's terminal is larger than the console's window. An operator
+resizing the browser repaints only the console (a font change), and the
+user's view is untouched. A local terminal outside the protocol's bounds
+(20-500 columns, 5-200 rows) is clamped, and only then can the two differ.
+Users get the fix with a clud release; the server side is backward
+compatible with older clients and must be deployed for new clients to take
+over the size.

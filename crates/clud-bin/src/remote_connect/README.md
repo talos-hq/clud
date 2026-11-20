@@ -31,6 +31,9 @@ consent boundary, protocol and executable integration check.
   running-process and the existing platform boundary. The shell gets the
   running clud's directory first on PATH
   ([contract](../../../../docs/architecture/remote-assistance.md#clud-in-the-operators-shell)).
+- `size.rs`: whose terminal sets the PTY's size: the local terminal's, when
+  there is one and the server follows (`pty_size`), else the operator's. See
+  [DD-229](../../../../docs/DESIGN_DECISIONS.md#dd-229-the-consenting-users-terminal-sets-the-remote-sessions-size).
 - `sudo.rs`: "Request sudo" on the client: the `[y/N]` consent, the hidden
   password prompt, and the closed `sudo_state` set the server may hear.
 - `leader.rs`: the portable half of `clud-remote-shell`, the PTY's session

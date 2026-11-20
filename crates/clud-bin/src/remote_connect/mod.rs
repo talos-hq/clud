@@ -15,6 +15,7 @@ mod open_url;
 mod paste;
 pub mod proxy;
 mod resume;
+mod size;
 mod sudo;
 mod terminal;
 #[cfg(test)]
@@ -117,6 +118,7 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let input = stdin_lines();
     let mut state = State::new(console::Console::stdout());
     state.inline = inline;
+    state.size = size::SessionSize::watch_stdout();
     state.terminal.enable_leader(sudo::advertised(inline));
     // Configured on `hello`, which says whether model requests ride the socket.
     state.proxy = Some(proxy::SessionProxy::new(
@@ -188,7 +190,12 @@ impl Link {
         let mut heard = Instant::now();
         while !self.stopped() {
             let local = state.read_consent(&self.input);
-            for event in local.into_iter().chain(state.sudo.poll(&state.console)) {
+            let resized = state.local_resize()?;
+            for event in local
+                .into_iter()
+                .chain(state.sudo.poll(&state.console))
+                .chain(resized)
+            {
                 if lost_on(send(socket, event.clone()))? {
                     state.hold_event(event);
                     return lost;
@@ -242,7 +249,13 @@ impl Link {
                 return Ok(Err(130));
             }
             let local = state.read_consent(&self.input);
-            for event in local.into_iter().chain(state.sudo.poll(&state.console)) {
+            // The PTY follows the local window now; the server hears on resume.
+            let resized = state.local_resize()?;
+            for event in local
+                .into_iter()
+                .chain(state.sudo.poll(&state.console))
+                .chain(resized)
+            {
                 state.hold_event(event);
             }
             let busy = state.hold_output()?;
@@ -302,6 +315,8 @@ struct State {
     /// The last `sudo_state` the server did not get, sent when it resumes.
     sudo_held: Option<Value>,
     terminal: terminal::Terminal,
+    /// Whose terminal sets the PTY's size (`size.rs`).
+    size: size::SessionSize,
     /// The agent's model route, configured on the first `hello`.
     proxy: Option<proxy::SessionProxy>,
     /// Model requests on the session socket, when `hello` offers channel 2.
@@ -335,6 +350,7 @@ impl State {
             sudo: sudo::Sudo::new(),
             sudo_held: None,
             terminal: terminal::Terminal::default(),
+            size: size::SessionSize::default(),
             proxy: None,
             bridge: None,
             connected: false,
@@ -454,6 +470,54 @@ impl State {
             }
         }
         opened
+    }
+
+    /// `pty_open` / `pty_resize` / `pty_kill`; `false` for any other event.
+    /// While the local terminal sets the size ([`size::SessionSize`]), the
+    /// operator's size is replaced by it and the actual size is announced.
+    fn pty_event(&mut self, event: &Value, socket: &mut transport::Socket) -> Result<bool, String> {
+        match event["type"].as_str() {
+            Some("pty_open") if self.granted => {
+                let event = self.size.applied(event);
+                send(socket, self.open_pty(&event))?;
+                self.announce_size(socket)?;
+            }
+            Some("pty_resize") if self.granted && self.terminal.matches(event) => {
+                if self.size.governing().is_some() {
+                    self.announce_size(socket)?;
+                } else {
+                    self.terminal.resize(event)?;
+                }
+            }
+            Some("pty_kill") if self.terminal.matches(event) => {
+                self.sudo.shutdown(&self.console);
+                self.terminal.stop();
+                send(
+                    socket,
+                    json!({"type":"pty_exit", "pty_id":event["pty_id"], "code":null, "signal":null}),
+                )?;
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    /// Tell a server that follows the client's size what the PTY's size is.
+    fn announce_size(&self, socket: &mut transport::Socket) -> Result<(), String> {
+        match self.size.governing().and(self.terminal.size_event()) {
+            Some(event) => send(socket, event),
+            None => Ok(()),
+        }
+    }
+
+    /// Resize the PTY to the local terminal's new size, when that sets the
+    /// session's size; the `pty_size` to announce.
+    fn local_resize(&mut self) -> Result<Option<Value>, String> {
+        let Some(size) = self.size.changed() else {
+            return Ok(None);
+        };
+        self.terminal.resize_to(size)?;
+        Ok(self.terminal.size_event())
     }
 
     /// `sudo_request` / `sudo_drop`; `false` for any other event.
@@ -591,6 +655,7 @@ impl State {
             None
         };
         send(socket, json!({"type":"resume", "pty":pty}))?;
+        self.announce_size(socket)?;
         self.sync_sudo(&record["sudo"], socket)?;
         self.flush_outage(socket)?;
         self.console.line(resume::RESUMED_NOTICE);
@@ -662,11 +727,12 @@ impl State {
     }
 
     fn event(&mut self, event: &Value, socket: &mut transport::Socket) -> Result<bool, String> {
-        if self.sudo_event(event, socket)? {
+        if self.sudo_event(event, socket)? || self.pty_event(event, socket)? {
             return Ok(false);
         }
         match event["type"].as_str().unwrap_or("") {
             "hello" => {
+                self.size.hello(event);
                 self.connected = matches!(event["state"].as_str(), Some("accepted" | "connected"));
                 self.resumes = event["resume"].is_object();
                 send(socket, caps(self.inline))?;
@@ -707,18 +773,6 @@ impl State {
                     send(socket, exit)?;
                 }
                 self.revoke();
-            }
-            "pty_open" if self.granted => send(socket, self.open_pty(event))?,
-            "pty_resize" if self.granted && self.terminal.matches(event) => {
-                self.terminal.resize(event)?
-            }
-            "pty_kill" if self.terminal.matches(event) => {
-                self.sudo.shutdown(&self.console);
-                self.terminal.stop();
-                send(
-                    socket,
-                    json!({"type":"pty_exit", "pty_id":event["pty_id"], "code":null, "signal":null}),
-                )?;
             }
             "message" => {
                 if let Some(body) = event["body"].as_str() {
