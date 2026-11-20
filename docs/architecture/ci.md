@@ -1167,6 +1167,24 @@ Fix: a shared `common::bin_path("clud")` helper that prefers a runtime
 `cargo test` is unchanged. This is the only production/test source edit the
 redesign requires; everything else is CI plumbing.
 
+## Self-hosted Linux x64 build pool
+
+The Linux x64 dev build (`build-linux-x64`, `lint-linux-x64`) can run on
+the self-hosted Dell pool instead of `ubuntu-24.04`. The pool is
+forge-ci/gh-runner host `dell-jw22zc3` (VxRail E640, 64 threads, RAM-backed
+caches), registered to the talos-hq runner group `Dell-NixOS`, which admits
+only this repository. `_build-target.yml` routes there when the repository
+variable `CLUD_LINUX_X64_BUILD_RUNNER` holds the pool's label
+(`dell-jw22zc3`), and only for `ci.yml` dev builds of same-repo code:
+release builds, other callers and fork PRs keep the hosted label, as
+`test_self_hosted_linux_build_routing_stays_guarded` asserts. `ci.yml`
+keeps literal hosted labels, so the target registry tests are unchanged.
+Exec suites stay hosted: `setup-exec` removes the Rust toolchain, which on a
+persistent runner would cost the next build its toolchain.
+
+Rollback: `gh variable delete CLUD_LINUX_X64_BUILD_RUNNER -R talos-hq/clud`;
+the next run is hosted again with no code change.
+
 ## Release profile containment
 
 Installer acceptance on a PR runs only while it has the `ci-full` label
