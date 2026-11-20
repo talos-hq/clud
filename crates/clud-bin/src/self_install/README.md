@@ -61,7 +61,8 @@ or a user declining the original confirmation. Invalid requests also receive
 a structured failure when the installer reporting flag parsed successfully.
 
 `app_bundle.rs` is `Install clud.app`, the macOS disk image's double-click
-installer (#2863): a bare launch from `<x>.app/Contents/MacOS/clud` runs the
+installer (#2863): a bare launch from `<x>.app/Contents/MacOS/clud` hands off
+to the pristine `Contents/Helpers/clud --installer-app`, which runs the
 current-executable plan and transaction through native dialogs
 (`platform::app_dialog`), and any outcome but `complete` offers **Fix in
 Terminal** (`clud --installer`); tests in `app_bundle_tests.rs` drive it with a

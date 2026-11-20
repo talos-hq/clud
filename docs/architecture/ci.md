@@ -1517,7 +1517,9 @@ Three jobs in `auto-release.yml` run one leg per macOS wheel:
    `clud` executables into `clud-<v>-universal-apple-darwin` and proves each
    slice is byte-identical to its wheel executable (so the universal file is
    already notarized bytes). It assembles `Install clud.app` with that
-   universal binary as `Contents/MacOS/clud`, signs it from a throwaway
+   universal binary as `Contents/MacOS/clud` and, unchanged, as
+   `Contents/Helpers/clud` (the copy that gets installed: the bundle
+   signature binds the main executable to the app), signs it from a throwaway
    keychain (`codesign --options runtime --timestamp`), notarizes and
    staples it, puts it with `READ ME if blocked.txt` on
    `clud-<v>-macos.dmg` (`hdiutil`, UDZO), then signs, notarizes and staples

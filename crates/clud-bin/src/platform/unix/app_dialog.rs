@@ -12,6 +12,16 @@ use std::os::unix::fs::PermissionsExt;
 use crate::backend_bootstrap::run_captured_command;
 use crate::self_install::app_bundle::Dialogs;
 
+/// Run `helper flag` to completion; its exit code, or why it did not start.
+/// Its output (dialog failures) is relayed to this process's stderr.
+pub fn run_helper(helper: &std::path::Path, flag: &str) -> Result<i32, String> {
+    let command = vec![helper.to_string_lossy().into_owned(), flag.to_owned()];
+    let (code, output) =
+        run_captured_command(command).map_err(|error| format!("{}: {error}", helper.display()))?;
+    eprint!("{output}");
+    Ok(code)
+}
+
 /// The production [`Dialogs`]: `osascript` and `open`.
 pub struct NativeDialogs;
 

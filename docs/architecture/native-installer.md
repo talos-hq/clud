@@ -211,7 +211,13 @@ slice for the host, so the app can install its own executable.
 The app's `Contents/MacOS/clud` **is** the universal binary. Finder starts it
 with no arguments and no terminal; `self_install/app_bundle.rs` recognizes that
 launch from the executable's place in a `.app` bundle (no argv, or one
-`-psn_…`) before any other dispatch and drives the ordinary plan and
+`-psn_…`) before any other dispatch and runs
+`Contents/Helpers/clud --installer-app`, a byte-identical copy that keeps the
+binary's own notarized signature. Signing the app binds the main
+executable's signature to the bundle's Info.plist, so a copy of
+`Contents/MacOS/clud` taken out of the bundle is invalid and macOS kills it
+(SIGKILL on `--version`, first seen in the proof run); the helper is what the
+plan copies to `~/.local/bin/clud`. The helper drives the ordinary plan and
 transaction through native dialogs (`platform::app_dialog`: `osascript`
 `display dialog` with the text as argv, no Automation permission):
 
@@ -228,7 +234,7 @@ Everything else lets a human in: a planning error or any outcome other than
 `complete` (`activation_required`, `failed`, `refused`) shows the reason with
 **Fix in Terminal**, which opens Terminal (`open -a Terminal` on a private
 `.command` file; never `tell application "Terminal"`) running
-`<app>/Contents/MacOS/clud --installer`, the interactive installer with its
+`<app>/Contents/Helpers/clud --installer`, the interactive installer with its
 repair prompt. The bundle never retries on its own, and its exit code is
 non-zero. If Terminal cannot open, the dialog prints that command to run by
 hand. Double-clicking again later offers Update or Reinstall, so the image

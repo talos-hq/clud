@@ -286,6 +286,7 @@ fn transcript_forces_centralized_daemon() {
         no_modify_path: false,
         installer_json: false,
         installer_plan_json: false,
+        installer_app: false,
         force: false,
         experimental_daemon_centralized: false,
         daemon_state_dir: None,

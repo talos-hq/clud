@@ -13,9 +13,12 @@ Release's ``package-macos`` job on a macOS runner, after ``notarize-macos``:
    wheels into ``clud-X-universal-apple-darwin``. Each slice keeps its own
    signature, so the universal file is the notarized bytes; the job proves the
    slices are byte-identical to the wheel executables.
-2. Assemble ``Install clud.app`` (``Contents/MacOS/clud`` is the universal
-   binary; clud recognizes that launch, see ``self_install/app_bundle.rs``),
-   sign it with the Developer ID Application certificate from a temporary
+2. Assemble ``Install clud.app``: ``Contents/MacOS/clud`` is the universal
+   binary, which recognizes the Finder launch and hands off to
+   ``Contents/Helpers/clud`` (see ``self_install/app_bundle.rs``). The helper
+   is the universal binary unchanged: signing the app binds the main
+   executable's signature to the bundle, so only the helper may be copied
+   out and installed. Sign the app with the Developer ID Application certificate from a temporary
    keychain, notarize it and staple the ticket.
 3. Put the stapled app and ``READ ME if blocked.txt`` on ``clud-X-macos.dmg``
    (``hdiutil``), sign, notarize and staple the image.
@@ -24,7 +27,8 @@ Release's ``package-macos`` job on a macOS runner, after ``notarize-macos``:
 with Apple's ticket service blocked (``/etc/hosts``) and the files
 quarantined as a browser would. A negative control proves the block works:
 the bare universal binary, which carries no ticket, must *not* assess as
-notarized. The stapled image and app must, and the app's clud must install
+notarized. The stapled image and app must, the helper must be the exact
+universal binary, and the helper must install
 with ``--installer --install-current --yes`` and resolve by name in a fresh
 login shell.
 """
@@ -83,7 +87,7 @@ If macOS says the app cannot be opened:
 
 Prefer a terminal? Either of these installs the same release:
   curl -fsSL https://talos-hq.github.io/clud/install.sh | sh
-  "/Volumes/<this disk>/Install clud.app/Contents/MacOS/clud" --installer
+  "/Volumes/<this disk>/Install clud.app/Contents/Helpers/clud" --installer
 
 https://talos-hq.github.io/clud/
 """
@@ -235,8 +239,11 @@ def staple(target: Path) -> None:
 def assemble_app(universal: Path, destination: Path, version: str) -> Path:
     app = destination / APP_NAME
     (app / "Contents" / "MacOS").mkdir(parents=True)
+    (app / "Contents" / "Helpers").mkdir()
     (app / "Contents" / "Info.plist").write_bytes(info_plist(version))
     shutil.copy2(universal, app / "Contents" / "MacOS" / "clud")
+    # Signed already (each slice); codesign without --deep leaves it as is.
+    shutil.copy2(universal, app / "Contents" / "Helpers" / "clud")
     return app
 
 
@@ -379,13 +386,13 @@ def gate(directory: Path, version: str) -> None:
             _require(["hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen",
                       "-mountpoint", str(mount), str(dmg)], "hdiutil attach")
             try:
-                gate_mounted(mount, version)
+                gate_mounted(mount, version, bare)
             finally:
                 _quiet(["hdiutil", "detach", "-force", str(mount)])
     print(f"offline Gatekeeper gate passed for {dmg_name(version)}")
 
 
-def gate_mounted(mount: Path, version: str) -> None:
+def gate_mounted(mount: Path, version: str, universal: Path) -> None:
     app = mount / APP_NAME
     if not (mount / README_NAME).is_file():
         raise SigningError(f"the disk image lacks {README_NAME!r}")
@@ -393,9 +400,11 @@ def gate_mounted(mount: Path, version: str) -> None:
         raise SigningError(f"stapled {APP_NAME} is not notarized offline")
     _require(["codesign", "--verify", "--strict", "--deep", "--verbose=2", str(app)],
              "codesign --verify app")
-    clud = app / "Contents" / "MacOS" / "clud"
-    if lipo_archs(clud) != set(UNIVERSAL_ARCHS):
-        raise SigningError(f"{APP_NAME}'s clud is not universal")
+    clud = app / "Contents" / "Helpers" / "clud"
+    if clud.read_bytes() != universal.read_bytes():
+        raise SigningError(f"{APP_NAME}'s helper is not the published universal binary")
+    if lipo_archs(app / "Contents" / "MacOS" / "clud") != set(UNIVERSAL_ARCHS):
+        raise SigningError(f"{APP_NAME}'s main executable is not universal")
     # The installer refuses a HOME reached through a symlinked ancestor, and
     # macOS's temporary directory is under /var -> /private/var. A scratch
     # home under the runner's real home is what a user's home looks like.

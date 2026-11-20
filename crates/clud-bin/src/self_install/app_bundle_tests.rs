@@ -93,6 +93,17 @@ fn bundle_launch_is_recognized_only_from_contents_macos_with_no_arguments() {
 }
 
 #[test]
+fn the_installed_copy_is_the_bundle_helper_not_the_bound_main_executable() {
+    assert_eq!(
+        helper_of(&bundle_of(&exe()).unwrap()),
+        PathBuf::from("/Volumes/clud 2.8.70/Install clud.app/Contents/Helpers/clud")
+    );
+    // The helper's own launch is never mistaken for a Finder start.
+    let helper = helper_of(&bundle_of(&exe()).unwrap());
+    assert!(!is_app_launch(&["clud".to_owned()], &helper));
+}
+
+#[test]
 fn not_now_and_dismissal_write_nothing() {
     for press in [Some(NOT_NOW), None] {
         let mut dialogs = Scripted::pressing(&[press]);

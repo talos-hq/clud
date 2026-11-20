@@ -88,3 +88,15 @@ def test_main_reports_signing_errors_without_a_traceback(tmp_path, capsys, monke
     )
     assert code == 1
     assert "missing macOS signing secret" in capsys.readouterr().err
+
+
+def test_app_installs_from_a_pristine_helper_beside_the_bound_main_executable(tmp_path) -> None:
+    """#2863: signing the app binds Contents/MacOS/clud to the bundle, so a copy
+    of it outside the bundle is killed by macOS; the helper is copied instead."""
+    universal = tmp_path / "clud-universal"
+    universal.write_bytes(b"\xca\xfe\xba\xbe universal bytes")
+    app = pkg.assemble_app(universal, tmp_path, "2.8.70")
+    contents = app / "Contents"
+    assert (contents / "MacOS" / "clud").read_bytes() == universal.read_bytes()
+    assert (contents / "Helpers" / "clud").read_bytes() == universal.read_bytes()
+    assert "Contents/Helpers/clud\" --installer" in pkg.README

@@ -3,9 +3,10 @@
 //!
 //! The bundle's main executable is the universal `clud` itself. Finder starts
 //! it with no arguments and no terminal, so [`run`] recognizes that launch
-//! from the executable's place in a `.app` bundle and drives the same plan
-//! and transaction as `clud --installer --install-current` through native
-//! dialogs instead of the terminal selector.
+//! from the executable's place in a `.app` bundle and runs the bundle's
+//! pristine copy, [`helper_of`] (`--installer-app`). The helper drives
+//! the same plan and transaction as `clud --installer --install-current`
+//! through native dialogs instead of the terminal selector.
 //!
 //! The rule for everything that is not a clean install: never fail silently
 //! and never retry on its own. Any outcome other than `complete` offers
@@ -61,9 +62,30 @@ pub fn is_app_launch(raw_argv: &[String], exe: &Path) -> bool {
     bare && bundle_of(exe).is_some()
 }
 
+/// The pristine universal clud the bundle installs. Signing the app binds
+/// `Contents/MacOS/clud`'s signature to the bundle (its Info.plist), so a copy
+/// of that file outside the bundle fails validation and macOS kills it. The
+/// helper keeps the standalone notarized signature, so it is what gets copied.
+pub fn helper_of(bundle: &Path) -> PathBuf {
+    bundle.join("Contents").join("Helpers").join("clud")
+}
+
 /// Run the bundle installer when this process is a double-clicked
-/// `Install clud.app`; `None` for every other launch.
+/// `Install clud.app` or its helper; `None` for every other launch.
 pub fn run(args: &Args) -> Option<i32> {
+    if args.installer_app {
+        if !crate::platform::host::MACOS {
+            eprintln!("clud: --installer-app is part of the macOS Install clud.app");
+            return Some(2);
+        }
+        return Some(match std::env::current_exe() {
+            Ok(exe) => install_from(&exe),
+            Err(error) => {
+                eprintln!("clud: cannot locate the running executable: {error}");
+                1
+            }
+        });
+    }
     if !crate::platform::host::MACOS {
         return None;
     }
@@ -71,6 +93,22 @@ pub fn run(args: &Args) -> Option<i32> {
     if !is_app_launch(&args.raw_argv, &exe) {
         return None;
     }
+    let helper = helper_of(&bundle_of(&exe)?);
+    let error = match crate::platform::app_dialog::run_helper(&helper, "--installer-app") {
+        Ok(code) => return Some(code),
+        Err(error) => error,
+    };
+    let message = format!("clud cannot start its installer:\n\n{error}");
+    Some(rescue(
+        &mut crate::platform::app_dialog::NativeDialogs,
+        &helper,
+        &message,
+        1,
+    ))
+}
+
+/// The dialog installer for the running (helper) executable `exe`.
+fn install_from(exe: &Path) -> i32 {
     let mut dialogs = crate::platform::app_dialog::NativeDialogs;
     let plan = super::entry::current_install_plan();
     let facts = plan.as_ref().map(Facts::of).map_err(Clone::clone);
@@ -78,7 +116,7 @@ pub fn run(args: &Args) -> Option<i32> {
         Ok(plan) => super::entry::install_consented(plan),
         Err(_) => Outcome::failed(1, "planning_failed"),
     };
-    Some(flow(&mut dialogs, facts, &exe, install))
+    flow(&mut dialogs, facts, exe, install)
 }
 
 /// The dialog sequence; `install` commits the plan `facts` describes.
