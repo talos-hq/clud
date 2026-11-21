@@ -201,9 +201,10 @@ failure never turns a completed release red and is retried alone. The Homebrew
 tap is `homebrew-tap.yml`
 ([Homebrew tap](installer-pages.md#homebrew-tap)). Because promotion uses
 `GITHUB_TOKEN`, which starts no `release` workflow, an automatic channel
-triggers on Auto Release's completion and reads the current latest stable
-release itself. A failed, proof-only or rolled-back run therefore publishes
-nothing new.
+triggers on Auto Release's completion and takes the tag from that run's
+`head_branch`, never from `releases/latest`, which can lag the promotion. A
+failed, proof-only or rolled-back run therefore publishes nothing new, and the
+tap never moves to an older version.
 
 `tests/test_release_package_channels.py` walks Auto Release and every local
 workflow and action it reaches. It fails on any job that references a known

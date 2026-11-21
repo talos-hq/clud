@@ -7,9 +7,9 @@ name: Homebrew tap
 on:
   # Auto Release promotes with GITHUB_TOKEN, and GitHub starts no workflow for
   # a release event made by that token. Completion of the release run is the
-  # automatic trigger; the job then reads the current stable release, so a
-  # proof run, a failed run or a rolled-back release renders the formula that
-  # is already in the tap and exits as a no-op.
+  # automatic trigger; the job takes the tag from that run (its head_branch),
+  # never from releases/latest, which can lag the promotion. A failed or
+  # rolled-back run, or a proof run without a stable release, is a no-op.
   workflow_run:
     workflows: [Auto Release]
     types: [completed]
@@ -45,25 +45,37 @@ jobs:
           EVENT: ${{ github.event_name }}
           DISPATCH_TAG: ${{ inputs.tag }}
           EVENT_TAG: ${{ github.event.release.tag_name }}
+          # Auto Release is dispatched on (or pushed as) the tag, so the run's
+          # head_branch is the tag it released, e.g. 2.8.69.
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
         run: |
-          latest=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          skip() { echo "$1"; echo "skip=true" >> "$GITHUB_OUTPUT"; exit 0; }
+          # Never read the latest-release endpoint: right after promotion it can
+          # still return the previous one (2.8.69's run read 2.8.68). Each path
+          # names its tag, and that one release is checked directly.
           case "$EVENT" in
             workflow_dispatch) tag="$DISPATCH_TAG" ;;
             release) tag="$EVENT_TAG" ;;
-            *) tag="$latest" ;;
+            workflow_run)
+              # A failed run, including one whose rollback-public demoted the
+              # release, leaves the tap alone.
+              [ "$RUN_CONCLUSION" = success ] || skip "Auto Release concluded '$RUN_CONCLUSION'; the tap is left alone"
+              tag="$RUN_TAG" ;;
+            *) echo "::error::unexpected event $EVENT"; exit 1 ;;
           esac
           test -n "$tag" || { echo "::error::no release tag to publish"; exit 1; }
-          state=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '"\(.draft) \(.prerelease)"')
-          if [ "$state" != "false false" ]; then
-            echo "::error::$tag is not a published stable release (draft prerelease = $state); the tap only carries stable releases"
+          if ! state=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$tag" --jq '"\(.draft) \(.prerelease)"'); then
+            # A proof run on a branch has no release; dispatch with the tag to repair.
+            [ "$EVENT" = workflow_run ] && skip "::warning::$tag has no GitHub Release; nothing to publish (dispatch this workflow with the tag to repair)"
+            echo "::error::$tag has no GitHub Release"
             exit 1
           fi
-          # Only an explicit repair may point the tap at anything but the
-          # current latest stable release (for example after a rollback).
-          if [ "$EVENT" != workflow_dispatch ] && [ "$tag" != "$latest" ]; then
-            echo "$tag is no longer the latest stable release ($latest); nothing to publish"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            exit 0
+          if [ "$state" != "false false" ]; then
+            msg="$tag is not a published stable release (draft prerelease = $state); the tap only carries stable releases"
+            [ "$EVENT" = workflow_run ] && skip "$msg"
+            echo "::error::$msg"
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
           echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -89,20 +101,45 @@ jobs:
           cat "$RUNNER_TEMP/clud.rb"
 
       # The tap is public: an unchanged formula needs no write credential, so a
-      # no-op succeeds even while the App is not installed on the tap.
+      # no-op succeeds even while the App is not installed on the tap. A formula
+      # older than the tap's is never pushed, so a stale or late run cannot
+      # roll the tap back; only a dispatch reports that as a failure.
       - name: Compare with the published tap formula
         id: diff
         if: steps.tag.outputs.skip == 'false'
         env:
+          EVENT: ${{ github.event_name }}
           RELEASE_TAG: ${{ steps.tag.outputs.tag }}
         run: |
           git clone --depth 1 https://github.com/talos-hq/homebrew-tap.git "$RUNNER_TEMP/tap"
-          if cmp -s "$RUNNER_TEMP/clud.rb" "$RUNNER_TEMP/tap/Formula/clud.rb"; then
-            echo "Formula already at $RELEASE_TAG; nothing to push"
-            echo "changed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-          fi
+          python - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          tmp = Path(os.environ["RUNNER_TEMP"])
+          tag = os.environ["RELEASE_TAG"]
+          rendered = (tmp / "clud.rb").read_text()
+          tap_file = tmp / "tap" / "Formula" / "clud.rb"
+          published = tap_file.read_text() if tap_file.exists() else ""
+          pattern = r"/releases/download/v?(\d+)\.(\d+)\.(\d+)/"
+          ours = tuple(map(int, re.fullmatch(r"v?(\d+)\.(\d+)\.(\d+)", tag).groups()))
+          theirs = max((tuple(map(int, m)) for m in re.findall(pattern, published)), default=None)
+          if rendered == published:
+              print(f"Formula already at {tag}; nothing to push")
+              changed = "false"
+          elif theirs is not None and ours < theirs:
+              have = ".".join(map(str, theirs))
+              msg = f"refusing to downgrade the tap from {have} to {tag}"
+              if os.environ["EVENT"] == "workflow_dispatch":
+                  raise SystemExit(f"::error::{msg}")
+              print(f"::warning::{msg}")
+              changed = "false"
+          else:
+              changed = "true"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
+              out.write(f"changed={changed}\n")
+          PY
 
       # Same clud-refresh App as the catalog refresh jobs: a token that lives
       # at most an hour, scoped to the tap repo, and no PAT to rotate.
