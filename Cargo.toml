@@ -42,6 +42,11 @@ targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwi
 # `[workspace.metadata.dylint]` library with the nightly each one pins in
 # dylints/*/rust-toolchain.toml; `--cross-dylint` repeats it per cross target.
 steps = ["fmt", "clippy", "dylint"]
+# The Static checks job's ruff, repo guards and fmt (`ci/lint.py
+# --static-only`), so a host `soldr lint` lane also covers it. A full `bash
+# lint` already ran them and its soldr child skips this (ci/lint.py
+# STATIC_DONE_ENV).
+extra = [["bash", "lint", "--static-only"]]
 
 [workspace.metadata.dylint]
 libraries = [{ path = "dylints/*" }]

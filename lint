@@ -1,6 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# `soldr lint`'s repo extra (Cargo.toml) runs `bash lint --static-only`; when a
+# full `bash lint` started that soldr lint, ci/lint.py already ran the static
+# checks and marks its child so they are not repeated.
+if [[ "${CLUD_LINT_STATIC_DONE:-}" == 1 && " $* " == *" --static-only "* ]]; then
+    echo "lint: static checks already ran in this bash lint" >&2
+    exit 0
+fi
+
 # Sync dev deps but never install the project itself.
 uv sync --frozen --group dev --no-install-project 2>/dev/null \
     || uv sync --group dev --no-install-project

@@ -274,7 +274,6 @@ The raw bosn commands below remain available:
 
 ```bash
 docker info
-bosn ci run --workspace . --trigger pr --job static-checks --wait       # formatting, ruff and static guards
 bosn ci run --workspace . --trigger pr --job build-linux-x64 --wait     # Linux x64 build
 bosn ci run --workspace . --trigger pr --job test-linux-x64-unit --wait # Linux unit suite
 bosn ci report RUN                                         # verdict and the first failure
@@ -286,18 +285,22 @@ test`/`full` select the `ci-test`/`ci-full` job sets; combine them with `--job`
 (for example `--mode test --job test-linux-x64-integration`), never bare. Jobs that need a native runner (Windows, macOS, arm) are reported
 `unsupported`, not run.
 
-Lint never runs under Bosn; `soldr lint` on the host only. Do not replay the
-`dylint` or `lint-linux-x64` jobs through `bosn ci run --job`, and do not run
-the bare plan (`bosn ci run --trigger pr` without `--job`, or with `--mode`),
-which includes them: their cached container state misbehaves on the build
-hosts. `--job` takes one job, so replay jobs one at a time. local-gate.toml
-declares no `[gate.full-run]`, so `ci-lint local-gate run` dispatches each lane
-on its own and never runs the bare plan. local-gate.toml's `dylint` lane
-runs `soldr lint rust --check --cross-dylint` (fmt check, Clippy on the host
-and every declared cross target, every Dylint library on the host and each
-cross target), its `clippy` lane runs `soldr lint rust --check --host-only`,
-and its `doctest` lane runs `soldr cargo test --workspace --doc`, the
-doc-tests the remote `lint-linux-x64` job carries.
+Lint never runs under Bosn; `soldr lint` on the host only. Never replay the
+`static-checks`, `dylint` or `lint-linux-x64` jobs through `bosn ci run
+--job`, and never run the bare plan (`bosn ci run --trigger pr` without
+`--job`, or with only `--mode`), which includes them: their cached container
+state misbehaves on the build hosts. `--job` takes one job, and bosn runs that
+job's `needs:` closure with it.
+
+local-gate.toml follows this. Its `[gate] run` is `bosn ci run ... --job
+test-linux-x64-unit`, the one Bosn lane (`unit`), whose closure also builds
+Linux x64, and it declares no `[gate.full-run]`. Lint lanes run on the host:
+`dylint` runs `soldr lint rust --check --cross-dylint` (fmt check, Clippy on
+the host and every declared cross target, every Dylint library on the host and
+each cross target), `clippy` runs `soldr lint rust --check --host-only`, and
+both end with Cargo.toml's repo extra `bash lint --static-only`, the Static
+checks job. `doctest` runs `soldr cargo test --workspace --doc`, the doc-tests
+the remote `lint-linux-x64` job carries.
 
 **Stock workflows, no local special cases ([zackees/ci.yml ACT-003](https://github.com/zackees/ci.yml/blob/main/docs/policy-general.md)).**
 `.github/` runs under act2 exactly as written. act2 sets
@@ -334,9 +337,9 @@ session on the machine shares one bosn daemon and its CPU, so each extra run
 slows every other one. On 2026-10-02 a one-module fix spent about 50 minutes
 in the old local act path (#1715). So:
 
-- **If using local replay, run the full PR plan at most once per change**.
-  Don't loop it. `--job static-checks` (a few minutes) is fine for formatting and
-  lint. RED can come from that one local run or from the PR's first CI run.
+- **If using local replay, replay each non-lint job at most once per change** (never the bare plan, which includes lint).
+  Don't loop it. Formatting and lint run on the host (`soldr lint`), never
+  under bosn. RED can come from that one local run or from the PR's first CI run.
   GREEN comes from the PR's CI, which is the CI of record: after a fix, push
   and watch the PR rather than rerunning locally.
 - **Don't wait in the bosn queue.** If `bosn ci show RUN` stays `queued` for

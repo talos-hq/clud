@@ -217,10 +217,24 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
         print("lint: install soldr (./install) to run clippy", file=sys.stderr)
         return 1
     argv = clippy_argv(soldr, host_only)
-    if run(argv) != 0:
+    if run_soldr_lint(argv) != 0:
         explain_readonly_failure(argv)
         return 1
     return 0
+
+
+# Cargo.toml's `[workspace.metadata.soldr.lint] extra` runs `bash lint
+# --static-only` so a bare host `soldr lint` (local-gate.toml's lint lanes)
+# covers the Static checks job. This run already did them, so its soldr child
+# tells that extra to stand down instead of repeating them.
+STATIC_DONE_ENV = "CLUD_LINT_STATIC_DONE"
+
+
+def run_soldr_lint(argv: list[str]) -> int:
+    from ci.env import clean_env
+
+    env = {**clean_env(), STATIC_DONE_ENV: "1"}
+    return process.run(argv, cwd=ROOT, env=env).returncode
 
 
 if __name__ == "__main__":
