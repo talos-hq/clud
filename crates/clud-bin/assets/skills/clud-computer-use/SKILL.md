@@ -55,6 +55,8 @@ clud computer-use install       # download + SHA-256 verify the pinned driver no
 clud computer-use doctor        # cua-driver's own diagnostics, clud's environment
 ```
 
+Every `clud computer-use` flag: the [CLI grammar](https://github.com/talos-hq/clud/blob/main/docs/cli-grammar.md#clud-computer-use).
+
 - First use downloads the pinned driver (30-70 MB) into
   `~/.clud/libexec/cua-driver/`; a slow link can outlast the MCP startup
   timeout. Run `clud computer-use install`, then ask the user to reconnect the

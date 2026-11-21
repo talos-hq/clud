@@ -43,6 +43,8 @@ pub mod civil_time;
 pub mod claude_files;
 pub mod claude_temp_home_install;
 pub mod claude_worktree_hook;
+#[cfg(test)]
+mod cli_grammar;
 pub mod clud_hook_roots;
 pub mod clud_hooks;
 pub mod clud_hooks_compile;

@@ -66,6 +66,7 @@ re-explaining.
 
 ## Quick Reference
 
+- **"What is the exact syntax of a clud command or flag?"** -> [cli-grammar.md](cli-grammar.md) (generated from clap)
 - **"How do I measure idle daemon and client cost?"** -> [idle CPU benchmark](../bench/idle_cpu/README.md)
 
 - **"How does `clud loop` decide when to stop?"** -> [loop-subsystem.md](architecture/loop-subsystem.md)

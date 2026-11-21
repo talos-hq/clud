@@ -57,6 +57,8 @@ clud secret --title 'Telegram BotFather token for the notification bot' --messag
 clud secret --title 'SSH private key for the deployment host' --message 'Save the deployment identity; copy the private key from your secret manager' --multiline --to-file /chosen/private/key
 ```
 
+Every `clud secret` and `clud sudo` flag, with defaults and conflicts, is in the
+[CLI grammar](https://github.com/talos-hq/clud/blob/main/docs/cli-grammar.md#clud-secret).
 Preview the request with `--dry-run` before acquiring a credential. For tests,
 use a fake lokr or fixtures, set `LOKR_TEST_MODE=1` and
 `CLUD_TEST_NO_SECRET_UI=1`, and remove `DISPLAY`,

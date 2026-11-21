@@ -8857,3 +8857,26 @@ second) does not justify that yet.
 - `--safe` no longer prompts for desktop actions; it narrows them through cua's profile instead.
 - macOS still needs one user approval of Accessibility and Screen Recording; clud asks once and `clud computer-use grant` asks again.
 - Native Wayland windows accept semantic AT-SPI actions but not another app's pixel input; window capture on KWin needs the user's one-time `cua-driver kwin-capture on`.
+
+## DD-234: the CLI grammar is generated from clap and checked for drift, not hand-written
+
+**Context:** clud's command line was described in several hand-maintained places: the README's flag table, `--help`, the source map, skills and topic docs. The splitter's passthrough tables and the argv[0] multicall names were documented nowhere an agent could find them. Agents asked for one reference they could load cheaply, also from outside the repository (`llms.txt`, clud.bot).
+
+**Decision:** `docs/cli-grammar.md` is rendered by the test-only module `crates/clud-bin/src/cli_grammar.rs` from the built clap tree (`args::parser_command`), the splitter's module-level tables in `args.rs` and `multicall::alias_names`. The test `cli_grammar::tests::committed_cli_grammar_is_current` compares the committed file with a fresh render and fails with the regenerate command (`CLUD_REGEN_CLI_GRAMMAR=1 soldr cargo test -p clud --lib cli_grammar`). Other docs link to it instead of restating flags. The root `llms.txt` indexes it for agents.
+
+**Rationale:**
+- A generated reference cannot describe a flag clud does not parse, and the drift test makes a CLI change and its documentation one commit.
+- A test-only generator keeps the multicall rule (no new `[[bin]]`, no new shipped subcommand) and costs release builds nothing.
+- The committed file is read through `include_str!`, so the check runs inside CI's prebuilt test bundles, which carry no source tree.
+
+**Alternatives Considered:**
+
+| Approach | Why not |
+|---|---|
+| Hand-written reference | Drifts; the README table had already fallen behind `args.rs`. |
+| Hidden `clud __cli-grammar` subcommand | Ships generator code in every binary and needs entries in three registries, for a file only CI and contributors produce. |
+| `clap-markdown` / `clap_mangen` | Cover clap alone, not passthrough rules, multicall names, environment or exit codes; adds a dependency. |
+
+**Consequences:**
+- Any change to a clap attribute or doc comment, a splitter table or a multicall name must regenerate the file; the failing test says how.
+- Flag help text in `args.rs` doc comments is now user-facing documentation; a flag without one shows an empty description.

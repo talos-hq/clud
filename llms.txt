@@ -1,0 +1,41 @@
+# clud
+
+> clud is a fast Rust CLI, shipped as a Python wheel, that launches agent harnesses (Claude Code, Codex, OpenCode) in YOLO mode with model routing (Anthropic, OpenAI, DeepSeek, Kimi, OpenRouter), an always-on session daemon, safety hooks, and a stdio MCP server for other agents. Unknown flags pass through to the harness.
+
+Start with the CLI grammar: it is generated from clud's argument parser and is the single reference for every command and flag. Repository: https://github.com/talos-hq/clud. Remote assistance runs at https://clud.bot (its own index: https://clud.bot/llms.txt).
+
+## Docs
+
+- [CLI grammar](https://raw.githubusercontent.com/talos-hq/clud/main/docs/cli-grammar.md): every command, subcommand, flag and positional; EBNF; passthrough and `--` rules; multicall names; environment; exit codes
+- [README](https://raw.githubusercontent.com/talos-hq/clud/main/README.md): install, usage examples, Hermes/MCP setup, command guard, `clud do` / `grind` / `loop`
+- [Architecture index](https://raw.githubusercontent.com/talos-hq/clud/main/docs/ARCHITECTURE.md): one doc per subsystem
+- [Design decisions](https://raw.githubusercontent.com/talos-hq/clud/main/docs/DESIGN_DECISIONS.md): why the non-obvious choices were made (DD-NNN)
+
+## Launching
+
+- [Launch plan](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/launch-plan.md): the one resolved argv; `--dry-run` JSON
+- [Provider selection](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/provider-selection.md): provider/harness flags, model IDs, effort and context
+- [Launch targets](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/launch-targets.md): sticky provider and harness preferences
+- [Unsafe mode](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/unsafe-mode.md): what `--safe` and `--unsafe` change
+
+## MCP and sessions
+
+- [MCP server tools](https://raw.githubusercontent.com/talos-hq/clud/main/src/clud/mcp_server.py): `python -m clud.mcp_server` (stdio). Tools: `run`, `run_json`, `dry_run`; `session_start`, `session_status`, `session_result`, `session_wait`, `session_wait_any`, `session_kill`, `session_inject`; `board_whoami`, `board_post`, `board_read`; `serve_start`, `serve_status`, `serve_stop`
+- [Agent board](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/agent-board.md): the `board_*` bulletin board between agents
+- [Session inject](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/session-inject.md): steering a running session (`session_inject`, `clud inject`)
+- [API session storage](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/api-session-storage.md): durable `/v1/sessions` behind `session_*`
+- [Local API gateway](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/standalone-gateway.md): `clud serve` and `serve_*`
+- [Daemon IPC](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/daemon-ipc.md): `attach`, `list`, `kill`, `logs` and the always-on daemon
+- [Remote assistance](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/remote-assistance.md): `clud remote connect` and clud.bot
+
+## Contributing
+
+- [CLAUDE.md](https://raw.githubusercontent.com/talos-hq/clud/main/CLAUDE.md): agent rules, build/lint/test, registries to update
+- [Source map](https://raw.githubusercontent.com/talos-hq/clud/main/crates/clud-bin/src/README.md): which file owns each subcommand
+
+## Optional
+
+- [Skill system](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/skill-system.md): bundled skills and their installer
+- [Hook dispatch](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/hook-dispatch.md): repo hooks run by clud
+- [grind](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/grind.md): `clud grind` and the `/grind` workflow
+- [CI](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/ci.md): build-once CI and labels
