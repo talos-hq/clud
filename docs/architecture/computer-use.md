@@ -75,9 +75,11 @@ There are three layers, and none prompts:
 2. The managed copy `~/.clud/libexec/cua-driver/<version>-<sha16>/`, accepted
    only when its `.clud-pin` marker names the pinned archive digest and the
    binary still hashes to the digest recorded at unpack time.
-3. A Hermes PM install (`$HERMES_HOME` or `~/.hermes`, `tools/facts.json`)
-   of the same version built from the same archive digest. Another version is
-   reported by `status` and not reused.
+
+Another product's copy, such as one Hermes installed, is never reused: only
+setup and install may read Hermes' tree or environment (the boundary test in
+`setup_command/hermes_tests.rs`, #2609), and this resolution runs on the MCP
+serve path. Point `CLUD_CUA_DRIVER` at it to share one copy deliberately.
 
 Otherwise it downloads the pinned archive (`computer_use/pin.rs`: version,
 per-target URL, size, SHA-256 from the release's `SHA256SUMS`) from
@@ -148,7 +150,7 @@ declined or interrupted request is never raised again automatically.
 
 | Command | Does |
 |---|---|
-| `clud computer-use status [--json]` | pinned version and target, driver path and source, Hermes version when not reusable, display kind, XAUTHORITY repair, native Wayland, permission modes, platform notes |
+| `clud computer-use status [--json]` | pinned version and target, driver path and source, display kind, XAUTHORITY repair, native Wayland, permission modes, platform notes |
 | `clud computer-use install` | provision now |
 | `clud computer-use doctor` | `cua-driver doctor` with clud's environment |
 | `clud computer-use grant` | macOS TCC request (no-op elsewhere) |
@@ -168,7 +170,7 @@ assets`), run `clud computer-use install` and the Xvfb proof below, and check
 
 - Unit (`computer_use/tests.rs`): pin table shape and URL allowlist,
   provisioning decision (missing, installed, tampered, wrong size/digest,
-  wrapped archive, zip, override, Hermes match and mismatch), permission
+  wrapped archive, zip, override, broken override), permission
   mapping, credential scrubbing, display detection, XAUTHORITY repair,
   Wayland opt-out, Claude and Codex registration payloads.
 - Launch (`command/tests/computer_use_launch.rs`): default, `--safe`,

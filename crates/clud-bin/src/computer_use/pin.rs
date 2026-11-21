@@ -1,9 +1,8 @@
 //! The one pinned cua-driver release clud provisions, per host target.
 //!
 //! The digests are the archives' SHA-256 values from the release's
-//! `SHA256SUMS` (trycua/cua `cua-driver-rs-v<VERSION>`). Hermes pins the same
-//! archive names, so a Hermes install of this exact version is reusable (see
-//! `provision::hermes_install`). Bump all rows together.
+//! `SHA256SUMS` (trycua/cua `cua-driver-rs-v<VERSION>`). Bump all rows
+//! together.
 
 use crate::platform::host;
 
@@ -23,7 +22,7 @@ pub enum ArchiveKind {
 /// One host target's pinned archive.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Artifact {
-    /// Target label, also Hermes PM's target key.
+    /// Target label (`<os>-<arch>`).
     pub target: &'static str,
     /// Archive file name under the release tag.
     pub asset: &'static str,

@@ -59,8 +59,7 @@ clud computer-use doctor        # cua-driver's own diagnostics, clud's environme
   `~/.clud/libexec/cua-driver/`; a slow link can outlast the MCP startup
   timeout. Run `clud computer-use install`, then ask the user to reconnect the
   server with `/mcp` (or restart the session). Do not retry in a loop.
-- A Hermes install of the same pinned version is reused. Set
-  `CLUD_CUA_DRIVER=/abs/path/cua-driver` to use another binary.
+- Set `CLUD_CUA_DRIVER=/abs/path/cua-driver` to use another binary.
 - `clud --no-computer-use` disabled it for this session. Headless one-shot
   runs (`clud -p`), gateway providers (OpenRouter, DeepSeek, Kimi, Codex
   bridge) and the Codex harness get it only with `clud --computer-use`: a
@@ -122,3 +121,6 @@ may trigger one SmartScreen notice; that is the user's call.
   so, since it takes over the user's pointer and focus.
 - Stop any daemon you start yourself (`cua-driver stop`); end sessions you
   opened (`end_session`).
+- When computer use is the reproduction for a code change, keep RED -> GREEN:
+  capture the failing screen or window state before the fix and the passing
+  one after it.

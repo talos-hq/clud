@@ -2,7 +2,7 @@
 //! MCP server (`mcp__cua__*`) on clud's launches, provisioned on first use.
 //!
 //! - [`pin`] — the one pinned release, per host target, with digests.
-//! - [`provision`] — find (override, managed, Hermes) or install the driver.
+//! - [`provision`] — find (override or managed copy) or install the driver.
 //! - [`session_env`] — the driver's environment: permission mode, privacy,
 //!   credential scrubbing, Linux display repairs.
 //! - [`serve`] — `clud computer-use {status,install,doctor,grant,mcp}`.

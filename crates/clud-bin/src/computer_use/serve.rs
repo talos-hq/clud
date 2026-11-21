@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use running_process::{CommandSpec, NativeProcess, ProcessConfig, StderrMode, StdinMode};
 
 use super::pin::{self, Artifact};
-use super::provision::{self, Driver, HermesInstall, Resolution};
+use super::provision::{self, Driver, Resolution};
 use super::session_env::{self, DisplayKind, PermissionMode};
 use crate::platform::host;
 
@@ -23,7 +23,7 @@ fn home_and_artifact() -> Result<(PathBuf, &'static Artifact), String> {
 fn ensure_driver() -> Result<Driver, String> {
     let (home, artifact) = home_and_artifact()?;
     let inputs = provision::host_inputs(&home, artifact);
-    if matches!(provision::resolve(&inputs), Resolution::Missing { .. }) {
+    if matches!(provision::resolve(&inputs), Resolution::Missing) {
         eprintln!(
             "[clud] computer use: downloading pinned cua-driver {} ({} MB, verified by SHA-256)",
             pin::VERSION,
@@ -205,7 +205,6 @@ fn source_label(driver: &Driver) -> &'static str {
     match driver.source {
         provision::Source::Override => "CLUD_CUA_DRIVER override",
         provision::Source::Managed => "clud managed",
-        provision::Source::Hermes => "reused Hermes install",
     }
 }
 
@@ -217,7 +216,6 @@ pub struct Status {
     pub driver: Option<String>,
     pub source: Option<provision::Source>,
     pub problem: Option<String>,
-    pub hermes_version: Option<String>,
     pub display: DisplayKind,
     pub xauthority_repaired: Option<String>,
     pub native_wayland: bool,
@@ -241,7 +239,6 @@ pub fn collect_status() -> Status {
         driver: None,
         source: None,
         problem: None,
-        hermes_version: None,
         display,
         xauthority_repaired: repaired.map(|path| path.display().to_string()),
         native_wayland,
@@ -273,11 +270,8 @@ fn fill_resolution(status: &mut Status) {
                 path.display()
             ));
         }
-        Resolution::Missing { hermes } => {
+        Resolution::Missing => {
             status.problem = Some("not installed yet; first use downloads it".into());
-            if let HermesInstall::Mismatch { version } = hermes {
-                status.hermes_version = Some(version);
-            }
         }
     }
 }
@@ -346,12 +340,6 @@ fn print_status(status: &Status) {
             "driver: {}",
             status.problem.as_deref().unwrap_or("unavailable")
         ),
-    }
-    if let Some(version) = &status.hermes_version {
-        println!(
-            "hermes: has cua-driver {version}; not reused (pin is {})",
-            status.pinned_version
-        );
     }
     println!("display: {:?}", status.display);
     if let Some(path) = &status.xauthority_repaired {

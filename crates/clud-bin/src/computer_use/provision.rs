@@ -5,8 +5,10 @@
 //! 1. `CLUD_CUA_DRIVER` names an executable: used as-is, externally owned.
 //! 2. clud's managed copy under `~/.clud/libexec/cua-driver/<version>-<sha>/`,
 //!    re-verified against the digest recorded when it was unpacked.
-//! 3. A Hermes PM install of the same version, built from the same archive
-//!    digest (`~/.hermes/tools/facts.json`).
+//!
+//! Another product's copy (for example one Hermes installed) is never
+//! reused: only setup and install may read Hermes' tree or environment
+//! (`setup_command::hermes`, #2609), and this runs on the MCP serve path.
 //!
 //! Otherwise the driver is missing and [`ensure`] downloads the pinned archive,
 //! checks its size and SHA-256 before unpacking anything, and publishes the
@@ -30,7 +32,6 @@ const MARKER: &str = ".clud-pin";
 pub enum Source {
     Override,
     Managed,
-    Hermes,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,34 +40,19 @@ pub struct Driver {
     pub source: Source,
 }
 
-/// What a Hermes install offers for the pinned artifact.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum HermesInstall {
-    Absent,
-    /// Same version and archive digest: reusable.
-    Match(PathBuf),
-    /// Present but another version or archive: never reused.
-    Mismatch {
-        version: String,
-    },
-}
-
 /// The provisioning decision, before any download.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resolution {
     Ready(Driver),
     /// The override names no executable file; never silently replaced.
     BadOverride(PathBuf),
-    Missing {
-        hermes: HermesInstall,
-    },
+    Missing,
 }
 
 /// The inputs to a resolution, so tests can supply every one.
 pub struct Inputs<'a> {
     pub home: &'a Path,
     pub override_path: Option<PathBuf>,
-    pub hermes_home: Option<PathBuf>,
     pub artifact: &'a Artifact,
 }
 
@@ -83,19 +69,14 @@ pub fn managed_dir(home: &Path, artifact: &Artifact) -> PathBuf {
         .join(format!("{}-{}", pin::VERSION, &artifact.sha256[..16]))
 }
 
-/// Reads the process environment for the override and Hermes' home.
+/// Reads the process environment for the override.
 pub fn host_inputs<'a>(home: &'a Path, artifact: &'a Artifact) -> Inputs<'a> {
     let override_path = std::env::var_os(OVERRIDE_ENV)
         .filter(|value| !value.is_empty())
         .map(PathBuf::from);
-    let hermes_home = std::env::var_os("HERMES_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| Some(home.join(".hermes")));
     Inputs {
         home,
         override_path,
-        hermes_home,
         artifact,
     }
 }
@@ -117,19 +98,7 @@ pub fn resolve(inputs: &Inputs<'_>) -> Resolution {
             source: Source::Managed,
         });
     }
-    let hermes = inputs
-        .hermes_home
-        .as_deref()
-        .map_or(HermesInstall::Absent, |root| {
-            hermes_install(root, inputs.artifact)
-        });
-    match hermes {
-        HermesInstall::Match(path) => Resolution::Ready(Driver {
-            path,
-            source: Source::Hermes,
-        }),
-        other => Resolution::Missing { hermes: other },
-    }
+    Resolution::Missing
 }
 
 /// Resolves the driver, installing the pinned archive when it is missing.
@@ -147,44 +116,13 @@ pub fn ensure_with_fetch(
             "{OVERRIDE_ENV}={} is not an executable file; fix or unset it",
             path.display()
         )),
-        Resolution::Missing { .. } => {
+        Resolution::Missing => {
             let path = install(&inputs.managed_dir(), inputs.artifact, fetch)?;
             Ok(Driver {
                 path,
                 source: Source::Managed,
             })
         }
-    }
-}
-
-/// Hermes PM's record of its cua-driver, reused only for the exact pin.
-pub fn hermes_install(hermes_home: &Path, artifact: &Artifact) -> HermesInstall {
-    let tools = hermes_home.join("tools");
-    let Ok(text) = std::fs::read_to_string(tools.join("facts.json")) else {
-        return HermesInstall::Absent;
-    };
-    let Ok(facts) = serde_json::from_str::<serde_json::Value>(&text) else {
-        return HermesInstall::Absent;
-    };
-    let package = &facts["packages"]["cua-driver"];
-    let Some(version) = package["version"].as_str() else {
-        return HermesInstall::Absent;
-    };
-    let digest_matches = package["artifacts"]
-        .as_array()
-        .is_some_and(|digests| digests.iter().any(|d| d.as_str() == Some(artifact.sha256)));
-    let entry = package["entry"].as_str().unwrap_or_default();
-    let safe_entry = !entry.is_empty() && !entry.contains(['/', '\\']) && !entry.starts_with('.');
-    if version != pin::VERSION || !digest_matches || !safe_entry {
-        return HermesInstall::Mismatch {
-            version: version.to_string(),
-        };
-    }
-    let binary = tools.join(entry).join(artifact.binary);
-    if binary.is_file() {
-        HermesInstall::Match(binary)
-    } else {
-        HermesInstall::Absent
     }
 }
 

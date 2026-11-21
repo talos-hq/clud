@@ -4,7 +4,7 @@ use std::time::{Duration, SystemTime};
 use sha2::{Digest, Sha256};
 
 use super::pin::{self, ArchiveKind, Artifact};
-use super::provision::{self, HermesInstall, Inputs, Resolution, Source};
+use super::provision::{self, Inputs, Resolution, Source};
 use super::session_env::{self, DisplayKind, PermissionMode, Probes};
 use super::*;
 
@@ -43,7 +43,6 @@ fn inputs<'a>(home: &'a Path, artifact: &'a Artifact) -> Inputs<'a> {
     Inputs {
         home,
         override_path: None,
-        hermes_home: None,
         artifact,
     }
 }
@@ -111,12 +110,7 @@ fn missing_driver_installs_verified_and_is_reused_offline() {
     let archive = fake_tar(&[("cua-driver", b"#!/bin/sh\n")]);
     let artifact = artifact_for(&archive, ArchiveKind::TarGz, "cua-driver");
     let inputs = inputs(home.path(), &artifact);
-    assert!(matches!(
-        provision::resolve(&inputs),
-        Resolution::Missing {
-            hermes: HermesInstall::Absent
-        }
-    ));
+    assert!(matches!(provision::resolve(&inputs), Resolution::Missing));
     let driver = provision::ensure_with_fetch(&inputs, |_| Ok(archive.clone())).unwrap();
     assert_eq!(driver.source, Source::Managed);
     assert!(driver.path.starts_with(inputs.managed_dir()));
@@ -135,7 +129,7 @@ fn a_tampered_managed_driver_is_not_trusted_and_is_replaced() {
     std::fs::write(&driver.path, b"evil").unwrap();
     assert!(matches!(
         provision::resolve(&inputs),
-        Resolution::Missing { .. }
+        Resolution::Missing
     ));
     let fixed = provision::ensure_with_fetch(&inputs, |_| Ok(archive.clone())).unwrap();
     assert_eq!(std::fs::read(fixed.path).unwrap(), b"good");
@@ -217,57 +211,6 @@ fn an_override_wins_and_a_broken_one_is_reported_not_replaced() {
     ));
     let error = provision::ensure_with_fetch(&inputs, |_| panic!("no download")).unwrap_err();
     assert!(error.contains(provision::OVERRIDE_ENV), "{error}");
-}
-
-fn write_hermes(root: &Path, version: &str, digest: &str, binary: &str) -> PathBuf {
-    let entry = format!("cua-driver-{version}-linux-x64");
-    let tools = root.join("tools");
-    let path = tools.join(&entry).join(binary);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, b"hermes").unwrap();
-    let facts = serde_json::json!({"packages": {"cua-driver": {
-        "artifacts": [digest], "entry": entry, "target": "linux-x64", "version": version,
-    }}});
-    std::fs::write(tools.join("facts.json"), facts.to_string()).unwrap();
-    path
-}
-
-#[test]
-fn a_hermes_install_of_the_exact_pin_is_reused() {
-    let home = tempfile::tempdir().unwrap();
-    let hermes = tempfile::tempdir().unwrap();
-    let artifact = *pin::ARTIFACTS.first().unwrap();
-    let path = write_hermes(
-        hermes.path(),
-        pin::VERSION,
-        artifact.sha256,
-        artifact.binary,
-    );
-    let mut inputs = inputs(home.path(), &artifact);
-    inputs.hermes_home = Some(hermes.path().to_path_buf());
-    let driver = provision::ensure_with_fetch(&inputs, |_| panic!("reuse, no download")).unwrap();
-    assert_eq!((driver.path, driver.source), (path, Source::Hermes));
-}
-
-#[test]
-fn a_hermes_install_of_another_version_or_archive_is_not_reused() {
-    let home = tempfile::tempdir().unwrap();
-    let artifact = *pin::ARTIFACTS.first().unwrap();
-    let zeros = "0".repeat(64);
-    for (version, digest) in [("0.21.0", artifact.sha256), (pin::VERSION, zeros.as_str())] {
-        let hermes = tempfile::tempdir().unwrap();
-        write_hermes(hermes.path(), version, digest, artifact.binary);
-        let mut inputs = inputs(home.path(), &artifact);
-        inputs.hermes_home = Some(hermes.path().to_path_buf());
-        assert_eq!(
-            provision::resolve(&inputs),
-            Resolution::Missing {
-                hermes: HermesInstall::Mismatch {
-                    version: version.to_string()
-                }
-            }
-        );
-    }
 }
 
 // ---- environment policy ----------------------------------------------------
