@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Attest the committed branch with prooft, push it, and open its PR
+# (ci/push.py; talos-hq/clud#2873). /grind workers use this as the whole
+# local gate. Same venv rule as ./lint: never build the wheel to push.
+uv sync --frozen --group dev --no-install-project 2>/dev/null \
+    || uv sync --group dev --no-install-project
+if [[ -x .venv/Scripts/python.exe ]]; then
+    VENV_PY=.venv/Scripts/python.exe
+elif [[ -x .venv/bin/python ]]; then
+    VENV_PY=.venv/bin/python
+else
+    echo "push: could not find .venv/{Scripts,bin}/python after uv sync" >&2
+    exit 1
+fi
+exec "$VENV_PY" -m ci.push "$@"

@@ -417,6 +417,14 @@ git commit ...                # prooft attests commits, never a dirty tree
 git push                      # after a pushed head: git push --force-with-lease
 ```
 
+`./push` (`ci/push.py`, #2873) does all three for a committed feature
+branch: it attests the host lanes (`clippy`, `dylint`; `--cross` adds the
+cross Dylint legs, `--test` runs `bash test --host` first), pushes with
+`--force-with-lease`, and opens or reuses the PR. A failing lane stops the
+push. It refuses `main`, a detached HEAD and a dirty tree. `/grind` uses a
+repository's `./push` as its whole local gate
+([grind.md](grind.md#coordinator-workflow-sequential-mode-2873)).
+
 `ci/attest.py` runs each lane in `ci-attestations.yml` with the hosted
 commands (`--list` prints them). Each lane that passes adds one
 `Ci-Attestation:` trailer per gate, bound to the tree and parents. The

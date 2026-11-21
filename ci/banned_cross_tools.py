@@ -293,6 +293,7 @@ SCAN_DIRS: tuple[str, ...] = (
 SCAN_FILES: tuple[str, ...] = (
     "build",
     "lint",
+    "push",
     "test",
     "install",
     "install.sh",

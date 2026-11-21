@@ -21,6 +21,7 @@ before selecting native coverage.
 - **Test (Tier 0, host)**: `bash test --host` — Rust library tests + Python tests with no built binary or daemon; run constantly ([tiers](docs/architecture/ci.md#two-local-test-tiers-2356))
 - **Test**: `bash test` — Rust unit tests + Python unit tests
 - **Test (full)**: `bash test --integration` — adds integration tests with mock agents
+- **Push**: `./push` — attest the committed branch with prooft, push it, open its PR ([ci.md](docs/architecture/ci.md#attested-clippy-and-dylint-prooft-dd-225))
 
 ### Soldr (Rust toolchain wrapper)
 
