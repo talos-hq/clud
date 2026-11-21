@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.harness.harness import Harness, RunResult
-from tests.harness.worlds import _issue, _world, with_user_sub_meta
+from tests.harness.worlds import STAGED, _issue, _world, with_user_sub_meta
 
 MARK = {
     "prework": "You are the /grind prework role",
@@ -261,7 +261,9 @@ def _workflow(h: Harness, meta: str, goals: list[str], plan: dict[str, Any]) -> 
         "plan": plan,
         "goals": [{"id": g, "title": f"child {g}", "brief": f"do {g}"} for g in goals],
     }
-    return {"tool_use": {"name": "Workflow", "input": {"name": "grind-run", "args": args}}}
+    return {"tool_use": {"name": "Workflow", "input": {
+        "name": "grind-run", "args": {**STAGED, **args},
+    }}}
 
 
 def _script(

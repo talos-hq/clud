@@ -20,6 +20,10 @@ from typing import Any
 # The marker /grind writes into the sub-meta issues it creates (with the
 # `grind:meta` label); see the /grind skill's regroup step.
 GRIND_MARKER = "<!-- grind:v1 -->"
+# These suites script the planner, editor, reviewer and integrator roles, so
+# their grind-run calls opt into the staged pipeline; the default worker
+# pipeline (#2873) is covered offline by tests/test_grind_worker_stacking_2873.py.
+STAGED: dict[str, Any] = {"pipeline": "staged"}
 
 
 def _issue(

@@ -49,6 +49,9 @@ def probe(
         "main": "main",
         "mode": mode,
         "goals": [{"id": g, "title": g, "brief": g} for g in goals],
+        # These tests cover the opt-in staged chain; the worker pipeline (#2873)
+        # is covered by tests/test_grind_worker_stacking_2873.py.
+        "pipeline": "staged",
         **extra,
     }
     config = tmp_path / "probe.json"
@@ -127,7 +130,7 @@ def test_the_integrator_never_runs_concurrently(tmp_path: Path) -> None:
     assert _peak(out, "integrate:") == 1
 
 
-def test_the_integrator_must_pass_the_multi_platform_lint_gate_and_no_full_test_suite(
+def test_the_integrator_must_pass_the_multi_platform_lint_gate_and_the_test_script(
     tmp_path: Path,
 ) -> None:
     out = probe(tmp_path, {}, scripts={"lint": "./lint", "test": "./test"})
@@ -135,7 +138,8 @@ def test_the_integrator_must_pass_the_multi_platform_lint_gate_and_no_full_test_
     assert "MULTI-PLATFORM LINT GATE" in prompt
     assert "workspace.metadata.soldr" in prompt
     assert "./lint" in prompt
-    assert "./test" not in prompt
+    # #2873: local CI is the push gate, so a chosen test script runs too.
+    assert "./test" in prompt
     assert "Return as soon as the PR is pushed" in prompt
 
 
@@ -350,7 +354,7 @@ def test_a_dependent_is_blocked_when_its_dependency_gets_stuck(tmp_path: Path) -
     assert _goal(out, "g2")["blocked"] is True
 
 
-def test_chaperones_use_the_large_model_with_the_handoff_and_no_inherited_cheap_model(
+def test_chaperone_watchers_use_haiku_and_fixers_the_large_model_with_the_handoff(
     tmp_path: Path,
 ) -> None:
     pushed = {
@@ -368,9 +372,10 @@ def test_chaperones_use_the_large_model_with_the_handoff_and_no_inherited_cheap_
             "chaperone-fix:g1": [FIXED],
         },
     )
-    for label in ("chaperone:g1", "chaperone-fix:g1"):
+    # #2873: the watcher only observes and enqueues; the fixer diagnoses and fixes.
+    for label, model in (("chaperone:g1", "haiku"), ("chaperone-fix:g1", "opus")):
         call = next(p for p in out["prompts"] if p.get("label", "").startswith(label))
-        assert call["model"] == "opus"
+        assert call["model"] == model
         assert "INTEGRATOR-HANDOFF-NOTE" in call["prompt"]
         assert "pull/9" in call["prompt"]
         assert HEAD in call["prompt"]
@@ -386,9 +391,17 @@ def test_the_handoff_falls_back_to_the_plan_when_the_integrator_wrote_none(
 
 
 def test_a_session_override_can_pick_the_chaperone_model(tmp_path: Path) -> None:
-    out = probe(tmp_path, {}, models={"chaperone": "fable"})
-    call = next(p for p in out["prompts"] if p.get("label", "").startswith("chaperone:g1"))
-    assert call["model"] == "fable"
+    """`models.chaperone` is the legacy name for the fixer's model (#2873)."""
+    out = probe(
+        tmp_path,
+        {"chaperone:g1": [_verdict("needs_fix", failure_log="red"), MERGED],
+         "chaperone-fix:g1": [FIXED]},
+        models={"chaperone": "fable"},
+    )
+    fix = next(p for p in out["prompts"] if p.get("label", "").startswith("chaperone-fix:g1"))
+    assert fix["model"] == "fable"
+    watch = next(p for p in out["prompts"] if p.get("label", "").startswith("chaperone:g1"))
+    assert watch["model"] == "haiku"
 
 
 def test_a_feature_stage_goal_has_a_chaperone_merge_into_the_feature_branch_without_a_queue(

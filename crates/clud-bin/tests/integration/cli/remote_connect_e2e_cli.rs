@@ -1056,6 +1056,10 @@ fn numbers_received(output: &[u8]) -> Vec<usize> {
 /// the same socket, pacing the shell, and deliver every line in order: a
 /// reconnect would lose what the old socket had in flight.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "#2887: on windows-x64 the flood plateaus near 10 MB of 17.9 MB within WAIT; unproven on ConPTY"
+)]
 fn a_stalled_link_paces_the_shell_and_loses_nothing() {
     const LINES: usize = 2_500_000;
     let (client, mut operator, listener) = resumable_session(None);

@@ -94,6 +94,13 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
         body: include_str!("../assets/agents/grind-integrator.md"),
         procedure: Some("grind-integrate"),
     },
+    // One worker per goal (#2873): its own preamble, then the integrator's
+    // commit/rebase/gate/push procedure.
+    BundledClaudeFile {
+        rel_path: "agents/grind-worker.md",
+        body: include_str!("../assets/agents/grind-worker.md"),
+        procedure: Some("grind-integrate"),
+    },
     BundledClaudeFile {
         rel_path: "agents/grind-lander.md",
         body: include_str!("../assets/agents/grind-lander.md"),
@@ -117,9 +124,10 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
 ///
 /// `workflows/grind.js` was renamed to `grind-run.js`: a workflow named
 /// `grind` listed a second `/grind` beside the router skill, and picking it
-/// skipped the router's questions. `agents/grind-worker.md` became
-/// `grind-editor.md` when /grind moved to one editor at a time.
-pub const PURGED_CLAUDE_FILES: &[&str] = &["workflows/grind.js", "agents/grind-worker.md"];
+/// skipped the router's questions. (`agents/grind-worker.md`, once renamed
+/// to `grind-editor.md`, is bundled again as the one worker per goal, #2873;
+/// installing it overwrites the old managed copy.)
+pub const PURGED_CLAUDE_FILES: &[&str] = &["workflows/grind.js"];
 
 /// Result of one install pass.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -230,6 +238,7 @@ mod tests {
             "editor",
             "reviewer",
             "integrator",
+            "worker",
             "lander",
             "chaperone",
         ] {
@@ -279,6 +288,7 @@ mod tests {
             "editor",
             "reviewer",
             "integrator",
+            "worker",
             "lander",
             "chaperone",
         ] {

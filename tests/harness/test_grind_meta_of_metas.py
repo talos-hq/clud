@@ -36,6 +36,7 @@ from typing import Any
 from tests.harness.harness import Harness, RunResult
 from tests.harness.worlds import (
     GRIND_MARKER,
+    STAGED,
     _issue,
     _world,
     regroupable,
@@ -711,7 +712,9 @@ def test_m6_only_the_picked_feature_group_is_worked(harness: Harness) -> None:
     main = {
         "name": "main",
         "steps": [
-            {"tool_use": {"name": "Workflow", "input": {"name": "grind-run", "args": args}}},
+            {"tool_use": {"name": "Workflow", "input": {
+                "name": "grind-run", "args": {**STAGED, **args},
+            }}},
             {"text": "GRIND_DONE"},
         ],
     }
