@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.harness.harness import Harness, RunResult
-from tests.harness.worlds import _issue, _world, regroupable
+from tests.harness.worlds import STAGED, _issue, _world, regroupable
 
 MARK = {
     "prework": "You are the /grind prework role",
@@ -72,7 +72,9 @@ def _structured(value: dict[str, Any]) -> dict[str, Any]:
 
 
 def _workflow(args: dict[str, Any]) -> dict[str, Any]:
-    return {"tool_use": {"name": "Workflow", "input": {"name": "grind-run", "args": args}}}
+    return {"tool_use": {"name": "Workflow", "input": {
+        "name": "grind-run", "args": {**STAGED, **args},
+    }}}
 
 
 def _after(expect: dict[str, Any], step: dict[str, Any]) -> dict[str, Any]:

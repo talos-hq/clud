@@ -15,6 +15,8 @@ const execute = new AsyncFunction(
   source.replace(metadataExport, 'const meta ='),
 );
 const prompts = [];
+// The workflow journal: every log() line, in order (#2873).
+const logs = [];
 const agent = async (prompt, options) => {
   prompts.push({ prompt, role: options.agentType, label: options.label, model: options.model });
   // Scripted replies (#2467): `script` maps a label prefix to a list of
@@ -51,6 +53,10 @@ const agent = async (prompt, options) => {
       checkout: config.args.repo, branch: 'grind/12', depends_on: [], verify: 'true',
       tasks: [{ id: 't1', files: ['src/a.rs'], instructions: 'controlled task' }],
     },
+    'grind-worker': {
+      status: 'pushed', pr_url: 'https://github.com/fork/project/pull/34', branch: 'grind/12',
+      head_sha: 'c'.repeat(40), base_sha: 'd'.repeat(40), summary: 'controlled worker push',
+    },
     'grind-editor': { files_touched: ['src/a.rs'], summary: 'controlled work' },
     'grind-reviewer': { approved: true, summary: 'controlled review' },
     'grind-integrator': {
@@ -71,7 +77,7 @@ const agent = async (prompt, options) => {
 };
 try {
   const result = await execute(
-    config.args, agent, () => {}, () => {},
+    config.args, agent, line => logs.push(String(line)), () => {},
     tasks => Promise.all(tasks.map(task => task())),
     // Native pipeline: items run concurrently, each item's stages run in
     // order on the previous result, and a null result stops that item.
@@ -84,7 +90,7 @@ try {
       return value;
     })),
   );
-  console.log(JSON.stringify({ result, prompts }));
+  console.log(JSON.stringify({ result, prompts, logs }));
 } catch (error) {
-  console.log(JSON.stringify({ error: String(error.message || error), prompts }));
+  console.log(JSON.stringify({ error: String(error.message || error), prompts, logs }));
 }

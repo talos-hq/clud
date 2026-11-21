@@ -42,6 +42,10 @@ pub(super) const PREWORK: &str = "grind-prework";
 pub(super) const ORCHESTRATOR: &str = "grind-orchestrator";
 pub(super) const GATE: &str = "grind-gate";
 pub(super) const CHAPERONE: &str = "grind-chaperone";
+/// One worker per goal (#2873): plans, edits, runs local CI and pushes, so it
+/// builds under the integrator's denylist and may add its own worktree in
+/// parallel mode, as the planner did for it.
+pub(super) const WORKER: &str = "grind-worker";
 
 /// Read-only inspection commands every shell-holding role may run, subject
 /// to [`inspect_ok`].
@@ -361,6 +365,7 @@ pub(super) fn is_grind_role(agent_type: &str) -> bool {
             | ORCHESTRATOR
             | GATE
             | CHAPERONE
+            | WORKER
     )
 }
 
@@ -405,7 +410,7 @@ pub(super) fn shell_reason(role: &str, command: &str, run: &RunFacts) -> Option<
 
 /// Integrators resolve formatter output locally, never in the shared stash stack (#2451).
 fn integrator_stash_reason(role: &str, words: &[String]) -> Option<String> {
-    if role != INTEGRATOR {
+    if !matches!(role, INTEGRATOR | WORKER) {
         return None;
     }
     // Like the build denylist, look through transparent wrappers. Nested
@@ -424,16 +429,17 @@ fn integrator_stash_reason(role: &str, words: &[String]) -> Option<String> {
         s.first().is_some_and(|w| w == "stash") && s.get(1).is_some_and(|w| w == "list")
     });
     (!read_only).then(|| {
-        "grind-integrator may only run `git stash list`: commit goal formatting or restore \
-         verified formatter-only paths; never mutate preflight, carry or unrelated stashes"
-            .to_string()
+        format!(
+            "{role} may only run `git stash list`: commit goal formatting or restore \
+             verified formatter-only paths; never mutate preflight, carry or unrelated stashes"
+        )
     })
 }
 
 /// The roles that build, so they share the integrator's shell denylist and
 /// deletion scope.
 fn builds(role: &str) -> bool {
-    matches!(role, INTEGRATOR | CHAPERONE)
+    matches!(role, INTEGRATOR | CHAPERONE | WORKER)
 }
 
 /// Whether `path` is a slot of the fixup pool: `.clud/worktrees/<repo>-wt-grind-fixup-<n>`.
@@ -746,7 +752,8 @@ fn remote_ci_reason(role: &str, words: &[String]) -> Option<String> {
 /// `pr_merge_watch`, which judges the newest run per workflow and has a
 /// deadline; `gh run watch` and `gh pr checks --watch` have neither.
 fn native_watch_reason(role: &str, words: &[String]) -> Option<String> {
-    if !matches!(role, LANDER | INTEGRATOR | CHAPERONE) || program_name(&words[0]) != "gh" {
+    if !matches!(role, LANDER | INTEGRATOR | CHAPERONE | WORKER) || program_name(&words[0]) != "gh"
+    {
         return None;
     }
     let stripped = strip_gh_repo_flag(words);
@@ -1113,7 +1120,7 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
             }
             deny(&program)
         }
-        INTEGRATOR | CHAPERONE => {
+        INTEGRATOR | CHAPERONE | WORKER => {
             // A denylist is only as good as what it sees, so look through
             // wrappers (`env act`, `xargs bosn`): every word counts. A nested
             // shell's code (`bash -c "docker run …"`) is parsed into
@@ -1149,7 +1156,16 @@ fn statement_reason(role: &str, words: &[String], run: &RunFacts) -> Option<Stri
                 .windows(2)
                 .any(|w| w[0] == "worktree" && w[1] == "add")
             {
-                return Some(format!("{role} may not create worktrees"));
+                // The worker creates its goal's worktree in parallel mode, as
+                // the planner does for the staged chain (#2873).
+                if role == WORKER && run.parallel && !run.plan_only {
+                    return None;
+                }
+                return Some(if role == WORKER {
+                    format!("{role} may create worktrees only in parallel mode")
+                } else {
+                    format!("{role} may not create worktrees")
+                });
             }
             None
         }
@@ -1249,7 +1265,7 @@ pub(super) fn rm_tool_verdict(
 ) -> Option<Option<String>> {
     let profile = match role {
         // A chaperone deletes as an integrator does: only inside its own checkout.
-        INTEGRATOR | CHAPERONE => crate::deletion_rules::Profile::GrindIntegrator,
+        INTEGRATOR | CHAPERONE | WORKER => crate::deletion_rules::Profile::GrindIntegrator,
         EDITOR => crate::deletion_rules::Profile::GrindEditor,
         REVIEWER => crate::deletion_rules::Profile::GrindReviewer,
         PLANNER => crate::deletion_rules::Profile::GrindPlanner,
@@ -2548,6 +2564,40 @@ mod tests {
         assert!(!allowed(INTEGRATOR, "bosn init", &facts));
         assert!(!allowed(INTEGRATOR, "docker run --rm img", &facts));
         assert!(!allowed(INTEGRATOR, "git worktree add /x", &facts));
+    }
+
+    /// #2873: the one worker per goal builds, lints, tests and pushes like the
+    /// integrator, keeps its stash restriction, and adds its own worktree only
+    /// in parallel mode.
+    #[test]
+    fn worker_builds_and_pushes_and_adds_a_worktree_only_in_parallel_mode() {
+        let sequential = run(false, false);
+        let parallel = run(true, false);
+        for facts in [&sequential, &parallel] {
+            assert!(allowed(WORKER, "bash lint && bash test", facts));
+            assert!(allowed(WORKER, "git push -u origin grind/12-x", facts));
+            assert!(allowed(
+                WORKER,
+                "gh pr create --repo o/r --base main --title t --body b",
+                facts
+            ));
+            assert!(allowed(
+                WORKER,
+                "git rebase --onto origin/main abc grind/12-x",
+                facts
+            ));
+            assert!(allowed(WORKER, "git stash list", facts));
+            assert!(!allowed(WORKER, "git stash push -m x", facts));
+            assert!(!allowed(WORKER, "docker run --rm img", facts));
+            assert!(!allowed(WORKER, "bosn init", facts));
+            assert!(!allowed(WORKER, "gh run watch 5", facts));
+            assert!(!allowed(WORKER, "gh issue create --title x", facts));
+        }
+        let add = "git -C /repo worktree add --no-track /home/u/.clud/worktrees/r-wt-12 -b grind/12 origin/main";
+        assert!(allowed(WORKER, add, &parallel));
+        assert!(!allowed(WORKER, add, &sequential));
+        assert!(!allowed(INTEGRATOR, add, &parallel));
+        assert!(is_grind_role(WORKER));
     }
 
     #[test]

@@ -919,30 +919,26 @@ directly. Before anything runs, `/grind` asks:
 | Question | Choices |
 |---|---|
 | Mode | **parallel**: a git worktree per goal; server-side CI runs concurrently. **sequential**: one goal at a time in the local checkout, with no worktrees, so a heavy C++/Rust build cache stays warm. **cron**: one issue per native `/loop` tick. |
-| Models | planner, worker, reviewer, integrator. Each defaults to the session's model, including whatever `--deepseek`, `--codex` or OpenRouter resolved. |
-| Local CI | run the `ci.yml` job under `act` before each push. Only offered when Docker works and `.github/workflows/ci.yml` exists. |
+| Models | the worker (one per goal); chaperone watchers default to `haiku` and fixers to `opus`. Each other role defaults to the session's model, including whatever `--deepseek`, `--codex` or OpenRouter resolved. |
+| Local CI | run the relevant `ci.yml` jobs under bosn before each push. Only offered when bosn is installed and `.github/workflows/ci.yml` exists. |
 
 Before any goal starts, a `grind-prework` agent posts the run's plan as one
 JSON comment on the meta issue (it may only comment there; nobody edits that
 comment), and every later agent is given its URL. If the plan cannot be
 posted, no work happens.
 
-Then the bundled workflow takes each goal through five roles. Each role is its
-own agent type with hard caps:
-
-| Stage | Agent type | May | May not |
-|---|---|---|---|
-| Plan | `grind-planner` | read code; read-only `git`/`gh`; add a worktree in parallel mode | edit files, build |
-| Work | `grind-editor` | edit its assigned files; read-only `gh`; web search | build, lint, test |
-| Review | `grind-reviewer` | same as worker | same as worker |
-| Integrate | `grind-integrator` | rebase, lint, build, test, push, open the PR; **one at a time** | `bosn`, direct `docker`, new worktrees |
-| Land | `grind-lander` | watch with `pr_merge_watch`, admin-merge when green | edit, build; failures go back to the integrator (≤10 rounds) |
-
-At most four plan/work/review agents run at once, and only the integrator
-builds, so builds never overlap. A goal that depends on another lands after
-it. The run ends with the checkout rebased onto `origin/main` and a clean
-`git status`. `grind` requires the Claude harness; clud never runs its own
-loop for it.
+Then the bundled workflow gives each goal **one worker** (`grind-worker`):
+it plans, edits test-first, reviews its own diff, runs the repo's lint and
+test scripts, pushes the PR and returns at once, so the next goal starts
+while CI and the merge queue run. Goals go in critical-path order. A goal
+that shares files with another is **stacked** on that goal's pushed branch
+instead of waiting for it to merge. Each PR gets a chaperone: a `haiku`
+watcher follows checks and the merge queue and enqueues it; any problem goes
+to an `opus` fixer in a pooled worktree, including rebasing a stacked PR
+with `git rebase --onto` once its parent merges. A goal that waits on a
+person (`gate: "human"`) is reported, never scheduled. The old
+plan → edit → review → integrate chain remains as `pipeline: "staged"`.
+`grind` requires the Claude harness; clud never runs its own loop for it.
 
 Problems an agent finds outside its task (a flaky test, an unrelated bug)
 are returned to `/grind`, which files them as you chose up front: one
@@ -957,7 +953,7 @@ so it never holds the meta issue open), or one comment each.
 | Router skill | [`assets/skills/grind/SKILL.md`](crates/clud-bin/assets/skills/grind/SKILL.md) |
 | Leaf skills | [`grind-intake`](crates/clud-bin/assets/skills/grind-intake/SKILL.md), [`grind-prework`](crates/clud-bin/assets/skills/grind-prework/SKILL.md), [`grind-plan`](crates/clud-bin/assets/skills/grind-plan/SKILL.md), [`grind-edit`](crates/clud-bin/assets/skills/grind-edit/SKILL.md), [`grind-review`](crates/clud-bin/assets/skills/grind-review/SKILL.md), [`grind-integrate`](crates/clud-bin/assets/skills/grind-integrate/SKILL.md), [`grind-land`](crates/clud-bin/assets/skills/grind-land/SKILL.md), [`grind-cron`](crates/clud-bin/assets/skills/grind-cron/SKILL.md) |
 | Workflow script | [`assets/workflows/grind-run.js`](crates/clud-bin/assets/workflows/grind-run.js) (named `grind-run` so `/grind` stays the router) |
-| Agent types | [`assets/agents/`](crates/clud-bin/assets/agents/) (`grind-planner.md` … `grind-lander.md`) |
+| Agent types | [`assets/agents/`](crates/clud-bin/assets/agents/) (`grind-worker.md`, `grind-chaperone.md`, and the staged `grind-planner.md` … `grind-lander.md`) |
 | Installer for agents + workflow | [`src/claude_files.rs`](crates/clud-bin/src/claude_files.rs) |
 | Per-role shell caps (hook) | [`src/block_bad_cmd_grind_caps.rs`](crates/clud-bin/src/block_bad_cmd_grind_caps.rs) |
 | `clud grind` launch + prompt | [`src/command/prompts.rs`](crates/clud-bin/src/command/prompts.rs) (`GRIND_TEMPLATE`), [`src/command/builder.rs`](crates/clud-bin/src/command/builder.rs) (`grind_launch_error`), [`src/grind.rs`](crates/clud-bin/src/grind.rs) (issues-URL resolution) |

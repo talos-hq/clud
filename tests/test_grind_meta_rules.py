@@ -115,7 +115,10 @@ def test_workflow_maps_role_models_onto_each_agent() -> None:
     assert (
         "MODELS[role === 'lander' ? 'integrator' : role === 'prework' ? 'planner' : role]" in text
     )
-    assert "role === 'chaperone' ? MODELS.chaperone || 'opus'" in text
+    # #2873: a chaperone chain's watcher is cheap and its fixer large;
+    # `models.chaperone` stays the fixer's legacy name.
+    assert "role === 'watcher' ? MODELS.watcher || 'haiku'" in text
+    assert "role === 'fixer' ? MODELS.fixer || MODELS.chaperone || 'opus'" in text
     assert "if (m) o.model = m" in text
 
 
