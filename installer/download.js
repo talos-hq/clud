@@ -105,8 +105,14 @@
     return "Detected: " + result.label + ". Not right? Pick another below.";
   }
 
+  // #2863: a universal macOS row (the installer disk image) fits every Mac,
+  // so a Mac needs no CPU guess when the release has one.
   function assetFor(result, rows) {
-    if (!result || !result.recommended) return null;
+    if (!result || !result.os) return null;
+    for (var j = 0; j < rows.length; j++) {
+      if (rows[j].os === result.os && rows[j].arch === "universal") return rows[j];
+    }
+    if (!result.recommended) return null;
     for (var i = 0; i < rows.length; i++) {
       if (rows[i].os === result.os && rows[i].arch === result.arch) return rows[i];
     }
@@ -164,6 +170,10 @@
   function recommend(doc, select, rows, result) {
     var row = assetFor(result, rows);
     if (row) select.value = row.url;
+    if (row && row.arch === "universal") {
+      show(doc, row, "Detected: macOS. This download runs on Apple Silicon and Intel.", null);
+      return;
+    }
     show(doc, row, statusText(row ? result : { label: result.label }), row && result.override);
   }
 

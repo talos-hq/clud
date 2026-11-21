@@ -26,7 +26,8 @@ notarizes zips, never a bare Mach-O), submits with ``notarytool submit
 log`` otherwise. It never modifies the wheel: notarization registers the
 signed files' code-directory hashes with Apple, so the bytes signed on Linux
 are the bytes that ship. A bare executable cannot carry a stapled ticket, so
-Gatekeeper looks the ticket up online; nothing is stapled.
+Gatekeeper looks its ticket up online; ``ci.macos_package`` builds the
+stapled universal ``Install clud.app`` and disk image from these bytes.
 
 Missing secrets fail closed, naming every absent secret at once.
 
@@ -448,24 +449,30 @@ def notarize_wheel(wheel: Path, config: NotaryConfig, run=_quiet) -> str:
         if code != 0:
             raise SigningError(f"ditto failed for {wheel.name}: {(out + err).strip()}")
         print(f"notarytool: submitting {upload.name} ({len(names)} Mach-O file(s)); waiting")
-        code, out, err = run(notary_submit_command(config, upload))
-        print(err.strip())
-        try:
-            record = notary_result(out)
-        except SigningError as exc:
-            raise SigningError(f"{exc} for {wheel.name} (exit {code}): {out.strip()}") from exc
-        submission = record.get("id", "")
-        status = record.get("status", "")
-        print(f"notarytool: {wheel.name}: submission {submission} status {status}")
-        if code != 0 or status != NOTARY_ACCEPTED:
-            if submission:
-                _code, log, log_err = run(notary_log_command(config, submission))
-                print(log.strip() or log_err.strip())
-            raise SigningError(
-                f"notarization of {wheel.name} was not accepted: submission "
-                f"{submission or '<none>'} status {status or '<none>'} "
-                f"({record.get('message', '')}) exit {code}"
-            )
+        return submit_for_notarization(upload, config, wheel.name, run)
+
+
+def submit_for_notarization(upload: Path, config: NotaryConfig, label: str, run=_quiet) -> str:
+    """``notarytool submit --wait`` ``upload`` (a zip, .dmg or .pkg); return the
+    Accepted submission ID, or print ``notarytool log`` and raise."""
+    code, out, err = run(notary_submit_command(config, upload))
+    print(err.strip())
+    try:
+        record = notary_result(out)
+    except SigningError as exc:
+        raise SigningError(f"{exc} for {label} (exit {code}): {out.strip()}") from exc
+    submission = record.get("id", "")
+    status = record.get("status", "")
+    print(f"notarytool: {label}: submission {submission} status {status}")
+    if code != 0 or status != NOTARY_ACCEPTED:
+        if submission:
+            _code, log, log_err = run(notary_log_command(config, submission))
+            print(log.strip() or log_err.strip())
+        raise SigningError(
+            f"notarization of {label} was not accepted: submission "
+            f"{submission or '<none>'} status {status or '<none>'} "
+            f"({record.get('message', '')}) exit {code}"
+        )
     return submission
 
 

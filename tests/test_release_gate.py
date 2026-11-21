@@ -91,7 +91,7 @@ def test_release_workflow_gates_every_publish_path() -> None:
     publish_needs = (
         "needs: [preflight, full-ci-gate, snapshot-public, build, wheel-smoke, "
         "windows-signature-smoke, sign-macos, notarize-macos, macos-signature-smoke, "
-        "build-static-musl, verify-static-musl-arm64]"
+        "package-macos, macos-installer-gate, build-static-musl, verify-static-musl-arm64]"
     )
     assert publish_needs in text
     assert "name: Publish final bytes as public prerelease" in text
@@ -99,8 +99,8 @@ def test_release_workflow_gates_every_publish_path() -> None:
     assert "make_latest: false" in text
     pypi_needs = (
         "needs: [preflight, full-ci-gate, build, wheel-smoke, windows-signature-smoke, "
-        "sign-macos, notarize-macos, macos-signature-smoke, candidate-acceptance-gate, "
-        "verify-prior-public]"
+        "sign-macos, notarize-macos, macos-signature-smoke, package-macos, "
+        "macos-installer-gate, candidate-acceptance-gate, verify-prior-public]"
     )
     assert pypi_needs in text
     # #1545: the release wheel is pip-installed and run before either publish.

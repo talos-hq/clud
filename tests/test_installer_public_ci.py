@@ -15,6 +15,7 @@ import pytest
 from running_process import PseudoTerminalProcess
 
 from ci.installer_candidate import TARGETS
+from ci.installer_public_catalog import executable_bytes, native_row
 from ci.installer_public_evidence import require_evidence, require_guest_evidence
 from installer.catalog import (
     ONLINE_URL,
@@ -37,6 +38,41 @@ def test_public_executable_flavor_accepts_catalog_rows_without_variant(os_name: 
 
 def test_public_executable_flavor_preserves_linux_static_musl() -> None:
     assert public_executable_flavor({"variant": {"flavor": "static-musl"}}) == "static-musl"
+
+
+def _row(os_name: str, arch: str, media: str, variant: dict | None = None) -> dict:
+    row = {"platform": {"os": os_name, "arch": arch}, "asset": {"media_type": media}}
+    if variant is not None:
+        row["variant"] = variant
+    return row
+
+
+def test_native_row_falls_back_to_the_macos_wheel_only() -> None:
+    """#2863: macOS releases ship a universal binary the catalog cannot name."""
+    direct = _row("darwin", "aarch64", "application/octet-stream")
+    wheel = _row("darwin", "aarch64", "application/zip")
+    assert native_row({"platforms": [direct, wheel]}, "darwin", "aarch64") is direct
+    assert native_row({"platforms": [wheel]}, "darwin", "aarch64") is wheel
+    linux_wheel = _row("linux", "x86_64", "application/zip", {"flavor": "gnu"})
+    with pytest.raises(ValueError, match="one exact native asset"):
+        native_row({"platforms": [linux_wheel]}, "linux", "x86_64")
+    with pytest.raises(ValueError, match="one exact native asset"):
+        native_row({"platforms": [_row("windows", "x86_64", "application/zip")]},
+                   "windows", "x86_64")
+
+
+def test_executable_bytes_extracts_the_wheel_clud() -> None:
+    from io import BytesIO
+    from zipfile import ZipFile
+
+    thin = b"\xcf\xfa\xed\xfe" + b"\0" * 60
+    data = BytesIO()
+    with ZipFile(data, "w") as archive:
+        archive.writestr("clud-2.9.0.data/scripts/clud", thin)
+    wheel = _row("darwin", "aarch64", "application/zip")
+    assert executable_bytes(wheel, data.getvalue()) == thin
+    direct = _row("darwin", "aarch64", "application/octet-stream")
+    assert executable_bytes(direct, thin) == thin
 
 
 def test_public_windows_lookup_accepts_mixed_path_separators() -> None:
@@ -335,21 +371,15 @@ def assert_older_installer_discovery(
         }
     assert version_key(prior_version) < version_key(version)
     release = next(row for row in catalog["releases"] if row["version"] == prior_version)
-    matches = [
-        row for row in release["platforms"]
-        if row["platform"]["os"] == os_name
-        and row["platform"]["arch"] == arch
-        and row["asset"]["media_type"] == "application/octet-stream"
-        and (os_name != "linux" or row["variant"] == {"flavor": "static-musl"})
-    ]
-    assert len(matches) == 1, matches
-    asset = matches[0]["asset"]
+    row = native_row(release, os_name, arch)
+    asset = row["asset"]
     payload = public_bytes(asset["urls"][0])
     assert len(payload) == asset["size_bytes"]
     assert hashlib.sha256(payload).hexdigest() == asset["sha256"]
-    verify_direct_executable(payload, os_name, arch, public_executable_flavor(matches[0]))
-    binary = directory / asset["filename"]
-    binary.write_bytes(payload)
+    executable = executable_bytes(row, payload)
+    verify_direct_executable(executable, os_name, arch, public_executable_flavor(row))
+    binary = directory / f"clud-{prior_version}-prior"
+    binary.write_bytes(executable)
     binary.chmod(0o755)
     source = run_process(
         [str(binary), "--version"], env=env, capture_output=True, timeout=15, check=False
@@ -490,23 +520,17 @@ def test_public_release_installs_by_name(installer_target, tmp_path: Path) -> No
     arch = platform.machine().lower()
     arch = {"amd64": "x86_64", "arm64": "aarch64"}.get(arch, arch)
     release = next(row for row in catalog["releases"] if row["version"] == version)
-    matches = [
-        row
-        for row in release["platforms"]
-        if row["platform"]["os"] == os_name
-        and row["platform"]["arch"] == arch
-        and row["asset"]["media_type"] == "application/octet-stream"
-        and (os_name != "linux" or row["variant"] == {"flavor": "static-musl"})
-    ]
-    assert len(matches) == 1, matches
-    asset = matches[0]["asset"]
+    row = native_row(release, os_name, arch)
+    asset = row["asset"]
     payload = public_bytes(asset["urls"][0])
-    digest = hashlib.sha256(payload).hexdigest()
     assert len(payload) == asset["size_bytes"]
-    assert digest == asset["sha256"]
-    verify_direct_executable(payload, os_name, arch, public_executable_flavor(matches[0]))
-    binary = tmp_path / asset["filename"]
-    binary.write_bytes(payload)
+    assert hashlib.sha256(payload).hexdigest() == asset["sha256"]
+    # macOS rows are wheels since #2863; the installer extracts their clud.
+    executable = executable_bytes(row, payload)
+    digest = hashlib.sha256(executable).hexdigest()
+    verify_direct_executable(executable, os_name, arch, public_executable_flavor(row))
+    binary = tmp_path / f"clud-{version}-public"
+    binary.write_bytes(executable)
     binary.chmod(0o755)
 
     env, destination = installer_target
@@ -563,7 +587,7 @@ def test_public_release_installs_by_name(installer_target, tmp_path: Path) -> No
         "version": version,
         "os": os_name,
         "arch": arch,
-        "sha256": digest,
+        "sha256": asset["sha256"],
         "size_bytes": len(payload),
         "asset_url": asset["urls"][0],
         "resolved_path": lines[0],

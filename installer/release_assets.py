@@ -1,4 +1,8 @@
-"""Extract only clud executables from the release wheels for direct download."""
+"""Extract the Windows clud executables from the release wheels for direct download.
+
+macOS direct downloads are the universal binary and installer disk image
+``ci.macos_package`` builds (#2863); Linux ships the static musl builds.
+"""
 
 from __future__ import annotations
 
@@ -22,7 +26,7 @@ def extract(
         if target is None:
             continue
         os_name, arch, executable = target
-        if os_name == "linux":
+        if os_name != "windows":
             continue
         candidates = [suffix for suffix, mapped in DIRECT_TARGETS.items() if mapped == target]
         if len(candidates) != 1 or (os_name, arch) in found:
@@ -35,9 +39,9 @@ def extract(
         destination.write_bytes(payload)
         destination.chmod(0o755)
         results.append(destination)
-    expected = sum(os_name != "linux" for os_name, _, _ in TARGETS.values())
+    expected = sum(os_name == "windows" for os_name, _, _ in TARGETS.values())
     if len(results) != expected:
-        raise ValueError(f"expected {expected} Windows/macOS wheel targets, found {len(results)}")
+        raise ValueError(f"expected {expected} Windows wheel targets, found {len(results)}")
     return results
 
 

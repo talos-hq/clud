@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from installer.catalog import direct_target, linux_variant, write_catalog
+from installer.verify_native_assets import verify_udif
 
 INSTALLER_SITE_FILES = ("index.html", "install/index.html", "install/manifest.json")
 _HERE = Path(__file__).resolve().parent
@@ -138,6 +139,38 @@ def select_native_downloads(catalog: dict) -> list[dict[str, str]]:  # noqa: C90
     return sorted(chosen.values(), key=lambda row: (order[row["os"]], row["arch"]))
 
 
+def macos_installer(releases: list[dict], version: str, fetch_bytes) -> dict[str, str] | None:
+    """The stapled installer disk image of ``version`` (#2863), verified.
+
+    The catalog keeps macOS on the per-architecture wheels for installed
+    clud versions, so the page reads the image from the release itself. It is
+    linked at its GitHub release URL rather than copied to Pages.
+    """
+    release = next(
+        (item for item in releases if item.get("tag_name", "").removeprefix("v") == version),
+        None,
+    )
+    name = f"clud-{version}-macos.dmg"
+    asset = next(
+        (item for item in (release or {}).get("assets", []) if item.get("name") == name), None
+    )
+    if asset is None:
+        return None
+    data = fetch_bytes(asset["browser_download_url"])
+    if asset.get("digest") != f"sha256:{hashlib.sha256(data).hexdigest()}" or asset.get(
+        "size"
+    ) != len(data):
+        raise ValueError(f"published asset digest/size mismatch: {name}")
+    verify_udif(data)
+    return {
+        "os": "darwin",
+        "arch": "universal",
+        "flavor": "installer",
+        "filename": name,
+        "url": asset["browser_download_url"],
+    }
+
+
 def download_path(row: dict[str, str]) -> str:
     """Same-origin bytes let browsers honor the download filename."""
     return f"/clud/downloads/{row['os']}/{row['arch']}/{row['filename']}"
@@ -159,12 +192,37 @@ def publish_downloads(destination: Path, catalog: dict, fetch_bytes) -> None:
         path.write_bytes(payload)
 
 
-def render_page(catalog: dict) -> str:
+def _installer_entries(installer: dict[str, str]) -> tuple[str, str, str]:
+    url = html.escape(installer["url"], quote=True)
+    filename = html.escape(installer["filename"])
+    platform = "macOS (Apple Silicon and Intel)"
+    row = (
+        f'<li>{platform}: <a class="native-download" data-os="darwin" data-arch="universal" '
+        f'data-flavor="installer" href="{url}">{filename}</a></li>'
+    )
+    option = (
+        f'<option value="{url}" data-os="darwin" data-arch="universal" '
+        f'data-download-url="{url}" data-download-name="{filename}" '
+        f'data-filename="{filename}">{platform}: {filename}</option>'
+    )
+    instruction = (
+        f"<li>{platform}: open <code>{filename}</code> and double-click "
+        "<strong>Install clud</strong>. It shows what it will install and asks first.</li>"
+    )
+    return row, option, instruction
+
+
+def render_page(catalog: dict, installer: dict[str, str] | None = None) -> str:
     latest = html.escape(catalog["channels"]["latest-stable"])
     downloads = select_native_downloads(catalog)
     rows = []
     options = []
     instructions = []
+    if installer:
+        row, option, instruction = _installer_entries(installer)
+        rows.append(row)
+        options.append(option)
+        instructions.append(instruction)
     labels = {"windows": "Windows", "darwin": "macOS", "linux": "Linux"}
     for row in downloads:
         platform = f"{labels[row['os']]} {row['arch']}"
@@ -213,7 +271,14 @@ def render_page(catalog: dict) -> str:
         download_section = "<p>No native downloads are available for this stable release.</p>"
         launch_section = ""
     mac_help = ""
-    if any(row["os"] == "darwin" for row in downloads):
+    if installer:
+        mac_help = (
+            "<p>The macOS disk image is notarized and stapled, so Install clud opens "
+            "without a warning, even offline. If macOS still blocks it, open System "
+            "Settings &gt; Privacy &amp; Security, choose Open Anyway, then confirm Open. "
+            '<a href="https://support.apple.com/en-us/102445">Apple instructions</a>.</p>'
+        )
+    elif any(row["os"] == "darwin" for row in downloads):
         mac_help = (
             "<p>If macOS blocks the downloaded executable, try the terminal command first. "
             "If you trust the download, open System Settings &gt; Privacy &amp; Security, "
@@ -270,9 +335,9 @@ installation only when no <code>clud</code> executable is found on PATH.</p>
 """
 
 
-def root_page(catalog: dict) -> str:
+def root_page(catalog: dict, installer: dict[str, str] | None = None) -> str:
     """The site root serves the same download page as ``install/index.html``."""
-    return render_page(catalog)
+    return render_page(catalog, installer)
 
 
 def build_site(
@@ -288,9 +353,12 @@ def build_site(
         verified_catalog=previous_catalog,
     )
     publish_downloads(destination, catalog, fetch_bytes)
-    (destination / "index.html").write_text(root_page(catalog), encoding="utf-8")
+    installer = macos_installer(releases, catalog["channels"]["latest-stable"], fetch_bytes)
+    (destination / "index.html").write_text(root_page(catalog, installer), encoding="utf-8")
     (destination / ".nojekyll").write_text("", encoding="utf-8")
-    (destination / "install" / "index.html").write_text(render_page(catalog), encoding="utf-8")
+    (destination / "install" / "index.html").write_text(
+        render_page(catalog, installer), encoding="utf-8"
+    )
     for relative, body in STATIC_ASSETS.items():
         asset = destination / relative
         asset.parent.mkdir(parents=True, exist_ok=True)

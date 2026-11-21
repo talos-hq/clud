@@ -344,7 +344,13 @@ def test_release_workflow_signs_and_notarizes_macos_wheels_before_publish() -> N
         body = release[release.index(f"  {job}:") :]
         needs = body.split("needs:", 1)[1].split("\n", 1)[0]
         condition = body.split("    if: >-", 1)[1].split("    runs-on:", 1)[0]
-        for proof in ("sign-macos", "notarize-macos", "macos-signature-smoke"):
+        for proof in (
+            "sign-macos",
+            "notarize-macos",
+            "macos-signature-smoke",
+            "package-macos",
+            "macos-installer-gate",
+        ):
             assert proof in needs, job
             assert f"needs.{proof}.result == 'success'" in condition, job
     # Only the signing chain declares the secrets environment.
@@ -353,7 +359,7 @@ def test_release_workflow_signs_and_notarizes_macos_wheels_before_publish() -> N
         for name in re.findall(r"^  ([a-z0-9-]+):$", release.split("\njobs:\n", 1)[1], re.MULTILINE)
         if "environment: release-signing" in _job(release, name)
     ]
-    assert holders == ["sign-macos", "notarize-macos", "macos-signature-smoke"]
+    assert holders == ["sign-macos", "notarize-macos", "macos-signature-smoke", "package-macos"]
     # The Rust build job runs third-party build scripts; it never sees Apple secrets.
     build = (WORKFLOWS / "_build-target.yml").read_text(encoding="utf-8")
     for name in (*sign.CERT_SECRETS, *sign.NOTARY_SECRETS):
@@ -368,6 +374,8 @@ PROOF_JOBS = {
     "sign-macos",
     "notarize-macos",
     "macos-signature-smoke",
+    "package-macos",
+    "macos-installer-gate",
     "wheel-smoke",
 }
 
@@ -407,3 +415,28 @@ def test_resume_requires_the_original_macos_signing_proof() -> None:
     assert release_resume.REQUIRED["Sign macOS ("] == 2
     assert release_resume.REQUIRED["Notarize macOS ("] == 2
     assert release_resume.REQUIRED["Verify macOS signature ("] == 2
+    assert release_resume.REQUIRED["Package macOS universal binary and installer disk image"] == 1
+    assert release_resume.REQUIRED["Verify macOS installer offline ("] == 2
+
+
+def test_release_packages_and_gates_the_stapled_macos_installer() -> None:
+    """#2863: universal binary + stapled disk image, gated offline on both CPUs."""
+    release = (WORKFLOWS / "auto-release.yml").read_text(encoding="utf-8")
+    package = _job(release, "package-macos")
+    assert "needs: [preflight, notarize-macos]" in package
+    assert "runs-on: macos-15" in package
+    assert "environment: release-signing" in package
+    assert "pattern: wheels-macos-*" in package
+    assert "python -m ci.macos_package build --dist-dir dist --out-dir macos-installer" in package
+    for name in (*sign.CERT_SECRETS, *sign.NOTARY_SECRETS):
+        assert f"{name}: ${{{{ secrets.{name} }}}}" in package
+    gate = _job(release, "macos-installer-gate")
+    assert "needs: [preflight, package-macos]" in gate
+    assert "runs-on: [macos-15, macos-15-intel]" in gate
+    assert "python -m ci.macos_package gate --dir macos-installer" in gate
+    # The gate holds no secrets: it proves what any downloader sees.
+    assert "environment:" not in gate
+    assert "secrets." not in gate
+    # Every job that publishes or re-verifies native files reads the image.
+    for job in ("publish-release", "verify-candidate-public"):
+        assert "name: macos-installer" in _job(release, job), job

@@ -48,8 +48,13 @@ pub fn explicit_request(args: &Args) -> Result<Option<Request>, String> {
     let mut words = args.raw_argv.iter().skip(1);
     while let Some(word) = words.next() {
         match word.as_str() {
-            "--installer" | "--installer-json" | "--install-current" | "--no-modify-path"
-            | "--yes" | "-y" => {}
+            "--installer"
+            | "--installer-json"
+            | "--installer-plan-json"
+            | "--install-current"
+            | "--no-modify-path"
+            | "--yes"
+            | "-y" => {}
             "--install-version" => {
                 words.next().ok_or("--install-version requires a version")?;
             }
@@ -62,6 +67,9 @@ pub fn explicit_request(args: &Args) -> Result<Option<Request>, String> {
     }
     if args.installer_json && !args.install_current && args.install_version.is_none() {
         return Err("--installer-json requires --install-current or --install-version".into());
+    }
+    if args.installer_plan_json && !args.install_current && args.install_version.is_none() {
+        return Err("--installer-plan-json requires --install-current or --install-version".into());
     }
     if args.install_current {
         Ok(Some(Request::Current))
@@ -88,6 +96,16 @@ pub fn should_offer(args: &Args, stdin_tty: bool, stderr_tty: bool, path_has_clu
 
 /// Run an explicit installer request before launch setup has side effects.
 pub fn run_explicit(args: &Args) -> Option<i32> {
+    if args.installer_plan_json {
+        return match explicit_request(args) {
+            Ok(None) => None,
+            Ok(Some(request)) => Some(print_plan(request, !args.no_modify_path)),
+            Err(error) => {
+                eprintln!("clud installer: {error}");
+                Some(2)
+            }
+        };
+    }
     let outcome = match explicit_request(args) {
         Ok(None) => return None,
         Ok(Some(request)) => run_request(
@@ -194,27 +212,43 @@ fn run_request(request: Request, options: InstallOptions, automatic: bool) -> Ou
                 eprintln!("clud installer: a terminal or --yes is required before installation");
                 return Outcome::refused(2, "consent_required");
             }
-            let catalog = match fetch_catalog() {
-                Ok(catalog) => catalog,
-                Err(error) => {
+            match published_intent(version) {
+                Ok(intent) => run_selected(intent, options),
+                Err((error, reason)) => {
                     eprintln!("clud installer: {error}");
-                    return Outcome::failed(1, "catalog_unavailable");
-                }
-            };
-            let host = match host() {
-                Ok(host) => host,
-                Err(error) => {
-                    eprintln!("clud installer: {error}");
-                    return Outcome::failed(1, "unsupported_host");
-                }
-            };
-            match catalog.resolve(VersionChoice::Exact(version), host) {
-                Ok(asset) => run_selected(InstallIntent::Published(asset), options),
-                Err(error) => {
-                    eprintln!("clud installer: {error}");
-                    Outcome::failed(1, "version_unavailable")
+                    Outcome::failed(1, reason)
                 }
             }
+        }
+    }
+}
+
+/// Resolve an exact published version for this host from the catalog.
+fn published_intent(version: String) -> Result<InstallIntent, (String, &'static str)> {
+    let catalog = fetch_catalog().map_err(|error| (error, "catalog_unavailable"))?;
+    let host = host().map_err(|error| (error, "unsupported_host"))?;
+    catalog
+        .resolve(VersionChoice::Exact(version), host)
+        .map(InstallIntent::Published)
+        .map_err(|error| (error, "version_unavailable"))
+}
+
+/// `--installer-plan-json`: print the plan an explicit request would show
+/// for consent, as one JSON object on stdout. Planning never writes.
+fn print_plan(request: Request, modify_path: bool) -> i32 {
+    let intent = match request {
+        Request::Current => Ok(InstallIntent::CurrentExecutable),
+        Request::Exact(version) => published_intent(version).map_err(|(error, _)| error),
+        Request::Menu => Err("--installer-plan-json requires an explicit install choice".into()),
+    };
+    match intent.and_then(|intent| transaction::plan(intent, modify_path)) {
+        Ok(plan) => {
+            println!("{}", Facts::of(&plan).report());
+            0
+        }
+        Err(error) => {
+            eprintln!("clud installer: {error}");
+            1
         }
     }
 }
@@ -251,6 +285,24 @@ fn run_selected(intent: InstallIntent, options: InstallOptions) -> Outcome {
 /// the user chooses to install.
 fn current_plan(options: InstallOptions) -> Result<InstallPlan, String> {
     transaction::plan(InstallIntent::CurrentExecutable, options.modify_path)
+}
+
+/// The running executable's plan with default options (PATH activation on),
+/// for `Install clud.app`'s consent dialog.
+pub(super) fn current_install_plan() -> Result<InstallPlan, String> {
+    current_plan(InstallOptions::default())
+}
+
+/// Commit a plan consented to outside the terminal (the app bundle's
+/// dialog): unattended from here on, so no further prompt can block.
+pub(super) fn install_consented(plan: InstallPlan) -> Outcome {
+    install_planned(
+        plan,
+        InstallOptions {
+            yes: true,
+            modify_path: true,
+        },
+    )
 }
 
 /// Commit a plan the user has consented to, then activate it.
@@ -780,6 +832,43 @@ mod tests {
         assert_eq!(explicit_request(&current).unwrap(), Some(Request::Current));
         assert!(Args::try_parse_from(["clud", "--installer-json"]).is_err());
         assert!(explicit_request(&parse(&["clud", "--installer", "--installer-json"])).is_err());
+    }
+
+    #[test]
+    fn plan_json_is_scoped_read_only_and_needs_an_explicit_choice() {
+        for (flags, expected) in [
+            (vec!["--install-current"], Request::Current),
+            (
+                vec!["--install-version", "2.8.14"],
+                Request::Exact("2.8.14".into()),
+            ),
+            (
+                vec!["--install-current", "--no-modify-path"],
+                Request::Current,
+            ),
+        ] {
+            let mut argv = vec!["clud", "--installer", "--installer-plan-json"];
+            argv.extend(flags);
+            let parsed = parse(&argv);
+            assert!(parsed.installer_plan_json);
+            assert!(parsed.passthrough.is_empty());
+            assert_eq!(explicit_request(&parsed).unwrap(), Some(expected));
+        }
+        assert!(
+            explicit_request(&parse(&["clud", "--installer", "--installer-plan-json"])).is_err()
+        );
+        assert!(Args::try_parse_from(["clud", "--installer-plan-json"]).is_err());
+        // A plan is never consent: it cannot ride along with an install.
+        for extra in ["--yes", "--installer-json"] {
+            assert!(Args::try_parse_from([
+                "clud",
+                "--installer",
+                "--install-current",
+                "--installer-plan-json",
+                extra
+            ])
+            .is_err());
+        }
     }
 
     #[test]

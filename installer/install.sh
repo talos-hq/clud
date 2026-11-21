@@ -104,6 +104,9 @@ fi
 
 # Asset names never carry the tag's "v" (v2.8.65 ships clud-2.8.65-*, #2786).
 asset="clud-${version#v}-$arch-$suffix"
+# #2863: macOS releases ship one universal binary; older releases (and a pinned
+# --version from before it) ship one per architecture. SHA256SUMS decides.
+universal="clud-${version#v}-universal-apple-darwin"
 base="https://github.com/$REPO/releases/download/$version"
 dir="${CLUD_INSTALL_DIR:-$HOME/.local/bin}"
 dest="$dir/clud"
@@ -112,7 +115,12 @@ if [ "$dry_run" = 1 ]; then
     say "clud install (dry run): nothing will be downloaded or written"
     say "  platform:  $os $arch"
     say "  release:   $version"
-    say "  download:  $base/$asset"
+    if [ "$os" = Darwin ]; then
+        say "  download:  $base/$universal"
+        say "             (or $base/$asset for releases without a universal binary)"
+    else
+        say "  download:  $base/$asset"
+    fi
     say "  checksums: $base/SHA256SUMS"
     say "  install:   $dest"
     exit 0
@@ -145,11 +153,18 @@ fetch_binary() {
     esac
 }
 
+curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" || die "download failed: $base/SHA256SUMS"
+sum_of() {
+    awk -v name="$1" '$2 == name || $2 == "./" name || $2 == "*" name { print $1; exit }' "$tmp/SHA256SUMS"
+}
+if [ "$os" = Darwin ] && [ -n "$(sum_of "$universal")" ]; then
+    asset="$universal"
+fi
+
 say "Downloading $asset ($version)"
 fetch_binary "$tmp/$asset" "$base/$asset" || die "download failed: $base/$asset"
-curl -fsSL -o "$tmp/SHA256SUMS" "$base/SHA256SUMS" || die "download failed: $base/SHA256SUMS"
 
-expected="$(awk -v name="$asset" '$2 == name || $2 == "./" name || $2 == "*" name { print $1; exit }' "$tmp/SHA256SUMS")"
+expected="$(sum_of "$asset")"
 [ -n "$expected" ] || die "$asset is not listed in the release's SHA256SUMS; refusing to install"
 if command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$tmp/$asset" | awk '{ print $1 }')"

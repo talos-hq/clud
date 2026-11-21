@@ -609,6 +609,47 @@ def test_install_sh_dry_run_names_the_asset_and_fetches_nothing(
 
 
 @posix_only
+@pytest.mark.parametrize("uname_m", ["x86_64", "arm64"])
+@pytest.mark.parametrize(
+    ("listed", "expected"),
+    [
+        ("universal-apple-darwin", "universal-apple-darwin"),
+        # A release from before #2863 has only per-architecture binaries.
+        (None, None),
+    ],
+)
+def test_install_sh_prefers_the_universal_macos_binary_when_the_release_has_one(
+    tmp_path, uname_m, listed, expected
+) -> None:
+    arch = "aarch64" if uname_m == "arm64" else "x86_64"
+    thin = f"clud-2.8.56-{arch}-apple-darwin"
+    digest = "a" * 64
+    sums = f"{digest}  ./{thin}\n"
+    if listed:
+        sums += f"{digest}  ./clud-2.8.56-{listed}\n"
+    done, calls = run_install(
+        tmp_path, ["--version", "2.8.56"], "Darwin", uname_m, sums=sums, digest=digest
+    )
+    assert done.returncode == 0, done.stderr
+    fetched = [c for c in calls if "/clud-2.8.56-" in c]
+    want = f"clud-2.8.56-{expected}" if expected else thin
+    assert len(fetched) == 1, fetched
+    assert fetched[0].endswith(f"/{want}"), fetched
+    # The checksum list is read before any binary is downloaded.
+    assert calls.index(next(c for c in calls if c.endswith("/SHA256SUMS"))) < calls.index(
+        fetched[0]
+    )
+
+
+@posix_only
+def test_install_sh_dry_run_on_macos_names_the_universal_binary(tmp_path) -> None:
+    done, calls = run_install(tmp_path, ["--dry-run", "--version", "2.8.70"], "Darwin", "arm64")
+    assert done.returncode == 0, done.stderr
+    assert "releases/download/2.8.70/clud-2.8.70-universal-apple-darwin" in done.stdout
+    assert calls == []
+
+
+@posix_only
 def test_install_sh_v_prefixed_tag_names_the_unprefixed_asset(tmp_path) -> None:
     """#2786: a v-prefixed tag keeps its v in the URL path, never in the asset name."""
     done, calls = run_install(tmp_path, ["--dry-run", "--version", "v2.8.65"])
@@ -979,3 +1020,83 @@ def test_recommendation_uses_same_origin_and_clean_filename(facts, os_name, arch
     row = next(row for row in rows if row["os"] == os_name and row["arch"] == arch)
     assert got["before"]["href"] == row["downloadUrl"]
     assert got["before"]["download"] == filename
+
+
+# ------------------------------------------------- macOS installer disk image (#2863)
+
+DMG_URL = f"https://github.com/talos-hq/clud/releases/download/{VERSION}/clud-{VERSION}-macos.dmg"
+UDIF = b"\0" * 1024 + b"koly" + b"\0" * 508
+
+
+def dmg_release(data: bytes = UDIF, digest: str | None = None, size: int | None = None) -> list:
+    import hashlib
+
+    return [
+        {
+            "tag_name": VERSION,
+            "assets": [
+                {
+                    "name": f"clud-{VERSION}-macos.dmg",
+                    "browser_download_url": DMG_URL,
+                    "digest": digest or f"sha256:{hashlib.sha256(data).hexdigest()}",
+                    "size": len(data) if size is None else size,
+                }
+            ],
+        }
+    ]
+
+
+def test_universal_macos_row_is_recommended_on_every_mac_without_a_cpu_guess() -> None:
+    results = run_detection([facts for _, facts, *_ in DETECTION_TABLE])
+    rows = [
+        {"os": os_name, "arch": arch, "filename": f"clud-{VERSION}-{triple}"}
+        for (os_name, arch), triple in TRIPLES.items()
+        if os_name != "darwin"
+    ] + [{"os": "darwin", "arch": "universal", "filename": f"clud-{VERSION}-macos.dmg"}]
+    names = run_node(
+        "const d = require(process.argv[1]);"
+        "const r = JSON.parse(process.argv[2]); const rows = JSON.parse(process.argv[3]);"
+        "console.log(JSON.stringify(r.map((x) => { const a = d.assetFor(x, rows);"
+        " return a ? a.filename : null; })));",
+        json.dumps(results),
+        json.dumps(rows),
+    )
+    for (case, _facts, os_name, arch, recommended), name in zip(
+        DETECTION_TABLE, names, strict=True
+    ):
+        if os_name == "darwin":
+            assert name == f"clud-{VERSION}-macos.dmg", case
+        elif recommended:
+            assert name == f"clud-{VERSION}-{TRIPLES[(os_name, arch)]}", case
+        else:
+            assert name is None, case
+
+
+def test_site_reads_the_stapled_disk_image_from_the_release_and_verifies_it() -> None:
+    row = site.macos_installer(dmg_release(), VERSION, lambda url: UDIF)
+    assert row == {
+        "os": "darwin",
+        "arch": "universal",
+        "flavor": "installer",
+        "filename": f"clud-{VERSION}-macos.dmg",
+        "url": DMG_URL,
+    }
+    # A release from before #2863 has no disk image: the page keeps its rows.
+    assert site.macos_installer([{"tag_name": VERSION, "assets": []}], VERSION, None) is None
+    with pytest.raises(ValueError, match="digest"):
+        site.macos_installer(dmg_release(digest="sha256:" + "0" * 64), VERSION, lambda u: UDIF)
+    with pytest.raises(ValueError, match="koly"):
+        site.macos_installer(dmg_release(b"\0" * 600), VERSION, lambda u: b"\0" * 600)
+
+
+def test_page_offers_the_disk_image_as_the_macos_download() -> None:
+    installer = site.macos_installer(dmg_release(), VERSION, lambda url: UDIF)
+    page = render_page(assets_catalog(), installer)
+    parsed = Page()
+    parsed.feed(page)
+    universal = [o for o in parsed.options if o.get("data-arch") == "universal"]
+    assert [o["value"] for o in universal] == [DMG_URL]
+    assert "double-click <strong>Install clud</strong>" in page
+    assert "notarized and stapled" in page
+    assert "does not promise Finder double-click" not in page
+    assert site.root_page(assets_catalog(), installer) == page

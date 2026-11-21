@@ -360,6 +360,20 @@ pub struct Args {
     #[arg(long = "installer-json", requires = "installer")]
     pub installer_json: bool,
 
+    /// `Install clud.app`'s helper entry (#2863): run the dialog installer
+    /// as the bundle's pristine `Contents/Helpers/clud`. Internal.
+    #[arg(long = "installer-app", hide = true)]
+    pub installer_app: bool,
+
+    /// Print the read-only install plan as JSON (`clud-installer-plan/v1`)
+    /// and exit without writing (explicit choice required).
+    #[arg(
+        long = "installer-plan-json",
+        requires = "installer",
+        conflicts_with_all = ["installer_json", "yes"]
+    )]
+    pub installer_plan_json: bool,
+
     /// Select the invoking executable for installation.
     #[arg(
         long = "install-current",
@@ -2744,6 +2758,8 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--no-redact-secrets",
         "--installer",
         "--installer-json",
+        "--installer-plan-json",
+        "--installer-app",
         "--install-current",
         "--no-modify-path",
         "--continue",

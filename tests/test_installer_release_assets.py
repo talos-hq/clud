@@ -24,8 +24,10 @@ def test_release_assets_extract_one_clud_per_target(tmp_path) -> None:
         (wheels / f"clud-2.9.0-py3-none-{platform}.whl").write_bytes(data.getvalue())
     output = tmp_path / "standalone"
     paths = extract(wheels, output, "2.9.0")
-    assert len(paths) == 4
+    assert len(paths) == 2
     assert all(path.read_bytes() for path in paths)
-    assert sum(path.suffix == ".exe" for path in paths) == 2
+    assert all(path.suffix == ".exe" for path in paths)
+    # macOS downloads come from ci.macos_package (universal + disk image).
+    assert not any(path.name.endswith("-apple-darwin") for path in paths)
     assert not any(path.name.endswith("-unknown-linux-gnu") for path in paths)
     assert not any(path.name.endswith("-unknown-linux-musl") for path in paths)

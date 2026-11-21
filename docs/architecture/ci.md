@@ -1502,7 +1502,8 @@ Three jobs in `auto-release.yml` run one leg per macOS wheel:
    The submission IDs go to the job summary. The job uploads nothing:
    notarization records the signatures' code-directory hashes, so the bytes
    signed on Linux are the bytes that ship. A bare executable cannot be
-   stapled, so nothing is stapled. Gatekeeper looks the ticket up online.
+   stapled, so Gatekeeper looks its ticket up online; step 4 builds the
+   containers that carry a stapled ticket.
 3. **`macos-signature-smoke`** (native `macos-15` arm64 and `macos-15-intel`
    x86_64, after `notarize-macos`) requires, for every Mach-O:
    - `codesign --verify --strict`;
@@ -1511,25 +1512,54 @@ Three jobs in `auto-release.yml` run one leg per macOS wheel:
      (an online ticket lookup).
 
    It then runs `clud --version`.
+4. **`package-macos`** (`macos-15`, after `notarize-macos`; #2863) runs
+   `python -m ci.macos_package build`. It `lipo`s the two notarized thin
+   `clud` executables into `clud-<v>-universal-apple-darwin` and proves each
+   slice is byte-identical to its wheel executable, then signs the universal
+   file as one (identifier `clud`, hardened runtime): `lipo`'s per-slice
+   signatures run standalone but fail `codesign --verify` as nested code in
+   the app. The app's notarization covers that file. It assembles `Install clud.app` with that
+   universal binary as `Contents/MacOS/clud` and, unchanged, as
+   `Contents/Helpers/clud` (the copy that gets installed: the bundle
+   signature binds the main executable to the app), signs it from a throwaway
+   keychain (`codesign --options runtime --timestamp`), notarizes and
+   staples it, puts it with `READ ME if blocked.txt` on
+   `clud-<v>-macos.dmg` (`hdiutil`, UDZO), then signs, notarizes and staples
+   the image. It uploads both as the `macos-installer` artifact.
+5. **`macos-installer-gate`** (native `macos-15` and `macos-15-intel`, no
+   secrets) runs `python -m ci.macos_package gate`: it quarantines the files
+   as a browser download would and points Gatekeeper's ticket service
+   (`api.apple-cloudkit.com`) at localhost. The bare universal binary must
+   **not** assess as notarized there (a negative control that proves the
+   block, and the reason the bare binary alone is not the macOS download);
+   the stapled image (`spctl --type open`) and app (`--type execute`) must.
+   The mounted app's `clud` then prints a read-only `--installer-plan-json`,
+   installs itself with `--installer --install-current --yes`, and resolves
+   by name in a fresh zsh login shell.
 
 `wheel-smoke`, both publish jobs and `installer.release_assets` read the
-signed artifact. PyPI, the standalone macOS assets, `SHA256SUMS`, the Pages
-catalog and the Homebrew formula therefore all carry signed bytes. Both
-publish jobs `need` all three jobs, and release recovery requires each job's
-original proof.
+signed artifact. PyPI, the Windows standalone assets, `SHA256SUMS`, the Pages
+catalog and the Homebrew formula therefore all carry signed bytes; the macOS
+standalone assets are the `macos-installer` artifact. Both publish jobs
+`need` all five jobs, and release recovery requires each job's original
+proof. The Pages catalog still resolves macOS to the per-architecture wheels:
+installed clud versions reject any catalog row they cannot name, and they
+name only thin `<arch>-apple-darwin` binaries
+([DD-231](../DESIGN_DECISIONS.md#dd-231-macos-ships-one-universal-binary-inside-a-stapled-disk-image-and-the-catalog-keeps-the-wheels)).
 
 Credentials live only in the talos-hq/clud `release-signing` environment.
-Only these three jobs declare it, so the Rust build job never sees the
+Only `sign-macos`, `notarize-macos`, `macos-signature-smoke` and
+`package-macos` declare it, so the Rust build job never sees the
 credentials:
 
 | Secret | Value | Used by |
 | --- | --- | --- |
-| `MACOS_SIGNING_CERT` | base64 of the Developer ID Application `.p12` (key + cert) | sign |
-| `MACOS_SIGNING_CERT_PASSWORD` | the `.p12` password | sign |
-| `MACOS_SIGNING_IDENTITY` | the certificate common name, `Developer ID Application: <name> (<TEAMID>)` | sign, notarize, smoke |
-| `APPLE_NOTARY_USER` | the Apple ID email | notarize |
-| `APPLE_NOTARY_PASSWORD` | an app-specific password for that Apple ID (appleid.apple.com) | notarize |
-| `APPLE_TEAM_ID` | the Developer team ID; must equal `<TEAMID>` in the identity | notarize |
+| `MACOS_SIGNING_CERT` | base64 of the Developer ID Application `.p12` (key + cert) | sign, package |
+| `MACOS_SIGNING_CERT_PASSWORD` | the `.p12` password | sign, package |
+| `MACOS_SIGNING_IDENTITY` | the certificate common name, `Developer ID Application: <name> (<TEAMID>)` | sign, notarize, smoke, package |
+| `APPLE_NOTARY_USER` | the Apple ID email | notarize, package |
+| `APPLE_NOTARY_PASSWORD` | an app-specific password for that Apple ID (appleid.apple.com) | notarize, package |
+| `APPLE_TEAM_ID` | the Developer team ID; must equal `<TEAMID>` in the identity | notarize, package |
 
 A missing secret fails its job with one error naming every absent secret. That
 blocks both publish jobs; there is no unsigned or unnotarized fallback.
@@ -1544,7 +1574,8 @@ gh workflow run auto-release.yml --ref <branch> -f notarize_only=true
 `preflight` skips its tag and published-release checks, and `full-ci-gate`
 is skipped. `release-matrix` emits only the macOS wheels
 (`ci_matrix --release --macos-only`). The run then executes `build`,
-`sign-macos`, `notarize-macos`, `macos-signature-smoke` and `wheel-smoke`,
+`sign-macos`, `notarize-macos`, `macos-signature-smoke`, `package-macos`,
+`macos-installer-gate` and `wheel-smoke`,
 in its own concurrency group. Every snapshot, publish, promote,
 Pages and rollback job is skipped; `tests/test_sign_macos_release.py`
 checks each job's `if:`. It uses real secrets and Apple's notary service. A

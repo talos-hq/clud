@@ -184,6 +184,62 @@ picker. Evidence includes both source and installed digests
 and a separate older-installer terminal transcript. The selected stable must
 be newer than the fixed source version.
 
+### `--installer-plan-json`
+
+`clud --installer --install-current --installer-plan-json` (or
+`--install-version VERSION`) prints the plan the consent screen would show as
+one `clud-installer-plan/v1` JSON object on stdout and exits without writing:
+`version`, `destination`, `existing_version`, `replaces`, `replaces_text`,
+`path` (`change`: `add` with `directory` and `files`, `unchanged`, `manual` or
+`not_modified`), `source`, `sha256`, `path_edit` and `prompt_engine`
+(`summary.rs::Facts::report`). It needs an explicit install choice, like
+`--installer-json`, and refuses `--yes` and `--installer-json`: a plan is
+never consent.
+
+### macOS disk image and `Install clud.app`
+
+A bare Mach-O cannot carry a notarization ticket (`stapler` accepts only
+`.app`, `.dmg` and `.pkg`), so a browser-downloaded bare `clud` passes
+Gatekeeper only online. Since #2863 the release ships one universal binary
+and `clud-<v>-macos.dmg`: a stapled image holding a stapled
+`Install clud.app` and `READ ME if blocked.txt`
+([ci.md](ci.md#developer-id-signing-and-notarization-of-macos-release-wheels)
+builds and gates them; [DD-231](../DESIGN_DECISIONS.md#dd-231-macos-ships-one-universal-binary-inside-a-stapled-disk-image-and-the-catalog-keeps-the-wheels)).
+`transaction::validate_macho_header` accepts a universal Mach-O that has a
+slice for the host, so the app can install its own executable.
+
+The app's `Contents/MacOS/clud` **is** the universal binary. Finder starts it
+with no arguments and no terminal; `self_install/app_bundle.rs` recognizes that
+launch from the executable's place in a `.app` bundle (no argv, or one
+`-psn_…`) before any other dispatch and runs
+`Contents/Helpers/clud --installer-app`, a byte-identical copy that keeps the
+binary's own standalone signature. Signing the app binds the main
+executable's signature to the bundle's Info.plist, so a copy of
+`Contents/MacOS/clud` taken out of the bundle is invalid and macOS kills it
+(SIGKILL on `--version`, first seen in the proof run); the helper is what the
+plan copies to `~/.local/bin/clud`. The helper drives the ordinary plan and
+transaction through native dialogs (`platform::app_dialog`: `osascript`
+`display dialog` with the text as argv, no Automation permission):
+
+1. The consent dialog shows the plan summary of the terminal screen
+   (version, install location, PATH, what it replaces) with **Not now**,
+   **Show details** (the exact plan) and **Install**, which reads **Update**
+   or **Reinstall** when an older or the same clud is already there. Not now
+   or closing the dialog writes nothing.
+2. **Install** commits the consented plan unattended (PATH activation on).
+3. `complete`: "clud is installed … open a new terminal", with **Open
+   Terminal**.
+
+Everything else lets a human in: a planning error or any outcome other than
+`complete` (`activation_required`, `failed`, `refused`) shows the reason with
+**Fix in Terminal**, which opens Terminal (`open -a Terminal` on a private
+`.command` file; never `tell application "Terminal"`) running
+`<app>/Contents/Helpers/clud --installer`, the interactive installer with its
+repair prompt. The bundle never retries on its own, and its exit code is
+non-zero. If Terminal cannot open, the dialog prints that command to run by
+hand. Double-clicking again later offers Update or Reinstall, so the image
+doubles as a repair tool.
+
 ### First-run and browser acceptance boundaries
 
 The native candidate-host suite drives the automatic first-run menu in a real

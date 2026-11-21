@@ -17,6 +17,8 @@ REQUIRED = {
     "Sign macOS (": 2,
     "Notarize macOS (": 2,
     "Verify macOS signature (": 2,
+    "Package macOS universal binary and installer disk image": 1,
+    "Verify macOS installer offline (": 2,
     "Execute release static musl ARM64": 1,
     "Attach versioned public candidate catalog": 1,
     "Verify anonymous final bytes and prerelease asset identity": 1,

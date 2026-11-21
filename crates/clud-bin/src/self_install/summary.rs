@@ -121,6 +121,36 @@ impl Facts {
         format!("clud {existing} ({relation})")
     }
 
+    /// `--installer-plan-json`: the plan the consent screen shows, as one
+    /// read-only JSON object (`clud-installer-plan/v1`).
+    pub fn report(&self) -> serde_json::Value {
+        let path = match &self.path {
+            None => serde_json::json!({ "change": "not_modified" }),
+            Some(PathChange::Unchanged { directory }) => {
+                serde_json::json!({ "change": "unchanged", "directory": directory })
+            }
+            Some(PathChange::Add { directory, files }) => {
+                serde_json::json!({ "change": "add", "directory": directory, "files": files })
+            }
+            Some(PathChange::Manual { directory }) => {
+                serde_json::json!({ "change": "manual", "directory": directory })
+            }
+        };
+        serde_json::json!({
+            "schema": PLAN_SCHEMA,
+            "version": self.version,
+            "destination": self.destination,
+            "existing_version": self.existing_version,
+            "replaces": self.replaces,
+            "replaces_text": self.replaces_text(),
+            "path": path,
+            "source": self.source,
+            "sha256": self.sha256,
+            "path_edit": self.path_edit,
+            "prompt_engine": self.prompt_engine,
+        })
+    }
+
     /// The exact plan, printed above the screen on request.
     pub fn details(&self) -> Vec<Block> {
         vec![
@@ -132,6 +162,23 @@ impl Facts {
             Block::below("Also installs", self.prompt_engine.as_str()),
         ]
     }
+}
+
+/// Schema id of the `--installer-plan-json` object.
+pub const PLAN_SCHEMA: &str = "clud-installer-plan/v1";
+
+/// Screen blocks as plain lines (`key: value`), for a native dialog that
+/// cannot draw the terminal layout.
+pub fn plain_text(blocks: &[Block]) -> String {
+    blocks
+        .iter()
+        .map(|block| match block {
+            Block::Blank => String::new(),
+            Block::Text(text, _) => text.clone(),
+            Block::Field { key, value, .. } => format!("{key}: {value}"),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// The PATH field, in plain words: the one directory a new terminal gains.
@@ -225,6 +272,58 @@ mod tests {
         assert!(value(&path_field(None, &paths))
             .1
             .contains("--no-modify-path"));
+    }
+
+    #[test]
+    fn plan_report_is_a_stable_read_only_schema() {
+        let mut facts = Facts {
+            version: "2.8.70".into(),
+            destination: "/home/me/.local/bin/clud".into(),
+            existing_version: Some("2.8.65".into()),
+            replaces: true,
+            path: Some(PathChange::Add {
+                directory: "/home/me/.local/bin".into(),
+                files: vec!["/home/me/.zprofile".into()],
+            }),
+            source: "running executable".into(),
+            sha256: "ab".repeat(32),
+            path_edit: "append to ~/.zprofile".into(),
+            prompt_engine: "lokr 0.1.0".into(),
+        };
+        let report = facts.report();
+        let keys: Vec<&str> = report
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                "schema",
+                "version",
+                "destination",
+                "existing_version",
+                "replaces",
+                "replaces_text",
+                "path",
+                "source",
+                "sha256",
+                "path_edit",
+                "prompt_engine"
+            ]
+        );
+        assert_eq!(report["schema"], PLAN_SCHEMA);
+        assert_eq!(report["replaces_text"], "clud 2.8.65 (upgrade)");
+        assert_eq!(report["path"]["change"], "add");
+        assert_eq!(report["path"]["files"][0], "/home/me/.zprofile");
+        facts.path = None;
+        assert_eq!(facts.report()["path"]["change"], "not_modified");
+        assert_eq!(
+            plain_text(&facts.summary(&home("/home/me"))),
+            "Install to: ~/.local/bin/clud\nPATH: not changed (--no-modify-path)\n\
+             Replaces: clud 2.8.65 (upgrade)"
+        );
     }
 
     #[test]
