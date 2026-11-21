@@ -67,7 +67,7 @@ const NO_WAIT = 'Never wait for CI or the merge queue, never enqueue, never merg
 const WORKER = { type: 'object', required: ['status', 'summary', 'checkout_clean'], properties: {
   status: { enum: ['pushed', 'covered', 'no_change', 'failed'] },
   pr_url: { type: 'string' }, branch: { type: 'string' }, head_sha: { type: 'string' },
-  covered_by: { type: 'string' }, local_gate: { type: 'string' }, failure_log: { type: 'string' },
+  covered_by: { type: 'string' }, covered_state: { enum: ['merged', 'open'] }, local_gate: { type: 'string' }, failure_log: { type: 'string' },
   checkout_clean: { type: 'boolean' }, summary: { type: 'string' },
   problems: { type: 'array', items: { type: 'object' } },
 } }
@@ -92,9 +92,14 @@ const nextEvent = () => events.length ? Promise.resolve() : new Promise(r => { w
 let inFlight = 0
 let dirty = false
 let cleanups = 0
+let halted = false
 const report = []
 const problems = []
 
+// A central agent that errors or dies returns null: its task fails or its PR
+// is reported stuck, and the checkout is treated as dirty. Nothing throws out
+// of the loop, so in-flight PRs keep their chaperones and the run reports.
+const central = (prompt, opts) => agent(prompt, opts).catch(() => null)
 const workerOpts = (label) => ({ label, phase: 'Produce', agentType: 'grind-worker', schema: WORKER, ...(POLICY.workerModel ? { model: POLICY.workerModel } : {}) })
 
 // Human gates block their dependents too.
@@ -118,7 +123,7 @@ const ready = () => TASKS
   .filter(t => status.get(t.id) === 'queued' && t.after.every(d => status.get(d) === 'merged'))
   .sort((a, b) => depth.get(b.id) - depth.get(a.id))
 const blockedForever = () => TASKS.filter(t => status.get(t.id) === 'queued' &&
-  t.after.some(d => ['failed', 'stuck', 'base_red', 'waiting_on_person', 'blocked', 'left_in_queue'].includes(status.get(d))))
+  t.after.some(d => ['failed', 'stuck', 'base_red', 'waiting_on_person', 'blocked', 'left_in_queue', 'covered_open'].includes(status.get(d))))
 
 // ---- chaperone: watch only, report to the coordinator ----------------------
 function watch(taskId) {
@@ -163,41 +168,58 @@ function handle({ task, r }) {
       return
     }
   }
-  if (p.watches >= POLICY.maxWatches) return settle(task, r.verdict === 'queued' ? 'left_in_queue' : 'stuck')
+  rewatch(task, r.verdict)
+}
+
+// Watch again within the budget; past it, stop tracking the PR. A PR still in
+// the merge queue is reported left_in_queue, never re-marked as unstarted.
+function rewatch(task, verdict) {
+  if (pr.get(task).watches >= POLICY.maxWatches) return settle(task, verdict === 'queued' ? 'left_in_queue' : 'stuck')
   watch(task)
 }
 
 async function cleanup() {
   cleanups += 1
-  const r = await agent(`${HEADER}\nCLEANUP the central checkout after a task left it dirty. Park any uncommitted work you find on a branch named grind/parked-<n> with a commit, never discard it, then: ${CLEAN_END}`,
+  const r = await central(`${HEADER}\nCLEANUP the central checkout after a task left it dirty. Park any uncommitted work you find on a branch named grind/parked-<n> with a commit, never discard it, then: ${CLEAN_END}`,
     { label: `cleanup:${cleanups}`, phase: 'Produce', agentType: 'grind-worker', schema: CLEAN, model: 'sonnet' })
   dirty = !(r && r.checkout_clean)
-  if (dirty && cleanups > POLICY.maxCleanups) throw new Error('the central checkout stays dirty after cleanup; stopping before more work lands on it')
+  if (dirty && cleanups > POLICY.maxCleanups) {
+    // Stop central work but keep the run: chaperones drain, the result reports.
+    halted = true
+    problems.push({ kind: 'checkout', summary: `the central checkout ${REPO} stayed dirty after ${cleanups} cleanups; no further central work ran` })
+  }
 }
 
 async function runFixup(f) {
   const p = pr.get(f.task)
   p.fixups += 1
   phase('Produce')
-  const r = await agent(`${HEADER}\nFIXUP PR ${p.url} (task ${f.task}, branch ${p.branch}, head ${p.head}), fix ${p.fixups} of at most ${POLICY.maxFixups}. Problem: ${f.problem}.\n` +
+  const r = await central(`${HEADER}\nFIXUP PR ${p.url} (task ${f.task}, branch ${p.branch}, head ${p.head}), fix ${p.fixups} of at most ${POLICY.maxFixups}. Problem: ${f.problem}.\n` +
     `Chaperone evidence:\n${f.log || '(none)'}\n` +
     `In the central checkout: \`git -C ${REPO} fetch origin ${p.branch} ${BASE}\`, switch to ${p.branch} at origin/${p.branch}. ${f.problem === 'conflict' || f.problem === 'ejected' || f.problem === 'parent_merged' ? `Rebase onto origin/${BASE} first. ` : ''}` +
     `Read the failure before changing anything; never weaken or skip a test. ${GATE_TEXT} Push to ${p.branch} with --force-with-lease=${p.branch}:${p.head}. ${NO_WAIT} ${CLEAN_END}`,
     workerOpts(`fixup:${f.task}#${p.fixups}`))
   dirty = !(r && r.checkout_clean)
   p.fixed.add(f.evidence)
-  if (r && r.status === 'pushed' && r.head_sha) { p.head = r.head_sha; watch(f.task) } else settle(f.task, 'stuck')
+  if (r && r.status === 'pushed' && r.head_sha) { p.head = r.head_sha; rewatch(f.task) }
+  // Nothing to change (review already addressed, a flaky check rerun): keep
+  // the head and watch again; p.fixed stops a second fix of the same problem.
+  else if (r && (r.status === 'no_change' || r.status === 'covered')) rewatch(f.task)
+  else settle(f.task, 'stuck')
 }
 
 async function runTask(t) {
   status.set(t.id, 'working')
   phase('Produce')
-  const r = await agent(`${HEADER}\nTASK ${t.id}: ${t.title || ''}\n${t.brief || ''}\n` +
-    `You are the only agent on this task until its PR is pushed. Dedup first (an open or merged PR already closing it means status covered). Branch from origin/${BASE}, write the focused regression test first (RED), make it pass (GREEN), review your own diff. ${GATE_TEXT} Open the PR against ${BASE}${t.issue ? ` with \`Closes #${t.issue}\`` : ''}. ${NO_WAIT} ${CLEAN_END}`,
+  const r = await central(`${HEADER}\nTASK ${t.id}: ${t.title || ''}\n${t.brief || ''}\n` +
+    `You are the only agent on this task until its PR is pushed. Dedup first (an open or merged PR already closing it means status covered, with covered_by and covered_state merged or open). Branch from origin/${BASE}, write the focused regression test first (RED), make it pass (GREEN), review your own diff. ${GATE_TEXT} Open the PR against ${BASE}${t.issue ? ` with \`Closes #${t.issue}\`` : ''}. ${NO_WAIT} ${CLEAN_END}`,
     workerOpts(`work:${t.id}`))
   dirty = !(r && r.checkout_clean)
   if (r && Array.isArray(r.problems)) problems.push(...r.problems)
   if (!r || r.status === 'failed') { status.set(t.id, 'failed'); report.push({ task: t.id, status: 'failed', log: r && r.failure_log }); return }
+  // An OPEN covering PR has not landed: its dependents must not start (they
+  // wait for a merge), so it blocks them instead of counting as merged.
+  if (r.status === 'covered' && r.covered_state !== 'merged') { status.set(t.id, 'covered_open'); report.push({ task: t.id, status: 'covered_open', pr: r.covered_by }); return }
   if (r.status === 'covered' || r.status === 'no_change') { status.set(t.id, 'merged'); report.push({ task: t.id, status: r.status, pr: r.covered_by }); return }
   pr.set(t.id, { url: r.pr_url, branch: r.branch, head: r.head_sha, fixups: 0, watches: 0, fixed: new Set() })
   status.set(t.id, 'in_flight')
@@ -211,8 +233,14 @@ async function runTask(t) {
 // for the next chaperone report.
 log(`grind-coord: ${TASKS.length} tasks on ${BASE}; in-flight cap ${POLICY.maxInFlight}, chaperones on ${POLICY.chaperoneModel}`)
 for (;;) {
-  if (dirty) { await cleanup(); continue }
+  if (dirty && !halted) { await cleanup(); continue }
   while (events.length) handle(events.shift())
+  if (halted) {
+    // A dirty checkout cannot take fixups or tasks; drain the chaperones.
+    while (fixQueue.length) settle(fixQueue.shift().task, 'stuck')
+    if (inFlight > 0) { await nextEvent(); continue }
+    break
+  }
   if (fixQueue.length) { await runFixup(fixQueue.shift()); continue }
   for (const t of blockedForever()) { status.set(t.id, 'blocked'); report.push({ task: t.id, status: 'blocked' }) }
   const next = ready()[0]
@@ -224,8 +252,8 @@ for (;;) {
 for (const t of TASKS) if (status.get(t.id) === 'queued') { status.set(t.id, 'blocked'); report.push({ task: t.id, status: 'blocked' }) }
 phase('Finish')
 let featurePr = null
-if (FEATURE && TASKS.some(t => status.get(t.id) === 'merged')) {
-  featurePr = await agent(`${HEADER}\nFEATURE: every landed task is on ${BASE}. Open or update the PR from ${BASE} into ${MAIN} (draft unless args say otherwise), listing each task's PR. Merge origin/${MAIN} into ${BASE} first if it is behind and the merge is clean; push that merge with \`${GATE.push || 'git push'}\` after the local gate passes. Never merge the feature PR yourself. ${CLEAN_END}`,
+if (FEATURE && !halted && TASKS.some(t => status.get(t.id) === 'merged')) {
+  featurePr = await central(`${HEADER}\nFEATURE: every landed task is on ${BASE}. Open or update the PR from ${BASE} into ${MAIN} (draft unless args say otherwise), listing each task's PR. Merge origin/${MAIN} into ${BASE} first if it is behind and the merge is clean; push that merge with \`${GATE.push || 'git push'}\` after the local gate passes. Never merge the feature PR yourself. ${CLEAN_END}`,
     workerOpts('feature-pr'))
 }
 const waiting = TASKS.filter(t => status.get(t.id) === 'waiting_on_person').map(t => ({ task: t.id, status: 'waiting_on_person', reason: t.gate_reason || '' }))

@@ -680,7 +680,10 @@ mod tests {
         assert!(tool.body.contains("managed-by: clud"));
         assert!(!tool.body.contains("import subprocess"));
         for rule in ["GS102", "GS103", "GS104", "GS106", "GS111"] {
-            assert!(tool.body.contains(rule), "lint_workflow.py lost rule {rule}");
+            assert!(
+                tool.body.contains(rule),
+                "lint_workflow.py lost rule {rule}"
+            );
         }
     }
 

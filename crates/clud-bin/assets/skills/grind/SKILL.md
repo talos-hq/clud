@@ -559,10 +559,9 @@ launch it. Contract and invariants: `docs/architecture/grind.md`,
 "Coordinator workflow".
 
 1. **Gate.** `clud tool run grind/detect_gate.py -- --repo <checkout>
-   --github-repo <github-repo> --base <base>`. Use its `gate` and `land`:
-   a `./push` script is the whole gate (it attests and pushes); a Rust repo
-   without one gates on `soldr lint --host-only` and host unit tests; other
-   repos on the chosen scripts (narrow `./test` to the mode the user picked).
+   --github-repo <github-repo> --base <base>` and copy its `gate` and
+   `land` into the args (the order it applies is in grind.md, "Coordinator
+   workflow"). Narrow a `./test` command to the mode the user picked.
 2. **Tasks.** One per approved goal: `{id, issue, title, brief, after,
    gate, gate_reason}`. `after` lists goals it must wait for to MERGE (the
    graph's `merge` and `semantic` edges); drop `file_overlap` edges, since
@@ -582,7 +581,8 @@ launch it. Contract and invariants: `docs/architecture/grind.md`,
    `maxFixups` 3, chaperones on `sonnet`. Tailor only what the run needs:
    task briefs, prompt wording for this repo's gate, policy. Keep the
    label contract (`work:`, `fixup:`, `cleanup:`, `chaperone:`,
-   `feature-pr`) and every invariant in the file header.
+   `feature-pr`, and `expected head <sha>.` in chaperone prompts) and every
+   invariant in the file header.
 5. **Machine check.** `clud tool run grind/lint_workflow.py --
    .clud/grind/<run-id>/coord.js --args .clud/grind/<run-id>/args.json`.
    Fix every finding and run it again; never launch a script with

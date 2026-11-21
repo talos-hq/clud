@@ -4,7 +4,7 @@ Compile-time-embedded resources bundled directly into the `clud-bin` binary. Fil
 
 ## Layout
 
-- `agents/` and `workflows/` - Claude Code agent types (`grind-*`) and the `grind-run` workflow, installed into `~/.claude/` by `src/claude_files.rs`; [grind.md](../../../docs/architecture/grind.md) owns forge identity, role caps and watch recovery.
+- `agents/` and `workflows/` - Claude Code agent types (`grind-*`), the `grind-run` workflow and the sequential `grind-coord` coordinator template, installed into `~/.claude/` by `src/claude_files.rs`; [grind.md](../../../docs/architecture/grind.md) owns forge identity, role caps and watch recovery.
 - [`skills/`](skills/README.md) - slash-command skill definitions (`SKILL.md` files) installed per-backend into `.claude/skills/` or `.codex/skills/` on first run.
 - [`tools/`](tools/README.md) - embedded scripts and the `clud tool run` watchdog exit contract.
 - `fonts/` - `DejaVuSansMono.ttf` for rasterizing toast text into the kitty-graphics toast image (#1189, `src/toast/raster.rs`, embedded with `include_bytes!`). Bundled so the wheel needs no system font library; its license is `fonts/DejaVu-LICENSE.txt`.

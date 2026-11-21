@@ -838,17 +838,27 @@ scenario's trace:
 | GS105 | after a central agent returns `checkout_clean: false`, the next central agent is a cleanup |
 | GS106 | watches, fixups and total agents stay within the policy's bounds (the watcher-storm detector) |
 | GS107 | roles and models: chaperones run as `grind-chaperone` on sonnet or haiku and forbid `run_in_background`; central work runs as `grind-worker`, never on haiku |
-| GS108 | a task starts only after its `after` tasks merged; human-gated tasks never start |
+| GS108 | a task starts only after its `after` tasks merged (an open covering PR is not merged); human-gated tasks never start |
 | GS109 | every pushed head gets a chaperone |
+| GS112 | a task is worked once: a PR left in the queue is never re-marked unstarted |
+| GS113 | a problem already fixed on a head is never fixed again on that head |
 | GS100/GS110/GS111 | the run completes, reports every task, and never waits with no agent running (deadlock) |
 | GW001–GW005 | static: one pure `meta`, no `Date.now`/`Math.random`, no worktree isolation, known agent types, no nested `workflow()` |
 
-Scenarios: `happy`, `slow_queue`, `red_check`, `review`, `stale_report`,
-`ejected`, `persistent_red`, `wait_storm`, `dirty_checkout`,
-`worker_failed`, `fix_while_producing`
-(`lint_workflow.py --list-scenarios`). `tests/test_grind_coord_2873.py`
-runs the template through all of them and proves each rule catches a
-one-line mutation of the template.
+Scenarios: `lint_workflow.py --list-scenarios`. `tests/test_grind_coord_2873.py`
+runs the template through all of them, and has a one-line mutation of the
+template for every rule except GS100 and GS101 (GS101 shares its mutant
+with GW003).
+
+**Label contract.** The linter reads the trace by label, so a tailored copy
+keeps `work:<task>`, `fixup:<task>#<k>`, `cleanup:<n>`,
+`chaperone:<task>#<n>` and `feature-pr`, and every chaperone prompt names its
+head as `expected head <sha>.` (GS109 reads it). Workers return
+`checkout_clean`; a `covered` worker returns `covered_state` (`merged` or
+`open`). An agent call that fails returns null: its task fails or its PR is
+reported stuck, and the checkout counts as dirty. After `maxCleanups`
+failed cleanups the coordinator halts central work, lets the chaperones
+drain and still returns its result with a `checkout` problem.
 
 **Base branch.** `<main>` for bug work. A long-horizon plan passes
 `feature: {branch}`. Tasks branch from and target it, every central agent
@@ -856,10 +866,12 @@ returns the checkout to it (`switch --discard-changes`, `fetch`,
 `merge --ff-only`), and the final `feature-pr` agent merges `origin/<main>`
 into it when that is clean, then opens or updates the PR into `<main>`.
 
-**Gate** (`grind/detect_gate.py`). `./push` first: it proves the attested
-lanes and pushes, so hosted CI can reduce the proven work. Then a Rust
-workspace: `soldr lint --host-only` and
-`SOLDR_PORCELAIN=1 soldr cargo test --workspace`. Then `./lint`/`./test`.
+**Gate** (`grind/detect_gate.py`; this section owns the order). `./push`
+first: it proves the attested lanes and pushes, so hosted CI can reduce the
+proven work. Then a Rust workspace: `soldr lint --host-only` and the
+workspace tests on the host (`SOLDR_PORCELAIN=1 soldr cargo test
+--workspace`); cross-target lanes stay in hosted CI. Then
+`./lint`/`./test`.
 `land` is `merge_queue` or `merge` from the base branch's rules. The
 chaperone's `pr_merge.py` call is the same either way.
 

@@ -26,12 +26,15 @@ ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "crates/clud-bin/assets/workflows/grind-coord.js"
 LINTER = ROOT / "crates/clud-bin/assets/tools/grind/lint_workflow.py"
 
-pytestmark = pytest.mark.skipif(shutil.which("node") is None, reason="the simulated run needs Node.js")
+pytestmark = pytest.mark.skipif(
+    shutil.which("node") is None, reason="the simulated run needs Node.js"
+)
 
 
 def _linter():
     spec = importlib.util.spec_from_file_location("grind_lint_workflow", LINTER)
-    assert spec and spec.loader
+    assert spec
+    assert spec.loader
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod
     spec.loader.exec_module(mod)
@@ -92,7 +95,8 @@ def test_template_passes_with_a_single_slot_and_no_fixups() -> None:
 MUTANTS = {
     # The 2026-11-20 storm: every interim watcher return started a fixer.
     "watch_storm": (
-        "if (p.watches >= POLICY.maxWatches) return settle(task, r.verdict === 'queued' ? 'left_in_queue' : 'stuck')",
+        "  if (pr.get(task).watches >= POLICY.maxWatches) "
+        "return settle(task, verdict === 'queued' ? 'left_in_queue' : 'stuck')\n",
         "",
         "GS106",
     ),
@@ -108,14 +112,22 @@ MUTANTS = {
         "  if (fixQueue.length && !ready().length) { await runFixup(fixQueue.shift()); continue }",
         "GS104",
     ),
-    "fixups_dropped": ("  if (fixQueue.length) { await runFixup(fixQueue.shift()); continue }", "", "GS104"),
+    "fixups_dropped": (
+        "  if (fixQueue.length) { await runFixup(fixQueue.shift()); continue }",
+        "",
+        "GS104",
+    ),
     "stale_refixed": (
         "if ((r.head_sha && r.head_sha !== p.head) || p.fixed.has(key)) {",
         "if (false) {",
-        "GS104",
+        "GS113",
     ),
-    "no_cleanup": ("  if (dirty) { await cleanup(); continue }", "", "GS105"),
-    "chaperone_on_session_model": ("model: POLICY.chaperoneModel, schema: WATCH", "schema: WATCH", "GS107"),
+    "no_cleanup": ("  if (dirty && !halted) { await cleanup(); continue }", "", "GS105"),
+    "chaperone_on_session_model": (
+        "model: POLICY.chaperoneModel, schema: WATCH",
+        "schema: WATCH",
+        "GS107",
+    ),
     "background_wait": (
         "never run_in_background: you get no completion notification",
         "run it with run_in_background",
@@ -127,7 +139,47 @@ MUTANTS = {
         "GW003",
     ),
     "ignores_dependencies": ("t.after.every(d => status.get(d) === 'merged')", "true", "GS108"),
-    "nondeterministic": ("const A = args || {}", "const A = args || {}; const T0 = Date.now()", "GW002"),
+    "nondeterministic": (
+        "const A = args || {}",
+        "const A = args || {}; const T0 = Date.now()",
+        "GW002",
+    ),
+    # The regression DD-236 records: a PR left in the queue re-marked unstarted.
+    "requeue_left_in_queue": (
+        "verdict === 'queued' ? 'left_in_queue' : 'stuck'",
+        "verdict === 'queued' ? 'queued' : 'stuck'",
+        "GS112",
+    ),
+    "same_head_refixed": ("|| p.fixed.has(key)) {", ") {", "GS113"),
+    "covered_open_counts_as_merged": (
+        "if (r.status === 'covered' && r.covered_state !== 'merged')",
+        "if (false)",
+        "GS108",
+    ),
+    "fix_settles_without_fixing": (
+        "    } else if (p.fixups >= POLICY.maxFixups) {",
+        "    } else if (true) {",
+        "GS104",
+    ),
+    "unwatched_fix": (
+        "p.head = r.head_sha; rewatch(f.task) }",
+        "p.head = r.head_sha; settle(f.task, 'stuck') }",
+        "GS109",
+    ),
+    "drops_report": (
+        "  report.push({ task: taskId, status: final, "
+        "pr: pr.get(taskId) && pr.get(taskId).url })\n",
+        "",
+        "GS110",
+    ),
+    "lost_wakeup": ("returned nothing' } }); notify() })", "returned nothing' } }) })", "GS111"),
+    "no_meta": ("export const meta = {", "const meta = {", "GW001"),
+    "unknown_role": ("agentType: 'grind-chaperone'", "agentType: 'general-purpose'", "GW004"),
+    "nested_workflow": (
+        "phase('Finish')\n",
+        "phase('Finish')\nawait workflow('grind-run')\n",
+        "GW005",
+    ),
 }
 
 
@@ -150,7 +202,9 @@ def test_fixups_run_in_the_central_checkout_before_new_tasks(tmp_path: Path) -> 
     # Every runnable task went red once, and each got exactly one fixup, all
     # through the central checkout (one worker-type agent at a time).
     runnable = [str(t["id"]) for t in LW.runnable(args)]
-    assert sorted(lab for lab in labels if lab.startswith("fixup:")) == sorted(f"fixup:{t}#1" for t in runnable)
+    assert sorted(lab for lab in labels if lab.startswith("fixup:")) == sorted(
+        f"fixup:{t}#1" for t in runnable
+    )
     # The trace check owns the ordering rule (GS104) and exclusivity (GS102).
     sc = next(s for s in LW.scenarios(args, LW.Policy.of(args)) if s.name == "fix_while_producing")
     assert LW.check_trace(args, LW.Policy.of(args), sc, run) == []
@@ -159,7 +213,8 @@ def test_fixups_run_in_the_central_checkout_before_new_tasks(tmp_path: Path) -> 
 def test_human_gate_and_its_dependents_wait(tmp_path: Path) -> None:
     run = _sim(tmp_path, _args())
     labels = _labels(run)
-    assert "work:5321" not in labels and "work:5333" not in labels
+    assert "work:5321" not in labels
+    assert "work:5333" not in labels
     by_task = {t["task"]: t["status"] for t in run["result"]["tasks"]}
     assert by_task["5321"] == "waiting_on_person"
     assert by_task["5333"] == "waiting_on_person"
@@ -196,15 +251,26 @@ def test_feature_branch_mode_targets_the_feature_and_opens_the_final_pr(tmp_path
 
 def test_repo_without_merge_queue_merges_pinned(tmp_path: Path) -> None:
     run = _sim(tmp_path, _args(land="merge"))
-    chap = next(e for e in run["trace"] if e["ev"] == "start" and e["label"].startswith("chaperone:"))
+    chap = next(
+        e for e in run["trace"] if e["ev"] == "start" and e["label"].startswith("chaperone:")
+    )
     assert "no merge queue" in chap["prompt"]
     assert "--match-head-commit h-5327-0" in chap["prompt"]
 
 
 def test_push_script_gate_is_named_in_worker_prompts(tmp_path: Path) -> None:
-    run = _sim(tmp_path, _args(gate={"push": "./push", "commands": ["soldr lint --host-only"]}), "red_check")
-    prompts = [e["prompt"] for e in run["trace"] if e["ev"] == "start" and e["label"].startswith(("work:", "fixup:"))]
-    assert prompts and all("push only with `./push`" in p for p in prompts)
+    run = _sim(
+        tmp_path,
+        _args(gate={"push": "./push", "commands": ["soldr lint --host-only"]}),
+        "red_check",
+    )
+    prompts = [
+        e["prompt"]
+        for e in run["trace"]
+        if e["ev"] == "start" and e["label"].startswith(("work:", "fixup:"))
+    ]
+    assert prompts
+    assert all("push only with `./push`" in p for p in prompts)
     assert all("`soldr lint --host-only`" in p for p in prompts)
 
 
@@ -212,3 +278,58 @@ def test_cli_reports_ok_and_json(tmp_path: Path) -> None:
     args_file = tmp_path / "args.json"
     args_file.write_text(json.dumps(_args()), encoding="utf-8")
     assert LW.main([str(TEMPLATE), "--args", str(args_file), "--scenario", "happy"]) == 0
+
+
+def _run(tmp_path: Path, args: dict[str, Any], sc: Any) -> dict[str, Any]:
+    run = LW.simulate(shutil.which("node"), TEMPLATE, args, sc, tmp_path)
+    assert "error" not in run, run["error"]
+    return run
+
+
+def _chain_args() -> dict[str, Any]:
+    return _args(tasks=[{"id": "a"}, {"id": "b", "after": ["a"]}, {"id": "c"}])
+
+
+def test_open_covering_pr_blocks_dependents_until_it_merges(tmp_path: Path) -> None:
+    run = _run(tmp_path, _chain_args(), LW.Scenario("open", "", {}, {"a": "covered"}))
+    by_task = {t["task"]: t["status"] for t in run["result"]["tasks"]}
+    assert by_task == {"a": "covered_open", "b": "blocked", "c": "merged"}
+    assert "work:b" not in _labels(run)
+
+
+def test_merged_covering_pr_releases_dependents(tmp_path: Path) -> None:
+    run = _run(tmp_path, _chain_args(), LW.Scenario("merged", "", {}, {"a": "covered_merged"}))
+    assert "work:b" in _labels(run)
+
+
+def test_a_fixup_with_nothing_to_change_is_not_repeated(tmp_path: Path) -> None:
+    args = _chain_args()
+    sc = LW.Scenario(
+        "nc", "", {"a": ["red_check", "red_check", "merged"]}, fixup={"a": "no_change"}
+    )
+    run = _run(tmp_path, args, sc)
+    assert [lab for lab in _labels(run) if lab.startswith("fixup:")] == ["fixup:a#1"]
+    by_task = {t["task"]: t["status"] for t in run["result"]["tasks"]}
+    assert by_task["a"] == "merged"
+    assert LW.check_trace(args, LW.Policy.of(args), sc, run) == []
+
+
+def test_a_checkout_that_stays_dirty_halts_central_work_and_still_reports(tmp_path: Path) -> None:
+    args = _chain_args()
+    sc = LW.Scenario("dirty", "", {}, {}, ["a"])
+    sc.__dict__["stuck_dirty"] = True
+    run = _run(tmp_path, args, sc)
+    labels = _labels(run)
+    cleanups = [lab for lab in labels if lab.startswith("cleanup:")]
+    assert len(cleanups) == LW.Policy.of(args).max_cleanups + 1
+    # Nothing central runs after the last cleanup, but a's chaperone drains.
+    after = labels[labels.index(cleanups[-1]) + 1 :]
+    assert not [lab for lab in after if lab.startswith(("work:", "fixup:"))]
+    result = run["result"]
+    assert {t["task"]: t["status"] for t in result["tasks"]}["a"] == "merged"
+    assert result["problems"][0]["kind"] == "checkout"
+
+
+def test_null_policy_values_use_the_defaults() -> None:
+    pol = LW.Policy.of({"policy": {"maxInFlight": None, "maxFixups": None}})
+    assert (pol.max_in_flight, pol.max_fixups) == (6, 3)

@@ -8941,7 +8941,7 @@ The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also rep
 - Every reported problem becomes a fixup in the same central checkout, scheduled before any new task. Problems are deduped by problem kind and head. A real Sonnet chaperone filled `evidence_id` with a timestamped log path, so that field cannot be the key.
 - No new task starts while `maxInFlight` PRs are pushed and unsettled. Watches, fixups and cleanups are capped.
 - A long-horizon plan passes a feature branch as the base. The checkout returns to it between tasks, and one final agent opens the feature PR.
-- The gate comes from `grind/detect_gate.py`: `./push` (attested push) first, then `soldr lint --host-only` and host unit tests for Rust, then `./lint`/`./test`.
+- The gate comes from `grind/detect_gate.py`, which prefers a repository's attested `./push` ([order](architecture/grind.md#coordinator-workflow-sequential-mode-2873)).
 - A tailored script launches only after `grind/lint_workflow.py` passes and an LLM review approves it. The linter applies static rules, then runs the script in Node against mock agents across scripted scenarios and checks the trace for the invariants.
 
 **Rationale:**

@@ -44,7 +44,9 @@ from running_process import PIPE, RunningProcess, TimeoutExpired
 
 def _gh_json(argv: list[str]) -> object | None:
     try:
-        res = RunningProcess.run(["gh", *argv], stdout=PIPE, stderr=PIPE, text=True, timeout=30, check=False)
+        res = RunningProcess.run(
+            ["gh", *argv], stdout=PIPE, stderr=PIPE, text=True, timeout=30, check=False
+        )
     except (TimeoutExpired, OSError):
         return None
     if res.returncode != 0:
@@ -59,7 +61,11 @@ def merge_queue(github_repo: str, base: str) -> str:
     rules = _gh_json(["api", f"repos/{github_repo}/rules/branches/{base}"])
     if not isinstance(rules, list):
         return "auto"
-    return "merge_queue" if any(isinstance(r, dict) and r.get("type") == "merge_queue" for r in rules) else "merge"
+    return (
+        "merge_queue"
+        if any(isinstance(r, dict) and r.get("type") == "merge_queue" for r in rules)
+        else "merge"
+    )
 
 
 def is_rust(repo: Path) -> bool:
@@ -74,7 +80,9 @@ def detect(repo: Path) -> dict[str, object]:
     why: list[str] = []
     push = repo / "push"
     if push.is_file():
-        why.append("./push exists: it proves the attested lanes and pushes, so it is the whole gate")
+        why.append(
+            "./push exists: it proves the attested lanes and pushes, so it is the whole gate"
+        )
         return {"gate": {"push": "./push", "commands": []}, "kind": "push_script", "why": why}
     if is_rust(repo):
         why.append("Rust workspace without ./push: host lint and host unit tests through soldr")
@@ -82,7 +90,9 @@ def detect(repo: Path) -> dict[str, object]:
         return {"gate": {"push": None, "commands": cmds}, "kind": "rust", "why": why}
     cmds = [f"./{name}" for name in ("lint", "test") if (repo / name).is_file()]
     if cmds:
-        why.append("repository scripts; the router may narrow ./test to a faster mode from the question round")
+        why.append(
+            "repository scripts; the router may narrow ./test to a faster mode from the question round"
+        )
         return {"gate": {"push": None, "commands": cmds}, "kind": "scripts", "why": why}
     why.append("no ./push, Rust workspace or ./lint/./test: the worker uses its focused test only")
     return {"gate": {"push": None, "commands": []}, "kind": "none", "why": why}
@@ -99,7 +109,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"not a directory: {ns.repo}", file=sys.stderr)
         return 2
     out = detect(ns.repo.resolve())
-    out["land"] = "auto" if ns.no_network or not ns.github_repo else merge_queue(ns.github_repo, ns.base)
+    out["land"] = (
+        "auto" if ns.no_network or not ns.github_repo else merge_queue(ns.github_repo, ns.base)
+    )
     print(json.dumps(out, indent=2))
     return 0
 
