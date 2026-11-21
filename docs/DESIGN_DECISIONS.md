@@ -8929,3 +8929,38 @@ The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also rep
 - A child whose parent is still queued at Finish is reported `stacked` with the exact rebase command; nothing rebases it later.
 - A goal with two stacking parents that are not in one chain still waits for the second parent's merge.
 - The harness suites that script the staged roles pin `pipeline: "staged"`.
+
+## DD-236: sequential grind is a coordinator over one central checkout, and its tailored workflow is linted by simulation
+
+**Context:** [DD-235](#dd-235-grind-is-one-worker-per-goal-stacked-dependents-and-a-haiku-watcher-escalating-to-an-opus-fixer)'s pilot on FastLED (2026-11-20, #2873) landed 9 of 10 goals but created its own backpressure. A watcher started inside a workflow cannot receive a background completion notification (#2877), so each interim return started an opus fixer: 32 watchers and 25 fixers for 9 PRs, 18 of them no-ops. Fixers built in worktrees while the worker and the session's Stop hook built in the central checkout; the zccache daemon crashed, the build lock timed out, and the load average reached about 175 on 16 cores. The pilot was a hand-written script nobody had checked, and the fixed `grind-run.js` could only be reordered by stopping and restarting it.
+
+**Decision:** Sequential `/grind` runs a coordinator (`workflows/grind-coord.js`):
+- Triage is the existing orchestrator agent. After the question round the router tailors a copy of the template to the run (tasks, gate, policy, base) instead of passing args to a fixed engine.
+- One `grind-worker` at a time in the central checkout takes a task from `origin/<base>` to a pushed PR and ends with the checkout clean on `<base>`. A cleanup agent runs before anything else if it is not.
+- A `grind-chaperone` on Sonnet (or Haiku) per PR only watches, enqueues and reports. It never edits.
+- Every reported problem becomes a fixup in the same central checkout, scheduled before any new task. Problems are deduped by problem kind and head. A real Sonnet chaperone filled `evidence_id` with a timestamped log path, so that field cannot be the key.
+- No new task starts while `maxInFlight` PRs are pushed and unsettled. Watches, fixups and cleanups are capped.
+- A long-horizon plan passes a feature branch as the base. The checkout returns to it between tasks, and one final agent opens the feature PR.
+- The gate comes from `grind/detect_gate.py`: `./push` (attested push) first, then `soldr lint --host-only` and host unit tests for Rust, then `./lint`/`./test`.
+- A tailored script launches only after `grind/lint_workflow.py` passes and an LLM review approves it. The linter applies static rules, then runs the script in Node against mock agents across scripted scenarios and checks the trace for the invariants.
+
+**Rationale:**
+- One checkout means one warm build cache and no two builds racing. On a heavy C++ or Rust repository, building is the scarce resource, and agents are not.
+- Fixing first is backpressure: production cannot outrun repair, so problems never pile up behind new PRs.
+- A chaperone that cannot fix has nothing to escalate on an interim return, so the storm's mechanism is gone, and a small model is enough.
+- A tailored script fits the run, but code written per run needs a machine check. Simulating it against the failure modes that already happened catches a broken coordinator before it costs an hour of merge queue. The template itself failed it once: a PR left in the queue was re-marked as not started and redone.
+
+**Alternatives Considered:**
+
+| Approach | Why not |
+|---|---|
+| Keep fixers in a worktree pool (DD-205/235) | Cold builds per slot, and fixers race the worker for CPU and the build lock. That was the 2026-11-20 overload. |
+| Static-only lint of the tailored script | Text rules cannot see ordering, caps or deadlocks. Each mutation test of the template changes one line that looks fine. |
+| Data-only tailoring (args to a fixed engine) | Reordering or reshaping a run needs a new engine release. The template plus the linter keeps the engine's guarantees with per-run shape. |
+| Let chaperones notify the main session directly | Workflow subagents cannot message the session mid-run. A chaperone's return value is the notification, and the script is the coordinator. |
+
+**Consequences:**
+- The linter needs Node. Claude Code already requires it.
+- Tasks run one at a time, so independent goals no longer build in parallel. Parallel mode stays `grind-run` with worktrees.
+- A PR whose watch budget runs out while it is still queued is reported `left_in_queue`. Its dependents are blocked, not restarted.
+- An inline `Workflow` script containing chaperone wording is refused by the command hook. The router launches tailored scripts by `scriptPath`.

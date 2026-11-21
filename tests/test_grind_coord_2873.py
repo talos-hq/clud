@@ -110,7 +110,7 @@ MUTANTS = {
     ),
     "fixups_dropped": ("  if (fixQueue.length) { await runFixup(fixQueue.shift()); continue }", "", "GS104"),
     "stale_refixed": (
-        "if ((r.head_sha && r.head_sha !== p.head) || p.fixed.has(`${key}@${p.head}`)) {",
+        "if ((r.head_sha && r.head_sha !== p.head) || p.fixed.has(key)) {",
         "if (false) {",
         "GS104",
     ),

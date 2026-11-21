@@ -26,9 +26,10 @@ Router for the grind DAG. It gathers every answer up front, then hands the
 deterministic part to the bundled `grind-run` workflow.
 
 ```
-/grind ─ intake ─ orchestrator + graph approval ─ classify (plan-only) ─ preflight ─ configuration ─ prework ─┬─ parallel   ─┐
-                                                                                          ├─ sequential ─┼─ workflow grind-run: one worker per goal → push ⇒ chaperone per PR (haiku watcher → opus fixer) ─ finish
-                                                                                          └─ cron ─ /grind-cron ─ /loop: sequential run, one issue per tick
+/grind ─ intake ─ orchestrator (triage) + graph approval ─ classify (plan-only) ─ preflight ─ configuration ─┬─ sequential ─ coordinator (4c): tailor grind-coord.js → lint_workflow.py → LLM review → launch
+                                                                                                             │    one worker at a time in the central checkout ⇒ Sonnet chaperone per PR ⇒ fixups back through the central checkout ─ finish
+                                                                                                             ├─ parallel ─── prework ─ workflow grind-run: one worker per goal → push ⇒ chaperone per PR (haiku watcher → opus fixer) ─ finish
+                                                                                                             └─ cron ─────── /grind-cron ─ /loop: sequential run, one issue per tick
 ```
 
 From the moment prework starts (the run's `grind-run` workflow, after the
@@ -319,10 +320,13 @@ after it, by the main session or anyone else.
   `{group, sub_meta, children}` with no branch assigned.
 - **Mode.** (i) *Parallel*: each goal gets a git worktree; one worker per goal
   plans, edits, runs local CI and pushes (`workers` at once, default 1); a chaperone per PR takes it from there.
-  Uses GitHub's server-side concurrency. (ii) *Sequential*: one goal at a
-  time from `origin/<main>` in the local checkout, no worktrees or sister
-  clones; best for C++/Rust or other heavy repos where a cold worktree build
-  is expensive. (iii) *Cron*: one issue per `/loop` tick, each tick a
+  Uses GitHub's server-side concurrency. (ii) *Sequential* (the
+  coordinator, section 4c): one worker at a time in the central checkout
+  takes each task from `origin/<base>` to a pushed PR, a Sonnet chaperone
+  per PR reports problems, and the coordinator schedules each fixup back
+  through the same checkout before new work; no worktrees or sister clones,
+  so every build reuses one warm cache. Best for C++/Rust or other heavy
+  repos where a cold worktree build is expensive. (iii) *Cron*: one issue per `/loop` tick, each tick a
   sequential run.
   For a Rust repo, offer *Sequential* first as "(Recommended)" and state
   parallel mode's cost in its option text: every worktree starts a cold
@@ -506,7 +510,8 @@ agent gets that comment's URL. Nobody edits the plan comment.
 ## 4. Run
 
 - Cron: read `../grind-cron/SKILL.md` and follow it with the goal source and the answers.
-- Parallel or sequential: start the Workflow named `grind-run` once per
+- Sequential: section 4c (the coordinator). Do not start `grind-run`.
+- Parallel: start the Workflow named `grind-run` once per
   stage, because the feature branch is cut only after the bug stage ends.
   1. **Bug stage** (always, even when it has no children): args
      `{repo, github_repo, main, mode, goals, orchestration, ci, scripts, plan, meta, base: <main>,
@@ -545,6 +550,57 @@ Concurrency is fixed by the workflow: one worker building at a time (`workers`
 in parallel mode), goals in critical-path order, one chaperone chain per PR, and at
 most 2 chaperone fixups building at once (`fixupPool`). The staged pipeline keeps
 at most 4 planner/reviewer agents, one editor and one integrator.
+
+## 4c. Sequential: the coordinator
+
+The main session is the coordinator. Triage was the 1a orchestrator (one
+agent); after the question round, tailor the run's workflow, check it, then
+launch it. Contract and invariants: `docs/architecture/grind.md`,
+"Coordinator workflow".
+
+1. **Gate.** `clud tool run grind/detect_gate.py -- --repo <checkout>
+   --github-repo <github-repo> --base <base>`. Use its `gate` and `land`:
+   a `./push` script is the whole gate (it attests and pushes); a Rust repo
+   without one gates on `soldr lint --host-only` and host unit tests; other
+   repos on the chosen scripts (narrow `./test` to the mode the user picked).
+2. **Tasks.** One per approved goal: `{id, issue, title, brief, after,
+   gate, gate_reason}`. `after` lists goals it must wait for to MERGE (the
+   graph's `merge` and `semantic` edges); drop `file_overlap` edges, since
+   tasks already run one at a time in one checkout. `gate: "human"` goals and
+   their dependents are reported as waiting and never started.
+3. **Base.** Bugs-only and simple plans use `<main>`. A long-horizon plan
+   (a feature stage) passes `feature: {branch}`: tasks branch from and
+   target the feature branch, the checkout returns to it between tasks, and
+   one final agent opens or updates the feature PR into `<main>`. Create the
+   feature branch (4b step 1) before launch.
+4. **Tailor.** Copy `~/.claude/workflows/grind-coord.js` to
+   `.clud/grind/<run-id>/coord.js` and write the args to
+   `.clud/grind/<run-id>/args.json`:
+   `{repo, github_repo, main, land, gate, feature?, policy: {maxInFlight,
+   maxFixups, maxWatches, chaperoneModel}, tasks}`. Defaults: `maxInFlight`
+   6 (lower it when hosted CI or the merge queue is the bottleneck),
+   `maxFixups` 3, chaperones on `sonnet`. Tailor only what the run needs:
+   task briefs, prompt wording for this repo's gate, policy. Keep the
+   label contract (`work:`, `fixup:`, `cleanup:`, `chaperone:`,
+   `feature-pr`) and every invariant in the file header.
+5. **Machine check.** `clud tool run grind/lint_workflow.py --
+   .clud/grind/<run-id>/coord.js --args .clud/grind/<run-id>/args.json`.
+   Fix every finding and run it again; never launch a script with
+   findings. It simulates the run against mock agents (red checks, stale
+   reports, ejections, wait storms, a dirty checkout, a failed worker).
+6. **LLM review.** One review agent reads the tailored script, the
+   template (`diff` the two), the args and the lint output, and answers:
+   does every pushed head get a chaperone; can production outrun fixes;
+   can two agents ever build in the checkout; is anything unbounded; does
+   the base strategy match the plan. Apply its findings, rerun step 5, and
+   launch only on an approval.
+7. **Launch** with `Workflow({scriptPath: ".clud/grind/<run-id>/coord.js",
+   args})`. Use `scriptPath`, never an inline `script`: the command hook
+   scans inline script text and refuses its prompt wording.
+8. **After it returns:** confirm the checkout is clean, on `<base>` and
+   equal to `origin/<base>` (`clud tool run git/state.py`). Fix it with the
+   same steps the workers use before Finish; never discard work you did not
+   park. Then go to Finish with the result's `tasks` and `problems`.
 
 ## 4b. Feature stage (feature-branch mode)
 

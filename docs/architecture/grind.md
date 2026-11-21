@@ -803,6 +803,66 @@ The rationale is in
   `did not land`, `is blocked`). In parallel mode a dependency that is still
   running is awaited before integration, as before.
 
+### Coordinator workflow (sequential mode, #2873)
+
+Sequential mode runs `workflows/grind-coord.js`, tailored per run by the
+router ([DD-236](../DESIGN_DECISIONS.md#dd-236-sequential-grind-is-a-coordinator-over-one-central-checkout-and-its-tailored-workflow-is-linted-by-simulation)).
+The router steps are in the `/grind` skill, section 4c.
+
+```
+triage (orchestrator) ─ questions ─ detect_gate ─ tailor coord.js ─ lint_workflow (static + simulated) ─ LLM review ─ launch by scriptPath
+coordinator loop (one central agent at a time):
+  dirty checkout? → cleanup:<n>
+  chaperone reports → merged | left_in_queue | stuck | base_red | needs_fix → fixQueue | waiting/queued → watch again (bounded)
+  fixQueue → fixup:<task>#k in the central checkout, then chaperone:<task>#n on the new head
+  ready task and in-flight < maxInFlight → work:<task> (critical path first), then chaperone:<task>#1
+  otherwise wait for the next chaperone report
+```
+
+| Label | Agent type | Model | Does |
+|---|---|---|---|
+| `work:<task>` | `grind-worker` | session (or `policy.workerModel`) | dedup, RED → GREEN, local gate, push, return the checkout clean on `<base>` |
+| `fixup:<task>#k` | `grind-worker` | session | fix the reported problem on the PR branch in the central checkout, gate, push with a lease |
+| `cleanup:<n>` | `grind-worker` | sonnet | park stray work on a branch, return the checkout to `origin/<base>` |
+| `chaperone:<task>#n` | `grind-chaperone` | sonnet/haiku | foreground wait, enqueue or pinned merge, report a verdict; never edits |
+| `feature-pr` | `grind-worker` | session | long-horizon only: open or update the feature PR into `<main>` |
+
+**Invariants**, which `clud tool run grind/lint_workflow.py` checks on every
+scenario's trace:
+
+| Rule | Invariant |
+|---|---|
+| GS102 | one central agent at a time; no two builds share the checkout |
+| GS103 | no `work:` starts while `maxInFlight` PRs are pushed and unsettled |
+| GS104 | a reported problem is fixed before any new task; a stale report (old head, or a problem already fixed on this head) is never fixed again |
+| GS105 | after a central agent returns `checkout_clean: false`, the next central agent is a cleanup |
+| GS106 | watches, fixups and total agents stay within the policy's bounds (the watcher-storm detector) |
+| GS107 | roles and models: chaperones run as `grind-chaperone` on sonnet or haiku and forbid `run_in_background`; central work runs as `grind-worker`, never on haiku |
+| GS108 | a task starts only after its `after` tasks merged; human-gated tasks never start |
+| GS109 | every pushed head gets a chaperone |
+| GS100/GS110/GS111 | the run completes, reports every task, and never waits with no agent running (deadlock) |
+| GW001–GW005 | static: one pure `meta`, no `Date.now`/`Math.random`, no worktree isolation, known agent types, no nested `workflow()` |
+
+Scenarios: `happy`, `slow_queue`, `red_check`, `review`, `stale_report`,
+`ejected`, `persistent_red`, `wait_storm`, `dirty_checkout`,
+`worker_failed`, `fix_while_producing`
+(`lint_workflow.py --list-scenarios`). `tests/test_grind_coord_2873.py`
+runs the template through all of them and proves each rule catches a
+one-line mutation of the template.
+
+**Base branch.** `<main>` for bug work. A long-horizon plan passes
+`feature: {branch}`. Tasks branch from and target it, every central agent
+returns the checkout to it (`switch --discard-changes`, `fetch`,
+`merge --ff-only`), and the final `feature-pr` agent merges `origin/<main>`
+into it when that is clean, then opens or updates the PR into `<main>`.
+
+**Gate** (`grind/detect_gate.py`). `./push` first: it proves the attested
+lanes and pushes, so hosted CI can reduce the proven work. Then a Rust
+workspace: `soldr lint --host-only` and
+`SOLDR_PORCELAIN=1 soldr cargo test --workspace`. Then `./lint`/`./test`.
+`land` is `merge_queue` or `merge` from the base branch's rules. The
+chaperone's `pr_merge.py` call is the same either way.
+
 ### The worker pipeline: one worker per goal, stacked dependents (#2873)
 
 The default `pipeline: "worker"`

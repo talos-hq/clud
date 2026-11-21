@@ -130,7 +130,7 @@ function watch(taskId) {
     : `Once the checks pass, enqueue with \`clud tool run github/pr_merge.py -- ${p.url} --repo ${GH} --match-head-commit ${p.head}\` (it picks the merge queue when ${BASE} requires one, or merges directly), then wait with \`clud tool run github/pr_merge_watch.py -- ${p.url} --repo ${GH} --until merged --timeout ${POLICY.watchSeconds}\`.`
   const prompt = `${HEADER}\nWATCH PR ${p.url} (task ${taskId}), expected head ${p.head}. Watch ${n} of at most ${POLICY.maxWatches}.\n` +
     `Wait for required checks with \`clud tool run github/pr_merge_watch.py -- ${p.url} --repo ${GH} --no-merge-wait --timeout ${POLICY.watchSeconds}\` in the foreground (one Bash call, timeout 600000, never run_in_background: you get no completion notification). ${land}\n` +
-    `You only watch and report; never edit, build, rebase or push. Return verdict merged, queued (enqueued, still in the queue), waiting (checks still pending at your deadline; never needs_fix for a check that has not failed), base_red (the same job fails on ${BASE}), stuck, or needs_fix with problem red_check|review|conflict|ejected|parent_merged, the head_sha you judged, an evidence_id (failing run id, review id or ejection) and failure_log (the failing job's last lines or the review comments). A rerun of an infrastructure failure is yours to do once; report it as waiting.`
+    `You only watch and report; never edit, build, rebase or push. Return verdict merged, queued (enqueued, still in the queue), waiting (checks still pending at your deadline; never needs_fix for a check that has not failed), base_red (the same job fails on ${BASE}), stuck, or needs_fix with problem red_check|review|conflict|ejected|parent_merged, the head_sha you judged, an evidence_id (the failing run id, review id or ejection reason; never a log file path) and failure_log (the failing job's last lines or the review comments). A rerun of an infrastructure failure is yours to do once; report it as waiting.`
   return agent(prompt, { label: `chaperone:${taskId}#${n}`, phase: 'Chaperone', agentType: 'grind-chaperone', model: POLICY.chaperoneModel, schema: WATCH })
     .catch(() => null)
     .then(r => { events.push({ task: taskId, r: r || { verdict: 'stuck', summary: 'chaperone returned nothing' } }); notify() })
@@ -148,15 +148,18 @@ function handle({ task, r }) {
   if (r.verdict === 'merged') return settle(task, 'merged')
   if (r.verdict === 'base_red' || r.verdict === 'stuck') return settle(task, r.verdict)
   if (r.verdict === 'needs_fix') {
-    const key = `${r.problem}:${r.evidence_id || ''}`
-    // A report about an older head, or about a problem already fixed on this
-    // head, is stale: watch again instead of fixing twice (talos-hq/clud#2878).
-    if ((r.head_sha && r.head_sha !== p.head) || p.fixed.has(`${key}@${p.head}`)) {
+    // Dedup on problem kind and head, never on evidence_id alone: a real
+    // Sonnet chaperone filled evidence_id with a timestamped log path, which
+    // differs on every report. A report about an older head, or about a
+    // problem already fixed on this head, is stale: watch again instead of
+    // fixing twice (talos-hq/clud#2878).
+    const key = `${r.problem}@${p.head}`
+    if ((r.head_sha && r.head_sha !== p.head) || p.fixed.has(key)) {
       log(`${task}: stale ${key} on ${r.head_sha || '?'}; watching again`)
     } else if (p.fixups >= POLICY.maxFixups) {
       return settle(task, 'stuck')
     } else {
-      fixQueue.push({ task, problem: r.problem, evidence: key, head: p.head, log: r.failure_log || r.summary })
+      fixQueue.push({ task, problem: r.problem, evidence: key, log: [r.evidence_id, r.failure_log || r.summary].filter(Boolean).join('\n') })
       return
     }
   }
@@ -182,7 +185,7 @@ async function runFixup(f) {
     `Read the failure before changing anything; never weaken or skip a test. ${GATE_TEXT} Push to ${p.branch} with --force-with-lease=${p.branch}:${p.head}. ${NO_WAIT} ${CLEAN_END}`,
     workerOpts(`fixup:${f.task}#${p.fixups}`))
   dirty = !(r && r.checkout_clean)
-  p.fixed.add(`${f.evidence}@${f.head}`)
+  p.fixed.add(f.evidence)
   if (r && r.status === 'pushed' && r.head_sha) { p.head = r.head_sha; watch(f.task) } else settle(f.task, 'stuck')
 }
 
