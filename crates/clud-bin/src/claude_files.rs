@@ -116,6 +116,14 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
         body: include_str!("../assets/workflows/grind-run.js"),
         procedure: None,
     },
+    // The coordinator template (#2873): the /grind router tailors a copy per
+    // run and launches it only after `grind/lint_workflow.py` and an LLM
+    // review pass.
+    BundledClaudeFile {
+        rel_path: "workflows/grind-coord.js",
+        body: include_str!("../assets/workflows/grind-coord.js"),
+        procedure: None,
+    },
 ];
 
 /// Files clud used to install and has since retired or renamed. Each is
@@ -246,6 +254,7 @@ mod tests {
             assert!(paths.contains(&path.as_str()), "missing {path}");
         }
         assert!(paths.contains(&"workflows/grind-run.js"));
+        assert!(paths.contains(&"workflows/grind-coord.js"));
         assert!(!paths.contains(&"workflows/grind.js"));
     }
 
