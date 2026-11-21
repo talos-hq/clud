@@ -806,7 +806,7 @@ The rationale is in
 ### Coordinator workflow (sequential mode, #2873)
 
 Sequential mode runs `workflows/grind-coord.js`, tailored per run by the
-router ([DD-236](../DESIGN_DECISIONS.md#dd-236-sequential-grind-is-a-coordinator-over-one-central-checkout-and-its-tailored-workflow-is-linted-by-simulation)).
+router ([DD-237](../DESIGN_DECISIONS.md#dd-237-sequential-grind-is-a-coordinator-over-one-central-checkout-and-its-tailored-workflow-is-linted-by-simulation)).
 The router steps are in the `/grind` skill, section 4c.
 
 ```
@@ -878,7 +878,7 @@ chaperone's `pr_merge.py` call is the same either way.
 ### The worker pipeline: one worker per goal, stacked dependents (#2873)
 
 The default `pipeline: "worker"`
-([DD-235](../DESIGN_DECISIONS.md#dd-235-grind-is-one-worker-per-goal-stacked-dependents-and-a-haiku-watcher-escalating-to-an-opus-fixer)).
+([DD-236](../DESIGN_DECISIONS.md#dd-236-grind-is-one-worker-per-goal-stacked-dependents-and-a-haiku-watcher-escalating-to-an-opus-fixer)).
 A real run on a C++ repository with a 30-90 minute merge queue showed each
 goal written in about five minutes while the run idled for hours: dependents
 waited for their blocker to merge, goals ran in the graph's listed order, and

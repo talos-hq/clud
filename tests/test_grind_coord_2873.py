@@ -144,7 +144,7 @@ MUTANTS = {
         "const A = args || {}; const T0 = Date.now()",
         "GW002",
     ),
-    # The regression DD-236 records: a PR left in the queue re-marked unstarted.
+    # The regression DD-237 records: a PR left in the queue re-marked unstarted.
     "requeue_left_in_queue": (
         "verdict === 'queued' ? 'left_in_queue' : 'stuck'",
         "verdict === 'queued' ? 'queued' : 'stuck'",

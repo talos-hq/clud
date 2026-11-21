@@ -8930,9 +8930,9 @@ The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also rep
 - A goal with two stacking parents that are not in one chain still waits for the second parent's merge.
 - The harness suites that script the staged roles pin `pipeline: "staged"`.
 
-## DD-236: sequential grind is a coordinator over one central checkout, and its tailored workflow is linted by simulation
+## DD-237: sequential grind is a coordinator over one central checkout, and its tailored workflow is linted by simulation
 
-**Context:** [DD-235](#dd-235-grind-is-one-worker-per-goal-stacked-dependents-and-a-haiku-watcher-escalating-to-an-opus-fixer)'s pilot on FastLED (2026-11-20, #2873) landed 9 of 10 goals but created its own backpressure. A watcher started inside a workflow cannot receive a background completion notification (#2877), so each interim return started an opus fixer: 32 watchers and 25 fixers for 9 PRs, 18 of them no-ops. Fixers built in worktrees while the worker and the session's Stop hook built in the central checkout; the zccache daemon crashed, the build lock timed out, and the load average reached about 175 on 16 cores. The pilot was a hand-written script nobody had checked, and the fixed `grind-run.js` could only be reordered by stopping and restarting it.
+**Context:** [DD-236](#dd-236-grind-is-one-worker-per-goal-stacked-dependents-and-a-haiku-watcher-escalating-to-an-opus-fixer)'s pilot on FastLED (2026-11-20, #2873) landed 9 of 10 goals but created its own backpressure. A watcher started inside a workflow cannot receive a background completion notification (#2877), so each interim return started an opus fixer: 32 watchers and 25 fixers for 9 PRs, 18 of them no-ops. Fixers built in worktrees while the worker and the session's Stop hook built in the central checkout; the zccache daemon crashed, the build lock timed out, and the load average reached about 175 on 16 cores. The pilot was a hand-written script nobody had checked, and the fixed `grind-run.js` could only be reordered by stopping and restarting it.
 
 **Decision:** Sequential `/grind` runs a coordinator (`workflows/grind-coord.js`):
 - Triage is the existing orchestrator agent. After the question round the router tailors a copy of the template to the run (tasks, gate, policy, base) instead of passing args to a fixed engine.
