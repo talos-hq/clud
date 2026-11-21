@@ -747,14 +747,19 @@ def test_preprune_is_ordered_before_writers_and_only_deletes_on_main_pushes() ->
 def test_self_hosted_linux_build_routing_stays_guarded():
     """The Dell build pool takes only CI's own same-repo Linux x64 dev builds.
 
-    `_build-target.yml` routes to the repo variable CLUD_LINUX_X64_BUILD_RUNNER.
-    Every guard below keeps untrusted or release work off a persistent
-    self-hosted runner; the hosted label stays the fallback.
+    `_build-target.yml` asks forge-ci pool-select (job `pool`, tokenless, on
+    forge-quick behind FORGE_QUICK_LABELS) whether a runner carrying the repo
+    variable CLUD_LINUX_X64_BUILD_RUNNER's label is idle. Every guard below
+    keeps untrusted or release work from even asking, so it never reaches a
+    persistent self-hosted runner; the hosted label stays the fallback.
     """
     text = BUILD_YML.read_text(encoding="utf-8")
-    match = re.search(r"^    runs-on: >-\n((?:      .*\n)+)", text, re.MULTILINE)
-    assert match, "_build-target.yml build job must compute runs-on"
-    expr = " ".join(match.group(1).split())
+    pool = re.search(r"^  pool:\n((?:    .*\n|\n)+?)(?=^  \S)", text, re.MULTILINE)
+    assert pool, "_build-target.yml must have a pool-select job `pool`"
+    body = pool.group(1)
+    cond = re.search(r"^    if: >-\n((?:      .*\n)+)", body, re.MULTILINE)
+    assert cond, "the pool job must be guarded by an if:"
+    expr = " ".join(cond.group(1).split())
     for guard in (
         "vars.CLUD_LINUX_X64_BUILD_RUNNER != ''",
         "inputs.target == 'x86_64-unknown-linux-gnu'",
@@ -764,4 +769,22 @@ def test_self_hosted_linux_build_routing_stays_guarded():
         "github.event.pull_request.head.repo.full_name == github.repository",
     ):
         assert guard in expr, f"self-hosted routing lost its guard: {guard}"
-    assert expr.endswith("&& vars.CLUD_LINUX_X64_BUILD_RUNNER || inputs.runs-on }}")
+    # RUN-004: forge-quick only through the kill switch, 2 minutes, a pinned action.
+    quick = (
+        "runs-on: ${{ vars.FORGE_QUICK_LABELS != '' "
+        "&& fromJSON(vars.FORGE_QUICK_LABELS) || 'ubuntu-latest' }}"
+    )
+    assert quick in body
+    assert "timeout-minutes: 2" in body
+    assert "permissions: {}" in body
+    assert re.search(r"uses: forge-ci/ci\.yml/actions/pool-select@[0-9a-f]{40}\n", body)
+    assert "continue-on-error: true" in body
+    assert "fallback: ${{ inputs.runs-on }}" in body
+    assert "runs-on: ${{ steps.select.outputs.runs-on || toJSON(inputs.runs-on) }}" in body
+    build = re.search(r"^  build:\n((?:    .*\n|\n)+?)(?=^  \S|\Z)", text, re.MULTILINE)
+    assert build, "_build-target.yml must have a build job"
+    head = build.group(1).split("    timeout-minutes:", 1)[0]
+    assert "needs: pool" in head
+    # A skipped selector (fork PR, release, other targets) must not skip the build.
+    assert "if: ${{ !cancelled() }}" in head
+    assert "runs-on: ${{ fromJSON(needs.pool.outputs.runs-on || toJSON(inputs.runs-on)) }}" in head

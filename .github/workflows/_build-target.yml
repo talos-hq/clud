@@ -96,22 +96,46 @@ on:
         default: false
 
 jobs:
+  # The self-hosted Dell build pool (forge-ci/gh-runner, talos-hq runner group
+  # Dell-NixOS, clud only) may take the Linux x64 dev build when the repo
+  # variable CLUD_LINUX_X64_BUILD_RUNNER names its label. Only CI's own dev
+  # builds of same-repo code qualify: release builds, other callers and fork
+  # PRs never run the selector and keep the hosted label. For those that do,
+  # pool-select asks https://signal.forge-ci.com/v1/pool (no token) right
+  # before the build whether a runner with that label is idle, and the build
+  # runs there only if so; otherwise, or on any error, it runs hosted. Unset
+  # CLUD_LINUX_X64_BUILD_RUNNER to stop routing at once; unset the org
+  # variable FORGE_QUICK_LABELS to run the selector itself hosted (RUN-004).
+  pool:
+    name: Select runner (${{ inputs.target }})
+    if: >-
+      vars.CLUD_LINUX_X64_BUILD_RUNNER != ''
+      && inputs.target == 'x86_64-unknown-linux-gnu'
+      && inputs.profile != 'release'
+      && startsWith(github.workflow_ref, format('{0}/.github/workflows/ci.yml@', github.repository))
+      && (github.event_name != 'pull_request'
+          || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ${{ vars.FORGE_QUICK_LABELS != '' && fromJSON(vars.FORGE_QUICK_LABELS) || 'ubuntu-latest' }}
+    timeout-minutes: 2
+    permissions: {}
+    outputs:
+      runs-on: ${{ steps.select.outputs.runs-on || toJSON(inputs.runs-on) }}
+    steps:
+      - name: Select pool or hosted
+        id: select
+        continue-on-error: true
+        uses: forge-ci/ci.yml/actions/pool-select@a36bc81ad6ada5fb17398e3e7ba38435cc67a951
+        with:
+          labels: ${{ format('["{0}"]', vars.CLUD_LINUX_X64_BUILD_RUNNER) }}
+          fallback: ${{ inputs.runs-on }}
+
   build:
     name: ${{ inputs.target }}
-    # The self-hosted Dell build pool (forge-ci/gh-runner host dell-jw22zc3,
-    # talos-hq runner group Dell-NixOS, clud only) takes the Linux x64 dev
-    # build when the repo variable CLUD_LINUX_X64_BUILD_RUNNER names its
-    # label. Only CI's own dev builds of same-repo code go there: release
-    # builds, other callers and fork PRs keep the hosted label. Unset the
-    # variable to fall back to hosted runners at once.
-    runs-on: >-
-      ${{ (vars.CLUD_LINUX_X64_BUILD_RUNNER != ''
-           && inputs.target == 'x86_64-unknown-linux-gnu'
-           && inputs.profile != 'release'
-           && startsWith(github.workflow_ref, format('{0}/.github/workflows/ci.yml@', github.repository))
-           && (github.event_name != 'pull_request'
-               || github.event.pull_request.head.repo.full_name == github.repository))
-          && vars.CLUD_LINUX_X64_BUILD_RUNNER || inputs.runs-on }}
+    needs: pool
+    # Runs when the selector was skipped (fork PRs, release, other targets,
+    # routing off) or failed, too: the hosted inputs.runs-on is then the runner.
+    if: ${{ !cancelled() }}
+    runs-on: ${{ fromJSON(needs.pool.outputs.runs-on || toJSON(inputs.runs-on)) }}
     timeout-minutes: 60
     env:
       RUST_BACKTRACE: "1"
