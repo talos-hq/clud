@@ -177,6 +177,19 @@ impl Outage {
         let _ = self.take();
     }
 
+    pub(super) fn is_empty(&self) -> bool {
+        self.frames.is_empty()
+    }
+
+    /// The oldest held frame, to send now.
+    pub(super) fn pop_front(&mut self) -> Option<Message> {
+        let frame = self.frames.pop_front()?;
+        if let Message::Binary(bytes) = &frame {
+            self.bytes -= bytes.len().saturating_sub(1);
+        }
+        Some(frame)
+    }
+
     /// Put frames that could not be sent back in front, for the next attempt.
     pub(super) fn requeue(&mut self, frames: VecDeque<Message>) {
         for frame in frames.into_iter().rev() {

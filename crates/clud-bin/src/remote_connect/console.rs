@@ -7,7 +7,7 @@
 //! loop, which is what handles disconnect and Ctrl+C.
 use super::mirror::{MirrorFilter, RESET_INPUT_MODES};
 use crate::session::KeyboardEnhancementTracker;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     mpsc, Arc,
@@ -21,13 +21,28 @@ const MAX_PENDING_BYTES: usize = 2 * 1024 * 1024;
 const SETTLE_WAIT: Duration = Duration::from_millis(250);
 const FINAL_WAIT: Duration = Duration::from_secs(1);
 
+/// Draw on the bottom row and come back: save the cursor (and its colours),
+/// go to the last row (999 is clamped to it) and erase the row. The text is
+/// cut to fit the row, so it never wraps (which would scroll the screen), and
+/// the remote program's own wrapping mode is left alone.
+const BANNER_OPEN: &[u8] = b"\x1b7\x1b[999;1H\x1b[2K\x1b[7m";
+/// Back to normal text and the cursor where the program left it.
+const BANNER_CLOSE: &[u8] = b"\x1b[27m\x1b8";
+/// Erase the bottom row and return.
+const BANNER_ERASE: &[u8] = b"\x1b7\x1b[999;1H\x1b[2K\x1b8";
+
 enum Command {
     Output(Vec<u8>),
     Line(String),
     Prompt(String),
-    Answered { echoed: bool },
+    Answered {
+        echoed: bool,
+    },
     Hold(bool),
     Settle(mpsc::SyncSender<()>),
+    Banner(String),
+    /// Clear the banner, or print this line where there is none.
+    ClearBanner(String),
 }
 
 /// Terminal state of the mirrored stream, applied on the worker thread.
@@ -38,6 +53,11 @@ struct Renderer<W: Write> {
     /// Remote output reached the terminal since the last settle.
     mirrored: bool,
     at_line_start: bool,
+    /// The sink is a terminal, so a banner can be drawn over the remote
+    /// program's screen and erased again; otherwise banners are lines.
+    overlay: bool,
+    /// The banner on the bottom row.
+    banner: Option<String>,
 }
 
 impl<W: Write> Renderer<W> {
@@ -48,6 +68,52 @@ impl<W: Write> Renderer<W> {
             mirror: MirrorFilter::default(),
             mirrored: false,
             at_line_start: true,
+            overlay: false,
+            banner: None,
+        }
+    }
+
+    /// A connection notice on the terminal's bottom row, drawn over the
+    /// remote program without moving its cursor or scrolling its screen, so
+    /// clearing it leaves nothing behind. Not a terminal: an ordinary line.
+    fn banner(&mut self, text: &str) {
+        if !self.overlay {
+            self.line(text);
+            return;
+        }
+        self.banner = Some(text.to_owned());
+        self.draw_banner();
+    }
+
+    /// Draw the banner, cut to the terminal's width.
+    fn draw_banner(&mut self) {
+        let Some(text) = &self.banner else {
+            return;
+        };
+        let width = crossterm::terminal::size().map_or(usize::MAX, |(cols, _)| usize::from(cols));
+        let fitted: String = text.chars().take(width.saturating_sub(1)).collect();
+        let mut bytes = BANNER_OPEN.to_vec();
+        bytes.extend_from_slice(fitted.as_bytes());
+        bytes.extend_from_slice(BANNER_CLOSE);
+        self.write(&bytes);
+    }
+
+    /// Take the banner off the screen for a moment: anything written while
+    /// it is shown could scroll it up into the remote program's screen,
+    /// where the erase on resume would no longer find it.
+    fn lift_banner(&mut self) -> bool {
+        if self.banner.is_some() {
+            self.write(BANNER_ERASE);
+        }
+        self.banner.is_some()
+    }
+
+    /// Erase the banner. Not a terminal: print `done` instead.
+    fn clear_banner(&mut self, done: &str) {
+        if !self.overlay {
+            self.line(done);
+        } else if self.banner.take().is_some() {
+            self.write(BANNER_ERASE);
         }
     }
 
@@ -65,17 +131,25 @@ impl<W: Write> Renderer<W> {
     }
 
     fn line(&mut self, text: &str) {
+        let lifted = self.lift_banner();
         self.fresh_line();
         self.write(text.as_bytes());
         self.write(b"\n");
+        if lifted {
+            self.draw_banner();
+        }
     }
 
     /// Ask a question (`crate::yes_no::question`) and leave the cursor after
     /// it, where the answer is typed.
     fn prompt(&mut self, text: &str) {
+        let lifted = self.lift_banner();
         self.fresh_line();
         self.write(text.as_bytes());
         self.at_line_start = false;
+        if lifted {
+            self.draw_banner();
+        }
     }
 
     /// A terminal echoes the answer's Enter, which already ended the prompt line.
@@ -94,12 +168,19 @@ impl<W: Write> Renderer<W> {
         if let Some(&last) = visible.last() {
             self.mirrored = true;
             self.at_line_start = last == b'\n';
+            let lifted = self.lift_banner();
             self.write(&visible);
+            if lifted {
+                self.draw_banner();
+            }
         }
     }
 
     /// Undo what the remote program left on, so what follows is readable.
     fn settle(&mut self) {
+        if self.banner.take().is_some() {
+            self.write(BANNER_ERASE);
+        }
         let reset = self.modes.take_child_reset();
         self.write(&reset);
         // The filter never forwards an input-reporting mode; this also clears
@@ -114,11 +195,13 @@ impl<W: Write> Renderer<W> {
 
 fn run_worker<W: Write>(
     sink: W,
+    overlay: bool,
     commands: mpsc::Receiver<Command>,
     pending: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
 ) {
     let mut renderer = Renderer::new(sink);
+    renderer.overlay = overlay;
     // Output held while a local question is open, still counted as pending.
     let mut held: Option<Vec<Vec<u8>>> = None;
     for command in commands {
@@ -149,6 +232,8 @@ fn run_worker<W: Write>(
                 renderer.settle();
                 let _ = done.try_send(());
             }
+            Command::Banner(text) => renderer.banner(&text),
+            Command::ClearBanner(done) => renderer.clear_banner(&done),
         }
     }
 }
@@ -162,25 +247,36 @@ pub(super) struct Console {
     commands: mpsc::Sender<Command>,
     pending: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
+    /// Banners are drawn over the screen ([`Renderer::banner`]).
+    overlay: bool,
 }
 
 impl Console {
     pub fn stdout() -> Self {
-        Self::with_sink(std::io::stdout())
+        Self::with_overlay(std::io::stdout(), std::io::stdout().is_terminal())
     }
 
+    #[cfg(test)]
     pub(super) fn with_sink<W: Write + Send + 'static>(sink: W) -> Self {
+        Self::with_overlay(sink, false)
+    }
+
+    /// `overlay`: `sink` is a terminal, where banners are drawn and erased.
+    pub(super) fn with_overlay<W: Write + Send + 'static>(sink: W, overlay: bool) -> Self {
         let (commands, receiver) = mpsc::channel();
         let pending = Arc::new(AtomicUsize::new(0));
         let dropped = Arc::new(AtomicUsize::new(0));
         let worker_pending = Arc::clone(&pending);
         let worker_dropped = Arc::clone(&dropped);
         // Detached: a worker blocked on a stalled terminal must not delay exit.
-        std::thread::spawn(move || run_worker(sink, receiver, worker_pending, worker_dropped));
+        std::thread::spawn(move || {
+            run_worker(sink, overlay, receiver, worker_pending, worker_dropped);
+        });
         Self {
             commands,
             pending,
             dropped,
+            overlay,
         }
     }
 
@@ -197,6 +293,18 @@ impl Console {
     /// Print a notice. Notices are few and are never dropped.
     pub fn line(&self, text: impl Into<String>) {
         let _ = self.commands.send(Command::Line(text.into()));
+    }
+
+    /// Show a transient connection notice ([`Renderer::banner`]).
+    pub fn banner(&self, text: impl Into<String>) {
+        let _ = self.commands.send(Command::Banner(text.into()));
+    }
+
+    /// Clear the banner; without a terminal print `done` instead. `true`
+    /// when a banner may have covered the remote program's screen.
+    pub fn clear_banner(&self, done: impl Into<String>) -> bool {
+        let _ = self.commands.send(Command::ClearBanner(done.into()));
+        self.overlay
     }
 
     /// Ask a question; the answer is typed on the same line.
@@ -261,6 +369,91 @@ mod tests {
             r.output(b"cd");
         });
         assert_eq!(out, b"abd");
+    }
+
+    fn on_terminal(steps: impl FnOnce(&mut Renderer<&mut Vec<u8>>)) -> Vec<u8> {
+        rendered(|r| {
+            r.overlay = true;
+            steps(r);
+        })
+    }
+
+    #[test]
+    fn a_banner_on_a_terminal_is_drawn_over_the_bottom_row_and_erased_without_a_trace() {
+        let out = on_terminal(|r| {
+            r.output(b"\x1b[?1049h$ top");
+            r.banner("lost");
+        });
+        let drawn = &out[b"\x1b[?1049h$ top".len()..];
+        // Saved and restored around the drawing: the program's cursor and
+        // colours are where it left them, and nothing scrolled.
+        assert!(drawn.starts_with(b"\x1b7\x1b[999;1H\x1b[2K"), "{drawn:?}");
+        assert!(drawn.ends_with(b"\x1b8"), "{drawn:?}");
+        assert!(!drawn.contains(&b'\n'), "{drawn:?}");
+        assert!(drawn.windows(4).any(|w| w == b"lost"));
+        let cleared = on_terminal(|r| {
+            r.banner("lost");
+            r.clear_banner("Reconnected.");
+            r.clear_banner("Reconnected.");
+        });
+        let erase = cleared
+            .strip_prefix(&out[b"\x1b[?1049h$ top".len()..])
+            .unwrap();
+        assert_eq!(erase, BANNER_ERASE, "erased once, no text left behind");
+    }
+
+    #[test]
+    fn writing_while_the_banner_shows_lifts_it_first_so_it_never_scrolls_into_the_screen() {
+        let out = on_terminal(|r| {
+            r.banner("lost");
+            r.output(b"one\r\ntwo\r\n");
+            r.line("Operator: hi");
+        });
+        let text = String::from_utf8_lossy(&out).into_owned();
+        let erase = String::from_utf8_lossy(BANNER_ERASE).into_owned();
+        // Every write is preceded by an erase and followed by a redraw.
+        let output_at = text.find("one").unwrap();
+        let line_at = text.find("Operator: hi").unwrap();
+        let erases: Vec<usize> = text.match_indices(&erase).map(|(i, _)| i).collect();
+        assert!(erases.iter().any(|&i| i < output_at), "{text:?}");
+        assert!(
+            erases.iter().any(|&i| i > output_at && i < line_at),
+            "{text:?}"
+        );
+        assert!(text.ends_with("\x1b[27m\x1b8"), "redrawn last: {text:?}");
+        // The program's wrapping mode is never touched.
+        assert!(!text.contains("\x1b[?7"), "{text:?}");
+    }
+
+    #[test]
+    fn a_lost_connection_leaves_the_remote_program_s_modes_alone() {
+        // Nothing is reset when the banner appears: the program is still
+        // running and drawing, and a reset would break its screen on resume.
+        let out = on_terminal(|r| {
+            r.output(b"\x1b[?1049h\x1b[?25l");
+            r.banner("lost");
+        });
+        assert!(!out.windows(8).any(|w| w == b"\x1b[?1049l"), "{out:?}");
+        assert!(!out.windows(6).any(|w| w == b"\x1b[?25h"), "{out:?}");
+    }
+
+    #[test]
+    fn settling_erases_a_banner_still_shown() {
+        let out = on_terminal(|r| {
+            r.banner("lost");
+            r.settle();
+        });
+        assert!(out.windows(BANNER_ERASE.len()).any(|w| w == BANNER_ERASE));
+    }
+
+    #[test]
+    fn without_a_terminal_banners_are_plain_notice_lines() {
+        let out = rendered(|r| {
+            r.output(b"$ ");
+            r.banner("Connection lost");
+            r.clear_banner("Reconnected.");
+        });
+        assert_eq!(out, b"$ \r\nConnection lost\nReconnected.\n");
     }
 
     #[test]

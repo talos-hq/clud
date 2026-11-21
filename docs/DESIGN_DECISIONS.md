@@ -8770,3 +8770,61 @@ wording said `--retire` is the action.
 - `install.sh` reads `SHA256SUMS` first and prefers the universal binary; older pinned versions still get their thin binary. The Homebrew formula emits one `on_macos` block when the universal binary exists.
 - The public-host acceptance lane installs macOS from the catalog's wheel row and records the wheel digest as the asset digest.
 - Release recovery (`ci/release_resume.py`) requires the two new jobs, so a run from before this change cannot be resumed under it.
+
+## DD-232: a remote session waits out a slow link on a non-blocking socket
+
+**Status:** Accepted.
+
+**Context:** On a poor network `clud remote connect clud.bot` dropped and
+reconnected repeatedly, and each loss printed a notice into the terminal the
+user was watching. The session socket was blocking, with a 50 ms read timeout
+that paced the loop and a 5 s write timeout. A remote program that redraws
+often (Claude Code's spinner, progress bars) fills the send buffer of a slow
+uplink. Once TCP's retransmission backoff stalled a write past 5 s, the client
+called the link lost and reconnected over the same bad link. Every reconnect
+also lost what the old socket had in flight, because the protocol has no
+acknowledgements. On Windows, a send or receive that times out leaves the
+socket in an undefined state, so every expired 50 ms read was a small chance of
+a torn TLS record. On disconnect the client also reset the local terminal (it
+left the alternate screen and showed the cursor) and printed the notice as a
+line. The remote program kept drawing, so after resume its screen was broken
+and the notice stayed in it.
+
+**Decision:** After the handshake the session socket is non-blocking. A send
+the network cannot take yet stays queued, in order, in tungstenite (it queues
+a frame before writing it) and is written out on later passes. While anything
+is queued the loop reads no more shell output, bridge frames or held outage
+frames, so the shell is paced to the link. Only the heartbeat (35 s without a
+frame from the server) ends a connection. An idle pass sleeps from 1 ms up to
+20 ms, and `TCP_NODELAY` is set. TLS runs through a small stream of clud's
+own over `rustls::ClientConnection` with an unbounded send buffer, whose reads
+return what has arrived even while writes wait; rustls's `Stream` answers a
+write past its 64 KiB cap with `Ok(0)`, which tungstenite reports as a reset,
+and holds reads back until pending writes finish. Creating the session and
+opening its first socket retry network failures for up to 60 s. The connection notice is a
+banner on the bottom row: drawn and erased with the cursor saved and
+restored, and never written as a newline. The remote program's modes are left
+alone. When the banner is erased, a one-row PTY shrink held for 200 ms makes
+the program repaint. Anything written while the banner shows lifts it first and
+redraws it after, so it cannot scroll into the program's screen.
+
+**Why:** Waiting on the same socket loses nothing. TCP retransmits what is in
+flight, and tungstenite and rustls are designed for `WouldBlock`, which is
+well defined on every OS, unlike a timed-out blocking call. Pacing the
+shell instead of buffering without bound keeps the time a heartbeat ping
+waits behind queued output short, so a slow link is not mistaken for a dead
+one. Sequence numbers and replay would also recover output lost to a real
+disconnect. That needs a matching server change, so it is left for later; this
+change is client-only and works with every server. A blocking socket with a
+longer write timeout was rejected: it keeps the Windows hazard, and the loop
+would still stall for the whole timeout. A readiness wait (`poll`/`WSAPoll`)
+would remove the idle sleep but needs native code under `platform/` for one
+loop. Its benefit (at most 20 ms of keystroke latency, about 50 idle wakeups a
+second) does not justify that yet.
+
+**Consequences:**
+- `transport::Socket::send` returns `Ok` for a queued message; `backed_up`, `pump` and `close_within` expose the queue. `bridge::flush` and `State::forward` stop while it is backed up.
+- The proxy-only loop (`connect.rs`) paces itself with the same `transport::Idle`, and leaves with the same bounded, deliberate close (1000).
+- `remote_connect::tls::tests` drives `TlsStream` against a real rustls server with the uplink blocked: a 200 KB write is accepted, what the server sent is still read, and everything arrives once the uplink drains.
+- `cli::remote_connect_e2e_cli::a_stalled_link_paces_the_shell_and_loses_nothing` stops the server reading for 12 s while about 18 MB of numbered lines are printed, and requires every line, in order, on the same socket. `a_dropped_first_attempt_at_startup_is_retried` covers startup.
+- Design: [remote assistance, a slow link is waited out](architecture/remote-assistance.md#a-slow-link-is-waited-out).

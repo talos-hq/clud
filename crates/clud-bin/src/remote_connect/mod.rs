@@ -20,6 +20,7 @@ mod sudo;
 mod terminal;
 #[cfg(test)]
 mod tests;
+mod tls;
 mod transport;
 
 use serde_json::{json, Value};
@@ -184,28 +185,34 @@ impl Link {
     }
 
     /// One connection: forward output, answer the server, watch the heartbeat.
+    /// The socket never blocks: a pass that finds nothing to do sleeps briefly
+    /// ([`transport::Idle`]), and a congested link is waited out here, with
+    /// the shell paced to it, until the heartbeat says the link is gone.
     fn online(&self, state: &mut State, socket: &mut transport::Socket) -> Result<Online, String> {
         let lost = Ok(Online::Lost { restart: false });
         let mut ping = Instant::now();
         let mut heard = Instant::now();
+        let mut idle = transport::Idle::new();
         while !self.stopped() {
-            let local = state.read_consent(&self.input);
-            let resized = state.local_resize()?;
-            for event in local
-                .into_iter()
-                .chain(state.sudo.poll(&state.console))
-                .chain(resized)
-            {
-                if lost_on(send(socket, event.clone()))? {
-                    state.hold_event(event);
+            if socket.pump().is_err() {
+                return lost;
+            }
+            if let Some(size) = state.finish_repaint()? {
+                if lost_on(send(socket, size))? {
                     return lost;
                 }
             }
-            if !state.forward(socket)? {
+            let Some(mut active) = self.send_local(state, socket)? else {
                 return lost;
+            };
+            match state.forward(socket)? {
+                Some(forwarded) => active |= forwarded,
+                None => return lost,
             }
-            if lost_on(bridge::flush(state.bridge.as_ref(), socket))? {
-                return lost;
+            match bridge::flush(state.bridge.as_ref(), socket) {
+                Ok(flushed) => active |= flushed,
+                Err(error) if error == CONNECTION_LOST => return lost,
+                Err(error) => return Err(error),
             }
             if ping.elapsed() >= resume::HEARTBEAT {
                 ping = Instant::now();
@@ -220,19 +227,42 @@ impl Link {
             match socket.read() {
                 Ok(message) => {
                     heard = Instant::now();
+                    active = true;
                     if let Some(outcome) = state.receive(message, socket)? {
                         return Ok(outcome);
                     }
                 }
                 Err(tungstenite::Error::Io(error))
-                    if matches!(
-                        error.kind(),
-                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                    ) => {}
+                    if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(_) => return lost,
             }
+            idle.after(active);
         }
         Ok(Online::Exit(130))
+    }
+
+    /// Send what the local side produced: a consent answer, sudo's state and a
+    /// local resize. `Some(active)`, or `None` when the connection is lost.
+    fn send_local(
+        &self,
+        state: &mut State,
+        socket: &mut transport::Socket,
+    ) -> Result<Option<bool>, String> {
+        let local = state.read_consent(&self.input);
+        let resized = state.local_resize()?;
+        let mut active = false;
+        for event in local
+            .into_iter()
+            .chain(state.sudo.poll(&state.console))
+            .chain(resized)
+        {
+            active = true;
+            if lost_on(send(socket, event.clone()))? {
+                state.hold_event(event);
+                return Ok(None);
+            }
+        }
+        Ok(Some(active))
     }
 
     /// Disconnected: keep the shell alive and reconnect within the window.
@@ -258,6 +288,8 @@ impl Link {
             {
                 state.hold_event(event);
             }
+            // The size is announced again on resume.
+            let _ = state.finish_repaint()?;
             let busy = state.hold_output()?;
             match reconnector.poll() {
                 resume::Poll::Connected(socket) => return Ok(Ok(*socket)),
@@ -290,12 +322,30 @@ fn lost_on(result: Result<(), String>) -> Result<bool, String> {
 /// Close deliberately (1000): the server ends the session now instead of
 /// holding it for a reconnect that will not come.
 fn leave(socket: &mut transport::Socket) {
-    let _ = socket.close(Some(tungstenite::protocol::CloseFrame {
-        code: tungstenite::protocol::frame::coding::CloseCode::Normal,
-        reason: "".into(),
-    }));
-    let _ = socket.flush();
+    socket.close_within(
+        tungstenite::protocol::CloseFrame {
+            code: tungstenite::protocol::frame::coding::CloseCode::Normal,
+            reason: "".into(),
+        },
+        LEAVE_WAIT,
+    );
 }
+
+/// How long a deliberate close may wait for a slow link to carry it.
+const LEAVE_WAIT: Duration = Duration::from_secs(2);
+
+/// A PTY shrunk by a row to make the remote program repaint.
+struct Repaint {
+    due: Instant,
+    nudged: (u16, u16),
+    before: (u16, u16),
+}
+
+/// How long the PTY stays a row shorter to make the remote program repaint
+/// after the connection banner is cleared ([`State::start_repaint`]): long
+/// enough that a program reading its size on the resize signal sees the
+/// change, short enough to go unnoticed.
+const REPAINT_HOLD: Duration = Duration::from_millis(200);
 
 /// Whether the answer is typed on the question's own line: the question is
 /// drawn on stdout and echoed input comes from stdin, so both must be the
@@ -341,6 +391,8 @@ struct State {
     resuming: bool,
     /// Shell output produced while disconnected.
     outage: resume::Outage,
+    /// A repaint nudge in progress ([`State::start_repaint`]).
+    repaint: Option<Repaint>,
 }
 
 impl State {
@@ -364,6 +416,7 @@ impl State {
             resumes: false,
             resuming: false,
             outage: resume::Outage::default(),
+            repaint: None,
         }
     }
 
@@ -541,20 +594,56 @@ impl State {
         Ok(true)
     }
 
-    /// Forward waiting shell output. `false`: the connection is lost, and the
-    /// frame that failed is held for the resumed session.
-    fn forward(&mut self, socket: &mut transport::Socket) -> Result<bool, String> {
+    /// Forward waiting shell output while the network takes it: output
+    /// still held from an outage first, then the shell's. While the socket is
+    /// backed up the shell is not read, so it waits at the link's pace and the
+    /// queue in front of a heartbeat stays short. `Some(active)`, or `None`
+    /// when the connection is lost (the frame that failed is held).
+    fn forward(&mut self, socket: &mut transport::Socket) -> Result<Option<bool>, String> {
+        // Reconnected but not reconciled: nothing of the shell's leaves until
+        // the server's `hello` confirms this client still holds the grant.
+        if self.resuming {
+            return Ok(Some(false));
+        }
+        let Some(mut active) = self.drain_outage(socket) else {
+            return Ok(None);
+        };
+        if !self.outage.is_empty() {
+            return Ok(Some(active));
+        }
         for _ in 0..terminal::OUTPUT_DRAIN {
+            if socket.backed_up() {
+                break;
+            }
             let Some(output) = self.terminal.output()? else {
                 break;
             };
+            active = true;
             self.mirror(&output);
             if socket.send(output.clone()).is_err() {
                 self.outage.push(output);
-                return Ok(false);
+                return Ok(None);
             }
         }
-        Ok(true)
+        Ok(Some(active))
+    }
+
+    /// Send held output until the network is full; the rest stays held, in
+    /// front of anything newer. `Some(sent)`, or `None` when the connection is
+    /// lost.
+    fn drain_outage(&mut self, socket: &mut transport::Socket) -> Option<bool> {
+        let mut sent = false;
+        while !socket.backed_up() {
+            let Some(frame) = self.outage.pop_front() else {
+                break;
+            };
+            if socket.send(frame.clone()).is_err() {
+                self.outage.requeue([frame].into());
+                return None;
+            }
+            sent = true;
+        }
+        Some(sent)
     }
 
     /// One frame from the server; `Some` ends this connection's phase.
@@ -607,9 +696,11 @@ impl State {
     }
 
     /// The connection is gone: say so once, and hold output from here on.
+    /// The remote program keeps running and keeps drawing on this terminal,
+    /// so its modes stay as they are and the notice is a banner that the
+    /// resume clears again (`Console::banner`).
     fn disconnected(&mut self) {
-        self.console.settle();
-        self.console.line(resume::LOST_NOTICE);
+        self.console.banner(resume::LOST_NOTICE);
         self.outage.begin(self.terminal.report());
         if let Some(bridge) = &self.bridge {
             bridge.reset();
@@ -658,8 +749,51 @@ impl State {
         self.announce_size(socket)?;
         self.sync_sudo(&record["sudo"], socket)?;
         self.flush_outage(socket)?;
-        self.console.line(resume::RESUMED_NOTICE);
+        if self.console.clear_banner(resume::RESUMED_NOTICE) {
+            self.start_repaint()?;
+        }
         Ok(())
+    }
+
+    /// The banner covered part of the remote program's screen: shrink the PTY
+    /// by a row now and restore it after [`REPAINT_HOLD`], which makes the
+    /// program draw its whole screen again (and ConPTY re-emit it).
+    fn start_repaint(&mut self) -> Result<(), String> {
+        let Some(before @ (rows, cols)) = self.terminal.size() else {
+            return Ok(());
+        };
+        if rows < 2 {
+            return Ok(());
+        }
+        let nudged = (rows - 1, cols);
+        self.terminal.resize_to(nudged)?;
+        self.repaint = Some(Repaint {
+            due: Instant::now() + REPAINT_HOLD,
+            nudged,
+            before,
+        });
+        Ok(())
+    }
+
+    /// Give the PTY its size back once a repaint nudge has been seen: the
+    /// local terminal's current size when it sets the session's, else the
+    /// size before the nudge. A resize that arrived meanwhile already set the
+    /// size and is kept. The `pty_size` to announce, when this client sets it.
+    fn finish_repaint(&mut self) -> Result<Option<Value>, String> {
+        let Some(repaint) = self
+            .repaint
+            .take_if(|repaint| Instant::now() >= repaint.due)
+        else {
+            return Ok(None);
+        };
+        if self.terminal.size() != Some(repaint.nudged) {
+            return Ok(None);
+        }
+        let governing = self.size.governing();
+        self.terminal
+            .resize_to(governing.unwrap_or(repaint.before))?;
+        // A size announced during the nudge was the nudged one.
+        Ok(governing.and(self.terminal.size_event()))
     }
 
     fn reconcile_grant(&mut self, grant: Option<&str>) {
@@ -712,18 +846,17 @@ impl State {
             self.outage.discard();
             return Ok(());
         }
-        let (gap, mut frames) = self.outage.take();
+        let (gap, frames) = self.outage.take();
+        // Held again: what the network cannot take now goes out from the
+        // session loop at the link's pace (`forward`), ahead of newer output.
+        self.outage.requeue(frames);
         if let Some(gap) = gap {
             send(socket, gap)?;
         }
-        while let Some(frame) = frames.pop_front() {
-            if socket.send(frame.clone()).is_err() {
-                frames.push_front(frame);
-                self.outage.requeue(frames);
-                return Err(CONNECTION_LOST.into());
-            }
+        match self.drain_outage(socket) {
+            Some(_) => Ok(()),
+            None => Err(CONNECTION_LOST.into()),
         }
-        Ok(())
     }
 
     fn event(&mut self, event: &Value, socket: &mut transport::Socket) -> Result<bool, String> {

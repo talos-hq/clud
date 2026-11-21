@@ -13,11 +13,20 @@ consent boundary, protocol and executable integration check.
   background `Reconnector`. See
   [session resume](../../../../docs/architecture/remote-assistance.md#session-resume).
 - `console.rs`: the stdout worker: mirrors shell output to the client, prints
-  notices and restores the local terminal, never blocking the session loop.
+  notices and the connection banner (drawn over the bottom row and erased
+  without a trace), and restores the local terminal, never blocking the
+  session loop.
 - `mirror.rs`: what of the shell's output the local terminal may see: drops
   queries, clipboard writes and input-reporting modes, keeps all drawing.
-- `transport.rs`: bounded session creation, same-origin bearer validation and
-  HTTP/WebSocket TLS with bundled plus system roots.
+- `transport.rs`: session creation and first connection (retried on network
+  failures for up to 60 s), same-origin bearer validation, HTTP/WebSocket TLS
+  with bundled plus system roots, and the non-blocking session socket that
+  queues what a slow link cannot take yet (`Socket::pump`, `backed_up`) and
+  the loops' idle wait (`Idle`). See
+  [a slow link is waited out](../../../../docs/architecture/remote-assistance.md#a-slow-link-is-waited-out).
+- `tls.rs`: TLS for the non-blocking session socket (`TlsStream`: unbounded
+  send buffer, reads not held back by a full uplink) and the plain/TLS
+  `Stream` the socket runs on.
 - `e2e.rs`: end-to-end encryption of the session socket inside TLS
   (ephemeral X25519, HKDF-SHA256, ChaCha20-Poly1305 records); `transport::Socket`
   seals and opens every frame. See

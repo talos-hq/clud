@@ -197,6 +197,8 @@ struct ProxySession {
     reconnect: Option<resume::Reconnector>,
     heard: Instant,
     bridge: Option<bridge::Bridge>,
+    /// The socket is non-blocking; an idle pass sleeps (`transport::Idle`).
+    idle: transport::Idle,
 }
 
 impl ProxySession {
@@ -232,14 +234,19 @@ impl ProxySession {
         Ok(None)
     }
 
-    /// One bounded socket read. `Some` is the exit code of a session that is over.
+    /// Write out what is queued, then read one message, or wait briefly when
+    /// there is none. `Some` is the exit code of a session that is over.
     fn pump(&mut self) -> Result<Option<i32>, String> {
         if self.heard.elapsed() >= resume::HEARTBEAT_TIMEOUT {
             return Err(super::CONNECTION_LOST.into());
         }
+        self.socket
+            .pump()
+            .map_err(|_| super::CONNECTION_LOST.to_owned())?;
         let message = self.socket.read();
         if message.is_ok() {
             self.heard = Instant::now();
+            self.idle.active();
         }
         match message {
             Ok(Message::Text(text)) => {
@@ -264,11 +271,9 @@ impl ProxySession {
                 resume::Close::Final(message) => Err(message.into()),
             },
             Err(tungstenite::Error::Io(error))
-                if matches!(
-                    error.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
+                if error.kind() == std::io::ErrorKind::WouldBlock =>
             {
+                std::thread::sleep(self.idle.next());
                 Ok(None)
             }
             Err(_) => Err(super::CONNECTION_LOST.into()),
@@ -396,6 +401,7 @@ fn run_proxy_session(host: &str) -> Result<i32, String> {
         reconnect: None,
         heard: Instant::now(),
         bridge: None,
+        idle: transport::Idle::new(),
     };
     state.send(proxy_caps())?;
     drive(&mut state, &stop)
@@ -407,13 +413,13 @@ fn drive(state: &mut ProxySession, stop: &AtomicBool) -> Result<i32, String> {
         match &state.agent {
             Some(agent) => {
                 if let Ok(Some(code)) = agent.poll() {
-                    let _ = state.socket.close(None);
+                    super::leave(&mut state.socket);
                     return Ok(code);
                 }
             }
             // Once an agent runs, Ctrl+C is its keystroke, not a request to leave.
             None if stop.load(Ordering::Relaxed) => {
-                let _ = state.socket.close(None);
+                super::leave(&mut state.socket);
                 return Ok(130);
             }
             None => {}
@@ -433,11 +439,15 @@ fn drive(state: &mut ProxySession, stop: &AtomicBool) -> Result<i32, String> {
                 continue;
             }
         }
-        if let Err(error) = bridge::flush(state.bridge.as_ref(), &mut state.socket) {
-            if let Some(code) = state.lost(error)? {
-                return Ok(code);
+        match bridge::flush(state.bridge.as_ref(), &mut state.socket) {
+            Ok(true) => state.idle.active(),
+            Ok(false) => {}
+            Err(error) => {
+                if let Some(code) = state.lost(error)? {
+                    return Ok(code);
+                }
+                continue;
             }
-            continue;
         }
         let step = match state.pump() {
             Err(error) => state.lost(error)?,
