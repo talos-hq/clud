@@ -261,6 +261,8 @@ fn transcript_forces_centralized_daemon() {
         unattended: false,
         allow_plan_mode: false,
         allow_secrets: false,
+        no_computer_use: false,
+        computer_use: false,
         last: false,
         resume_mode: Default::default(),
         coauthor: None,

@@ -1334,6 +1334,9 @@ mod grind_launch;
 #[path = "tests/video_launch.rs"]
 mod video_launch;
 
+#[path = "tests/computer_use_launch.rs"]
+mod computer_use_launch;
+
 #[path = "tests/loop_contract.rs"]
 mod loop_contract;
 

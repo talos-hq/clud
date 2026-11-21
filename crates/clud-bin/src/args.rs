@@ -262,6 +262,16 @@ pub struct Args {
     #[arg(long = "allow-secrets")]
     pub allow_secrets: bool,
 
+    /// Leave computer use (the `cua` MCP server driving this desktop) out of
+    /// this launch. It is on by default for the Claude harness.
+    #[arg(long = "no-computer-use", conflicts_with = "computer_use")]
+    pub no_computer_use: bool,
+
+    /// Register computer use on a harness that does not get it by default
+    /// (Codex, which loads every MCP tool schema, ~220 KB, on each request).
+    #[arg(long = "computer-use")]
+    pub computer_use: bool,
+
     /// Opt in to Claude Code commit/PR attribution (#1317). clud hides the
     /// `Co-Authored-By: Claude …` trailer and "Generated with Claude Code"
     /// PR line by default; `--coauthor` keeps Claude Code's own, and
@@ -1490,6 +1500,12 @@ pub enum Command {
     /// lokr's background credential scanner.
     #[command(hide = true)]
     SecretsDaemon,
+    /// Computer use through the pinned cua-driver: status, install, doctor, grant.
+    #[command(name = "computer-use")]
+    ComputerUse {
+        #[command(subcommand)]
+        action: crate::computer_use::Action,
+    },
     /// Explicit compatibility spelling for a normal backend launch.
     Run,
     /// Query clud's cached OpenRouter model and pricing catalog.
@@ -2261,6 +2277,7 @@ const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "sudo",
     "secrets-mcp",
     "secrets-daemon",
+    "computer-use",
     "models",
     "codex-update",
     "dsh-update",
@@ -2781,6 +2798,8 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
         "--product-tools",
         "--builtin-subagents",
         "--allow-secrets",
+        "--computer-use",
+        "--no-computer-use",
         "--coauthor",
         "--dry-run",
         "--detach",
