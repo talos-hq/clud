@@ -330,6 +330,9 @@ CLI surface and backend resolution:
 
 - `args.rs` - `clap` `Args` and `Command` definitions; passthrough for unknown
   flags; subcommand definitions for `loop`, `up`, `rebase`, `fix`, `do`, `gc`, etc.
+- `cli_grammar.rs` - test-only generator for [`docs/cli-grammar.md`](../../../docs/cli-grammar.md)
+  from the clap tree, the splitter tables and the multicall names, plus its
+  drift test ([DD-234](../../../docs/DESIGN_DECISIONS.md#dd-234-the-cli-grammar-is-generated-from-clap-and-checked-for-drift-not-hand-written)).
 - `claude_temp_home_install.rs` - fallback for Claude Code's native installer
   when the home volume is too small or not writable (a live USB such as the
   Arch ISO): `backend_bootstrap.rs` reruns the installer once with `HOME` in
@@ -935,6 +938,8 @@ Diagnostics and misc:
   `chrono` / `time` dependency.
 
 Quick lookup, which file owns a given subcommand:
+
+For a subcommand's syntax and flags, see the generated [CLI grammar](../../../docs/cli-grammar.md); `cli_grammar.rs` renders it.
 
 - `clud clud.bot` / `clud remote connect clud.bot` -> `remote_connect::run`; see [remote assistance](../../../docs/architecture/remote-assistance.md).
 

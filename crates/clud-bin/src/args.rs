@@ -43,12 +43,17 @@ pub struct Args {
     )]
     pub set_web_term: Option<WebTermPreference>,
 
+    /// Run with this prompt and exit when the agent finishes.
     #[arg(short = 'p', long = "prompt")]
     pub prompt: Option<String>,
 
+    /// Send a one-off message.
     #[arg(short = 'm', long = "message")]
     pub message: Option<String>,
 
+    /// Continue a conversation: at a terminal, pick one of this directory's
+    /// Claude-harness sessions; `-c N` resumes the Nth newest (0 is the last)
+    /// without the picker. Without a terminal, the harness's own `--continue`.
     #[arg(short = 'c', long = "continue")]
     pub continue_session: bool,
 
@@ -68,9 +73,11 @@ pub struct Args {
     #[arg(long = "resume-mode", value_enum, default_value_t)]
     pub resume_mode: crate::session_history::recover::ResumeMode,
 
+    /// Use Claude as the backend (the default).
     #[arg(long = "claude", conflicts_with_all = ["codex", "deepseek", "kimi", "openrouter"])]
     pub claude: bool,
 
+    /// Use Codex as the backend.
     #[arg(long = "codex", conflicts_with_all = ["claude", "deepseek", "kimi", "openrouter"])]
     pub codex: bool,
 
@@ -114,9 +121,11 @@ pub struct Args {
     #[arg(long = "harness", value_enum)]
     pub harness: Option<HarnessSelection>,
 
+    /// Force subprocess launch mode.
     #[arg(long = "subprocess", conflicts_with = "pty")]
     pub subprocess: bool,
 
+    /// Force PTY launch mode.
     #[arg(long = "pty", conflicts_with = "subprocess")]
     pub pty: bool,
 
@@ -132,6 +141,7 @@ pub struct Args {
     #[arg(long = "demo-gfx-sixel")]
     pub demo_gfx_sixel: bool,
 
+    /// Model to launch with (an alias such as `opus`, or a provider model ID).
     #[arg(long = "model")]
     pub model: Option<String>,
 
@@ -193,6 +203,7 @@ pub struct Args {
     #[arg(long = "no-land")]
     pub no_land: bool,
 
+    /// Disable YOLO mode: do not inject the harness's permission-bypass flag.
     #[arg(long = "safe", conflicts_with = "unsafe_mode")]
     pub safe: bool,
 
@@ -286,6 +297,7 @@ pub struct Args {
     )]
     pub coauthor: Option<String>,
 
+    /// Print what would run (the launch plan as JSON) and exit.
     #[arg(long = "dry-run", global = true)]
     pub dry_run: bool,
 
@@ -306,12 +318,16 @@ pub struct Args {
     #[arg(skip)]
     pub do_goal: Option<String>,
 
+    /// Start a daemon-managed session in the background without attaching.
     #[arg(long = "detach", conflicts_with = "dry_run")]
     pub detach: bool,
 
+    /// Run attached under the daemon; Ctrl+C asks whether to keep the
+    /// session running in the background.
     #[arg(long = "detachable", conflicts_with = "dry_run")]
     pub detachable: bool,
 
+    /// Name the daemon-managed session (shown by `clud list` and `clud top`).
     #[arg(long = "name")]
     pub session_name: Option<String>,
 
@@ -326,6 +342,7 @@ pub struct Args {
     #[arg(long = "backlog-size")]
     pub backlog_size: Option<String>,
 
+    /// Show debug output.
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
@@ -457,6 +474,7 @@ pub struct Args {
     #[command(subcommand)]
     pub command: Option<Command>,
 
+    /// Arguments after `--`, forwarded verbatim to the backend harness.
     #[arg(last = true, id = "BACKEND_ARGS")]
     pub passthrough: Vec<String>,
 
@@ -763,6 +781,7 @@ impl InstallArgs {
 pub struct LoopArgs {
     /// Prompt text, path to a local file, or a GH issue/PR URL.
     pub task: Option<String>,
+    /// Maximum number of iterations.
     #[arg(long = "loop-count", default_value = "50")]
     pub loop_count: u32,
     /// Force re-fetch of a cached GH issue/PR body.
@@ -1067,6 +1086,7 @@ pub struct WorkflowArgs {
 
 #[derive(clap::Args, Debug, Clone)]
 pub struct LogsArgs {
+    /// Session whose log to print; omit to list every session's last line.
     pub session_id: Option<String>,
     /// Keep watching the file and print new output as it arrives. Exits
     /// once the session has terminated (after printing a status line).
@@ -1570,19 +1590,25 @@ pub enum Command {
         subcommand: DeepseekAuthSubcommand,
     },
     Loop(Box<LoopArgs>),
+    /// Ship it: run lint, test and cleanup, then commit with `codeup`.
     Up {
+        /// Commit message, passed to `codeup -m`.
         #[arg(short = 'm', long = "message")]
         message: Option<String>,
+        /// Also publish: run `codeup` with `-p`.
         #[arg(long = "publish")]
         publish: bool,
     },
     Rebase,
+    /// Run the repo's lint and test tools and fix failures until they pass.
     Fix {
+        /// Optional URL (issue, PR or CI run) whose failure to fix.
         url: Option<String>,
     },
     /// Implement a URL or free-form task end-to-end under the `/goal` contract.
     /// With no target, prompt for one in an interactive foreground terminal.
     Do {
+        /// Issue/PR URL or free-form goal.
         target: Option<String>,
     },
     /// Grind the current repo's issues page with `/loop`.
@@ -1598,6 +1624,7 @@ pub enum Command {
     /// `clud grind reconcile` instead runs the feature-branch reconcile pass
     /// (#1393) in the current checkout and exits with its status.
     Grind {
+        /// Issues page URL; default: the `origin` remote's issues page.
         url: Option<String>,
     },
     /// Edit videos with browser-use/video-use (#1851). Loads the pinned
@@ -1643,18 +1670,27 @@ pub enum Command {
     /// `agent()`/`parallel()`/`pipeline()`/`phase()`); every `agent()` call
     /// is a headless `clud -p` child.
     Workflow(Box<WorkflowArgs>),
+    /// Run a local `.wasm` module in clud's embedded runtime.
     Wasm {
+        /// Path to the `.wasm` module.
         module: String,
+        /// Exported function to call.
         #[arg(long = "invoke", default_value = "run")]
         invoke: String,
     },
+    /// Attach to a background session, or list them when no id is given.
     Attach {
+        /// Session id to attach to.
         session_id: Option<String>,
+        /// Attach to the most recently created session.
         #[arg(long = "last", short = 'l')]
         last: bool,
     },
+    /// End a background session.
     Kill {
+        /// Session id to end.
         session_id: Option<String>,
+        /// End every background session.
         #[arg(long = "all")]
         all: bool,
     },
@@ -2231,7 +2267,7 @@ pub enum GcSubcommand {
     Branches(Box<GcBranchesArgs>),
 }
 
-const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
+pub(crate) const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "ab",
     "remote",
     "clud.bot",
@@ -2400,7 +2436,9 @@ pub(crate) fn misplaced_global_flag(raw: &[String]) -> Option<String> {
 /// small caller stack can abort the process mid-parse.
 const ARG_PARSER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
-fn on_arg_parser_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+pub(crate) fn on_arg_parser_stack<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
     std::thread::Builder::new()
         .name("clud-arg-parser".to_string())
         .stack_size(ARG_PARSER_STACK_BYTES)
@@ -2659,7 +2697,7 @@ fn split_unicode_space_glued_flags(raw: &[String]) -> Vec<String> {
 }
 
 /// Provider flags that accept an inline API key.
-const INLINE_KEY_PROVIDER_FLAGS: &[&str] = &["--deepseek", "--kimi", "--openrouter"];
+pub(crate) const INLINE_KEY_PROVIDER_FLAGS: &[&str] = &["--deepseek", "--kimi", "--openrouter"];
 
 /// `--deepseek=<API_KEY>` must behave exactly like `--deepseek <API_KEY>`
 /// (#1197). The provider flags are on/off switches, so the splitter never
@@ -2700,7 +2738,7 @@ fn split_inline_key_assignments(raw: &[String]) -> Result<Vec<String>, String> {
     Ok(normalized)
 }
 
-const SPLITTER_VALUE_FLAGS: &[&str] = &[
+pub(crate) const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--backends",
     "--prompt-file",
     "--runs",
@@ -2748,16 +2786,100 @@ const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--session-pid",
     "--chain-b64",
 ];
-const SPLITTER_SHORT_VALUE_FLAGS: &[&str] = &["-p", "-m", "-r"];
+pub(crate) const SPLITTER_SHORT_VALUE_FLAGS: &[&str] = &["-p", "-m", "-r"];
+
+/// Switches the splitter keeps for clap (no value follows).
+pub(crate) const SPLITTER_BOOL_FLAGS: &[&str] = &[
+    "--no-fast-fail",
+    // `clud workflow --reuse` (#2471).
+    "--reuse",
+    "--zdr",
+    "--no-data-collection",
+    "--redact-secrets",
+    "--no-redact-secrets",
+    "--installer",
+    "--installer-json",
+    "--installer-plan-json",
+    "--installer-app",
+    "--install-current",
+    "--no-modify-path",
+    "--continue",
+    "--claude",
+    "--codex",
+    "--deepseek",
+    "--kimi",
+    "--openrouter",
+    "--unified",
+    "--failover-allow-metered",
+    "--subprocess",
+    "--pty",
+    "--safe",
+    "--no-land",
+    "--unsafe",
+    "--unattended",
+    "--allow-plan-mode",
+    "--artifact-tool",
+    "--product-tools",
+    "--builtin-subagents",
+    "--allow-secrets",
+    "--computer-use",
+    "--no-computer-use",
+    "--coauthor",
+    "--dry-run",
+    "--detach",
+    "--detachable",
+    "--verbose",
+    "--no-cpu-banner",
+    "--experimental-daemon-centralized",
+    "--all",
+    "--last",
+    "--refresh",
+    "--no-done",
+    "--no-done-marker",
+    "--no-dnd",
+    "--no-drag-drop",
+    "--clean-worktrees",
+    "--fix-hooks",
+    "--no-fix-hooks",
+    "--yes",
+    "--force",
+    "--no-daemon",
+    "--keep-orphans",
+    "--quiet-orphans",
+    "--explain-orphans",
+    "--json",
+    // `clud doctor --fix`.
+    "--fix",
+    "--no-open",
+    "--demo-gfx-sixel",
+    "--help",
+    "--version",
+    "--web-term",
+    "--kitty-term",
+    // Issue #469: `clud log --fail-on-no-server` bool flag.
+    "--fail-on-no-server",
+    // `clud settings --list` bool flag.
+    "--list",
+    // `clud extern trust --list` / `--revoke` bool flags.
+    "--revoke",
+];
+pub(crate) const SPLITTER_SHORT_BOOL_FLAGS: &[&str] = &["-c", "-v", "-h", "-V", "-y"];
+
+/// Subcommands whose own parser consumes `--` as data rather than as clud's
+/// end-of-flags marker. See the `--` branch of [`split_known_unknown`] (issue #508).
+///
+/// This was a single constant while `tool run` was the only `trailing_var_arg`
+/// parser in the CLI. `test run -- <cmd>` (#407) is the second, and a
+/// subcommand missing from this list does not fail loudly: clud silently
+/// swallows everything after `--` as backend passthrough, and the subcommand
+/// sees an empty command vector.
+pub(crate) const SEPARATOR_OWNING_SUBCOMMANDS: &[&str] =
+    &["tool", "test", "safe-rm", "secret", "sudo", "grind-facts"];
 
 /// Flags that take an optional `=`-joined value: bare, they are bool flags
-/// (and are listed in `bool_flags`); `--flag=value` carries the value.
-const OPTIONAL_VALUE_FLAGS: &[&str] = &["--coauthor"];
+/// (and are listed in [`SPLITTER_BOOL_FLAGS`]); `--flag=value` carries the value.
+pub(crate) const OPTIONAL_VALUE_FLAGS: &[&str] = &["--coauthor"];
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
-)]
 fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), String> {
     let mut known = vec![raw[0].clone()];
     let mut unknown = Vec::new();
@@ -2765,91 +2887,6 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
 
     let value_flags: &[&str] = SPLITTER_VALUE_FLAGS;
     let short_value_flags: &[&str] = SPLITTER_SHORT_VALUE_FLAGS;
-    let bool_flags: &[&str] = &[
-        "--no-fast-fail",
-        // `clud workflow --reuse` (#2471).
-        "--reuse",
-        "--zdr",
-        "--no-data-collection",
-        "--redact-secrets",
-        "--no-redact-secrets",
-        "--installer",
-        "--installer-json",
-        "--installer-plan-json",
-        "--installer-app",
-        "--install-current",
-        "--no-modify-path",
-        "--continue",
-        "--claude",
-        "--codex",
-        "--deepseek",
-        "--kimi",
-        "--openrouter",
-        "--unified",
-        "--failover-allow-metered",
-        "--subprocess",
-        "--pty",
-        "--safe",
-        "--no-land",
-        "--unsafe",
-        "--unattended",
-        "--allow-plan-mode",
-        "--artifact-tool",
-        "--product-tools",
-        "--builtin-subagents",
-        "--allow-secrets",
-        "--computer-use",
-        "--no-computer-use",
-        "--coauthor",
-        "--dry-run",
-        "--detach",
-        "--detachable",
-        "--verbose",
-        "--no-cpu-banner",
-        "--experimental-daemon-centralized",
-        "--all",
-        "--last",
-        "--refresh",
-        "--no-done",
-        "--no-done-marker",
-        "--no-dnd",
-        "--no-drag-drop",
-        "--clean-worktrees",
-        "--fix-hooks",
-        "--no-fix-hooks",
-        "--yes",
-        "--force",
-        "--no-daemon",
-        "--keep-orphans",
-        "--quiet-orphans",
-        "--explain-orphans",
-        "--json",
-        // `clud doctor --fix`.
-        "--fix",
-        "--no-open",
-        "--demo-gfx-sixel",
-        "--help",
-        "--version",
-        "--web-term",
-        "--kitty-term",
-        // Issue #469: `clud log --fail-on-no-server` bool flag.
-        "--fail-on-no-server",
-        // `clud settings --list` bool flag.
-        "--list",
-        // `clud extern trust --list` / `--revoke` bool flags.
-        "--revoke",
-    ];
-    let short_bool_flags: &[&str] = &["-c", "-v", "-h", "-V", "-y"];
-    // Subcommands whose own parser consumes `--` as data rather than as clud's
-    // end-of-flags marker. See the `--` branch below (issue #508).
-    //
-    // This was a single constant while `tool run` was the only `trailing_var_arg`
-    // parser in the CLI. `test run -- <cmd>` (#407) is the second, and a
-    // subcommand missing from this list does not fail loudly: clud silently
-    // swallows everything after `--` as backend passthrough, and the subcommand
-    // sees an empty command vector.
-    const SEPARATOR_OWNING_SUBCOMMANDS: &[&str] =
-        &["tool", "test", "safe-rm", "secret", "sudo", "grind-facts"];
 
     // Which subcommand we are inside, once one has been seen. `None` means the
     // tokens still belong to clud's own top-level flags.
@@ -2897,7 +2934,9 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
             continue;
         }
 
-        if bool_flags.contains(&arg.as_str()) || short_bool_flags.contains(&arg.as_str()) {
+        if SPLITTER_BOOL_FLAGS.contains(&arg.as_str())
+            || SPLITTER_SHORT_BOOL_FLAGS.contains(&arg.as_str())
+        {
             known.push(arg.clone());
             i += 1;
             continue;

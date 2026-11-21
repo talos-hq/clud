@@ -116,6 +116,9 @@ set `CLUD_BIN` to its absolute path if needed. Restart Hermes or use
 | `session_start` | Submit an agent task and receive a durable session handle immediately. |
 | `session_status`, `session_result`, `session_wait`, `session_kill` | Inspect, collect, wait for, or stop an agent session. |
 | `session_wait_any` | Wait once on a whole fan-out of sessions and return as soon as **any** child seals. |
+| `session_inject` | Steer a running session: queue a note or directive for its next turn, or interrupt it. |
+| `run`, `run_json`, `dry_run` | Run `clud -p` and block until it finishes (text or JSON result), or print the resolved launch without running it. |
+| `board_whoami`, `board_post`, `board_read` | Exchange messages with other agents on clud's bulletin board; `board_read` can wait for a message. |
 
 For Codex, authenticate with
 `clud auth login codex --acknowledge-experimental`, or provide `OPENAI_API_KEY`
@@ -170,41 +173,14 @@ clud list                         # Show background session IDs, PIDs, and cwd
 clud wasm guest.wasm              # Run a local wasm module with clud's embedded runtime
 ```
 
-### Flags
+### CLI grammar
 
-| Flag | Description |
-|------|-------------|
-| `-p`, `--prompt` | Run with a prompt, exit when complete |
-| `-m`, `--message` | Send a one-off message |
-| `-c`, `--continue` | Continue the most recent conversation |
-| `-r`, `--resume [TERM]` | Resume by session ID or search term |
-| `--claude` | Use Claude as the backend |
-| `--codex` | Use Codex as the backend |
-| `--deepseek` | Use DeepSeek's Anthropic-compatible API through Claude Code |
-| `--kimi` | Use Kimi's Anthropic-compatible API through Claude Code |
-| `--openrouter` | Use OpenRouter's Anthropic endpoint through Claude Code |
-| `--subprocess` | Force subprocess launch mode |
-| `--pty` | Force PTY launch mode |
-| `--graphics <auto\|off\|sixel>` | Control PTY graphics headers. `auto` only enables Sixel from a live terminal probe |
-| `--graphics-image <PATH>` | Render a custom image as the PTY graphics header when Sixel is enabled |
-| `--demo-gfx-sixel` | Render the README hero image as a standalone Sixel demo and exit |
-| `--detach` | Start a daemon-managed session directly in the background |
-| `--detachable` | Run attached under the daemon; `Ctrl+C` prompts whether to background or end |
-| `--transcript <PATH>` | Tee daemon-managed session output bytes to a transcript file |
-| `--model <NAME>` | Set model preference (e.g., haiku, sonnet, opus) |
-| `--safe` | Disable YOLO mode (don't inject `--dangerously-skip-permissions`) |
-| `--unsafe` | Disable clud's agent safety rules for this launch ([policy](docs/architecture/unsafe-mode.md)); conflicts with `--safe` |
-| `-c`, `--continue` | At a terminal, pick one of this directory's Claude-harness sessions (newest first, with provider, context estimate and compact checkpoints) to resume; without a terminal, Claude's native `--continue` |
-| `--last` | Resume this directory's newest Claude-harness session without the picker |
-| `--resume-mode <auto\|native\|portable>` | How `-c`/`--last` resumes: `native` is Claude's own resume, `portable` starts a new session from a compact summary plus the newest turns that fit, `auto` (default) picks native when safe |
-| `--coauthor[=TAG]` | Opt in to commit/PR attribution. clud hides Claude Code's `Co-Authored-By` trailer and "Generated with Claude Code" PR line by default; bare `--coauthor` keeps Claude's own, `=TAG` uses TAG for both (also `CLUD_COAUTHOR=1|TAG`; Claude harness only) |
-| `--allow-secrets` | Let the agent see which credentials exist on this machine, never their values. Claude backend only. See [Let an agent find your keys](#let-an-agent-find-your-keys---allow-secrets) |
-| `--dry-run` | Print what would be executed, then exit |
-| `-v`, `--verbose` | Show debug output |
-| `-h`, `--help` | Show help |
-| `-V`, `--version` | Show version |
-
-Unknown flags are forwarded directly to the backend agent.
+Every command, subcommand, flag, default and conflict is listed in the
+[CLI grammar](docs/cli-grammar.md), generated from clud's argument parser and
+checked by a drift test. It also covers how unknown flags and `--` pass
+through to the backend agent, the multicall names (`clud-cmd-scan`, `python`,
+`gh`, ...), environment variables and exit codes. Agents should start at
+[`llms.txt`](llms.txt).
 
 ### Local API gateway
 
