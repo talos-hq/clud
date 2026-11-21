@@ -2231,7 +2231,7 @@ pub enum GcSubcommand {
     Branches(Box<GcBranchesArgs>),
 }
 
-const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
+pub(crate) const TOP_LEVEL_SUBCOMMANDS: &[&str] = &[
     "ab",
     "remote",
     "clud.bot",
@@ -2400,7 +2400,9 @@ pub(crate) fn misplaced_global_flag(raw: &[String]) -> Option<String> {
 /// small caller stack can abort the process mid-parse.
 const ARG_PARSER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
-fn on_arg_parser_stack<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> T {
+pub(crate) fn on_arg_parser_stack<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> T {
     std::thread::Builder::new()
         .name("clud-arg-parser".to_string())
         .stack_size(ARG_PARSER_STACK_BYTES)
@@ -2659,7 +2661,7 @@ fn split_unicode_space_glued_flags(raw: &[String]) -> Vec<String> {
 }
 
 /// Provider flags that accept an inline API key.
-const INLINE_KEY_PROVIDER_FLAGS: &[&str] = &["--deepseek", "--kimi", "--openrouter"];
+pub(crate) const INLINE_KEY_PROVIDER_FLAGS: &[&str] = &["--deepseek", "--kimi", "--openrouter"];
 
 /// `--deepseek=<API_KEY>` must behave exactly like `--deepseek <API_KEY>`
 /// (#1197). The provider flags are on/off switches, so the splitter never
@@ -2700,7 +2702,7 @@ fn split_inline_key_assignments(raw: &[String]) -> Result<Vec<String>, String> {
     Ok(normalized)
 }
 
-const SPLITTER_VALUE_FLAGS: &[&str] = &[
+pub(crate) const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--backends",
     "--prompt-file",
     "--runs",
@@ -2748,16 +2750,100 @@ const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--session-pid",
     "--chain-b64",
 ];
-const SPLITTER_SHORT_VALUE_FLAGS: &[&str] = &["-p", "-m", "-r"];
+pub(crate) const SPLITTER_SHORT_VALUE_FLAGS: &[&str] = &["-p", "-m", "-r"];
+
+/// Switches the splitter keeps for clap (no value follows).
+pub(crate) const SPLITTER_BOOL_FLAGS: &[&str] = &[
+    "--no-fast-fail",
+    // `clud workflow --reuse` (#2471).
+    "--reuse",
+    "--zdr",
+    "--no-data-collection",
+    "--redact-secrets",
+    "--no-redact-secrets",
+    "--installer",
+    "--installer-json",
+    "--installer-plan-json",
+    "--installer-app",
+    "--install-current",
+    "--no-modify-path",
+    "--continue",
+    "--claude",
+    "--codex",
+    "--deepseek",
+    "--kimi",
+    "--openrouter",
+    "--unified",
+    "--failover-allow-metered",
+    "--subprocess",
+    "--pty",
+    "--safe",
+    "--no-land",
+    "--unsafe",
+    "--unattended",
+    "--allow-plan-mode",
+    "--artifact-tool",
+    "--product-tools",
+    "--builtin-subagents",
+    "--allow-secrets",
+    "--computer-use",
+    "--no-computer-use",
+    "--coauthor",
+    "--dry-run",
+    "--detach",
+    "--detachable",
+    "--verbose",
+    "--no-cpu-banner",
+    "--experimental-daemon-centralized",
+    "--all",
+    "--last",
+    "--refresh",
+    "--no-done",
+    "--no-done-marker",
+    "--no-dnd",
+    "--no-drag-drop",
+    "--clean-worktrees",
+    "--fix-hooks",
+    "--no-fix-hooks",
+    "--yes",
+    "--force",
+    "--no-daemon",
+    "--keep-orphans",
+    "--quiet-orphans",
+    "--explain-orphans",
+    "--json",
+    // `clud doctor --fix`.
+    "--fix",
+    "--no-open",
+    "--demo-gfx-sixel",
+    "--help",
+    "--version",
+    "--web-term",
+    "--kitty-term",
+    // Issue #469: `clud log --fail-on-no-server` bool flag.
+    "--fail-on-no-server",
+    // `clud settings --list` bool flag.
+    "--list",
+    // `clud extern trust --list` / `--revoke` bool flags.
+    "--revoke",
+];
+pub(crate) const SPLITTER_SHORT_BOOL_FLAGS: &[&str] = &["-c", "-v", "-h", "-V", "-y"];
+
+/// Subcommands whose own parser consumes `--` as data rather than as clud's
+/// end-of-flags marker. See the `--` branch of [`split_known_unknown`] (issue #508).
+///
+/// This was a single constant while `tool run` was the only `trailing_var_arg`
+/// parser in the CLI. `test run -- <cmd>` (#407) is the second, and a
+/// subcommand missing from this list does not fail loudly: clud silently
+/// swallows everything after `--` as backend passthrough, and the subcommand
+/// sees an empty command vector.
+pub(crate) const SEPARATOR_OWNING_SUBCOMMANDS: &[&str] =
+    &["tool", "test", "safe-rm", "secret", "sudo", "grind-facts"];
 
 /// Flags that take an optional `=`-joined value: bare, they are bool flags
-/// (and are listed in `bool_flags`); `--flag=value` carries the value.
-const OPTIONAL_VALUE_FLAGS: &[&str] = &["--coauthor"];
+/// (and are listed in [`SPLITTER_BOOL_FLAGS`]); `--flag=value` carries the value.
+pub(crate) const OPTIONAL_VALUE_FLAGS: &[&str] = &["--coauthor"];
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
-)]
 fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), String> {
     let mut known = vec![raw[0].clone()];
     let mut unknown = Vec::new();
@@ -2765,91 +2851,6 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
 
     let value_flags: &[&str] = SPLITTER_VALUE_FLAGS;
     let short_value_flags: &[&str] = SPLITTER_SHORT_VALUE_FLAGS;
-    let bool_flags: &[&str] = &[
-        "--no-fast-fail",
-        // `clud workflow --reuse` (#2471).
-        "--reuse",
-        "--zdr",
-        "--no-data-collection",
-        "--redact-secrets",
-        "--no-redact-secrets",
-        "--installer",
-        "--installer-json",
-        "--installer-plan-json",
-        "--installer-app",
-        "--install-current",
-        "--no-modify-path",
-        "--continue",
-        "--claude",
-        "--codex",
-        "--deepseek",
-        "--kimi",
-        "--openrouter",
-        "--unified",
-        "--failover-allow-metered",
-        "--subprocess",
-        "--pty",
-        "--safe",
-        "--no-land",
-        "--unsafe",
-        "--unattended",
-        "--allow-plan-mode",
-        "--artifact-tool",
-        "--product-tools",
-        "--builtin-subagents",
-        "--allow-secrets",
-        "--computer-use",
-        "--no-computer-use",
-        "--coauthor",
-        "--dry-run",
-        "--detach",
-        "--detachable",
-        "--verbose",
-        "--no-cpu-banner",
-        "--experimental-daemon-centralized",
-        "--all",
-        "--last",
-        "--refresh",
-        "--no-done",
-        "--no-done-marker",
-        "--no-dnd",
-        "--no-drag-drop",
-        "--clean-worktrees",
-        "--fix-hooks",
-        "--no-fix-hooks",
-        "--yes",
-        "--force",
-        "--no-daemon",
-        "--keep-orphans",
-        "--quiet-orphans",
-        "--explain-orphans",
-        "--json",
-        // `clud doctor --fix`.
-        "--fix",
-        "--no-open",
-        "--demo-gfx-sixel",
-        "--help",
-        "--version",
-        "--web-term",
-        "--kitty-term",
-        // Issue #469: `clud log --fail-on-no-server` bool flag.
-        "--fail-on-no-server",
-        // `clud settings --list` bool flag.
-        "--list",
-        // `clud extern trust --list` / `--revoke` bool flags.
-        "--revoke",
-    ];
-    let short_bool_flags: &[&str] = &["-c", "-v", "-h", "-V", "-y"];
-    // Subcommands whose own parser consumes `--` as data rather than as clud's
-    // end-of-flags marker. See the `--` branch below (issue #508).
-    //
-    // This was a single constant while `tool run` was the only `trailing_var_arg`
-    // parser in the CLI. `test run -- <cmd>` (#407) is the second, and a
-    // subcommand missing from this list does not fail loudly: clud silently
-    // swallows everything after `--` as backend passthrough, and the subcommand
-    // sees an empty command vector.
-    const SEPARATOR_OWNING_SUBCOMMANDS: &[&str] =
-        &["tool", "test", "safe-rm", "secret", "sudo", "grind-facts"];
 
     // Which subcommand we are inside, once one has been seen. `None` means the
     // tokens still belong to clud's own top-level flags.
@@ -2897,7 +2898,9 @@ fn split_known_unknown(raw: &[String]) -> Result<(Vec<String>, Vec<String>), Str
             continue;
         }
 
-        if bool_flags.contains(&arg.as_str()) || short_bool_flags.contains(&arg.as_str()) {
+        if SPLITTER_BOOL_FLAGS.contains(&arg.as_str())
+            || SPLITTER_SHORT_BOOL_FLAGS.contains(&arg.as_str())
+        {
             known.push(arg.clone());
             i += 1;
             continue;
