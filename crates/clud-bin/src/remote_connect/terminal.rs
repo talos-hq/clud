@@ -439,6 +439,11 @@ impl Terminal {
         Ok(())
     }
 
+    /// `(rows, cols)` of the open terminal.
+    pub fn size(&self) -> Option<(u16, u16)> {
+        self.process.as_ref().map(|_| self.size)
+    }
+
     /// `pty_size`: the open terminal's size, for a server that renders it.
     pub fn size_event(&self) -> Option<Value> {
         let mut event = self.report()?;

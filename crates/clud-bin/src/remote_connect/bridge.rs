@@ -39,22 +39,29 @@ const RESPONSE_BODY: u8 = 1;
 const RESPONSE_END: u8 = 2;
 
 /// Send the frames the agent's requests have queued, without waiting.
+/// `true` when a frame was sent. Stops while the socket is backed up, so
+/// model traffic waits at the link's pace instead of queueing without bound.
 pub(super) fn flush(
     bridge: Option<&Bridge>,
     socket: &mut super::transport::Socket,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let Some(bridge) = bridge else {
-        return Ok(());
+        return Ok(false);
     };
+    let mut sent = false;
     for _ in 0..QUEUE {
+        if socket.backed_up() {
+            break;
+        }
         let Some(frame) = bridge.next_frame() else {
             break;
         };
         socket
             .send(tungstenite::Message::Binary(frame.into()))
             .map_err(|_| "remote connection lost")?;
+        sent = true;
     }
-    Ok(())
+    Ok(sent)
 }
 
 /// Start the endpoint when `event` is a `hello` that offers it, and point the

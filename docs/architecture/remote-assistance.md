@@ -72,7 +72,9 @@ the session carries on. Output frames are at most 16 KiB (the server drops
 larger ones), and output already waiting is coalesced into one frame, so a
 progress bar's many small writes do not cost a frame each. The forwarding
 queue holds at most 128 frames (2 MiB), and the session loop empties it on
-every pass. When it is full the pump waits holding the PTY reader's lock, so
+every pass while the socket takes data. While the socket is backed up (see
+[a slow link is waited out](#a-slow-link-is-waited-out)) the loop leaves the
+queue alone; when it is full the pump waits holding the PTY reader's lock, so
 running-process stops reading the PTY and the shell's own writes block: a
 burst such as `uv` progress output is slowed to the socket's pace, never
 dropped, reordered or allowed to end the session. Stopping the terminal
@@ -216,15 +218,28 @@ protocol: clud.bot `SPEC.md` §4.2.3; code: `remote_connect/resume.rs` and
 **Loss.** The session loop (`Link::online`) ends a connected phase on a socket
 error, a close frame (except 4409 and protocol violations), a `server_restart`
 notice, or a heartbeat timeout: no frame from the server for 35 seconds while
-pinging every 10, which catches a half-open connection with no FIN. Expected
+pinging every 10, which catches a half-open connection with no FIN. A slow or
+stalled link alone is not a loss ([below](#a-slow-link-is-waited-out)). Expected
 terminations still end at once with their own messages: `disconnect`,
 `denied`, `expired`, `ended`, and a refused reconnect whose
 `/api/remote/status` is terminal. A server that did not advertise `resume` in
 its `hello` gets the old behaviour: the client exits with
 `remote connection lost`.
 
-**Reconnect.** The client prints `Connection to clud.bot lost; reconnecting…
-(Ctrl+C to end)` once and keeps the shell running. `Reconnector` attempts in a
+**Reconnect.** The client shows `Connection to clud.bot lost; reconnecting…
+(Ctrl+C to end)` once and keeps the shell running. On a terminal it is a
+banner: drawn over the bottom row with the cursor saved and restored, cut to
+the terminal's width and never followed by a newline, so the remote program's
+screen does not scroll and its wrapping mode is untouched. Anything written
+while it shows (mirrored output, a notice, a question) erases it first and
+redraws it after, so it cannot scroll up into the program's screen; the resume
+erases it for good. The remote program keeps running and drawing through the
+outage, so its terminal modes are left alone (no alternate-screen or cursor
+reset). After the banner is erased the PTY is made one row shorter for 200 ms,
+which makes the program (or ConPTY) draw its whole screen again; the size is
+then restored (and announced again when this terminal sets it), unless a
+resize arrived meanwhile. Piped output gets plain `…reconnecting…` and
+`Reconnected.` lines instead. `Reconnector` attempts in a
 background thread so the loop keeps draining the PTY and sees Ctrl+C even
 while a handshake waits on an unreachable host. Backoff is capped exponential
 with jitter: 0.5 s doubling to 15 s, each wait 50-100 % of its step; the first
@@ -246,7 +261,8 @@ newest output and a `pty_gap` marker for the rest. A consent answer typed
 while offline is remembered, not sent.
 
 **Resync.** On the new `hello`, `State::resume` reconciles with the server's
-record (`hello.resume`). Local consent stays authoritative:
+record (`hello.resume`). Until it has, nothing of the shell's (held or new) is
+sent on the new socket, and the shell waits. Local consent stays authoritative:
 
 - control continues only if this client holds the grant whose request id the
   server records (`grant_id`); otherwise the client closes its terminal,
@@ -269,6 +285,49 @@ record (`hello.resume`). Local consent stays authoritative:
 
 **Proxy mode** (`clud connect` → Use Proxy) reconnects the same way in the
 background; the user's agent keeps running and is not interrupted.
+
+### A slow link is waited out
+
+On a poor network the link is often slow or briefly stalled rather than gone,
+and reconnecting then costs more than it saves: the new handshake crosses the
+same bad link, and whatever the old socket had in flight is lost, because the
+protocol has no acknowledgements to replay it from
+([DD-232](../DESIGN_DECISIONS.md#dd-232-a-remote-session-waits-out-a-slow-link-on-a-non-blocking-socket)).
+So after the handshake the session socket (`transport::Socket`) is
+non-blocking. A message the network cannot take yet stays queued in order in
+tungstenite and goes out on a later pass (`Socket::pump`); while anything is
+queued (`backed_up`), the loop reads no more shell output, model-bridge frames
+or held outage frames, so the queue stays short and a heartbeat ping is not
+stuck behind megabytes of output. Only the heartbeat decides the link is gone.
+TLS runs through `tls::TlsStream` rather than rustls's own stream, which suits
+only blocking sockets: its send buffer is capped at 64 KiB and a write past
+the cap returns `Ok(0)`, which tungstenite reports as a reset, so a model
+request larger than the cap ended the connection whenever the network was full;
+and its reads first finish pending writes, so a full uplink also held back the
+operator's keystrokes and the server's pongs. `TlsStream` accepts every write
+(the pacing above keeps its buffer small) and reads whatever has arrived while
+writes wait.
+An idle pass sleeps 1 ms, doubling to 20 ms (`transport::Idle`), so a
+keystroke is still answered within 20 ms. `TCP_NODELAY` is set, so a
+keystroke's echo is sent without waiting for an acknowledgement. Held outage
+output is sent at the link's pace after a resume, ahead of newer output. A
+deliberate exit waits up to 2 s for its close frame to get through.
+
+A blocking socket with timeouts, the earlier design, abandoned a link whose
+writes stalled for 5 s; on a lossy link TCP's own retransmission backoff passes
+that easily. It was also unsafe on Windows, where a send or receive that times
+out leaves the socket in an undefined state.
+
+**Startup.** Creating the session and opening its first socket retry a
+network failure (and a 408, 429 or 5xx answer) with the same backoff for up to
+60 s, saying so once on stderr; `CLUD_REMOTE_STARTUP_WINDOW_SECS` may only
+shorten it. A refusal, a bad response and a server that will not encrypt still
+fail at once. A TLS failure, a rejected certificate included, counts as a
+network failure and is retried, as it is on reconnect: a captive portal or an
+intercepting middlebox on a poor network looks like one, nothing is sent before
+the certificate is verified, and the retry ends when the network does.
+No keyword is shown before creation succeeds, so a retry creates nothing the
+user has seen.
 
 ## End-to-end encryption
 

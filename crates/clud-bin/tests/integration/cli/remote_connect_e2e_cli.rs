@@ -271,6 +271,27 @@ impl Operator {
         }
     }
 
+    /// Like `wait_shell_output`, but searches only what arrived since the last
+    /// look, for floods where rescanning everything would be quadratic.
+    fn wait_shell_bytes(&mut self, needle: &[u8]) {
+        let deadline = Instant::now() + WAIT;
+        let mut from = 0;
+        loop {
+            let window = &self.shell_output[from.min(self.shell_output.len())..];
+            if window.windows(needle.len()).any(|w| w == needle) {
+                return;
+            }
+            from = self.shell_output.len().saturating_sub(needle.len());
+            assert!(
+                Instant::now() < deadline,
+                "server never received {:?} ({} bytes so far)",
+                String::from_utf8_lossy(needle),
+                self.shell_output.len()
+            );
+            self.pump_once();
+        }
+    }
+
     /// Drain briefly, for asserting that the client stays silent.
     fn settle(&mut self) {
         for _ in 0..20 {
@@ -1000,4 +1021,88 @@ fn a_server_without_encryption_is_refused_when_encryption_is_required() {
     client.wait_for("did not offer end-to-end encryption; refusing");
     assert_eq!(client.wait_exit(), 1);
     assert!(!client.text().contains("Keyword:"), "{}", client.text());
+}
+
+/// Numbered lines in a file, and the shell command that prints it.
+fn numbered_file(lines: usize) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("numbers.txt");
+    let mut text = String::with_capacity(lines * 9);
+    for number in 1..=lines {
+        text.push_str(&number.to_string());
+        text.push('\n');
+    }
+    std::fs::write(&path, text).unwrap();
+    let shown = path.display();
+    let command = if clud::platform::host::WINDOWS {
+        format!("type \"{shown}\"")
+    } else {
+        format!("cat '{shown}'")
+    };
+    (dir, command)
+}
+
+/// The numbered lines the operator received, in arrival order.
+fn numbers_received(output: &[u8]) -> Vec<usize> {
+    String::from_utf8_lossy(output)
+        .split(['\r', '\n'])
+        .filter(|line| !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()))
+        .map(|line| line.parse().unwrap())
+        .collect()
+}
+
+/// A congested link: the server stops reading while the shell floods the
+/// session, long past any write timeout. The client must wait the stall out on
+/// the same socket, pacing the shell, and deliver every line in order: a
+/// reconnect would lose what the old socket had in flight.
+#[test]
+fn a_stalled_link_paces_the_shell_and_loses_nothing() {
+    const LINES: usize = 2_500_000;
+    let (client, mut operator, listener) = resumable_session(None);
+    open_shell(&client, &mut operator);
+    let (_dir, print) = numbered_file(LINES);
+    operator.type_into_shell(&print);
+    operator.wait_shell_bytes(b"\n1000\r\n");
+    // Stop reading: the server's receive buffer and the client's send buffer fill.
+    std::thread::sleep(Duration::from_secs(12));
+    let last = format!("\n{LINES}\r\n");
+    operator.wait_shell_bytes(last.as_bytes());
+    listener.set_nonblocking(true).unwrap();
+    assert!(
+        matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock),
+        "the client reconnected instead of waiting out the stall"
+    );
+    assert!(!client.text().contains(LOST), "{}", client.text());
+    let numbers = numbers_received(&operator.shell_output);
+    if !clud::platform::host::WINDOWS {
+        // ConPTY renders the screen and may coalesce a flood; POSIX relays every byte.
+        assert_eq!(numbers.len(), LINES, "lines were lost or repeated");
+        assert!(numbers.iter().enumerate().all(|(i, n)| *n == i + 1));
+    }
+    operator.send(json!({"type":"disconnect"}));
+    client.wait_for("clud.bot has ended a connection");
+    assert_eq!(client.wait_exit(), 0);
+}
+
+/// A poor link drops the first try at each startup step: creating the session
+/// and opening its socket. Each is retried, and the session starts as usual.
+#[test]
+fn a_dropped_first_attempt_at_startup_is_retried() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let client = Client::start_with(&origin, None);
+    // Reset before any answer: the creation request is lost.
+    drop(accept_before_deadline(&listener));
+    serve_session_creation(&listener);
+    // The socket's first handshake is lost too.
+    drop(accept_before_deadline(&listener));
+    let (mut operator, path) = Operator::accept_path(&listener);
+    assert!(path.contains(&format!("token={TOKEN}")), "{path}");
+    client.wait_for(KEYWORD);
+    client.wait_for("retrying");
+    operator.send(json!({"type":"hello", "state":"pending"}));
+    operator.wait_event("caps");
+    operator.send(json!({"type":"disconnect"}));
+    client.wait_for("clud.bot has ended a connection");
+    assert_eq!(client.wait_exit(), 0);
 }
