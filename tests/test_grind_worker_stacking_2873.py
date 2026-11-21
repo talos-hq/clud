@@ -570,3 +570,69 @@ def test_a_red_stacked_pr_whose_parent_already_merged_is_rebased_before_any_fix(
     assert "parent_merged_needs_rebase" in fixes[0]
     assert "origin/grind/a" not in fixes[0]
     assert _goal(out, "B")["merged"] is True
+
+
+# ---- watcher waiting and escalation dedupe (talos-hq/clud#2877, #2878) --------
+
+
+def test_a_waiting_watch_is_watched_again_and_never_escalated(tmp_path: Path) -> None:
+    waiting = _verdict("waiting", exit_code=4)
+    out = _ok(probe(tmp_path, {"chaperone:A": [waiting, waiting, MERGED]}, goals=("A",)))
+    assert len(_prompts(out, "chaperone:A")) == 3
+    assert _prompts(out, "chaperone-fix:A") == []
+    assert _goal(out, "A")["merged"] is True
+    assert "return waiting" in _prompts(out, "chaperone:A")[0]
+
+
+def test_endless_waiting_hands_the_pr_back_without_a_fixer(tmp_path: Path) -> None:
+    waiting = _verdict("waiting", exit_code=4)
+    out = _ok(probe(tmp_path, {"chaperone:A": [waiting] * 10}, goals=("A",)))
+    # Seven chain watches (the seventh exceeds the six waits), then Finish's one
+    # last bounded watch; none of them reaches a fixer.
+    assert len(_prompts(out, "chaperone:A")) == 8
+    assert _prompts(out, "chaperone-fix:A") == []
+    goal = _goal(out, "A")
+    assert goal["merged"] is False
+    assert goal["status"] == "waiting"
+    assert "still pending" in goal["note"]
+
+
+def test_the_same_problem_on_the_same_head_goes_to_a_fixer_once(tmp_path: Path) -> None:
+    review = _verdict("needs_fix", failure_log="changes requested",
+                      head_sha="e" * 40, evidence_id="review-9")
+    out = _ok(
+        probe(
+            tmp_path,
+            {
+                "chaperone:A": [review, review, MERGED],
+                # The fixer answered the review without a new commit.
+                "chaperone-fix:A": [{**FIXED, "head_sha": "e" * 40}],
+            },
+            goals=("A",),
+        )
+    )
+    assert len(_prompts(out, "chaperone-fix:A")) == 1
+    assert _goal(out, "A")["merged"] is True
+    assert any("already went to a fixer" in line for line in out["logs"])
+
+
+def test_a_new_failure_on_a_new_head_still_escalates(tmp_path: Path) -> None:
+    out = _ok(
+        probe(
+            tmp_path,
+            {
+                "chaperone:A": [
+                    _verdict(
+                        "needs_fix", failure_log="red", head_sha="e" * 40, evidence_id="run-1"
+                    ),
+                    _verdict(
+                        "needs_fix", failure_log="red", head_sha="f" * 40, evidence_id="run-2"
+                    ),
+                    MERGED,
+                ],
+                "chaperone-fix:A": [FIXED, FIXED],
+            },
+            goals=("A",),
+        )
+    )
+    assert len(_prompts(out, "chaperone-fix:A")) == 2

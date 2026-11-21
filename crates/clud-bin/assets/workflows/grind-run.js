@@ -464,7 +464,9 @@ const LAND = { type: 'object', required: ['status', 'summary'], properties: {
 // new review before the queue, needs_fixup an ejection or conflict after it,
 // green a stacked PR's passing checks (it is never enqueued before its parent merges).
 const CHAPERONE = { type: 'object', required: ['verdict', 'summary'], properties: {
-  verdict: { type: 'string', enum: ['merged', 'queued', 'green', 'needs_fix', 'needs_fixup', 'stuck', 'base_red', 'tool_misuse'] },
+  verdict: { type: 'string', enum: ['merged', 'queued', 'green', 'waiting', 'needs_fix', 'needs_fixup', 'stuck', 'base_red', 'tool_misuse'] },
+  head_sha: { type: 'string', description: 'the PR head the verdict is about' },
+  evidence_id: { type: 'string', description: 'needs_fix/needs_fixup: the failing run id, queue ejection or review id the problem comes from' },
   enqueued: { type: 'boolean', description: 'queued only: the PR is already in the merge queue' },
   exit_code: { type: 'integer', description: 'pr_merge_watch exit code (0 merged, 4 timeout, 13 ejected, 14 unmergeable)' },
   command: { type: 'string', description: 'tool_misuse only: the command that failed' },
@@ -1082,6 +1084,10 @@ const FOREGROUND_WAIT_STACKED = FOREGROUND_WAIT_BASE + `When the checks pass, re
 const MAX_QUEUE_FIXUPS = gateInteger('queueFixups', 2, 0, 5)
 const POOL_SIZE = gateInteger('fixupPool', 2, 1, 8)
 const MAX_QUEUED_WATCHES = 3
+// A watcher whose waiter hit its deadline with checks still pending returns
+// waiting (talos-hq/clud#2877): it is watched again, never escalated and never
+// a fix attempt, up to this many times before the chain hands the PR back.
+const MAX_WAITING_WATCHES = 6
 const CHAINS = []
 // The child registry (#2873): goal id -> its chain, so a parent's merge wakes
 // the chains stacked on it.
@@ -1122,9 +1128,11 @@ const landSteps = (e) => {
 }
 // The watcher only observes and does the mechanical enqueue; any problem goes
 // back to the chain, which hands it to a fixer (#2873).
+const WAITING_RULE = `If your waiter reaches its deadline with checks still pending or running, return waiting: never needs_fix for a check that has not failed. ` +
+  `With needs_fix or needs_fixup, give head_sha and evidence_id (the failing run id, the queue ejection, or the review id). `
 const watch = (e, tag) => agent(
   `${e.handoff}\nFollow your WATCH procedure.\n${headLine(e)}${landSteps(e)}\n` +
-  (e.stack ? FOREGROUND_WAIT_STACKED : FOREGROUND_WAIT) +
+  (e.stack ? FOREGROUND_WAIT_STACKED : FOREGROUND_WAIT) + WAITING_RULE +
   `Fix rounds used: ${e.fixes} of ${MAX_FIX}. Queue fixups used: ${e.fixups} of ${MAX_QUEUE_FIXUPS}. Return your verdict by the exit codes.`,
   opts('watcher', `chaperone:${e.g.id}#${tag}`, 'Chaperone', CHAPERONE)).then(r => collect(r, 'chaperone', e.g.id))
 
@@ -1200,6 +1208,21 @@ const judge = (e, v) => {
   // Green only means something for a stacked PR; any other is watched again and enqueued.
   if (verdict === 'green') return e.stack ? 'green' : 'queued'
   if (verdict === 'queued') { e.enqueued = e.enqueued || v.enqueued === true; return 'queued' }
+  if (verdict === 'waiting') return 'wait'
+  // Dedupe escalations (talos-hq/clud#2878): the same problem on the same head
+  // from the same run or review was already given to a fixer, so this is stale
+  // state (a check or CHANGES_REQUESTED not yet refreshed); watch again.
+  if (verdict === 'needs_fix' || verdict === 'needs_fixup') {
+    // Only a verdict naming both is comparable: without them a repeat may be a
+    // new run on the same head (a second queue ejection), which must escalate.
+    const head = v && nonempty(v.head_sha) ? v.head_sha : null
+    const key = head && nonempty(v.evidence_id) ? `${verdict}|${head}|${v.evidence_id}` : null
+    if (key && e.escalated.has(key)) {
+      log(`goal ${e.g.id}: ${verdict} on ${head} (${v.evidence_id}) already went to a fixer; watching again`)
+      return 'wait'
+    }
+    if (key) e.escalated.add(key)
+  }
   if (verdict === 'tool_misuse') {
     e.agentErrors++
     if (e.agentErrors <= MAX_AGENT_ERRORS) return 'watch'
@@ -1227,6 +1250,7 @@ const stackedPhase = async (e) => {
     e.watches++
     const next = await observe(e, e.watches)
     if (next === 'done') return false
+    if (next === 'wait') { if (waited(e)) continue; return false }
     if (next === 'green') break
     // The parent merged meanwhile (its branch may be gone): rebase first; a
     // red check is then fixed on the rebased PR.
@@ -1251,12 +1275,21 @@ const stackedPhase = async (e) => {
   return true
 }
 // Bounded by the fix budgets, the misuse allowance and MAX_QUEUED_WATCHES.
+// One more waiting watch, or hand the PR back unescalated once they run out.
+const waited = (e) => {
+  if (++e.waits <= MAX_WAITING_WATCHES) return true
+  e.state = 'queued'
+  e.result.note = `waiting: checks still pending after ${MAX_WAITING_WATCHES} watches; resume watches ${e.pr} again`
+  settleOnce(e, false)
+  return false
+}
 const chain = async (e) => {
   if (e.stack && !(await stackedPhase(e))) return
   for (let queued = 0; queued < MAX_QUEUED_WATCHES;) {
     e.watches++
     const next = await observe(e, e.watches)
     if (next === 'done') return
+    if (next === 'wait') { if (waited(e)) continue; return }
     if (next === 'queued') { queued++; continue }
     if (next === 'watch') continue
     if (!(await fixInPool(e, next))) return
@@ -1275,7 +1308,7 @@ const handOff = (p, g, integ, rv, stack = null) => {
     branch: p.branch, head_sha: integ.head_sha || null,
     note: integ.summary, artifacts: { ...(integ.artifacts || {}) }, ...(stack ? { stacked_on: stack.goal } : {}) }
   const e = { g, p, pr: integ.pr_url, head: integ.head_sha || null, handoff: handoffOf(p, g, integ, rv), result, stack,
-    enqueued: false, fixes: 0, fixups: 0, rebases: 0, agentErrors: 0, watches: 0, why: '', state: 'watching', settled: false }
+    enqueued: false, fixes: 0, fixups: 0, rebases: 0, agentErrors: 0, watches: 0, waits: 0, escalated: new Set(), why: '', state: 'watching', settled: false }
   CHAINS.push(e)
   CHAIN_OF[String(g.id)] = e
   startChain(e)
@@ -1288,6 +1321,8 @@ const finishChains = async () => {
   await Promise.all(CHAINS.filter(e => e.state === 'queued').map(async e => {
     const next = await observe(e, 'final')
     if (next === 'done') return
+    // Still pending at Finish: report it, never escalate (talos-hq/clud#2877).
+    if (next === 'wait') return finish(e, 'waiting', false, `waiting: ${e.pr}'s checks are still pending at Finish (not a failure)`)
     if (next === 'queued' || next === 'watch') {
       return finish(e, 'queued', false, `queued: ${e.pr} is still in the merge queue at Finish (not a failure)`)
     }
