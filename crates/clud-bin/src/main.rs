@@ -601,6 +601,7 @@ fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
         args::Command::Sudo(options) => clud::secret_prompt::run_sudo(options),
         args::Command::SecretsMcp => clud::secrets_catalog::serve(),
         args::Command::SecretsDaemon => clud::secrets_catalog::daemon(),
+        args::Command::ComputerUse { action } => clud::computer_use::run(action),
         args::Command::PrCheck => {
             if !args.passthrough.is_empty() {
                 eprintln!("pr-check accepts no passthrough arguments");

@@ -182,6 +182,101 @@ fn claude_mcp_bridge_arg(backend: Backend, target: ResolvedLaunchTarget) -> Opti
     super::mcp_config::claude_mcp_config_arg(&super::mcp_config::current_exe_dir()?)
 }
 
+/// The `--mcp-config` tokens of a Claude launch, each server's directive
+/// appended to `instructions`.
+fn claude_mcp_servers(
+    args: &Args,
+    target: ResolvedLaunchTarget,
+    instructions: &mut String,
+) -> Vec<String> {
+    let backend = target.effective_harness;
+    let mut tokens = Vec::new();
+    if let Some(bridge) = claude_mcp_bridge_arg(backend, target) {
+        append_instructions(instructions, super::mcp_config::BOARD_DIRECTIVE);
+        tokens.push(bridge);
+    }
+    let secrets_catalog = (args.allow_secrets && matches!(backend, Backend::Claude))
+        .then(crate::secrets_catalog::claude_mcp_config_arg)
+        .flatten();
+    if let Some(catalog) = secrets_catalog {
+        append_instructions(instructions, crate::secrets_catalog::DIRECTIVE);
+        tokens.push(catalog);
+    }
+    if let Some(exe) = computer_use_exe() {
+        tokens.extend(computer_use_claude_tokens(args, target, &exe, instructions));
+    }
+    tokens
+}
+
+/// The running `clud`, which serves computer use (`clud computer-use mcp`).
+/// `None` in unit tests, which pin exact argv; see `mcp_config::bridge_host`.
+fn computer_use_exe() -> Option<std::path::PathBuf> {
+    if cfg!(test) {
+        return None;
+    }
+    std::env::current_exe().ok()
+}
+
+/// Computer use is on by default only where Claude Code's tool search is
+/// certain to defer its tool schemas (the Claude harness on Anthropic's API),
+/// and not for a headless one-shot turn: `claude -p` waits for every pending
+/// MCP server before its first turn, and a one-shot has no desktop task.
+fn computer_use_default_on(args: &Args, target: ResolvedLaunchTarget) -> bool {
+    let backend = target.effective_harness;
+    let headless_one_shot = has_noninteractive_prompt(args, backend)
+        && !matches!(
+            args.command,
+            Some(Command::Loop(_)) | Some(Command::Grind { .. })
+        );
+    backend == Backend::Claude
+        && target.routing_mode == crate::backend::RoutingMode::Direct
+        && target.model_provider == ModelProvider::Claude
+        && !headless_one_shot
+}
+
+/// The `cua` server and its allow rule for a Claude launch (DD-233).
+pub(super) fn computer_use_claude_tokens(
+    args: &Args,
+    target: ResolvedLaunchTarget,
+    exe: &Path,
+    instructions: &mut String,
+) -> Vec<String> {
+    let wanted = crate::computer_use::registered_for(
+        computer_use_default_on(args, target),
+        args.computer_use,
+        args.no_computer_use,
+    );
+    if target.effective_harness != Backend::Claude || !wanted {
+        return Vec::new();
+    }
+    append_instructions(instructions, crate::computer_use::DIRECTIVE);
+    let mode = crate::computer_use::PermissionMode::for_launch(args.safe);
+    vec![
+        crate::computer_use::claude_mcp_config_arg(exe, mode),
+        crate::computer_use::claude_allowed_tools_arg(),
+    ]
+}
+
+/// `-c` overrides registering the `cua` server on a Codex launch; only on
+/// request (`--computer-use`), since Codex loads every tool schema.
+pub(super) fn computer_use_codex_overrides(
+    args: &Args,
+    backend: Backend,
+    exe: Option<&Path>,
+) -> Vec<String> {
+    let (Backend::Codex, Some(exe)) = (backend, exe) else {
+        return Vec::new();
+    };
+    if !crate::computer_use::registered_for(false, args.computer_use, args.no_computer_use) {
+        return Vec::new();
+    }
+    let mode = crate::computer_use::PermissionMode::for_launch(args.safe);
+    crate::computer_use::codex_config_overrides(exe, mode)
+        .into_iter()
+        .flat_map(|value| ["-c".to_string(), value])
+        .collect()
+}
+
 /// The [`super::mcp_config::bridge_missing_notice`] for a Claude launch that
 /// would otherwise register the bridge.
 pub fn mcp_bridge_missing_notice(backend: Backend, target: ResolvedLaunchTarget) -> Option<String> {
@@ -769,23 +864,7 @@ fn build_launch_plan_for_target_at(
         deletion_instructions.push_str(&procedure);
     }
 
-    let mcp_bridge = claude_mcp_bridge_arg(backend, target);
-    if mcp_bridge.is_some() {
-        append_instructions(
-            &mut deletion_instructions,
-            super::mcp_config::BOARD_DIRECTIVE,
-        );
-    }
-
-    let secrets_catalog = (args.allow_secrets && matches!(backend, Backend::Claude))
-        .then(crate::secrets_catalog::claude_mcp_config_arg)
-        .flatten();
-    if secrets_catalog.is_some() {
-        append_instructions(
-            &mut deletion_instructions,
-            crate::secrets_catalog::DIRECTIVE,
-        );
-    }
+    let mcp_servers = claude_mcp_servers(args, target, &mut deletion_instructions);
 
     if matches!(backend, Backend::Claude) && !deletion_instructions.is_empty() {
         cmd.push("--append-system-prompt".into());
@@ -805,6 +884,11 @@ fn build_launch_plan_for_target_at(
         let matcher = CODEX_HOOK_MATCHER;
         cmd.extend(["-c".into(), format!("hooks.PreToolUse=[{{matcher=\"{matcher}\",hooks=[{{type=\"command\",command=\"{scan}\"}}]}}]")]);
         cmd.extend(["-c".into(), format!("hooks.state={{\"/<session-flags>/config.toml:pre_tool_use:0:0\"={{trusted_hash=\"{}\"}}}}", codex_hook_hash(scan))]);
+        cmd.extend(computer_use_codex_overrides(
+            args,
+            backend,
+            computer_use_exe().as_deref(),
+        ));
         let (mut instructions, has_user_instructions) =
             configured_codex_instructions(args, cwd, codex_passthrough_instructions);
         if !args.unsafe_mode {
@@ -921,8 +1005,7 @@ fn build_launch_plan_for_target_at(
     {
         cmd.push(format!("--agents={}", CLAUDE_WORKER_AGENT));
     }
-    cmd.extend(mcp_bridge);
-    cmd.extend(secrets_catalog);
+    cmd.extend(mcp_servers);
 
     // A Claude-harness gateway must receive its catalog discovery id, not the
     // provider wire id. Claude Code sees and classifies this value before the
@@ -1144,6 +1227,7 @@ fn build_launch_plan_for_target_at(
         | Some(Command::Sudo(_))
         | Some(Command::SecretsMcp)
         | Some(Command::SecretsDaemon)
+        | Some(Command::ComputerUse { .. })
         | Some(Command::Auth { .. })
         | Some(Command::Models { .. })
         | Some(Command::CodexUpdate)

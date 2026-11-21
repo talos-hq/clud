@@ -100,6 +100,53 @@ fn credential_prompt_skill_remains_automatically_discoverable_after_install() {
 }
 
 #[test]
+fn computer_use_skill_is_automatically_invocable_after_install() {
+    // DD-233: computer use is baked in, so the model must reach the skill on
+    // its own, under both Claude and Codex policy files.
+    let dir = tempdir().unwrap();
+    install_to(dir.path(), BUNDLED_SKILLS).unwrap();
+    install_explicit_invocation_policies(dir.path()).unwrap();
+    let body = std::fs::read_to_string(dir.path().join("clud-computer-use/SKILL.md")).unwrap();
+    assert!(body.contains(MANAGED_BY_CLUD_MARKER));
+    assert!(!body.contains("disable-model-invocation"));
+    assert!(!dir
+        .path()
+        .join("clud-computer-use/agents/openai.yaml")
+        .exists());
+}
+
+#[test]
+fn computer_use_skill_names_the_server_the_recovery_commands_and_the_limits() {
+    let skill = BUNDLED_SKILLS
+        .iter()
+        .find(|s| s.name == "clud-computer-use")
+        .expect("clud-computer-use must be bundled (DD-233)")
+        .skill_md;
+    let parsed = parse_frontmatter(&BundledSkill {
+        name: "clud-computer-use",
+        skill_md: skill,
+    });
+    assert_eq!(parsed.name, "clud-computer-use");
+    assert!(!parsed.triggers.is_empty());
+    let flat = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+    for needle in [
+        "mcp__cua__",
+        "clud computer-use install",
+        "clud computer-use status",
+        "clud computer-use grant",
+        "Wayland",
+        "XWayland",
+        "Accessibility and Screen Recording",
+        "Session 0",
+        "untrusted",
+    ] {
+        assert!(flat.contains(needle), "skill lacks {needle:?}");
+    }
+    // The directive the launch appends must name this skill.
+    assert!(crate::computer_use::DIRECTIVE.contains("clud-computer-use"));
+}
+
+#[test]
 fn installs_when_missing() {
     let dir = tempdir().unwrap();
     let report = install_to(dir.path(), &fake_skills()).unwrap();

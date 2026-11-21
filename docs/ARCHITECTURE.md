@@ -9,6 +9,7 @@ re-explaining.
 | Document | Lines | What it covers |
 |---|---|---|
 | [architecture/optional-context.md](architecture/optional-context.md) | ~55 | Optional Hermes SOUL.md references in Claude and Codex instructions, setting syntax and native prompt preservation |
+| [architecture/computer-use.md](architecture/computer-use.md) | ~190 | Built-in computer use: the `cua` MCP server, pinned and verified cua-driver provisioned on first use, permission modes (`unrestricted` / `--safe` standard, never a prompt), credential scrub, XAUTHORITY repair, Wayland/X11/macOS/Windows support matrix |
 | [architecture/secret-catalog.md](architecture/secret-catalog.md) | ~70 | `--allow-secrets`: lokr MCP routes, background scan, and what an agent may do with the results |
 | [architecture/secret-prompt.md](architecture/secret-prompt.md) | ~60 | Masked native credential input, direct sinks, caller-checked askpass, output secrecy and cancellation |
 | [architecture/prompt-output.md](architecture/prompt-output.md) | ~75 | Compact Claude/Codex print activity, per-tool line counts, exact edit counts and terminal encoding fallbacks |

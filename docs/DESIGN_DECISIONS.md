@@ -8828,3 +8828,32 @@ second) does not justify that yet.
 - `remote_connect::tls::tests` drives `TlsStream` against a real rustls server with the uplink blocked: a 200 KB write is accepted, what the server sent is still read, and everything arrives once the uplink drains.
 - `cli::remote_connect_e2e_cli::a_stalled_link_paces_the_shell_and_loses_nothing` stops the server reading for 12 s while about 18 MB of numbered lines are printed, and requires every line, in order, on the same socket. `a_dropped_first_attempt_at_startup_is_retried` covers startup.
 - Design: [remote assistance, a slow link is waited out](architecture/remote-assistance.md#a-slow-link-is-waited-out).
+
+## DD-233: computer use is built in through a pinned cua-driver, provisioned on first use
+
+**Context:** clud had no computer use. The owner asked for it baked in, with full permissions by default and no prompt ever standing between the agent and the driver. Hermes already integrates trycua's cross-platform `cua-driver` (an MCP server with ~65 tools for windows, screenshots, input and real browsers) through a pinned, checksummed package. On the reference Linux host, a terminal that outlived a re-login carried a stale `XAUTHORITY`, so the driver saw zero windows under KDE Wayland.
+
+**Decision:** clud registers `clud computer-use mcp` as the MCP server `cua` on every first-party Claude launch, with `--allowedTools=mcp__cua` and `alwaysLoad:false`, plus an automatically invocable `clud-computer-use` skill. The wrapper resolves the pinned driver (explicit override or clud's verified managed copy; a Hermes-installed copy is not reused, because only setup and install may read Hermes' tree, #2609), downloads and SHA-256-verifies it on first use, and starts `cua-driver mcp` with inherited stdio. The driver runs `unrestricted` on a default launch and in cua's `standard` profile under `--safe`; its environment drops credential variables, turns telemetry and update checks off, repairs a stale `XAUTHORITY`, and enables the native Wayland backend under Wayland. On macOS clud raises the TCC request once per machine. Gateway routes, headless one-shot turns (`clud -p`, which waits for every MCP server before its first turn) and the Codex harness register it only with `--computer-use`; `--no-computer-use` opts out. Contract: [computer-use.md](architecture/computer-use.md).
+
+**Rationale:**
+- Claude Code keeps MCP tools behind tool search, so ~220 KB of schemas cost one short directive until used. That holds against Anthropic's API; a gateway that rejects tool search, or Codex, would pay the full payload on every request, hence opt-in there.
+- One wrapper subcommand on the existing `clud` binary keeps the single-executable rule (no new `[[bin]]`) and lets provisioning be lazy: launches do no work for computer use, and Claude Code connects MCP servers in the background.
+- `--safe` keeps its meaning without bringing prompts back: the harness never asks, but cua's `standard` profile refuses the riskiest operations (logged-in browser profiles, foreign process kills, input into OS security prompts). DD-002's YOLO default maps to `unrestricted`.
+- A pin with digests (bumped deliberately) rather than cua's self-updater: the driver publishes several prereleases a day, and an unpinned binary acting on the desktop is a supply-chain risk. The managed copy is re-hashed at every server start.
+- The Wayland and XAUTHORITY handling makes the common Linux desktop work instead of failing silently with an empty window list; the skill states the remaining compositor limits so the agent reports them rather than retrying.
+
+**Alternatives Considered:**
+
+| Approach | Why not |
+|---|---|
+| Register the driver path directly in the MCP config | The driver may not exist yet at launch, and the environment policy (mode, credential scrub, display repair) would have to be duplicated into JSON. |
+| Download at launch, or in a launch-time background thread | Costs every user bandwidth and disk whether or not they use computer use; the MCP start is already off the critical path. |
+| Upstream `install.sh` / `cua-driver update` | Unpinned and unverified by clud; also installs autostart and skill packs clud does not want. |
+| Keep cua's `standard` profile on YOLO launches | Contradicts "full permissions by default"; residual boundaries would need host approval clud cannot give without a prompt. |
+| Register on every route and harness | Up to 220 KB extra per request where tool search is not guaranteed. |
+
+**Consequences:**
+- `computer_use/pin.rs` is the one place the version lives; bumping it means re-reading `SHA256SUMS` and re-running the Xvfb end-to-end test.
+- `--safe` no longer prompts for desktop actions; it narrows them through cua's profile instead.
+- macOS still needs one user approval of Accessibility and Screen Recording; clud asks once and `clud computer-use grant` asks again.
+- Native Wayland windows accept semantic AT-SPI actions but not another app's pixel input; window capture on KWin needs the user's one-time `cua-driver kwin-capture on`.
