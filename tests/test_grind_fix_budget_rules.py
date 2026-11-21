@@ -20,8 +20,8 @@ def _function(source: str, name: str) -> str:
 def test_chaperone_verdicts_have_tool_misuse_and_a_default_cap_of_three() -> None:
     source = _workflow()
     enum = (
-        "enum: ['merged', 'queued', 'green', 'needs_fix', 'needs_fixup', 'stuck', 'base_red', "
-        "'tool_misuse']"
+        "enum: ['merged', 'queued', 'green', 'waiting', 'needs_fix', 'needs_fixup', 'stuck', "
+        "'base_red', 'tool_misuse']"
     )
     assert enum in source
     assert "const MAX_AGENT_ERRORS = Math.max(0, Math.floor(args.agentErrors ?? 3))" in source
