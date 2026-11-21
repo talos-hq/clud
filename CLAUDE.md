@@ -34,12 +34,13 @@ usual (forge-ci/soldr#3924, clud#2231).
 
 **Batch validation (clud#2313).** This is about the edit loop's soldr calls; each call
 pays its own soldr process start and banner. While iterating, run one `soldr lint`
-(fmt check, Clippy, configured Dylint; `soldr lint --host-only` skips cross-target
+(fmt check, Clippy, every Dylint library; `soldr lint --host-only` skips cross-target
 clippy) instead of separate fmt/clippy calls, and one
 `SOLDR_PORCELAIN=1 soldr cargo test -p a -p b` with targeted filters instead of
 per-crate calls. `soldr lint` does not replace `bash lint`: that stays the mandatory
-gate (repo guards, Ruff, pinned Dylint setup), as do the hosted Static checks, Clippy
-and Dylint jobs.
+gate (repo guards, Ruff, then `soldr lint`), as do the hosted Static checks, Clippy
+and Dylint jobs. Lint never runs under Bosn: never replay `--job dylint` or
+`--job lint-linux-x64` through `bosn ci run`; run `soldr lint` on the host.
 
 Install soldr: `./install` (puts it in this repo's `.venv`) or `./install --global` (puts it in `~/.cargo/bin` or `~/.local/bin`). CI uses `forge-ci/setup-soldr@v0`.
 
@@ -189,14 +190,16 @@ See [`docs/DESIGN_DECISIONS.md`](docs/DESIGN_DECISIONS.md) for full rationale.
 
 ## Code Quality Standards
 
-For agents, the full PR plan fulfills the lint requirement below. Focused
-`--job static-checks` runs formatting/Ruff/guards, `--job lint-linux-x64`
-runs Clippy/doc-tests, and `--job dylint` runs Dylint. `--job static` only
-resolves CI mode. Local checks are optional; the selected hosted jobs must pass.
+Lint never runs under Bosn. Locally, `bash lint` (or `soldr lint` for the Rust
+side alone) runs on the host; never replay `--job dylint` or
+`--job lint-linux-x64` through `bosn ci run`. `--job static-checks` runs
+formatting/Ruff/guards and `--job static` only resolves CI mode. Local checks
+are optional; the selected hosted jobs must pass.
 
 After any code edit, the relevant lint checks must pass. The hosted Static
 checks, Clippy and Dylint jobs fulfill this requirement. For local feedback,
-`bash lint` runs formatting, Clippy, Ruff and the host Dylint pass.
+`bash lint` runs formatting, Ruff and guards, then Clippy and the host Dylint
+pass through `soldr lint`.
 
 ### Function-complexity ratchet
 

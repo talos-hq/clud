@@ -32,8 +32,8 @@ env:
   # Ignore stale developer/runner PATH installs and select Soldr's blessed
   # precompiled cargo-dylint, dylint-link, and matching driver as one unit.
   SOLDR_FORCE_MANAGED_CARGO_SUBCOMMANDS: "1"
-  # This crate uses Dylint's legacy bare rust-toolchain file. Soldr's
-  # preparer reads rust-toolchain.toml, so select the same nightly explicitly.
+  # Each lint crate pins this nightly in rust-toolchain.toml; naming it here
+  # too keeps CI's stable selector from overriding the pin.
   SOLDR_DYLINT_TOOLCHAIN: nightly-2026-08-15
   # See zackees/soldr#1879 -- authenticates soldr's cross-repo managed-tool
   # lookups so they are not rate-limited to 60 req/hr per runner IP.

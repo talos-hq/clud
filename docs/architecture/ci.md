@@ -13,8 +13,8 @@ it was moved out of ordinary runs after the measured minimal lane exceeded
 the 12.5% runner-minute budget.
 Every PR runs Linux Dylint for the custom late lint: a host pass plus
 parallel check-only cross-target passes for `x86_64-pc-windows-msvc` and
-`aarch64-apple-darwin`. Full local `bash lint` runs the host Dylint pass after
-Clippy. `ci-full` (and
+`aarch64-apple-darwin`. Full local `bash lint` runs the host Dylint pass inside
+`soldr lint`, after Clippy. `ci-full` (and
 existing `ci:full` labels) and manual full runs select all
 six build targets. A manual run requires a reachable
 `candidate_sha`; its CI workflow and helper tree must match the selected
@@ -274,9 +274,8 @@ The raw bosn commands below remain available:
 
 ```bash
 docker info
-bosn ci run --workspace . --trigger pr --wait              # the PR's jobs: static, build, clippy, dylint, Linux unit
+bosn ci run --workspace . --trigger pr --wait              # the PR's jobs: static, build, Linux unit
 bosn ci run --workspace . --trigger pr --job static-checks --wait # formatting, ruff and static guards
-bosn ci run --workspace . --trigger pr --job lint-linux-x64 --wait # Clippy and doc-tests
 bosn ci run --workspace . --trigger pr --mode test --wait  # adds the ci-test lanes act can run (Linux integration)
 bosn ci report RUN                                         # verdict and the first failure
 bosn ci logs RUN --follow                                  # live output; --job/--step narrow it
@@ -286,6 +285,15 @@ bosn ci logs RUN --follow                                  # live output; --job/
 `--mode test`/`full` select the job set that the `ci-test` and `ci-full` labels
 select. Jobs that need a native runner (Windows, macOS, arm) are reported
 `unsupported`, not run.
+
+Lint never runs under Bosn; `soldr lint` on the host only. Do not replay the
+`dylint` or `lint-linux-x64` jobs through `bosn ci run --job`: their cached
+container state misbehaves on the build hosts. local-gate.toml's `dylint` lane
+runs `soldr lint rust --check --cross-dylint` (fmt check, Clippy on the host
+and every declared cross target, every Dylint library on the host and each
+cross target), its `clippy` lane runs `soldr lint rust --check --host-only`,
+and its `doctest` lane runs `soldr cargo test --workspace --doc`, the
+doc-tests the remote `lint-linux-x64` job carries.
 
 **Stock workflows, no local special cases ([zackees/ci.yml ACT-003](https://github.com/zackees/ci.yml/blob/main/docs/policy-general.md)).**
 `.github/` runs under act2 exactly as written. act2 sets

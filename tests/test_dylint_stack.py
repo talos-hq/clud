@@ -42,10 +42,11 @@ def test_dylint_stack_versions_stay_in_lockstep() -> None:
         "enforce_platform_boundary",
     ]
     for lint_dir in LINT_DIRS:
-        assert not (lint_dir / "rust-toolchain.toml").exists(), lint_dir
-        assert (lint_dir / "rust-toolchain").exists(), lint_dir
+        # `soldr lint`'s Dylint step reads the pin from rust-toolchain.toml.
+        assert (lint_dir / "rust-toolchain.toml").exists(), lint_dir
+        assert not (lint_dir / "rust-toolchain").exists(), lint_dir
         lint_manifest = _toml(lint_dir / "Cargo.toml")
-        toolchain = _toml(lint_dir / "rust-toolchain")
+        toolchain = _toml(lint_dir / "rust-toolchain.toml")
         assert lint_manifest["dependencies"]["dylint_linting"] == f"={DYLINT_VERSION}", lint_dir
         assert toolchain["toolchain"]["channel"] == DYLINT_NIGHTLY, lint_dir
     workflow = _workflow_text()
@@ -70,12 +71,14 @@ def test_dylint_stack_versions_stay_in_lockstep() -> None:
 
 
 def test_full_local_lint_runs_the_custom_dylint() -> None:
+    # `bash lint` reaches Dylint through ci/lint.py's `soldr lint rust` call:
+    # the workspace's soldr lint steps include it, so no second pass is needed.
     script = (ROOT / "lint").read_text(encoding="utf-8")
     assert "-m ci.lint" in script
-    assert "env -u RUSTUP_TOOLCHAIN soldr dylint prepare" in script
-    assert "export SOLDR_DYLINT_TOOLCHAIN=nightly-2026-08-15" in script
-    assert "env -u RUSTUP_TOOLCHAIN soldr dylint --all -- --workspace --all-targets" in script
-    assert "--static-only" in script
+    assert "soldr dylint" not in script
+    with (ROOT / "Cargo.toml").open("rb") as handle:
+        steps = tomllib.load(handle)["workspace"]["metadata"]["soldr"]["lint"]["steps"]
+    assert "dylint" in steps
 
 
 def test_dylint_lockfile_matches_the_pinned_version() -> None:
