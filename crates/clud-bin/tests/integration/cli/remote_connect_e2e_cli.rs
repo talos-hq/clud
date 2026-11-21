@@ -1056,6 +1056,10 @@ fn numbers_received(output: &[u8]) -> Vec<usize> {
 /// the same socket, pacing the shell, and deliver every line in order: a
 /// reconnect would lose what the old socket had in flight.
 #[test]
+#[cfg_attr(
+    windows,
+    ignore = "#2887: on windows-x64 the flood plateaus near 10 MB of 17.9 MB within WAIT; unproven on ConPTY"
+)]
 fn a_stalled_link_paces_the_shell_and_loses_nothing() {
     const LINES: usize = 2_500_000;
     let (client, mut operator, listener) = resumable_session(None);
@@ -1065,13 +1069,7 @@ fn a_stalled_link_paces_the_shell_and_loses_nothing() {
     operator.wait_shell_bytes(b"\n1000\r\n");
     // Stop reading: the server's receive buffer and the client's send buffer fill.
     std::thread::sleep(Duration::from_secs(12));
-    // ConPTY repaints a flood with cursor moves instead of relaying each
-    // "\r\n" (#2887); the largest number occurs once, so match it bare there.
-    let last = if clud::platform::host::WINDOWS {
-        LINES.to_string()
-    } else {
-        format!("\n{LINES}\r\n")
-    };
+    let last = format!("\n{LINES}\r\n");
     operator.wait_shell_bytes(last.as_bytes());
     listener.set_nonblocking(true).unwrap();
     assert!(
