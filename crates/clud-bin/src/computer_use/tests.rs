@@ -127,10 +127,7 @@ fn a_tampered_managed_driver_is_not_trusted_and_is_replaced() {
     let inputs = inputs(home.path(), &artifact);
     let driver = provision::ensure_with_fetch(&inputs, |_| Ok(archive.clone())).unwrap();
     std::fs::write(&driver.path, b"evil").unwrap();
-    assert!(matches!(
-        provision::resolve(&inputs),
-        Resolution::Missing
-    ));
+    assert!(matches!(provision::resolve(&inputs), Resolution::Missing));
     let fixed = provision::ensure_with_fetch(&inputs, |_| Ok(archive.clone())).unwrap();
     assert_eq!(std::fs::read(fixed.path).unwrap(), b"good");
 }
