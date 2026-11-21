@@ -14,7 +14,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = "crates/clud-bin/assets/workflows/grind-run.js"
-ROLES = ("planner", "editor", "reviewer", "integrator", "lander")
+ROLES = ("planner", "editor", "reviewer", "integrator", "lander", "worker")
 
 
 def _read(rel: str) -> str:
@@ -63,7 +63,7 @@ def test_every_agent_after_prework_is_told_the_plan_url() -> None:
     assert "${ctx(g)}" in _read(WORKFLOW).split("const handoffOf = ")[1].split("\n")[0]
     for role, label, prompt in calls:
         # A chaperone's prompt starts with its handoff, which holds ctx(g).
-        if role in ("prework", "chaperone") or label == "'classify'":
+        if role in ("prework", "chaperone", "watcher", "fixer") or label == "'classify'":
             continue
         assert "ctx(" in prompt or "PLAN_URL" in prompt, (role, label)
 

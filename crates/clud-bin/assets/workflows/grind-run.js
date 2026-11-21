@@ -1,35 +1,47 @@
 // managed-by: clud
 export const meta = {
   name: 'grind-run',
-  description: 'Engine behind clud /grind (start it with /grind): plan, edit, review and integrate a list of goals one editor and one integrator at a time, then hand each pushed PR to its own chaperone, with per-role caps.',
+  description: 'Engine behind clud /grind (start it with /grind): one grind-worker per goal plans, edits, self-reviews, runs local CI and pushes, back to back in critical-path order, stacking dependents on their parent\'s pushed branch; each PR then gets a haiku watcher that escalates problems to an opus fixer. The staged plan/edit/review/integrate pipeline is opt-in.',
   whenToUse: 'Started by the /grind router skill, which gathers the goals, mode, models and CI choice first. Do not start it directly.',
   phases: [
     { title: 'Classify', detail: 'grind-planner plan-only: classify children, feature groups, threshold' },
     { title: 'Prework', detail: 'grind-prework: post the plan JSON comment on the meta issue' },
     { title: 'Gate', detail: 'grind-gate: observe one approved publication check' },
-    { title: 'Plan', detail: 'grind-planner: split each goal into disjoint file tasks' },
+    { title: 'Produce', detail: 'grind-worker, one per goal: plan, edit, self-review, local CI (lint + test scripts), push; never waits on CI or merges' },
+    { title: 'Plan', detail: 'staged pipeline only: grind-planner splits each goal into disjoint file tasks' },
     { title: 'Edit', detail: 'grind-editor: one at a time; read/write files only' },
     { title: 'Review', detail: 'grind-reviewer: read/edit only' },
     { title: 'Integrate', detail: 'grind-integrator: one at a time; focused test, multi-platform lint gate, push, return' },
     { title: 'Land', detail: 'grind-lander: the final feature PR only' },
-    { title: 'Chaperone', detail: 'grind-chaperone (large model), one per PR: checks, enqueue, queue, fix up in a recycled worktree; MERGED / NEEDS-FIXUP / STUCK' },
+    { title: 'Chaperone', detail: 'grind-chaperone, one chain per PR: haiku watcher (checks, enqueue, queue) escalating to an opus fixer in a recycled worktree; stacked PRs rebase --onto when their parent merges' },
   ],
 }
 
 // args: {
 //   repo: '/abs/repo', github_repo: 'owner/name', main: 'main', mode: 'parallel' | 'sequential',
 //   // github_repo may be omitted when plan.repo supplies the same forge identity.
-//   goals: [{ id, title, brief }], ci: false, lane?: 'job-id',
-//   models?: { planner, editor, reviewer, integrator, chaperone },   // omitted = session model; chaperone defaults to opus
-//   scripts?: { lint?: './lint', test?: './test' },     // omitted = planner picks verify
+//   goals: [{ id, title, brief, pipeline?, gate? }], ci: false, lane?: 'job-id',
+//   pipeline?: 'worker' | 'staged',   // default worker (#2873): one grind-worker per goal owns
+//                                     // plan+edit+self-review+local CI+push. 'staged' (run-wide, or
+//                                     // per goal) is the opt-in planner/editor/reviewer/integrator chain.
+//   workers?: 1,                      // grind-workers building at once (parallel mode only; 1..8)
+//   models?: { worker, planner, editor, reviewer, integrator, watcher, fixer, chaperone },
+//                                     // omitted = session model; watcher defaults to haiku, fixer to opus
+//                                     // (chaperone is the legacy name for the fixer)
+//   scripts?: { lint?: './lint', test?: './test' },     // run before every push; omitted = planner picks verify
 //   queueWatchSeconds?: 540, queueFixups?: 2,           // chaperone watch deadline (60..540, foreground) and automatic fixups after a queue ejection (#2467)
 //   fixupPool?: 2,                                      // chaperone fixup worktrees that may exist and build at once (DD-205)
 //   maxAgents?: 4, maxFixRounds?: 10, agentErrors?: 3,   // agentErrors: tool-misuse allowance, apart from fix rounds (#1331)
 //   gateAttempts?: 3, gateBackoffMs?: 1000, gateEpoch?: 0, gateEpochs?: {goalId: 0},
 //   planOnly?: true, meta?: '<meta issue number>',
 //   orchestration?: { session_repo: 'owner/repo', goals: [
-//     { id, repo, main, checkout?: 'local' | 'worktree', blockers: [{goal, when, check?}] }
+//     { id, repo, main, checkout?: 'local' | 'worktree', gate?: 'human', gate_reason?: '...',
+//       blockers: [{goal, when, edge?: 'file_overlap' | 'semantic' | 'merge', check?}] }
 //   ], proposed_goals: [], risks: [] }, // run graph, separate from grind-plan/v1 stages
+//   // A `merged` blocker's edge (#2873): file_overlap (default) and semantic stack the
+//   // dependent on the parent's pushed branch in the worker pipeline; merge keeps the
+//   // old wait for the parent's merge. A goal with gate 'human' is never planned or
+//   // scheduled: it and its dependents are reported as waiting.
 //   base?: 'main',   // default base branch for goals in no plan stage; omitted = main
 //                    // a plan stage's `base` wins for its children (#1409)
 //   // Stages (#1409): the router starts grind-run once per stage. The bug-stage
@@ -74,20 +86,65 @@ if (!args.planOnly && args.mode !== 'parallel' && args.mode !== 'sequential') {
 // This is structural validation. A local checkout still requires a clean-tree
 // check, and worktree creation still requires the session's explicit consent.
 const nonempty = (s) => typeof s === 'string' && s.trim().length > 0
+// Errors name the fix, not only the fault (#2873): the router repairs the graph
+// from the message before asking for approval again.
+const HUMAN_GATE_HINT = 'mark a goal that waits on a person (a maintainer decision, hardware, a vote) with gate: "human" and a gate_reason instead; it is reported as waiting and never scheduled'
 const graphGoal = (g, sessionRepo) => {
   if (!g || !nonempty(g.id)) throw new Error('run plan: every goal needs an id')
   if (!nonempty(g.repo) || !nonempty(g.main)) throw new Error(`goal ${g.id}: repo and main are required`)
   if (!/^[^\s/]+\/[^\s/]+$/.test(g.repo)) throw new Error(`goal ${g.id}: repo must be owner/name`)
   const checkout = g.checkout || (g.repo === sessionRepo ? 'local' : 'worktree')
-  if (checkout !== 'local' && checkout !== 'worktree') throw new Error(`goal ${g.id}: unknown checkout ${JSON.stringify(checkout)}`)
+  if (checkout !== 'local' && checkout !== 'worktree') {
+    throw new Error(`goal ${g.id}: unknown checkout ${JSON.stringify(checkout)}; use "local" (the session checkout, session repository only) or "worktree" (a sister repository, or an isolated worktree), or omit it`)
+  }
   if (checkout === 'local' && g.repo !== sessionRepo) throw new Error(`goal ${g.id}: a sister repo must use a worktree`)
-  if (!Array.isArray(g.blockers)) throw new Error(`goal ${g.id}: blockers must be an array`)
+  if (!Array.isArray(g.blockers)) throw new Error(`goal ${g.id}: blockers must be an array of {goal, when}; use [] for none`)
+  if (g.gate !== undefined && g.gate !== 'human') {
+    throw new Error(`goal ${g.id}: unknown gate ${JSON.stringify(g.gate)}; the only gate is "human" (${HUMAN_GATE_HINT.replace(/^mark a goal/, 'a goal')})`)
+  }
   return { ...g, checkout }
 }
+const EDGES = ['file_overlap', 'semantic', 'merge']
 const graphBlocker = (blocker, goal, ids) => {
-  if (!blocker || !ids.has(blocker.goal)) throw new Error(`unknown goal ${JSON.stringify(blocker && blocker.goal)} in blockers of ${goal.id}`)
-  if (!['merged', 'released', 'tag', 'published'].includes(blocker.when)) throw new Error(`unknown condition ${JSON.stringify(blocker.when)}`)
+  if (!blocker || !ids.has(blocker.goal)) {
+    throw new Error(`unknown goal ${JSON.stringify(blocker && blocker.goal)} in blockers of ${goal.id}: a blocker names exactly one goal id of this graph (${[...ids.keys()].join(', ')}); list several goals as several blockers, and ${HUMAN_GATE_HINT}`)
+  }
+  if (!['merged', 'released', 'tag', 'published'].includes(blocker.when)) throw new Error(`unknown condition ${JSON.stringify(blocker.when)}: use merged, released, tag or published`)
   if (blocker.when !== 'merged' && !nonempty(blocker.check)) throw new Error(`blocker ${blocker.goal} → ${goal.id} (${blocker.when}) has no check`)
+  if (blocker.edge !== undefined && !EDGES.includes(blocker.edge)) {
+    throw new Error(`blocker ${blocker.goal} → ${goal.id}: unknown edge ${JSON.stringify(blocker.edge)}; use file_overlap (shared files: stack), semantic (consumes its change: stack and read its diff) or merge (needs it merged first)`)
+  }
+  if (blocker.edge !== undefined && blocker.when !== 'merged') {
+    throw new Error(`blocker ${blocker.goal} → ${goal.id}: edge applies only to a merged condition, not ${blocker.when}`)
+  }
+}
+// Critical-path order (#2873): a topological order in which, among the goals
+// whose blockers are all scheduled, one that must wait for a merge or a
+// publication goes last, then the head of the longest remaining dependency
+// chain goes first, then the listed order. Stacked chains are produced back to
+// back and never queue behind a merge wait.
+const waitsForMerge = (g) => g.blockers.some(b => b.when !== 'merged' || b.edge === 'merge')
+const criticalOrder = (goals) => {
+  const children = new Map(goals.map(g => [g.id, []]))
+  goals.forEach(g => g.blockers.forEach(b => children.get(b.goal).push(g.id)))
+  const height = new Map()
+  const heightOf = (id) => {
+    if (!height.has(id)) height.set(id, 1 + Math.max(0, ...children.get(id).map(heightOf)))
+    return height.get(id)
+  }
+  const index = new Map(goals.map((g, i) => [g.id, i]))
+  const pending = new Map(goals.map(g => [g.id, new Set(g.blockers.map(b => b.goal))]))
+  const ordered = []
+  while (pending.size) {
+    const ready = goals.filter(g => pending.has(g.id) && pending.get(g.id).size === 0)
+    ready.sort((a, b) => (waitsForMerge(a) - waitsForMerge(b))
+      || (heightOf(b.id) - heightOf(a.id)) || (index.get(a.id) - index.get(b.id)))
+    const next = ready[0]
+    ordered.push(next)
+    pending.delete(next.id)
+    pending.forEach(blockers => blockers.delete(next.id))
+  }
+  return ordered
 }
 const graphOrder = (goals, ids) => {
   const done = new Set()
@@ -117,7 +174,10 @@ const validateRunPlan = (plan) => {
     ids.set(g.id, g)
   })
   goals.forEach(g => g.blockers.forEach(b => graphBlocker(b, g, ids)))
-  return { ...plan, goals: graphOrder(goals, ids) }
+  // graphOrder rejects a cycle; criticalOrder then picks the schedule, breaking
+  // ties by the listed order.
+  graphOrder(goals, ids)
+  return { ...plan, goals: criticalOrder(goals) }
 }
 const ORCHESTRATION = args.orchestration === undefined ? null : validateRunPlan(args.orchestration)
 const RUN_GOALS = new Map((ORCHESTRATION ? ORCHESTRATION.goals : []).map(g => [g.id, g]))
@@ -147,6 +207,36 @@ if (ORCHESTRATION) {
     if (!RUN_GOALS.has(id)) throw new Error(`run plan: selected goal ${id} was not approved`)
   }
   args.goals = ORCHESTRATION.goals.filter(g => selected.has(g.id)).map(g => selected.get(g.id))
+}
+
+// Human gates (#2873): a goal that waits on a person is never planned or
+// scheduled, and neither is anything that needs it. They are reported as
+// waiting, so the producer queue holds only work an agent can finish.
+const HUMAN_WAITING = []
+// Classification (planOnly) still places every child; only execution skips them.
+if (!args.planOnly) {
+  const waiting = new Map()
+  const humanGate = (g) => {
+    const approved = RUN_GOALS.get(String(g.id))
+    if (g.gate !== undefined && g.gate !== 'human') throw new Error(`goal ${g.id}: unknown gate ${JSON.stringify(g.gate)}; the only gate is "human"`)
+    if (g.gate === 'human') return g.gate_reason || (approved && approved.gate_reason) || 'needs a person'
+    return approved && approved.gate === 'human' ? (approved.gate_reason || 'needs a person') : null
+  }
+  for (const g of args.goals) {
+    const id = String(g.id)
+    const reason = humanGate(g)
+    if (reason) { waiting.set(id, `waiting: human gate (${reason}); not planned or scheduled`); continue }
+    const approved = RUN_GOALS.get(id)
+    const up = approved && approved.blockers.find(b => waiting.has(b.goal) || (RUN_GOALS.get(b.goal) || {}).gate === 'human')
+    if (up) waiting.set(id, `waiting: blocked by human-gated goal ${up.goal}; not scheduled`)
+  }
+  args.goals = args.goals.filter(g => {
+    const note = waiting.get(String(g.id))
+    if (note === undefined) return true
+    log(`goal ${g.id}: ${note}`)
+    HUMAN_WAITING.push({ goal: g.id, id: g.id, merged: false, status: 'waiting', gate: 'human', note, problems: [] })
+    return false
+  })
 }
 
 const REPO = args.repo
@@ -215,24 +305,45 @@ const gateEpoch = (id) => replayEpoch ?? requestedEpoch(id)
 
 // The repo's ./lint and ./test, chosen once by the /grind router (#1336).
 const SCRIPTS = (args.scripts && (args.scripts.lint || args.scripts.test)) ? args.scripts : null
-const scriptLines = () => [SCRIPTS.lint].filter(Boolean)
-// The integrator and a fixing chaperone stop at lint; full suites belong to CI
-// (DD-205). Cross-target lint is what a local host cannot leave to a native lane.
-const LINT_GATE = `MULTI-PLATFORM LINT GATE, required before every push: run the repo's lint, then in a Rust workspace that declares [workspace.metadata.soldr].targets, run Clippy and Dylint for every declared target through soldr (\`soldr lint rust\` runs cross-target Clippy; for Dylint use the repo's lint script or CI recipe, normally \`soldr dylint prepare --target <triple>\` then \`soldr dylint --all -- --workspace --all-targets --target <triple>\`). A finding blocks the push; fix it. If a target's toolchain cannot be provisioned on this machine, name the target in your summary; never claim it passed. A repo with no declared targets uses its plain lint. Do not run full test suites: required CI runs them.`
+// Local CI is the hard gate before every push (#2873): a chosen test script
+// runs too, not only lint. A local iteration costs minutes; a red PR in a
+// merge queue costs an hour.
+const scriptLines = () => [SCRIPTS.lint, SCRIPTS.test].filter(Boolean)
+// Cross-target lint is what a local host cannot leave to a native lane.
+const LINT_GATE = `MULTI-PLATFORM LINT GATE, required before every push: run the repo's lint, then in a Rust workspace that declares [workspace.metadata.soldr].targets, run Clippy and Dylint for every declared target through soldr (\`soldr lint rust\` runs cross-target Clippy; for Dylint use the repo's lint script or CI recipe, normally \`soldr dylint prepare --target <triple>\` then \`soldr dylint --all -- --workspace --all-targets --target <triple>\`). A finding blocks the push; fix it. If a target's toolchain cannot be provisioned on this machine, name the target in your summary; never claim it passed. A repo with no declared targets uses its plain lint. Run the run's test script when one is listed above; beyond it, leave full suites to required CI.`
 const verifyBlock = (p) => SCRIPTS
   ? `Verify commands, in this order, before every push (fix rounds included):\n` +
-    `1. planner's focused test:\n${p.verify}\n` +
+    `1. the goal's focused test:\n${p.verify}\n` +
     scriptLines().map((c, i) => `${i + 2}. ${c}`).join('\n') +
-    (scriptLines().length ? `\nThe lint script (${scriptLines().join(', ')}) was chosen for this run; rerun after every fix until green.` : '') +
+    `\nThe run's scripts (${scriptLines().join(', ')}) were chosen for this run; run every one before every push and rerun after every fix until green.` +
     `\n${LINT_GATE}`
   : `Verify commands:\n${p.verify}\n${LINT_GATE}`
 
+// The pipeline (#2873): 'worker' (default) gives each goal one grind-worker
+// that plans, edits, self-reviews, runs local CI and pushes. 'staged' is the
+// opt-in planner -> editor -> reviewer -> integrator chain, run-wide or per goal
+// (for a risky goal that should get a separate reviewer).
+const PIPELINES = ['worker', 'staged']
+const PIPELINE = args.pipeline ?? 'worker'
+if (!PIPELINES.includes(PIPELINE)) throw new Error(`pipeline must be "worker" or "staged" (got ${JSON.stringify(args.pipeline)})`)
+for (const g of args.goals) {
+  if (g.pipeline !== undefined && !PIPELINES.includes(g.pipeline)) {
+    throw new Error(`goal ${g.id}: pipeline must be "worker" or "staged" (got ${JSON.stringify(g.pipeline)})`)
+  }
+}
+const pipelineOf = (g) => g.pipeline || PIPELINE
+// Workers building at once. Sequential goals share one checkout, so one.
+const WORKERS = args.mode === 'parallel' ? gateInteger('workers', 1, 1, 8) : 1
+
 // Model per role; the lander shares the integrator's choice, prework the planner's.
+// A chaperone chain has two: the watcher only observes and enqueues, so it is
+// cheap (haiku); the fixer diagnoses and fixes, so it is large (opus) (#2873).
 const opts = (role, label, phase, schema) => {
-  const o = { label, phase, schema, agentType: `grind-${role}` }
-  // Chaperones default to the large model: they diagnose and fix on their own.
-  const m = role === 'editor' ? MODELS.editor || MODELS.worker
-    : role === 'chaperone' ? MODELS.chaperone || 'opus'
+  const type = role === 'watcher' || role === 'fixer' ? 'chaperone' : role
+  const o = { label, phase, schema, agentType: `grind-${type}` }
+  const m = role === 'editor' ? MODELS.editor
+    : role === 'watcher' ? MODELS.watcher || 'haiku'
+    : role === 'fixer' ? MODELS.fixer || MODELS.chaperone || 'opus'
     : MODELS[role === 'lander' ? 'integrator' : role === 'prework' ? 'planner' : role]
   if (m) o.model = m
   return o
@@ -273,6 +384,7 @@ const semaphore = (n) => {
 const light = semaphore(MAX_AGENTS)
 const exclusive = semaphore(1)
 const editing = semaphore(1)
+const producing = semaphore(WORKERS)
 
 // Problems found outside a task (#1411): optional on every role's schema,
 // recorded once per run however many rounds or roles report them.
@@ -330,14 +442,29 @@ const INTEG = { type: 'object', required: ['pushed', 'summary'], properties: {
   head_sha: { type: 'string', description: 'the full SHA you pushed' },
   handoff: { type: 'string', description: 'compact notes for the chaperone that takes this PR from here with no other history: what changed and why, what you verified, what is fragile' },
   artifacts: ARTIFACTS, problems: PROBLEMS } }
+// The one worker of a goal (#2873): what it pushed, and what a stacked child
+// and the chaperone need to take over with no other history.
+const WORKER = { type: 'object', required: ['status', 'summary'], properties: {
+  status: { type: 'string', enum: ['pushed', 'covered', 'no_change', 'failed'] },
+  pr_url: { type: 'string' }, branch: { type: 'string' },
+  head_sha: { type: 'string', description: 'the full SHA you pushed' },
+  base_sha: { type: 'string', description: 'the full SHA you branched from: the stacked parent\'s head, or origin/<base>' },
+  checkout: { type: 'string', description: 'absolute path you worked in' },
+  covered_by: { type: 'string', description: 'covered only: the open or merged PR (#N) that already closes the goal' },
+  local_ci: { type: 'string', description: 'the exact commands you ran before the push and their result' },
+  files_touched: { type: 'array', items: { type: 'string' } },
+  summary: { type: 'string' }, failure_log: { type: 'string' },
+  handoff: { type: 'string', description: 'compact notes for the chaperone that takes this PR from here with no other history: what changed and why, what you verified, what is fragile' },
+  artifacts: ARTIFACTS, problems: PROBLEMS } }
 const LAND = { type: 'object', required: ['status', 'summary'], properties: {
   status: { type: 'string', enum: ['merged', 'enqueued', 'needs_fix', 'base_red', 'gave_up', 'tool_misuse'] }, summary: { type: 'string' }, failure_log: { type: 'string' },
   head_sha: { type: 'string', description: 'enqueued only: the full head SHA passed to --match-head-commit' },
   command: { type: 'string', description: 'tool_misuse only: the command that failed' }, artifacts: ARTIFACTS, problems: PROBLEMS } }
 // The chaperone's verdict (#2467, DD-192, DD-205): needs_fix is a red check or
-// new review before the queue, needs_fixup an ejection or conflict after it.
+// new review before the queue, needs_fixup an ejection or conflict after it,
+// green a stacked PR's passing checks (it is never enqueued before its parent merges).
 const CHAPERONE = { type: 'object', required: ['verdict', 'summary'], properties: {
-  verdict: { type: 'string', enum: ['merged', 'queued', 'needs_fix', 'needs_fixup', 'stuck', 'base_red', 'tool_misuse'] },
+  verdict: { type: 'string', enum: ['merged', 'queued', 'green', 'needs_fix', 'needs_fixup', 'stuck', 'base_red', 'tool_misuse'] },
   enqueued: { type: 'boolean', description: 'queued only: the PR is already in the merge queue' },
   exit_code: { type: 'integer', description: 'pr_merge_watch exit code (0 merged, 4 timeout, 13 ejected, 14 unmergeable)' },
   command: { type: 'string', description: 'tool_misuse only: the command that failed' },
@@ -752,6 +879,65 @@ const integrate = (p, g, note) => exclusive(() => agent(
   `${verifyBlock(p)}\n\n${note}${featureIntegrateNote(g)}\nReturn as soon as the PR is pushed, with head_sha and a compact handoff: a chaperone takes the PR from there, so never wait for CI. Return any release version, tag and release URL produced by this goal in artifacts; omit unknown values.`,
   opts('integrator', `integrate:${g.id}`, 'Integrate', INTEG)).then(r => collect(r, 'integrator', g.id)))
 
+// One worker per goal (#2873). It owns dedup, plan, edit, self-review, local
+// CI and the push, then returns: its PR's chaperone takes over and the next
+// goal starts at once. A stacked goal branches from its parent's pushed branch.
+const stackBase = (g) => {
+  const stack = stackOf(g)
+  if (!stack.parent) return { stacked: null, note: '' }
+  const id = String(stack.parent.goal)
+  const up = outcome[id]
+  if (up && up.pushed && !up.merged && nonempty(up.branch)) {
+    return { stacked: { goal: id, edge: stack.parent.edge || 'file_overlap', pr: up.pr, branch: up.branch, head_sha: up.head_sha || null }, note: '' }
+  }
+  const why = up && up.merged ? 'has already merged' : 'pushed no PR'
+  return { stacked: null, note: `Its stack parent, goal ${id}, ${why}: branch from origin/${baseOf(g)} and say so in the PR body.\n` }
+}
+const workerCheckout = (g, base) => {
+  if (isFeatureGoal(g) && !PARALLEL) return `Checkout: the feature worktree ${FEATURE.worktree}.\n`
+  if (!PARALLEL) return `Checkout: ${REPO}, shared by every goal in this run (its build cache is warm). Work there; never create a worktree.\n`
+  const path = `~/.clud/worktrees/${repoName}-wt-${slug(g.id) || 'goal'}`
+  return `Checkout: your own worktree. Run git -C ${REPO} fetch origin ${base}, then git -C ${REPO} worktree add --no-track ${path} -b grind/${slug(g.id) || 'goal'}-<slug> origin/${base} (reuse it if it exists). Work only there.\n`
+}
+const workerBase = (g, stacked) => {
+  const base = baseOf(g)
+  if (!stacked) return `Base: origin/${base}. The PR targets ${base}.\n`
+  return `Base: STACKED on goal ${stacked.goal}'s pushed PR ${stacked.pr}. Fetch origin ${stacked.branch} and branch from origin/${stacked.branch} (head ${stacked.head_sha || 'its current head'}), not origin/${base}; wherever the procedure says origin/<base>, use origin/${stacked.branch}. ` +
+    `The PR still targets ${base} (gh pr create --repo ${GITHUB_REPO} --base ${base}); its body says "Stacked on ${stacked.pr}: merge after it." Until the parent merges this PR also shows the parent's commits; its chaperone rebases it with git rebase --onto origin/${base} <your base_sha> once the parent merges. ` +
+    `Return base_sha: the parent head you branched from.\n` +
+    (stacked.edge === 'semantic' ? `This goal consumes the parent's change: read its diff first (gh pr diff ${stacked.pr} --repo ${GITHUB_REPO}).\n` : '')
+}
+const produce = (g, stacked, note) => producing(() => agent(
+  `Follow your built-in /grind-worker procedure.\n\n${ctx(g)}\n\n` +
+  `You are this goal's only worker: dedup preflight, plan, edit (RED -> GREEN), self-review, local CI and push are all yours, and nobody reviews after you. ` +
+  `Return the moment the PR is pushed: never wait for CI or the merge queue and never enqueue; a chaperone takes the PR from there.\n` +
+  workerCheckout(g, stacked ? stacked.branch : baseOf(g)) + workerBase(g, stacked) + note +
+  `${verifyBlock({ verify: 'the RED -> GREEN focused test you write for this goal' })}\n` +
+  `Local CI is the hard gate: never push red. Record every command you ran and its result in local_ci.` +
+  featureIntegrateNote(g) +
+  `\nReturn status pushed with pr_url, branch, head_sha, base_sha and a compact handoff; covered with covered_by when an open or merged PR already closes the goal; no_change when nothing should change (say why); failed with failure_log otherwise. Return any release version, tag and release URL in artifacts.`,
+  opts('worker', `work:${g.id}`, 'Produce', WORKER)).then(r => collect(r, 'worker', g.id)))
+
+const produceAndHandOff = async (g, state) => {
+  const { stacked, note } = stackBase(g)
+  const r = await produce(g, stacked, note)
+  if (!r) return { merged: false, note: 'worker died' }
+  if (r.status === 'covered') return { merged: false, status: 'covered', note: `covered by ${String(r.covered_by || '').trim() || r.summary}` }
+  if (r.status === 'no_change') return { merged: false, status: 'no_change', note: `no change: ${r.summary}` }
+  if (r.status !== 'pushed' || !nonempty(r.pr_url)) {
+    // Sequential parking needs the goal's files (#1424).
+    if (Array.isArray(r.files_touched) && r.files_touched.length) {
+      state.p = { checkout: r.checkout || REPO, branch: r.branch || '', tasks: [], depends_on: [] }
+      state.results = [r]
+    }
+    return { merged: false, pushed: false, pr: r.pr_url, note: r.failure_log || r.summary }
+  }
+  const p = { checkout: r.checkout || REPO, branch: r.branch || '', depends_on: [], tasks: [],
+    verify: nonempty(r.local_ci) ? `# the worker's local CI (rerun what the fix touches):\n${r.local_ci}` : "# the focused test the worker's handoff names" }
+  const stack = stacked ? { ...stacked, base_sha: r.base_sha || stacked.head_sha } : null
+  return handOff(p, g, { pr_url: r.pr_url, head_sha: r.head_sha, summary: r.summary, handoff: r.handoff, artifacts: r.artifacts }, null, stack)
+}
+
 // Parking (#1424): in sequential mode every goal shares one checkout, so a
 // goal that ends unmerged with work nobody pushed would leak its files into
 // the next goal's lint and plan. The workflow has no shell; the integrator
@@ -782,10 +968,23 @@ const park = (p, results, g, why) => exclusive(() => agent(
 // already settled, so no wait can hang.
 const landed = {}
 const settle = {}
+// The pushed gate (#2873): resolves to the goal's settled result once its PR is
+// pushed, or null when it pushed nothing. A stacked dependent waits on this,
+// never on landed.
+const pushed = {}
+const settlePushed = {}
 const order = {}
+// Goals whose PR has merged, so a stacked child's watch can notice its parent
+// merged while it was still red (#2873).
+const MERGED_GOALS = new Set()
+const armGates = (g) => {
+  landed[g.id] = new Promise(r => { settle[g.id] = r })
+  landed[g.id].then(m => { if (m) MERGED_GOALS.add(String(g.id)) })
+  pushed[g.id] = new Promise(r => { settlePushed[g.id] = r })
+}
 args.goals.forEach((g, i) => {
   order[g.id] = i
-  landed[g.id] = new Promise(r => { settle[g.id] = r })
+  armGates(g)
 })
 const earlierDeps = (p, g) => {
   const approved = RUN_GOALS.get(String(g.id))
@@ -875,13 +1074,18 @@ const integrateAndHandOff = async ({ p: planned, review: rv }, g) => {
 // the chaperone runs every waiter in the foreground under the 600 s Bash cap;
 // a longer deadline cannot fit and is rejected here (#2732).
 const QUEUE_WATCH_S = gateInteger('queueWatchSeconds', 540, 60, 540)
-const FOREGROUND_WAIT = `Run each waiter in the foreground as one Bash call with timeout 600000; never use run_in_background: ` +
-  `you get no notification here, and ending your turn while a waiter runs abandons the PR. ` +
-  `When the checks pass, enqueue before you return. `
+const FOREGROUND_WAIT_BASE = `Run each waiter in the foreground as one Bash call with timeout 600000; never use run_in_background: ` +
+  `you get no notification here, and ending your turn while a waiter runs abandons the PR. `
+const FOREGROUND_WAIT = FOREGROUND_WAIT_BASE + `When the checks pass, enqueue before you return. `
+// A stacked PR is never enqueued before its parent merges (#2873).
+const FOREGROUND_WAIT_STACKED = FOREGROUND_WAIT_BASE + `When the checks pass, return green; never enqueue a stacked PR. `
 const MAX_QUEUE_FIXUPS = gateInteger('queueFixups', 2, 0, 5)
 const POOL_SIZE = gateInteger('fixupPool', 2, 1, 8)
 const MAX_QUEUED_WATCHES = 3
 const CHAINS = []
+// The child registry (#2873): goal id -> its chain, so a parent's merge wakes
+// the chains stacked on it.
+const CHAIN_OF = {}
 const settleOnce = (e, merged) => {
   if (e.settled) return
   e.settled = true
@@ -893,14 +1097,22 @@ const finish = (e, status, merged, note) => {
   settleOnce(e, merged)
 }
 // Workflow agent() has no forked-history option, so a chaperone starts empty and
-// reads this. Fallback order: the integrator's handoff, then the push summary;
-// the plan, pack and reviewer summary are always present.
+// reads this. Fallback order: the integrator's (or worker's) handoff, then the
+// push summary; the plan, pack and reviewer summary are present when staged.
 const handoffOf = (p, g, integ, rv) => `${packOf(p)}Handoff. You have no other history of this goal; this is all of it.\n${ctx(g)}\n` +
-  `Branch: ${p.branch}\nBase: origin/${baseOf(g)}\nPR: ${integ.pr_url}\nPlanned tasks: ${p.tasks.map(t => `${t.id} (${t.files.join(', ')})`).join('; ')}\n` +
-  `Reviewer: ${rv ? rv.summary : '(none)'}\nIntegrator: ${nonempty(integ.handoff) ? integ.handoff : integ.summary}\n`
+  `Branch: ${p.branch}\nBase: origin/${baseOf(g)}\nPR: ${integ.pr_url}\n` +
+  (p.tasks.length || rv
+    ? `Planned tasks: ${p.tasks.map(t => `${t.id} (${t.files.join(', ')})`).join('; ')}\n` +
+      `Reviewer: ${rv ? rv.summary : '(none)'}\nIntegrator: ${nonempty(integ.handoff) ? integ.handoff : integ.summary}\n`
+    : `Worker: ${nonempty(integ.handoff) ? integ.handoff : integ.summary}\n`)
 const headLine = (e) => `Head: ${e.head || '(resolve the full SHA with gh pr view --json headRefOid)'}\n`
 const landSteps = (e) => {
   const watchChecks = `clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --no-merge-wait --timeout ${QUEUE_WATCH_S}`
+  if (e.stack) {
+    return `This PR is STACKED on ${e.stack.pr} (goal ${e.stack.goal}), which has not merged. Never enqueue or merge it: once the parent merges, the workflow rebases it onto origin/${baseOf(e.g)} and a later watch enqueues it.\n` +
+      `1. Wait for the PR's required checks, once: ${watchChecks}\n` +
+      `Return verdict green when they pass; map any other exit code as usual.`
+  }
   if (isFeatureGoal(e.g)) return `1. Wait for the PR's checks: ${watchChecks}\n2. The feature branch has no merge queue.${featureLandNote(e.g)}\nReturn merged only after you observe the merge.`
   const follow = `clud tool run github/pr_merge_watch.py -- ${e.pr} --repo ${GITHUB_REPO} --until merged --timeout ${QUEUE_WATCH_S}`
   if (e.enqueued) return `The PR is already in the queue. Run once: ${follow}`
@@ -908,11 +1120,13 @@ const landSteps = (e) => {
     `2. Enqueue it pinned to the head: clud tool run github/pr_merge.py -- ${e.pr} --repo ${GITHUB_REPO} --match-head-commit <full-head-sha>\n` +
     `3. Follow the queue, once: ${follow}`
 }
+// The watcher only observes and does the mechanical enqueue; any problem goes
+// back to the chain, which hands it to a fixer (#2873).
 const watch = (e, tag) => agent(
   `${e.handoff}\nFollow your WATCH procedure.\n${headLine(e)}${landSteps(e)}\n` +
-  FOREGROUND_WAIT +
+  (e.stack ? FOREGROUND_WAIT_STACKED : FOREGROUND_WAIT) +
   `Fix rounds used: ${e.fixes} of ${MAX_FIX}. Queue fixups used: ${e.fixups} of ${MAX_QUEUE_FIXUPS}. Return your verdict by the exit codes.`,
-  opts('chaperone', `chaperone:${e.g.id}#${tag}`, 'Chaperone', CHAPERONE)).then(r => collect(r, 'chaperone', e.g.id))
+  opts('watcher', `chaperone:${e.g.id}#${tag}`, 'Chaperone', CHAPERONE)).then(r => collect(r, 'chaperone', e.g.id))
 
 // The pool: at most POOL_SIZE fixups build at once, each in a numbered worktree.
 // The most recently used free slot goes first, because its target/ is warmest.
@@ -926,34 +1140,53 @@ const inSlot = (fn) => fixSlots(async () => {
   USED_SLOTS.add(n)
   try { return await fn(n) } finally { FREE_SLOTS.unshift(n) }
 })
+// Step 3 of a fixup, by event. A stacked PR rebases onto its parent's branch
+// until the parent merges; then the parent's commits are dropped with --onto.
+const fixStep = (e, kind, path, base) => {
+  const cut = e.stack ? e.stack.base_sha : null
+  if (kind === 'PARENT MERGED') {
+    return `3. parent_merged_needs_rebase: the stack parent ${e.stack.pr} (goal ${e.stack.goal}) merged into ${base}. Drop its commits and keep only this PR's: git -C ${path} fetch origin ${base}, then git -C ${path} rebase --onto origin/${base} ${cut || '<the parent head this PR was cut from>'} (HEAD is this PR's head, detached). ` +
+      `If that commit is not an ancestor of HEAD, use the parent's final head (gh pr view ${e.stack.pr} --repo ${GITHUB_REPO} --json headRefOid) instead. Resolve conflicts by keeping both changes; never drop this PR's work.\n`
+  }
+  if (kind === 'PARENT FAILED') {
+    return `3. parent_failed: the stack parent ${e.stack.pr} (goal ${e.stack.goal}) will not merge. If this change stands alone, drop the parent's commits: git -C ${path} fetch origin ${base}, then git -C ${path} rebase --onto origin/${base} ${cut || '<the parent head this PR was cut from>'}. ` +
+      `If it needs the parent's change, push nothing and return pushed=false with why.\n`
+  }
+  const onto = e.stack ? e.stack.branch : base
+  return `3. Rebase onto origin/${onto} when the failure is a conflict or the queue dropped it. Fix what is reported, by name; never weaken a test or skip CI.\n`
+}
 const fixPrompt = (e, kind, n, slot) => {
   const path = slotPath(slot)
   const base = baseOf(e.g)
+  const refs = e.stack && kind !== 'PARENT MERGED' && kind !== 'PARENT FAILED' ? `${base} ${e.stack.branch}` : base
   return `${e.handoff}\nFollow your FIXUP procedure.\n${headLine(e)}${kind} ${n}: fix this PR in fixup worktree ${path}, never in ${REPO}.\n` +
     `1. If it is missing: git -C ${REPO} fetch origin, then git -C ${REPO} worktree add --detach ${path} origin/${base}\n` +
-    `2. Recycle it (ignored files such as target/ stay warm): git -C ${path} fetch origin +refs/heads/${e.p.branch}:refs/remotes/origin/${e.p.branch} ${base}, git -C ${path} switch --detach --discard-changes origin/${e.p.branch}, git -C ${path} clean -fd\n` +
-    `3. Rebase onto origin/${base} when the failure is a conflict or the queue dropped it. Fix what is reported, by name; never weaken a test or skip CI.\n` +
+    `2. Recycle it (ignored files such as target/ stay warm): git -C ${path} fetch origin +refs/heads/${e.p.branch}:refs/remotes/origin/${e.p.branch} ${refs}, git -C ${path} switch --detach --discard-changes origin/${e.p.branch}, git -C ${path} clean -fd\n` +
+    fixStep(e, kind, path, base) +
     `4. ${verifyBlock(e.p)}\n` +
     `5. Push: git -C ${path} push --force-with-lease=${e.p.branch}:<the head you started from> origin HEAD:refs/heads/${e.p.branch}. Return pushed=true and head_sha; a watch follows.\n` +
     `What failed:\n${e.why}`
 }
-// Returns true when the chain should watch the new head.
+// Returns true when the chain should watch the new head. Every hand-off is
+// journaled: watcher -> fixer, then fixer -> watcher (#2873).
 const fixInPool = async (e, kind) => {
-  const n = kind === 'FIX ROUND' ? ++e.fixes : ++e.fixups
-  const tag = `${e.fixes + e.fixups}`
-  log(`goal ${e.g.id}: chaperone ${kind.toLowerCase()} ${n} for ${e.pr}`)
+  const n = kind === 'FIX ROUND' ? ++e.fixes : kind === 'QUEUE FIXUP' ? ++e.fixups : ++e.rebases
+  const tag = `${e.fixes + e.fixups + e.rebases}`
+  log(`goal ${e.g.id}: watcher -> fixer: ${kind.toLowerCase()} ${n} for ${e.pr}`)
   const fixed = await inSlot(slot => agent(fixPrompt(e, kind, n, slot),
-    opts('chaperone', `chaperone-fix:${e.g.id}#${tag}`, 'Chaperone', INTEG)).then(r => collect(r, 'chaperone', e.g.id)))
+    opts('fixer', `chaperone-fix:${e.g.id}#${tag}`, 'Chaperone', INTEG)).then(r => collect(r, 'chaperone', e.g.id)))
   if (!fixed || !fixed.pushed) {
     finish(e, 'stuck', false, `stuck: ${kind.toLowerCase()} ${n} not pushed: ${fixed ? fixed.failure_log || fixed.summary : 'chaperone died'}`)
     return false
   }
   e.head = fixed.head_sha || null
+  e.result.head_sha = e.head
   e.enqueued = false
+  log(`goal ${e.g.id}: fixer -> watcher: pushed ${e.head || 'a new head'}`)
   return true
 }
 const stuckNote = (e, what, why) => `stuck: ${what}: ${why}`
-// What the chain does next: 'watch', 'fix round', 'queue fixup', 'queued' or 'done'.
+// What the chain does next: 'watch', 'fix round', 'queue fixup', 'queued', 'green' or 'done'.
 const judge = (e, v) => {
   const verdict = (v && v.verdict) || 'stuck'
   const why = v ? v.failure_log || v.summary : 'chaperone died'
@@ -964,6 +1197,8 @@ const judge = (e, v) => {
     finish(e, 'base-red', false, `base-red: ${why}; the same required job fails on ${MAIN}, so no fix round was spent`)
     return 'done'
   }
+  // Green only means something for a stacked PR; any other is watched again and enqueued.
+  if (verdict === 'green') return e.stack ? 'green' : 'queued'
   if (verdict === 'queued') { e.enqueued = e.enqueued || v.enqueued === true; return 'queued' }
   if (verdict === 'tool_misuse') {
     e.agentErrors++
@@ -983,8 +1218,41 @@ const observe = async (e, tag) => {
   try { v = await watch(e, tag) } catch (err) { v = { verdict: 'stuck', summary: `chaperone failed: ${err && err.message ? err.message : err}` } }
   return judge(e, v)
 }
+// A stacked PR (#2873): keep its own checks green while the parent is open,
+// then wait for the parent's chain. Its merge is the parent_merged_needs_rebase
+// event: a fixer drops the parent's commits with rebase --onto, and the chain
+// goes on as an ordinary PR. Returns true when the chain should continue.
+const stackedPhase = async (e) => {
+  for (let queued = 0; queued < MAX_QUEUED_WATCHES;) {
+    e.watches++
+    const next = await observe(e, e.watches)
+    if (next === 'done') return false
+    if (next === 'green') break
+    // The parent merged meanwhile (its branch may be gone): rebase first; a
+    // red check is then fixed on the rebased PR.
+    if (MERGED_GOALS.has(String(e.stack.goal))) break
+    if (next === 'queued') { queued++; continue }
+    if (next === 'watch') continue
+    if (!(await fixInPool(e, next))) return false
+  }
+  const parentId = String(e.stack.goal)
+  log(`goal ${e.g.id}: ${e.pr} is stacked on ${e.stack.pr}; waiting for goal ${parentId} to merge`)
+  const merged = await landed[parentId]
+  const parent = CHAIN_OF[parentId]
+  if (!merged && parent && parent.state === 'queued') {
+    finish(e, 'stacked', false, `stacked: parent ${e.stack.pr} is still in the merge queue; once it merges run git rebase --onto origin/${baseOf(e.g)} ${e.stack.base_sha || '<parent head>'} on ${e.p.branch}`)
+    return false
+  }
+  const event = merged ? 'parent_merged_needs_rebase' : 'parent_failed'
+  e.why = `${event}: stack parent ${e.stack.pr} (goal ${parentId}) ${merged ? 'merged' : `ended unmerged (${(outcome[parentId] || {}).note || 'no PR'})`}`
+  log(`goal ${e.g.id}: ${event}`)
+  if (!(await fixInPool(e, merged ? 'PARENT MERGED' : 'PARENT FAILED'))) return false
+  e.stack = null
+  return true
+}
 // Bounded by the fix budgets, the misuse allowance and MAX_QUEUED_WATCHES.
 const chain = async (e) => {
+  if (e.stack && !(await stackedPhase(e))) return
   for (let queued = 0; queued < MAX_QUEUED_WATCHES;) {
     e.watches++
     const next = await observe(e, e.watches)
@@ -1001,14 +1269,17 @@ const chain = async (e) => {
 const startChain = (e) => {
   e.running = chain(e).catch(err => finish(e, 'stuck', false, `stuck: ${err && err.message ? err.message : err}`))
 }
-const handOff = (p, g, integ, rv) => {
+// `stack`: the pushed parent a worker branched from, or null (#2873).
+const handOff = (p, g, integ, rv, stack = null) => {
   const result = { merged: false, pushed: true, chaperoned: true, status: 'pushed', pr: integ.pr_url,
-    note: integ.summary, artifacts: { ...(integ.artifacts || {}) } }
-  const e = { g, p, pr: integ.pr_url, head: integ.head_sha || null, handoff: handoffOf(p, g, integ, rv), result,
-    enqueued: false, fixes: 0, fixups: 0, agentErrors: 0, watches: 0, why: '', state: 'watching', settled: false }
+    branch: p.branch, head_sha: integ.head_sha || null,
+    note: integ.summary, artifacts: { ...(integ.artifacts || {}) }, ...(stack ? { stacked_on: stack.goal } : {}) }
+  const e = { g, p, pr: integ.pr_url, head: integ.head_sha || null, handoff: handoffOf(p, g, integ, rv), result, stack,
+    enqueued: false, fixes: 0, fixups: 0, rebases: 0, agentErrors: 0, watches: 0, why: '', state: 'watching', settled: false }
   CHAINS.push(e)
+  CHAIN_OF[String(g.id)] = e
   startChain(e)
-  log(`goal ${g.id}: pushed ${integ.pr_url}; its chaperone takes it from here`)
+  log(`goal ${g.id}: pushed ${integ.pr_url}${stack ? ` stacked on ${stack.pr}` : ''}; its chaperone takes it from here`)
   return result
 }
 // Finish: every chain has stopped; a PR still queued gets one last bounded wait.
@@ -1031,7 +1302,7 @@ const finishChains = async () => {
     try {
       await agent(`Follow your CLEANUP procedure. The run is over. Remove these fixup worktrees of ${REPO}, and nothing else:\n` +
         paths.map(path => `git -C ${REPO} worktree remove --force ${path}`).join('\n') + `\nA missing one is fine. Report what you removed.`,
-        opts('chaperone', 'chaperone-cleanup', 'Chaperone', CLEANUP))
+        opts('watcher', 'chaperone-cleanup', 'Chaperone', CLEANUP))
     } catch (err) {
       log(`fixup worktree cleanup failed (the daemon reclaims them later): ${err && err.message ? err.message : err}`)
     }
@@ -1088,6 +1359,49 @@ const observeGate = async (g, blocker, index) => {
     attempts }
 }
 
+// Stacking (#2873). In the worker pipeline a `merged` blocker whose edge is
+// file_overlap (the default) or semantic is a pushed gate: the dependent
+// branches from the parent's pushed branch and its PR still targets <base>;
+// its chaperone rebases it with `git rebase --onto` once the parent merges.
+// Only an edge marked merge still waits for the parent's merge.
+const stacksOn = (b) => b.when === 'merged' && (b.edge || 'file_overlap') !== 'merge'
+const stackAncestors = (id, seen = new Set()) => {
+  const approved = RUN_GOALS.get(String(id))
+  for (const b of (approved ? approved.blockers : [])) {
+    if (stacksOn(b) && !seen.has(b.goal)) {
+      seen.add(b.goal)
+      stackAncestors(b.goal, seen)
+    }
+  }
+  return seen
+}
+// A goal stacks on one parent. A stack blocker already inside another one's
+// branch adds nothing; past that, a second parent cannot share the branch, so
+// the dependent waits for it to merge instead (merge-gated).
+const STACKS = new Map()
+const stackOf = (g) => {
+  const id = String(g.id)
+  if (STACKS.has(id)) return STACKS.get(id)
+  const approved = RUN_GOALS.get(id)
+  const edges = pipelineOf(g) === 'worker' && approved ? approved.blockers.filter(stacksOn) : []
+  const direct = edges.filter(b => !edges.some(o => o !== b && stackAncestors(o.goal).has(b.goal)))
+  const demoted = new Set(direct.slice(1).map(b => b.goal))
+  if (demoted.size) log(`goal ${id}: stacks on ${direct[0].goal}; waits for ${[...demoted].join(', ')} to merge (one stack parent per goal)`)
+  STACKS.set(id, { edges, parent: direct[0] || null, demoted })
+  return STACKS.get(id)
+}
+// What a stacked blocker's settled result means for its dependent: null when
+// the dependent may proceed, else the blocked result.
+const stackGate = async (b, blocked) => {
+  if (await pushed[b.goal]) return null
+  const up = outcome[b.goal]
+  if (up && up.status === 'deferred') return { blocker: b, upstream: up }
+  if (up && (up.merged || up.status === 'covered' || up.status === 'no_change')) return null
+  // A file-overlap parent with no PR leaves nothing to conflict with: branch from <base>.
+  if ((b.edge || 'file_overlap') === 'file_overlap') return null
+  throw blocked(depNote(b.goal), b)
+}
+
 // Enforce approved dependencies before a planner or worker touches this goal.
 // A missing stage or external publication needs a resumable gate, not guessed
 // success. Cross-repository execution needs a separately rooted session first.
@@ -1097,6 +1411,7 @@ const approvedDependencies = async (g, approved) => {
     return blocked(`blocked: ${approved.repo} requires a separately rooted repository session`)
   }
   let dependencies
+  const stack = stackOf(g)
   try {
     // Subscribe to every blocker together: any hard failure wins immediately,
     // even if an earlier blocker is deferred or has not finished yet.
@@ -1104,6 +1419,7 @@ const approvedDependencies = async (g, approved) => {
       if (!(b.goal in landed) || (!PARALLEL && !(b.goal in outcome))) {
         throw blocked(`blocked: dependency ${b.goal} has not settled in this execution stage`, b)
       }
+      if (stack.edges.includes(b) && !stack.demoted.has(b.goal)) return stackGate(b, blocked)
       if (await landed[b.goal]) return null
       const upstream = outcome[b.goal]
       if (upstream && upstream.status === 'deferred') return { blocker: b, upstream }
@@ -1162,24 +1478,27 @@ const approvedBlock = (g) => {
   ]) : null
 }
 
-const attemptGoal = async (g, state) => {
+const dirtyBlock = () => !PARALLEL && DIRTY_AFTER !== null
+  ? { merged: false, blocked: true, note: `blocked: checkout not clean after parking goal ${DIRTY_AFTER}` } : null
+// Failed bugs block only the feature children that list them (#1409).
+const stuckBugBlock = async (g) => {
+  if (STUCK_BUG_BLOCKS) {
+    for (const bug of bugDepsOf(g)) {
+      const dep = goalIdOf[bug]
+      const stuck = dep === undefined ? STUCK_BUGS.has(bug) : !(await landed[dep])
+      if (stuck) return { merged: false, blocked: true, note: `blocked: bug #${bug} did not land` }
+    }
+  }
+  return null
+}
+
+const attemptStagedGoal = async (g, state) => {
   let worked
   let reviewed
   return inNativeStages([
-    () => !PARALLEL && DIRTY_AFTER !== null
-      ? { merged: false, blocked: true, note: `blocked: checkout not clean after parking goal ${DIRTY_AFTER}` } : null,
+    dirtyBlock,
     () => approvedBlock(g),
-    async () => {
-      // Failed bugs block only the feature children that list them (#1409).
-      if (STUCK_BUG_BLOCKS) {
-        for (const bug of bugDepsOf(g)) {
-          const dep = goalIdOf[bug]
-          const stuck = dep === undefined ? STUCK_BUGS.has(bug) : !(await landed[dep])
-          if (stuck) return { merged: false, blocked: true, note: `blocked: bug #${bug} did not land` }
-        }
-      }
-      return null
-    },
+    () => stuckBugBlock(g),
     async () => {
       const planned = await plan(g)
       if (!planned) return { merged: false, note: 'planner died' }
@@ -1197,6 +1516,17 @@ const attemptGoal = async (g, state) => {
     () => integrateAndHandOff(reviewed, g),
   ])
 }
+
+// The worker pipeline (#2873): approved gates, then one worker, then the PR's
+// chaperone. Nothing here waits on CI or a merge unless an edge says merge.
+const attemptWorkerGoal = async (g, state) => inNativeStages([
+  dirtyBlock,
+  () => approvedBlock(g),
+  () => stuckBugBlock(g),
+  () => produceAndHandOff(g, state),
+])
+
+const attemptGoal = (g, state) => pipelineOf(g) === 'worker' ? attemptWorkerGoal(g, state) : attemptStagedGoal(g, state)
 
 // Did anything write to the checkout? A rejected or blocked goal whose
 // workers touched no file and whose reviewer applied no fix left nothing to
@@ -1246,6 +1576,7 @@ const runGoal = async (g) => {
     log(`goal ${g.id}: park step failed: ${e && e.message ? e.message : e}`)
   } finally {
     outcome[String(g.id)] = result
+    settlePushed[g.id](result.pushed ? result : null)
     // A handed-off goal settles when its chaperone chain does (DD-205).
     if (!result.chaperoned) settle[g.id](!!result.merged)
   }
@@ -1273,7 +1604,7 @@ const runApprovedRounds = async () => {
     const goals = args.goals.filter(g => requestedEpoch(g.id) >= epoch)
     for (const g of goals) {
       delete outcome[String(g.id)]
-      landed[g.id] = new Promise(resolve => { settle[g.id] = resolve })
+      armGates(g)
     }
     const round = await runBatch(goals)
     goals.forEach((g, i) => { byId[String(g.id)] = round[i] })
@@ -1283,7 +1614,7 @@ const runApprovedRounds = async () => {
 }
 
 let results
-phase('Plan')
+phase(PIPELINE === 'worker' ? 'Produce' : 'Plan')
 const featureStages = STAGES.filter(s => !isBugStage(s))
 if (!ORCHESTRATION && STAGES.some(isBugStage) && featureStages.length) {
   // Bug stage first (plus any goal in no stage), then each feature stage in order.
@@ -1317,6 +1648,7 @@ DEFERRED_GOALS.forEach(d => {
   log(`deferred: goal ${d.goal}: ${d.note}`)
   summary.push(d)
 })
+HUMAN_WAITING.forEach(w => summary.push(w))
 // The router combines this small manifest with the original approved arguments
 // and the actual native Workflow launch references. No completed-goal bypass
 // or invented run identifier is accepted from the model.

@@ -33,7 +33,7 @@ from typing import Any
 
 from tests import process
 from tests.harness.harness import Harness, RunResult
-from tests.harness.worlds import _issue, _world
+from tests.harness.worlds import STAGED, _issue, _world
 
 MARK = {
     "planner": "You are the /grind planner",
@@ -193,7 +193,9 @@ def _script(
         "goals": [{"id": GOAL, "title": f"child {GOAL}", "brief": f"do {GOAL}"}],
     }
     start = [
-        {"tool_use": {"name": "Workflow", "input": {"name": "grind-run", "args": args}}},
+        {"tool_use": {"name": "Workflow", "input": {
+            "name": "grind-run", "args": {**STAGED, **args},
+        }}},
         {"text": "GRIND_STARTED"},
     ]
     pad = [{"text": "unused"}] * len(start)

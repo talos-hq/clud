@@ -8896,3 +8896,36 @@ The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also rep
 **Consequences:**
 - The `dylint` lane checks a superset of the remote jobs: Clippy on the host and every `[workspace.metadata.soldr].targets` triple, Dylint on the host and each of those targets.
 - Dylint 6.2.0 reads `rust-toolchain.toml`; the bare `rust-toolchain` filename only mattered for 6.0.3.
+
+## DD-236: grind is one worker per goal, stacked dependents, and a haiku watcher escalating to an opus fixer
+
+**Context:** A `/grind` run over 14 sub-issues of a heavy C++ repository (a merge queue of 30-90 minutes per PR, #2873) wrote each goal in about five minutes yet idled for hours. Dependents waited on `landed`, which resolves only when the blocker's PR merges, so a four-deep chain of file-overlap edges cost four serial merge-queue round trips. Sequential mode ran goals in the graph's listed order, so one merge wait blocked independent goals. Each goal crossed five agents (plan, edit, review, integrate, then a chaperone), every chaperone was a large model that spent most of its life waiting, and the chosen `test` script never ran before a push. A hand-written workflow with one worker per goal and a haiku watcher per PR escalating to an opus fixer opened the remaining PRs back to back in the same session.
+
+**Decision:** Supersedes [DD-205](#dd-205-grind-is-one-editor-one-integrator-and-n-chaperones)'s pipeline, chaperone model and lint-only gate; its chains, fixup pool, budgets and red-base breaker stay.
+
+- The default `pipeline: "worker"` runs one `grind-worker` per goal: dedup, plan, edit, self-review, local CI and push in one context. The planner/editor/reviewer/integrator chain stays as `pipeline: "staged"`, run-wide or per goal.
+- Local CI is the push gate: the run's `test` script runs before every push, with lint and the multi-platform lint gate.
+- A `merged` blocker carries an `edge`. `file_overlap` (default) and `semantic` dependents wait on a `pushed` promise and stack on the parent's pushed branch; their PRs still target `<base>`. Only `edge: "merge"` waits for the merge.
+- Each chaperone chain runs WATCH on `haiku` (detect, mechanical enqueue, `green` for a stacked PR) and FIXUP on `opus`. A parent's merge wakes its stacked children (`parent_merged_needs_rebase`), whose fixer runs `git rebase --onto origin/<base> <parent head>`.
+- The approved graph is scheduled in critical-path order. A goal with `gate: "human"` and its dependents are reported as waiting and never scheduled. The validator names the allowed values and the fix.
+
+**Rationale:**
+- Generating a change is fast and a merge queue slow, so the producer must never wait on the queue; stacking turns an N-deep chain from N merge round trips into N pushes plus one rebase each.
+- A watcher mostly waits and reads exit codes; a small model does that. Diagnosis and fixes need the large one, and only on a problem.
+- One agent per goal keeps the context it built while planning for the edit and the push, and removes four hand-offs.
+- A red PR in a queue costs an hour; the suite locally costs minutes.
+
+**Alternatives Considered:**
+
+| Approach | Why not |
+|---|---|
+| Keep the merged gate and only reorder the queue | Moves the stall: a dependency chain still serializes on merges. |
+| Stack on every parent (merge their branches) | A PR with merge commits from several unmerged branches cannot be rebased with one `--onto`; the second parent waits for its merge instead. |
+| A large-model chaperone that also fixes (DD-205) | Pays a large model to wait; DD-195's haiku chaperone failed because it had to fix too, which the fixer escalation removes. |
+| Drop the staged chain | A risky goal may still want a separate reviewer. |
+
+**Consequences:**
+- A stacked PR shows its parent's commits until the parent merges, and its CI runs twice (before and after the rebase).
+- A child whose parent is still queued at Finish is reported `stacked` with the exact rebase command; nothing rebases it later.
+- A goal with two stacking parents that are not in one chain still waits for the second parent's merge.
+- The harness suites that script the staged roles pin `pipeline: "staged"`.

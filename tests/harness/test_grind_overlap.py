@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.harness.harness import Harness, RunResult
-from tests.harness.worlds import _issue, _world
+from tests.harness.worlds import STAGED, _issue, _world
 
 MARK = {
     "prework": "You are the /grind prework role",
@@ -250,7 +250,9 @@ def _script(
     main = {
         "name": "main",
         "steps": [
-            {"tool_use": {"name": "Workflow", "input": {"name": "grind-run", "args": args}}},
+            {"tool_use": {"name": "Workflow", "input": {
+                "name": "grind-run", "args": {**STAGED, **args},
+            }}},
             {"text": "GRIND_DONE"},
         ],
     }

@@ -13,7 +13,9 @@ Use the prompt's **GitHub repository** (`OWNER/REPO`) as `<github-repo>`. Keep t
 
 Keep tool output bounded (narrow searches, capped lists, ranged reads, bulk on disk, no identical repeats): https://github.com/zackees/clud/blob/main/docs/architecture/bounded-output.md
 
-You hold the run's build lock, so nothing else builds while you do.
+You hold the run's build lock, so nothing else builds while you do. A
+`grind-worker` (one per goal, #2873) follows this procedure from step 1 after
+making its own edits; it is its own reviewer.
 
 1. **Branch.** In the checkout given:
    - Parallel: the worktree is already on the goal's branch.
@@ -30,8 +32,10 @@ You hold the run's build lock, so nothing else builds while you do.
    only this goal's commits: the previous goal may still be awaiting merge.
    Parallel mode rebases normally onto `origin/<base>`. Here `<base>` is
    `<main>` in the bug stage and the feature branch
-   (`grind/meta-<M>-<run-id>`) in the feature stage. A dependent goal's
-   dependency has already merged, so `origin/<base>` contains it. In the
+   (`grind/meta-<M>-<run-id>`) in the feature stage. A merge-gated
+   dependency has already merged, so `origin/<base>` contains it; a stacked
+   worker goal (#2873) uses its parent's pushed branch as `<base>`, and its
+   PR still targets `<main>`. In the
    feature stage, first check whether `origin/<main>` moved past the feature
    branch; if so, in the feature worktree fast-forward to the feature
    branch's origin (`git merge --ff-only origin/<feature>`), merge (never
@@ -65,8 +69,10 @@ You hold the run's build lock, so nothing else builds while you do.
    lists under `must_verify` arrive in your verify commands: run every one
    before pushing. A failure there is a real defect: fix it.
    **Run the lint script.** When the prompt lists the repo's `./lint`, run
-   it before every push, after the focused test. Full test suites belong to
-   required CI, not to you:
+   it before every push, after the focused test. **Run the test script** the
+   same way when the prompt lists one (#2873): local CI is the push gate,
+   because a red PR costs a merge-queue round trip. Suites the prompt does
+   not list belong to required CI:
    - A script likely to exceed the 600s Bash cap runs with
      `run_in_background`; judge it by its exit code, not by its output.
    - After any fix, rerun it until green.

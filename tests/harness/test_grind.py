@@ -17,6 +17,7 @@ import json
 from typing import Any
 
 from tests.harness.harness import Harness, RunResult
+from tests.harness.worlds import STAGED
 
 MARK = {
     "planner": "You are the /grind planner",
@@ -131,6 +132,7 @@ def _script(
         "main": "main",
         "mode": mode,
         "goals": goals,
+        **STAGED,
         **args,
     }
     call = {"name": "grind-run", "args": workflow_args}

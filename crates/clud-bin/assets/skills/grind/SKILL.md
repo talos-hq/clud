@@ -27,7 +27,7 @@ deterministic part to the bundled `grind-run` workflow.
 
 ```
 /grind ─ intake ─ orchestrator + graph approval ─ classify (plan-only) ─ preflight ─ configuration ─ prework ─┬─ parallel   ─┐
-                                                                                          ├─ sequential ─┼─ workflow grind-run: plan → work → review → integrate → land ─ finish
+                                                                                          ├─ sequential ─┼─ workflow grind-run: one worker per goal → push ⇒ chaperone per PR (haiku watcher → opus fixer) ─ finish
                                                                                           └─ cron ─ /grind-cron ─ /loop: sequential run, one issue per tick
 ```
 
@@ -37,9 +37,9 @@ AskUserQuestion, and clud's hook denies it for
 every `grind-*` subagent. Anything unexpected follows a rule recorded in
 advance in the run facts (section 3).
 
-Every code change keeps a RED -> GREEN focused regression: the integrator
-first shows the failure or reproduction, then makes it pass before the
-repository's broader gates.
+Every code change keeps a RED -> GREEN focused regression: the worker (or,
+in the opt-in staged pipeline, the integrator) first shows the failure or
+reproduction, then makes it pass before the repository's broader gates.
 
 ## Platform coverage selection
 
@@ -141,8 +141,18 @@ and blockers and include them in the approved graph. Keep upstream PR URLs,
 tags and versions as evidence to be forwarded when they exist; never guess
 them. Do not invoke the advisor again for each goal or stage. Subsequent
 configuration questions use this graph to ask about CI, scripts and checkout
-consent for each repository. The per-goal planner still splits one goal into
-tasks; it cannot remove the approved run dependencies.
+consent for each repository. The per-goal worker (or staged planner) cannot
+remove the approved run dependencies.
+
+**Edges and human gates (#2873).** Each `merged` blocker carries an `edge`:
+`file_overlap` (the goals touch the same files; the default), `semantic`
+(the dependent consumes the blocker's change) or `merge` (it truly needs the
+blocker merged first). The workflow stacks a `file_overlap` or `semantic`
+dependent on its blocker's pushed branch, so the whole chain opens PRs before
+the first merges; only `merge` waits. A goal that waits on a person (a
+maintainer decision, hardware, a vote) gets `gate: "human"` and a
+`gate_reason`, never a blocker naming something that is not a goal; the
+workflow reports it and its dependents as waiting and never schedules them.
 
 ## 1b. Plan before asking (classification)
 
@@ -307,8 +317,8 @@ after it, by the main session or anyone else.
   the regroup: the `simple` path runs and no issue is touched. Every other
   group goes into the plan's `deferred_groups` as
   `{group, sub_meta, children}` with no branch assigned.
-- **Mode.** (i) *Parallel*: each goal gets a git worktree; one editor at a time
-  reads and writes files; one integrator at a time rebases, lints and pushes; a chaperone per PR takes it from there.
+- **Mode.** (i) *Parallel*: each goal gets a git worktree; one worker per goal
+  plans, edits, runs local CI and pushes (`workers` at once, default 1); a chaperone per PR takes it from there.
   Uses GitHub's server-side concurrency. (ii) *Sequential*: one goal at a
   time from `origin/<main>` in the local checkout, no worktrees or sister
   clones; best for C++/Rust or other heavy repos where a cold worktree build
@@ -322,8 +332,11 @@ after it, by the main session or anyone else.
   test different branches concurrently. An operator may opt in to a shared
   `CARGO_TARGET_DIR` only when builds and tests are serialized, following
   `/clud-git`'s Rust target directory guidance (#1685).
-- **Models**, one question for the planner, editor, reviewer and integrator
-  (the lander shares the integrator's, prework the planner's; chaperones default to `opus`): first "the
+- **Models**, one question for the worker (one per goal; with the opt-in
+  `pipeline: "staged"`, the planner, editor, reviewer and integrator instead;
+  the lander shares the integrator's, prework the planner's). Chaperone
+  watchers default to `haiku` and fixers to `opus` (`models.watcher`,
+  `models.fixer`). Offer first "the
   session's model for every role", labelled "(Recommended)", then up to 3
   mixes of the other tiers the harness accepts (for example a stronger tier
   for planner and reviewer only). A typed answer may name a model per role.
@@ -497,7 +510,8 @@ agent gets that comment's URL. Nobody edits the plan comment.
   stage, because the feature branch is cut only after the bug stage ends.
   1. **Bug stage** (always, even when it has no children): args
      `{repo, github_repo, main, mode, goals, orchestration, ci, scripts, plan, meta, base: <main>,
-     problem_reporting, models: {planner, editor, reviewer, integrator}}`,
+     problem_reporting, models: {worker, watcher, fixer}}` (add `pipeline: "staged"` and
+     `models: {planner, editor, reviewer, integrator}` only when the user chose the staged chain),
      where `plan` is the 3b object and `goals` are the bug-stage children
      only (`[]` for an all-feature plan: the call then only posts the plan).
      Its first agent, prework, posts the plan; the result's `plan_url` is
@@ -527,9 +541,10 @@ substitution even inside quotes, so write any body that has one to a file
 and pass it with `--body-file <f>` (for the PATCH, `--input <f>` holding
 `{"body": ...}`).
 
-Concurrency is fixed by the workflow: at most 4 planner/reviewer agents
-at once, exactly one editor, exactly one integrator, one chaperone per PR, and at
-most 2 chaperone fixups building at once (`fixupPool`).
+Concurrency is fixed by the workflow: one worker building at a time (`workers`
+in parallel mode), goals in critical-path order, one chaperone chain per PR, and at
+most 2 chaperone fixups building at once (`fixupPool`). The staged pipeline keeps
+at most 4 planner/reviewer agents, one editor and one integrator.
 
 ## 4b. Feature stage (feature-branch mode)
 
@@ -683,11 +698,12 @@ two), whether or not every goal merged:
 | `/grind-prework` | `grind-prework` | read-only git/gh; `gh issue comment --repo <github-repo>` on the meta issue only; no edits, worktrees or builds |
 | `/grind-plan` | `grind-planner` | read-only git/gh; `git worktree add` in parallel mode |
 | `/grind-plan` (plan-only) | `grind-planner` | read-only git/gh; no Write/Edit, worktree or push |
-| `/grind-edit` | `grind-editor` | one at a time; read/write assigned files; read-only `gh`; web search |
+| `/grind-integrate` (worker preamble) | `grind-worker` | one per goal: plan, edit, self-review, lint + test scripts, push; the integrator's shell, plus `git worktree add` in parallel mode |
+| `/grind-edit` | `grind-editor` | staged only; one at a time; read/write assigned files; read-only `gh`; web search |
 | `/grind-review` | `grind-reviewer` | same as editor |
 | `/grind-integrate` | `grind-integrator` | full shell, one at a time; bounded `bosn ci` / `clud ci` only (own run), no `act` or containers, no new worktrees |
 | `/grind-land` | `grind-lander` | the final feature PR only: `gh pr`, `pr_merge_watch`, `git push`; no edits |
-| `/grind-land` | `grind-chaperone` | opus, one per PR, no lock: checks, pinned enqueue, queue, fixup in a pooled `~/.clud/worktrees/<repo>-wt-grind-fixup-<n>`, feature-branch merge and records |
+| `/grind-land` | `grind-chaperone` | one chain per PR, no lock: a haiku WATCH (checks, pinned enqueue, queue) escalating to an opus FIXUP in a pooled `~/.clud/worktrees/<repo>-wt-grind-fixup-<n>` (fixes, stacked `rebase --onto` after the parent merges), feature-branch merge and records |
 | `/grind-cron` | router | main session |
 | Finish: file problems | router | main session; the only node that runs `gh issue create --repo <github-repo>` (`grind:followup` issues) |
 
