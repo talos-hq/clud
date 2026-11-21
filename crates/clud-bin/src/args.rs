@@ -43,12 +43,17 @@ pub struct Args {
     )]
     pub set_web_term: Option<WebTermPreference>,
 
+    /// Run with this prompt and exit when the agent finishes.
     #[arg(short = 'p', long = "prompt")]
     pub prompt: Option<String>,
 
+    /// Send a one-off message.
     #[arg(short = 'm', long = "message")]
     pub message: Option<String>,
 
+    /// Continue a conversation: at a terminal, pick one of this directory's
+    /// Claude-harness sessions; `-c N` resumes the Nth newest (0 is the last)
+    /// without the picker. Without a terminal, the harness's own `--continue`.
     #[arg(short = 'c', long = "continue")]
     pub continue_session: bool,
 
@@ -68,9 +73,11 @@ pub struct Args {
     #[arg(long = "resume-mode", value_enum, default_value_t)]
     pub resume_mode: crate::session_history::recover::ResumeMode,
 
+    /// Use Claude as the backend (the default).
     #[arg(long = "claude", conflicts_with_all = ["codex", "deepseek", "kimi", "openrouter"])]
     pub claude: bool,
 
+    /// Use Codex as the backend.
     #[arg(long = "codex", conflicts_with_all = ["claude", "deepseek", "kimi", "openrouter"])]
     pub codex: bool,
 
@@ -114,9 +121,11 @@ pub struct Args {
     #[arg(long = "harness", value_enum)]
     pub harness: Option<HarnessSelection>,
 
+    /// Force subprocess launch mode.
     #[arg(long = "subprocess", conflicts_with = "pty")]
     pub subprocess: bool,
 
+    /// Force PTY launch mode.
     #[arg(long = "pty", conflicts_with = "subprocess")]
     pub pty: bool,
 
@@ -132,6 +141,7 @@ pub struct Args {
     #[arg(long = "demo-gfx-sixel")]
     pub demo_gfx_sixel: bool,
 
+    /// Model to launch with (an alias such as `opus`, or a provider model ID).
     #[arg(long = "model")]
     pub model: Option<String>,
 
@@ -193,6 +203,7 @@ pub struct Args {
     #[arg(long = "no-land")]
     pub no_land: bool,
 
+    /// Disable YOLO mode: do not inject the harness's permission-bypass flag.
     #[arg(long = "safe", conflicts_with = "unsafe_mode")]
     pub safe: bool,
 
@@ -286,6 +297,7 @@ pub struct Args {
     )]
     pub coauthor: Option<String>,
 
+    /// Print what would run (the launch plan as JSON) and exit.
     #[arg(long = "dry-run", global = true)]
     pub dry_run: bool,
 
@@ -306,12 +318,16 @@ pub struct Args {
     #[arg(skip)]
     pub do_goal: Option<String>,
 
+    /// Start a daemon-managed session in the background without attaching.
     #[arg(long = "detach", conflicts_with = "dry_run")]
     pub detach: bool,
 
+    /// Run attached under the daemon; Ctrl+C asks whether to keep the
+    /// session running in the background.
     #[arg(long = "detachable", conflicts_with = "dry_run")]
     pub detachable: bool,
 
+    /// Name the daemon-managed session (shown by `clud list` and `clud top`).
     #[arg(long = "name")]
     pub session_name: Option<String>,
 
@@ -326,6 +342,7 @@ pub struct Args {
     #[arg(long = "backlog-size")]
     pub backlog_size: Option<String>,
 
+    /// Show debug output.
     #[arg(short = 'v', long = "verbose")]
     pub verbose: bool,
 
@@ -457,6 +474,7 @@ pub struct Args {
     #[command(subcommand)]
     pub command: Option<Command>,
 
+    /// Arguments after `--`, forwarded verbatim to the backend harness.
     #[arg(last = true, id = "BACKEND_ARGS")]
     pub passthrough: Vec<String>,
 
@@ -763,6 +781,7 @@ impl InstallArgs {
 pub struct LoopArgs {
     /// Prompt text, path to a local file, or a GH issue/PR URL.
     pub task: Option<String>,
+    /// Maximum number of iterations.
     #[arg(long = "loop-count", default_value = "50")]
     pub loop_count: u32,
     /// Force re-fetch of a cached GH issue/PR body.
@@ -1067,6 +1086,7 @@ pub struct WorkflowArgs {
 
 #[derive(clap::Args, Debug, Clone)]
 pub struct LogsArgs {
+    /// Session whose log to print; omit to list every session's last line.
     pub session_id: Option<String>,
     /// Keep watching the file and print new output as it arrives. Exits
     /// once the session has terminated (after printing a status line).
@@ -1570,19 +1590,25 @@ pub enum Command {
         subcommand: DeepseekAuthSubcommand,
     },
     Loop(Box<LoopArgs>),
+    /// Ship it: run lint, test and cleanup, then commit with `codeup`.
     Up {
+        /// Commit message, passed to `codeup -m`.
         #[arg(short = 'm', long = "message")]
         message: Option<String>,
+        /// Also publish: run `codeup` with `-p`.
         #[arg(long = "publish")]
         publish: bool,
     },
     Rebase,
+    /// Run the repo's lint and test tools and fix failures until they pass.
     Fix {
+        /// Optional URL (issue, PR or CI run) whose failure to fix.
         url: Option<String>,
     },
     /// Implement a URL or free-form task end-to-end under the `/goal` contract.
     /// With no target, prompt for one in an interactive foreground terminal.
     Do {
+        /// Issue/PR URL or free-form goal.
         target: Option<String>,
     },
     /// Grind the current repo's issues page with `/loop`.
@@ -1598,6 +1624,7 @@ pub enum Command {
     /// `clud grind reconcile` instead runs the feature-branch reconcile pass
     /// (#1393) in the current checkout and exits with its status.
     Grind {
+        /// Issues page URL; default: the `origin` remote's issues page.
         url: Option<String>,
     },
     /// Edit videos with browser-use/video-use (#1851). Loads the pinned
@@ -1643,18 +1670,27 @@ pub enum Command {
     /// `agent()`/`parallel()`/`pipeline()`/`phase()`); every `agent()` call
     /// is a headless `clud -p` child.
     Workflow(Box<WorkflowArgs>),
+    /// Run a local `.wasm` module in clud's embedded runtime.
     Wasm {
+        /// Path to the `.wasm` module.
         module: String,
+        /// Exported function to call.
         #[arg(long = "invoke", default_value = "run")]
         invoke: String,
     },
+    /// Attach to a background session, or list them when no id is given.
     Attach {
+        /// Session id to attach to.
         session_id: Option<String>,
+        /// Attach to the most recently created session.
         #[arg(long = "last", short = 'l')]
         last: bool,
     },
+    /// End a background session.
     Kill {
+        /// Session id to end.
         session_id: Option<String>,
+        /// End every background session.
         #[arg(long = "all")]
         all: bool,
     },
