@@ -1,4 +1,4 @@
-//! Computer use registration on a launch (DD-232): the `cua` MCP server and
+//! Computer use registration on a launch (DD-233): the `cua` MCP server and
 //! its allow rule on first-party Claude launches, permission mode from
 //! `--safe`, opt-out and opt-in flags, and Codex overrides only on request.
 

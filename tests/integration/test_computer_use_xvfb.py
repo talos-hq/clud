@@ -1,4 +1,4 @@
-"""End-to-end computer use under Xvfb (DD-232).
+"""End-to-end computer use under Xvfb (DD-233).
 
 Takes the `cua` MCP server exactly as `clud --dry-run` registers it, starts it
 the way Claude Code would, and drives the pinned cua-driver over stdio against

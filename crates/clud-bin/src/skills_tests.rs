@@ -101,7 +101,7 @@ fn credential_prompt_skill_remains_automatically_discoverable_after_install() {
 
 #[test]
 fn computer_use_skill_is_automatically_invocable_after_install() {
-    // DD-232: computer use is baked in, so the model must reach the skill on
+    // DD-233: computer use is baked in, so the model must reach the skill on
     // its own, under both Claude and Codex policy files.
     let dir = tempdir().unwrap();
     install_to(dir.path(), BUNDLED_SKILLS).unwrap();
@@ -120,7 +120,7 @@ fn computer_use_skill_names_the_server_the_recovery_commands_and_the_limits() {
     let skill = BUNDLED_SKILLS
         .iter()
         .find(|s| s.name == "clud-computer-use")
-        .expect("clud-computer-use must be bundled (DD-232)")
+        .expect("clud-computer-use must be bundled (DD-233)")
         .skill_md;
     let parsed = parse_frontmatter(&BundledSkill {
         name: "clud-computer-use",

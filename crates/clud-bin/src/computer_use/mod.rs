@@ -8,7 +8,7 @@
 //! - [`serve`] — `clud computer-use {status,install,doctor,grant,mcp}`.
 //!
 //! Contract: [docs/architecture/computer-use.md](../../../../docs/architecture/computer-use.md),
-//! rationale: DD-232.
+//! rationale: DD-233.
 
 pub mod pin;
 pub mod provision;

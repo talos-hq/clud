@@ -234,7 +234,7 @@ fn computer_use_default_on(args: &Args, target: ResolvedLaunchTarget) -> bool {
         && !headless_one_shot
 }
 
-/// The `cua` server and its allow rule for a Claude launch (DD-232).
+/// The `cua` server and its allow rule for a Claude launch (DD-233).
 pub(super) fn computer_use_claude_tokens(
     args: &Args,
     target: ResolvedLaunchTarget,

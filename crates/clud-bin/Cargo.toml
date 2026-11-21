@@ -120,7 +120,7 @@ toml_edit = "0.25.11"
 # `deflate` is the only compression method present in git-bash-bin.zip;
 # disabling default features avoids pulling bzip2/zstd C deps.
 zip = { version = "9.0.3", default-features = false, features = ["deflate"] }
-# Computer use (DD-232): unpack the pinned cua-driver `.tar.gz` release
+# Computer use (DD-233): unpack the pinned cua-driver `.tar.gz` release
 # archives. Pure Rust; flate2 is already in the tree through `zip`.
 tar = "0.4"
 flate2 = "1"
