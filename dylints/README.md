@@ -25,13 +25,17 @@ workspace build because they use rustc internals and pin their own nightly.
     diagnostics. See
     [`docs/architecture/platform-boundary.md`](../docs/architecture/platform-boundary.md).
 
-Run locally:
+Run locally on the host (lint never runs under Bosn):
 
 ```bash
-export SOLDR_DYLINT_TOOLCHAIN=nightly-2026-08-15
-env -u RUSTUP_TOOLCHAIN soldr dylint prepare
-env -u RUSTUP_TOOLCHAIN soldr dylint --all -- --workspace --all-targets
+soldr lint                  # fmt, Clippy, then every library here
+soldr lint --cross-dylint   # plus a Dylint pass per declared cross target
 ```
+
+`[workspace.metadata.soldr.lint] steps` in the root `Cargo.toml` includes
+`dylint`, so `soldr lint` (and `bash lint`, which calls it) runs these
+libraries; local-gate.toml's `dylint` lane runs `soldr lint rust --check
+--cross-dylint`. Hosted CI (`_dylint.yml`) still calls `soldr dylint` directly.
 
 A late lint only sees code compiled for the checked target, so CI also runs a
 check-only pass per OS from Linux (`--target x86_64-pc-windows-msvc` and
@@ -41,21 +45,16 @@ installs that target's nightly `rust-std` first.
 Soldr's verified 6.2.0 Dylint lane supplies precompiled `cargo-dylint`,
 `dylint-link`, and the matching nightly driver for each supported host. Keep `dylint_linting` at
 **6.2.0** with those tools, and keep the nightly above matched to
-`ban_manual_slash_normalize/rust-toolchain`. `tests/test_dylint_stack.py`
+`ban_manual_slash_normalize/rust-toolchain.toml`. `tests/test_dylint_stack.py`
 asserts that lockstep.
 
-Clearing an inherited `RUSTUP_TOOLCHAIN` for `soldr dylint prepare` is
-intentional: CI's stable Rust selector must not override the lint crate's
-nightly pin. Set `SOLDR_DYLINT_TOOLCHAIN=nightly-2026-08-15` for these commands:
-Soldr's preparer reads `rust-toolchain.toml`, while this crate intentionally
-retains Dylint's bare `rust-toolchain` file. Soldr then selects the matching
-verified tool, linker, and driver set.
-
-The legacy bare `rust-toolchain` filename is intentional. Dylint 6.0.3 unsets
-`RUSTUP_TOOLCHAIN` while building its driver and recognizes this filename when
-selecting the lint crate's nightly. Renaming it to `rust-toolchain.toml` makes
-6.0.3 fall back to stable and fail; upgrading to 6.0.4 only to recognize that
-newer filename would also give up Soldr's blessed precompiled fast path.
+Each library pins its nightly in `rust-toolchain.toml`, the file Soldr's
+Dylint preparer reads, so `soldr lint` selects the matching verified tool,
+linker and driver set with no extra environment. Hosted CI also sets
+`SOLDR_DYLINT_TOOLCHAIN=nightly-2026-08-15` and clears an inherited
+`RUSTUP_TOOLCHAIN` for `soldr dylint prepare`, so CI's stable selector cannot
+override the pin. (The pre-6.0.4 bare `rust-toolchain` filename is gone:
+Dylint 6.2.0 reads `rust-toolchain.toml`.)
 
 `.cargo/config.toml` in the lint crate is load-bearing, not boilerplate. It
 routes linking through `dylint-link`, the wrapper that names the cdylib
@@ -66,8 +65,7 @@ fails with "Could not find ... despite successful build".
 That was the real cause of the failure CI used to work around by copying the
 artifact to the suffixed name and re-running Dylint. It read as an upstream
 artifact-naming gap; it was a missing linker config here, absent because this
-crate was not created from Dylint's template. The linker config and the legacy
-toolchain filename are both required for the blessed 6.2.0 path.
+crate was not created from Dylint's template. The linker config is required for the blessed 6.2.0 path.
 
 If the missing-alias failure ever recurs, check `.cargo/config.toml` before
 suspecting Dylint.

@@ -7393,6 +7393,8 @@ at creation.
 
 ## DD-193: `ci/lint.py` keeps its own fmt/Clippy steps instead of calling `soldr lint`
 
+*Partly superseded by [DD-235](#dd-235-lint-never-runs-under-bosn-local-gate-lints-on-the-host-with-soldr-lint): Dylint now rides `soldr lint`.*
+
 **Decision (2026-10-29):** Agents batch their edit-loop validation into one
 `soldr lint` call (CLAUDE.md "Batch validation", #2313), but the mandatory
 gate `bash lint` / `ci/lint.py` keeps running `soldr cargo fmt` and
@@ -8880,3 +8882,15 @@ second) does not justify that yet.
 **Consequences:**
 - Any change to a clap attribute or doc comment, a splitter table or a multicall name must regenerate the file; the failing test says how.
 - Flag help text in `args.rs` doc comments is now user-facing documentation; a flag without one shows an empty description.
+
+## DD-235: lint never runs under Bosn; local-gate lints on the host with `soldr lint`
+
+**Context:** local-gate.toml's `dylint` and `clippy` lanes replayed the hosted `dylint` and `lint-linux-x64` jobs through `bosn ci run --job ...`. Linting inside a Bosn/act container has caching semantics that break the build hosts, and the shared ci.yml `ci-lint local-gate lint` rule now rejects Bosn lint lanes.
+
+**Decision:** The `dylint` lane runs `soldr lint rust --check --cross-dylint` and the `clippy` lane `soldr lint rust --check --host-only`, both on the host; the names stay because ci-attestations.yml's prooft lanes use them. Cargo.toml's `[workspace.metadata.soldr.lint] steps` is `["fmt", "clippy", "dylint"]`, and each `dylints/*` crate pins its nightly in `rust-toolchain.toml`, the file Soldr's Dylint preparer reads. A host `doctest` lane runs `soldr cargo test --workspace --doc`, the doc-tests the remote `lint-linux-x64` job also runs. `[gate.trust] covered-by` maps `ci.yml:dylint` to `dylint` and `ci.yml:lint-linux-x64` to `clippy` and `doctest`; the replay selections and jobs drop the lint lanes. `bash lint` no longer runs a separate Dylint pass, because its `soldr lint rust` Clippy call now runs Dylint. bosn.toml's lint tasks (`lint`, `rm-lint-alpine`, `rm-windows-clippy-alpine`, `rm-windows-lint-alpine`) are removed; run `bash lint` or `soldr lint --target win-x64` on the host instead (forge-ci/ci.yml GATE-016).
+
+This supersedes DD-193's last point: `soldr lint`'s Dylint step is pinned by the libraries' own `rust-toolchain.toml`, so it is no longer a second, unpinned setup. Hosted CI is unchanged.
+
+**Consequences:**
+- The `dylint` lane checks a superset of the remote jobs: Clippy on the host and every `[workspace.metadata.soldr].targets` triple, Dylint on the host and each of those targets.
+- Dylint 6.2.0 reads `rust-toolchain.toml`; the bare `rust-toolchain` filename only mattered for 6.0.3.

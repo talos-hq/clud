@@ -37,9 +37,11 @@ too_many_lines = "warn"
 targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-apple-darwin", "aarch64-unknown-linux-gnu"]
 
 [workspace.metadata.soldr.lint]
-# Dylint runs in `bash lint` with the pinned nightly (dylints/*/rust-toolchain);
-# a `soldr lint` Dylint step would run without that pin and fail.
-steps = ["fmt", "clippy"]
+# Lint never runs under Bosn: `soldr lint` on the host is the aggregate local
+# linter (local-gate.toml's `dylint` and `clippy` lanes). Its Dylint step builds every
+# `[workspace.metadata.dylint]` library with the nightly each one pins in
+# dylints/*/rust-toolchain.toml; `--cross-dylint` repeats it per cross target.
+steps = ["fmt", "clippy", "dylint"]
 
 [workspace.metadata.dylint]
 libraries = [{ path = "dylints/*" }]

@@ -31,21 +31,38 @@ min-misses = 3
 run = ["bosn", "ci", "run", "--workspace", ".", "--trigger", "pr", "--wait", "--json", "--job", "static-checks"]
 tools = ["bosn", "docker", "uv", "python"]
 
+# Lint never runs under Bosn; `soldr lint` on the host only. Each pass checks
+# formatting, runs Clippy and runs every `[workspace.metadata.dylint]` library
+# (Cargo.toml's `[workspace.metadata.soldr.lint] steps`). The lane names match
+# ci-attestations.yml's prooft lanes.
+#
+# `dylint`: Clippy on the host and every `[workspace.metadata.soldr].targets`
+# triple, and `--cross-dylint` repeats Dylint per declared cross target, which
+# covers the remote `dylint` job's host, Windows and macOS legs.
 [gate.lanes.dylint]
-run = ["bosn", "ci", "run", "--workspace", ".", "--trigger", "pr", "--wait", "--json", "--job", "dylint"]
+run = ["soldr", "lint", "rust", "--check", "--cross-dylint"]
 # Rust lanes read nothing in root tests/, docs/, bench/ or root *.md except
 # the fixture `openrouter_catalog.rs` embeds (#2040).
 exclude = ["tests/**", "docs/**", "bench/**", "*.md"]
 keep = ["tests/fixtures/**"]
-tools = ["bosn", "docker", "uv", "python"]
+tools = ["soldr"]
 
+# `clippy`: the remote `lint-linux-x64` Clippy, on the Linux host only.
 [gate.lanes.clippy]
-run = ["bosn", "ci", "run", "--workspace", ".", "--trigger", "pr", "--wait", "--json", "--job", "lint-linux-x64"]
+run = ["soldr", "lint", "rust", "--check", "--host-only"]
 # Rust lanes read nothing in root tests/, docs/, bench/ or root *.md except
 # the fixture `openrouter_catalog.rs` embeds (#2040).
 exclude = ["tests/**", "docs/**", "bench/**", "*.md"]
 keep = ["tests/fixtures/**"]
-tools = ["bosn", "docker", "uv", "python"]
+tools = ["soldr"]
+
+# The remote `lint-linux-x64` job also runs doc-tests (ci/xbuild.py doctest);
+# they are tests, not lint, and run on the host through soldr.
+[gate.lanes.doctest]
+run = ["soldr", "cargo", "test", "--workspace", "--doc"]
+exclude = ["tests/**", "docs/**", "bench/**", "*.md"]
+keep = ["tests/fixtures/**"]
+tools = ["soldr"]
 
 [gate.lanes.build]
 run = ["bosn", "ci", "run", "--workspace", ".", "--trigger", "pr", "--wait", "--json", "--job", "build-linux-x64"]
@@ -76,16 +93,6 @@ job = "static-checks"
 event = "pull_request"
 
 [[gate.replay.selections]]
-lane = "dylint"
-job = "dylint"
-event = "pull_request"
-
-[[gate.replay.selections]]
-lane = "clippy"
-job = "lint-linux-x64"
-event = "pull_request"
-
-[[gate.replay.selections]]
 lane = "build"
 job = "build-linux-x64"
 event = "pull_request"
@@ -97,23 +104,19 @@ event = "pull_request"
 
 [[gate.replay.jobs]]
 source-job = "ci.yml:static"
-lanes = ["static", "dylint", "clippy", "build", "unit"]
+lanes = ["static", "build", "unit"]
 
 [[gate.replay.jobs]]
 source-job = "ci.yml:cache-maint"
-lanes = ["dylint", "build", "unit"]
+lanes = ["build", "unit"]
 
 [[gate.replay.jobs]]
 source-job = "ci.yml:static-checks"
 lanes = ["static"]
 
 [[gate.replay.jobs]]
-source-job = "_dylint.yml:dylint"
-lanes = ["dylint"]
-
-[[gate.replay.jobs]]
 source-job = "_build-target.yml:build"
-lanes = ["clippy", "build", "unit"]
+lanes = ["build", "unit"]
 
 [[gate.replay.jobs]]
 source-job = "_run-tests.yml:test"
@@ -132,7 +135,7 @@ skip = [
   "ci.yml:build-linux-x64",
   "ci.yml:test-linux-x64-unit",
 ]
-covered-by = { "ci.yml:static-checks" = ["static"], "ci.yml:dylint" = ["dylint"], "ci.yml:lint-linux-x64" = ["clippy"], "ci.yml:build-linux-x64" = ["build"], "ci.yml:test-linux-x64-unit" = ["unit"] }
+covered-by = { "ci.yml:static-checks" = ["static"], "ci.yml:dylint" = ["dylint"], "ci.yml:lint-linux-x64" = ["clippy", "doctest"], "ci.yml:build-linux-x64" = ["build"], "ci.yml:test-linux-x64-unit" = ["unit"] }
 # Labels that select lanes the local plan does not run.
 full-labels = ["ci-test", "ci-windows", "ci-macos", "ci-full", "ci:full"]
 # The CI helpers only the skipped jobs run.

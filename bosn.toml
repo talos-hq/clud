@@ -59,10 +59,8 @@ GIT_CONFIG_VALUE_0 = "/workspace"
 # rust-toolchain.toml; the image itself pins Rust 1.95.0.
 SOLDR_ALLOW_UNPINNED = "1"
 
-[task.lint]
-stack = "clud_1044_final_retry"
-cmd = "cd /workspace && bash lint"
-
+# Lint never runs under Bosn: run `bash lint` / `soldr lint` on the host
+# (cross-target Clippy: `soldr lint --target win-x64`), never as a task here.
 [task.model-manifest-test]
 stack = "clud_1044_final_retry"
 cmd = "cd /workspace && uv sync --frozen --group dev --no-install-project && .venv/bin/python -m pytest -q tests/test_model_manifest.py"
@@ -269,21 +267,9 @@ cmd = "cd /workspace && soldr cargo test -p clud --lib rm_guard && soldr cargo t
 stack = "clud_rm_alpine"
 cmd = "cd /workspace && soldr cargo build -p clud --bin clud && /build/target/debug/clud __link-aliases /build/target/debug && pip install --break-system-packages patchelf && pip install --break-system-packages pytest running-process==4.10.1 && CLUD_TEST_BINARY=/build/target/debug/clud python -m pytest -p no:cacheprovider -v tests/test_rm_shim.py::test_old_stub_corpus_maps_to_new_floor_and_hook tests/test_rm_shim.py::test_current_and_parent_are_refused_without_handoff tests/test_safe_rm.py tests/test_safe_rm_windows.py"
 
-[task.rm-lint-alpine]
-stack = "clud_rm_alpine"
-cmd = "cd /workspace && pip install --break-system-packages patchelf && pip install --break-system-packages ruff pytest running-process==4.10.1 && python -m pytest -p no:cacheprovider -q tests/test_banned_imports.py && RUFF_CACHE_DIR=/root/.cache/ruff python -m ci.lint"
-
 [task.rm-hook-latency-verify]
 stack = "clud_rm_verify"
 cmd = "cd /workspace && soldr cargo build -p clud --bin clud && /build/target/debug/clud __link-aliases /build/target/debug && (uv sync --frozen --group dev --no-install-project || uv sync --group dev --no-install-project) && RM_HOOK_BENCH=1 CLUD_TEST_BINARY=/build/target/debug/clud /workspace/.venv/bin/python -m pytest -p no:cacheprovider -v tests/test_hook_latency.py"
-
-[task.rm-windows-clippy-alpine]
-stack = "clud_rm_alpine"
-cmd = "cd /workspace && soldr cargo clippy -p clud --lib --target x86_64-pc-windows-msvc -- -D warnings"
-
-[task.rm-windows-lint-alpine]
-stack = "clud_rm_alpine"
-cmd = "cd /workspace && pip install --break-system-packages patchelf && pip install --break-system-packages ruff pytest running-process==4.10.1 && RUFF_CACHE_DIR=/root/.cache/ruff python -m ci.lint --windows"
 
 # Fresh Debian lane for final harness/full-lib checks. The original Debian
 # stack has a cancelled daemon job that never reached a terminal state; this
