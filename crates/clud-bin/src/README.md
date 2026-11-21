@@ -38,6 +38,12 @@ Credential prompt ownership (`secret_prompt.rs`, `secret_prompt/gui.rs`, and
 `managed_lokr.rs` owns the pinned prompt/catalog executable's private
 installation, integrity checks and resolution; see the credential prompt topic.
 
+`computer_use/` is built-in computer use: the pinned cua-driver
+(`pin.rs`), its verified first-use install or reuse (`provision.rs`), the
+driver's environment policy (`session_env.rs`) and `clud computer-use`
+(`serve.rs`); `command/builder.rs` registers it as the `cua` MCP server. See
+[computer-use.md](../../../docs/architecture/computer-use.md).
+
 `secret_redaction/` owns session-only reversible request tokenization, stream
 restoration, count-only status and the pure one-way hook-log redactor
 ([module API](secret_redaction/README.md)). See
@@ -945,6 +951,8 @@ Quick lookup, which file owns a given subcommand:
 - `clud video [DIR] [--update]` -> `video.rs` (pinned video-use checkout,
   plugin wrapper, ffmpeg and ElevenLabs-key preconditions); `command/builder.rs`
   adds `--plugin-dir` and the seed prompt (#1851).
+- `clud computer-use {status,install,doctor,grant,mcp}` -> `computer_use::run`
+  (`computer_use/serve.rs`); [computer-use.md](../../../docs/architecture/computer-use.md).
 - `clud --detach`, `clud attach`, `clud list`, `clud kill`, `clud logs` -> all
   in `daemon/` (dispatched from `daemon::handle_special_command`).
 - `clud gc branches [--retire]` -> `gc/branches.rs` (report, retire, `SessionStart` nudge; DD-230) over `daemon/gc_service/repo_branch*.rs`.

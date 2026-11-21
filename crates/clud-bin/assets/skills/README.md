@@ -59,6 +59,11 @@ every backend's skills dir on launch. `clud-loop` was retired once
   `doctor` first; confirmation-gated `restart`/`reset`; Windows storage disks
   resolved from Docker Desktop's real config (never the assumed C: default)
   and never compacted or deleted automatically.
+- [clud-computer-use/](clud-computer-use/SKILL.md) - Automatically invocable
+  guide to the built-in `mcp__cua__*` computer-use tools: the window/act/verify
+  loop, recovering a missing driver with `clud computer-use`, macOS TCC,
+  Windows sessions, Linux X11 vs Wayland limits, and safety rules. Contract:
+  [computer-use.md](../../../../docs/architecture/computer-use.md).
 - [video-use/](video-use/SKILL.md) - Explicit-only `/video-use` bridge to the
   pinned browser-use/video-use checkout via `clud video --path`; no context
   cost until invoked. Contract:

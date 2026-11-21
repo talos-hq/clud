@@ -181,6 +181,10 @@ pub const BUNDLED_SKILLS: &[BundledSkill] = &[
         skill_md: include_str!("../assets/skills/clud-os-debug/SKILL.md"),
     },
     BundledSkill {
+        name: "clud-computer-use",
+        skill_md: include_str!("../assets/skills/clud-computer-use/SKILL.md"),
+    },
+    BundledSkill {
         name: "video-use",
         skill_md: include_str!("../assets/skills/video-use/SKILL.md"),
     },
