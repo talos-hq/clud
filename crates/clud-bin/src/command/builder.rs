@@ -182,6 +182,29 @@ fn claude_mcp_bridge_arg(backend: Backend, target: ResolvedLaunchTarget) -> Opti
     super::mcp_config::claude_mcp_config_arg(&super::mcp_config::current_exe_dir()?)
 }
 
+/// The `--mcp-config` tokens of a Claude launch, each server's directive
+/// appended to `instructions`.
+fn claude_mcp_servers(
+    args: &Args,
+    target: ResolvedLaunchTarget,
+    instructions: &mut String,
+) -> Vec<String> {
+    let backend = target.effective_harness;
+    let mut tokens = Vec::new();
+    if let Some(bridge) = claude_mcp_bridge_arg(backend, target) {
+        append_instructions(instructions, super::mcp_config::BOARD_DIRECTIVE);
+        tokens.push(bridge);
+    }
+    let secrets_catalog = (args.allow_secrets && matches!(backend, Backend::Claude))
+        .then(crate::secrets_catalog::claude_mcp_config_arg)
+        .flatten();
+    if let Some(catalog) = secrets_catalog {
+        append_instructions(instructions, crate::secrets_catalog::DIRECTIVE);
+        tokens.push(catalog);
+    }
+    tokens
+}
+
 /// The [`super::mcp_config::bridge_missing_notice`] for a Claude launch that
 /// would otherwise register the bridge.
 pub fn mcp_bridge_missing_notice(backend: Backend, target: ResolvedLaunchTarget) -> Option<String> {
@@ -769,23 +792,7 @@ fn build_launch_plan_for_target_at(
         deletion_instructions.push_str(&procedure);
     }
 
-    let mcp_bridge = claude_mcp_bridge_arg(backend, target);
-    if mcp_bridge.is_some() {
-        append_instructions(
-            &mut deletion_instructions,
-            super::mcp_config::BOARD_DIRECTIVE,
-        );
-    }
-
-    let secrets_catalog = (args.allow_secrets && matches!(backend, Backend::Claude))
-        .then(crate::secrets_catalog::claude_mcp_config_arg)
-        .flatten();
-    if secrets_catalog.is_some() {
-        append_instructions(
-            &mut deletion_instructions,
-            crate::secrets_catalog::DIRECTIVE,
-        );
-    }
+    let mcp_servers = claude_mcp_servers(args, target, &mut deletion_instructions);
 
     if matches!(backend, Backend::Claude) && !deletion_instructions.is_empty() {
         cmd.push("--append-system-prompt".into());
@@ -921,8 +928,7 @@ fn build_launch_plan_for_target_at(
     {
         cmd.push(format!("--agents={}", CLAUDE_WORKER_AGENT));
     }
-    cmd.extend(mcp_bridge);
-    cmd.extend(secrets_catalog);
+    cmd.extend(mcp_servers);
 
     // A Claude-harness gateway must receive its catalog discovery id, not the
     // provider wire id. Claude Code sees and classifies this value before the
