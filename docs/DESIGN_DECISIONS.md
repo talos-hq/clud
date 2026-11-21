@@ -8891,6 +8891,8 @@ second) does not justify that yet.
 
 This supersedes DD-193's last point: `soldr lint`'s Dylint step is pinned by the libraries' own `rust-toolchain.toml`, so it is no longer a second, unpinned setup. Hosted CI is unchanged.
 
+The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also replays both lint jobs, and `--job` takes one job. So local-gate.toml declares no `[gate.full-run]`, the only path that executes `[gate] run` whole: `ci-lint local-gate run` always dispatches lane by lane, lint on the host, and Bosn only for single static, build and unit jobs. Docs no longer suggest the bare plan.
+
 **Consequences:**
 - The `dylint` lane checks a superset of the remote jobs: Clippy on the host and every `[workspace.metadata.soldr].targets` triple, Dylint on the host and each of those targets.
 - Dylint 6.2.0 reads `rust-toolchain.toml`; the bare `rust-toolchain` filename only mattered for 6.0.3.

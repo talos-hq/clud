@@ -55,8 +55,9 @@ and every merge-queue run, still executes in full
 ([DD-225](docs/DESIGN_DECISIONS.md#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them)).
 
 Use targeted local tests and lint for the edit loop. Rust commands still go
-through soldr. An optional `bosn ci run --workspace . --trigger pr` or
-`clud ci [JOB] [--filter RE]` can replay supported jobs in an isolated engine.
+through soldr. An optional `bosn ci run --workspace . --trigger pr --job JOB`
+(one non-lint job; never the bare plan, which includes the lint jobs) or
+`clud ci JOB [--filter RE]` can replay supported jobs in an isolated engine.
 If Bosn is unavailable or busy, use hosted CI. Stop only your own Bosn run;
 never kill other sessions' processes. Native Windows/macOS behavior needs the
 relevant native CI lane; a local run on another OS cannot prove it.

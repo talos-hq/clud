@@ -274,21 +274,25 @@ The raw bosn commands below remain available:
 
 ```bash
 docker info
-bosn ci run --workspace . --trigger pr --wait              # the PR's jobs: static, build, Linux unit
-bosn ci run --workspace . --trigger pr --job static-checks --wait # formatting, ruff and static guards
-bosn ci run --workspace . --trigger pr --mode test --wait  # adds the ci-test lanes act can run (Linux integration)
+bosn ci run --workspace . --trigger pr --job static-checks --wait       # formatting, ruff and static guards
+bosn ci run --workspace . --trigger pr --job build-linux-x64 --wait     # Linux x64 build
+bosn ci run --workspace . --trigger pr --job test-linux-x64-unit --wait # Linux unit suite
 bosn ci report RUN                                         # verdict and the first failure
 bosn ci logs RUN --follow                                  # live output; --job/--step narrow it
 ```
 
-`--trigger pr` builds the same `pull_request` payload GitHub would, and
-`--mode test`/`full` select the job set that the `ci-test` and `ci-full` labels
-select. Jobs that need a native runner (Windows, macOS, arm) are reported
+`--trigger pr` builds the same `pull_request` payload GitHub would. `--mode
+test`/`full` select the `ci-test`/`ci-full` job sets; combine them with `--job`
+(for example `--mode test --job test-linux-x64-integration`), never bare. Jobs that need a native runner (Windows, macOS, arm) are reported
 `unsupported`, not run.
 
 Lint never runs under Bosn; `soldr lint` on the host only. Do not replay the
-`dylint` or `lint-linux-x64` jobs through `bosn ci run --job`: their cached
-container state misbehaves on the build hosts. local-gate.toml's `dylint` lane
+`dylint` or `lint-linux-x64` jobs through `bosn ci run --job`, and do not run
+the bare plan (`bosn ci run --trigger pr` without `--job`, or with `--mode`),
+which includes them: their cached container state misbehaves on the build
+hosts. `--job` takes one job, so replay jobs one at a time. local-gate.toml
+declares no `[gate.full-run]`, so `ci-lint local-gate run` dispatches each lane
+on its own and never runs the bare plan. local-gate.toml's `dylint` lane
 runs `soldr lint rust --check --cross-dylint` (fmt check, Clippy on the host
 and every declared cross target, every Dylint library on the host and each
 cross target), its `clippy` lane runs `soldr lint rust --check --host-only`,

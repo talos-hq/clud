@@ -63,3 +63,23 @@ def test_host_only_skips_the_cross_targets() -> None:
         "rust",
         "--host-only",
     ]
+
+
+def test_local_gate_never_runs_the_bare_bosn_plan() -> None:
+    # The bare `bosn ci run --trigger pr` plan includes the hosted `dylint` and
+    # `lint-linux-x64` jobs. `[gate.full-run]` is the only path that executes
+    # `[gate] run` whole, so it must stay absent and every Bosn lane must pick
+    # exactly one non-lint job.
+    with (ROOT / "local-gate.toml").open("rb") as fh:
+        gate = tomllib.load(fh)["gate"]
+    assert "full-run" not in gate
+    prefix = gate["run"]
+    for name, lane in gate["lanes"].items():
+        run = lane["run"]
+        if run[0] != "bosn":
+            continue
+        assert run[: len(prefix)] == prefix, name
+        rest = run[len(prefix) :]
+        assert len(rest) == 2, name
+        assert rest[0] == "--job", name
+        assert rest[1] not in {"dylint", "lint-linux-x64"}, name

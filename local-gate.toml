@@ -7,10 +7,15 @@
 #
 #   uvx --from git+https://github.com/zackees/ci.yml@442537be9afba8cdfe7270b83a5493e9910aa522 ci-lint local-gate run
 #
-# runs the PR plan once under bosn ci -> act2 and, on success, amends
-# HEAD's message with a tree-bound
+# runs each lane below (lint lanes on the host through soldr, the rest as
+# single-job bosn ci -> act2 replays) and, on success, amends HEAD's message
+# with a tree-bound
 # `Local-Gate:` trailer plus one `Ci-Attestation:` per gate in
 # ci-attestations.yml. Hosted CI does not consume these local receipts.
+# `run` is only the prefix every Bosn lane extends with `--job`. It is never
+# executed bare: the bare PR plan includes the hosted `dylint` and
+# `lint-linux-x64` jobs, and lint never runs under Bosn. There is
+# deliberately no [gate.full-run], the one path that runs it whole.
 [gate]
 run = ["bosn", "ci", "run", "--workspace", ".", "--trigger", "pr", "--wait", "--json"]
 verify = "ci.yml:static"
@@ -19,13 +24,6 @@ mode = "shadow"
 # cancel-superseded (GEN-022, ci.yml#409) runs only on merge_group, first,
 # with no `needs:`; only the end-of-queue cache janitor depends on it.
 verify-exempt = ["cancel-superseded"]
-
-# Bosn's full run keeps its parallel schedule when three or more lanes miss.
-# The shared ci-lint verifier derives checks from these workflows and
-# validates the terminal Bosn report before seeding lane passes.
-[gate.full-run]
-receipt = "lane-passes-v1"
-min-misses = 3
 
 [gate.lanes.static]
 run = ["bosn", "ci", "run", "--workspace", ".", "--trigger", "pr", "--wait", "--json", "--job", "static-checks"]
