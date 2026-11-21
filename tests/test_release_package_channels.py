@@ -190,11 +190,76 @@ def test_homebrew_tap_triggers_only_after_a_stable_release_or_by_dispatch():
     assert tap["permissions"] == {"contents": "read"}
 
 
-def test_homebrew_tap_publishes_only_a_stable_release():
+def tap_step(step_id):
     steps = load(WORKFLOWS / "homebrew-tap.yml")["jobs"]["update-tap"]["steps"]
-    resolve = next(s for s in steps if s.get("id") == "tag")["run"]
-    assert "releases/latest" in resolve
+    return next(s for s in steps if s.get("id") == step_id)
+
+
+def test_homebrew_tap_publishes_only_a_stable_release():
+    resolve = tap_step("tag")["run"]
+    assert 'releases/tags/$tag"' in resolve
     assert '"false false"' in resolve, "drafts and prereleases must be refused"
+
+
+def test_homebrew_tap_workflow_run_publishes_the_runs_own_tag():
+    # Auto Release 44677702052 (2.8.69) has head_branch "2.8.69", but the tap
+    # run it started read releases/latest a few minutes after promotion, got
+    # 2.8.68 and pushed nothing. The tag comes from the run, never from latest.
+    step = tap_step("tag")
+    assert step["env"]["RUN_TAG"] == "${{ github.event.workflow_run.head_branch }}"
+    assert step["env"]["RUN_CONCLUSION"] == "${{ github.event.workflow_run.conclusion }}"
+    assert "releases/latest" not in step["run"]
+    assert 'tag="$RUN_TAG"' in step["run"]
+    assert '[ "$RUN_CONCLUSION" = success ] || skip' in step["run"], (
+        "a failed or rolled-back release run must leave the tap alone"
+    )
+    assert 'tag="$EVENT_TAG"' in step["run"]
+    assert 'tag="$DISPATCH_TAG"' in step["run"]
+
+
+def formula(tag):
+    return f'url "https://github.com/talos-hq/clud/releases/download/{tag}/clud-{tag}-x"\n'
+
+
+def run_compare(tmp_path, monkeypatch, tag, published, event="workflow_run"):
+    script = tap_step("diff")["run"]
+    body = script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    (tmp_path / "clud.rb").write_text(formula(tag))
+    if published is not None:
+        (tmp_path / "tap" / "Formula").mkdir(parents=True)
+        (tmp_path / "tap" / "Formula" / "clud.rb").write_text(published)
+    out = tmp_path / "out"
+    out.write_text("")
+    for key, value in {
+        "RUNNER_TEMP": str(tmp_path),
+        "RELEASE_TAG": tag,
+        "EVENT": event,
+        "GITHUB_OUTPUT": str(out),
+    }.items():
+        monkeypatch.setenv(key, value)
+    exec(compile(body, "homebrew-tap compare", "exec"), {})
+    return out.read_text()
+
+
+@pytest.mark.parametrize(
+    ("tag", "published", "changed"),
+    [
+        ("2.8.69", formula("2.8.68"), "true"),
+        ("2.8.69", formula("2.8.69"), "false"),
+        ("2.8.69", None, "true"),
+        ("2.10.0", formula("2.9.9"), "true"),
+        ("2.8.68", formula("2.8.69"), "false"),
+        ("2.9.9", formula("2.10.0"), "false"),
+    ],
+)
+def test_homebrew_tap_never_downgrades_the_formula(tmp_path, monkeypatch, tag, published, changed):
+    assert run_compare(tmp_path, monkeypatch, tag, published) == f"changed={changed}\n"
+
+
+def test_homebrew_tap_dispatched_downgrade_fails(tmp_path, monkeypatch):
+    refused = r"refusing to downgrade the tap from 2\.8\.69 to 2\.8\.68"
+    with pytest.raises(SystemExit, match=refused):
+        run_compare(tmp_path, monkeypatch, "2.8.68", formula("2.8.69"), event="workflow_dispatch")
 
 
 def test_homebrew_tap_renders_from_the_tags_own_sha256sums_and_generator():
@@ -211,7 +276,7 @@ def test_homebrew_tap_renders_from_the_tags_own_sha256sums_and_generator():
 
 def test_homebrew_tap_noop_needs_no_credential_and_missing_app_is_named():
     steps = load(WORKFLOWS / "homebrew-tap.yml")["jobs"]["update-tap"]["steps"]
-    token = next(s for s in steps if s.get("id") == "tap-app")
+    token = tap_step("tap-app")
     assert token["if"] == "steps.diff.outputs.changed == 'true'"
     assert token["continue-on-error"] is True
     explain = next(s for s in steps if s.get("name") == "Explain a missing tap credential")

@@ -8259,6 +8259,16 @@ failed run or a release that `rollback-public` demoted leaves the tap
 unchanged. `release: released` stays as a trigger for a promotion made by a
 person, and drafts and prereleases are refused on every path.
 
+**Addendum (2.8.69 tap miss):** the `workflow_run` path first read
+`releases/latest`. For 2.8.69 that read, made about eight minutes after
+promotion, still returned 2.8.68, so the run rendered the unchanged formula and
+pushed nothing. The job now takes the tag from the completed run's
+`head_branch` (Auto Release runs on the tag), requires the run's conclusion to
+be `success` and checks that tag's release directly; no path reads
+`releases/latest`. It also refuses to push a formula older than the tap's: an
+automatic run skips with a warning and a dispatch fails, so a stale or late run
+cannot roll the tap back.
+
 ## DD-224: a path-sensitive PR gets the Windows lanes without a label
 
 **Status:** Accepted (#2844).

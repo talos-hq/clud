@@ -197,10 +197,13 @@ The tap is not part of the release
 turns a completed Auto Release red and can be retried alone. It starts when an
 Auto Release run completes (the promotion uses `GITHUB_TOKEN`, which starts no
 `release` workflow), when a stable release is `released` by anyone else, or by
-`workflow_dispatch` with a `tag` for repair. The automatic paths read the
-current latest stable release after the run has finished, so a proof run, a
-failed run or a release that `rollback-public` demoted leaves the tap as it is.
-Drafts and prereleases are refused. The job checks out the tag, renders the
+`workflow_dispatch` with a `tag` for repair. Every path names its tag: the
+completed run's `head_branch` (Auto Release runs on the tag), the release
+event's tag or the dispatch input. `releases/latest` is never read, because
+right after promotion it can still return the previous release. A failed run,
+including one `rollback-public` demoted, a proof run without a stable release,
+drafts and prereleases leave the tap as it is. A formula older than the tap's
+is never pushed, so a stale or late run cannot roll the tap back. The job checks out the tag, renders the
 formula from that release's `SHA256SUMS` and compares it with the public tap.
 An unchanged formula is a no-op that needs no credential. Otherwise it pushes
 to `talos-hq/homebrew-tap` with a one-hour token from the clud-refresh GitHub
