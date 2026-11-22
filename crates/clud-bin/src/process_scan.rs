@@ -47,7 +47,7 @@ use std::time::{Duration, Instant};
 
 use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
 
-use crate::process_identity::{ProcessIdentity, UNKNOWN_START_TIME};
+use crate::process_identity::{origin_start, ProcessIdentity, UNKNOWN_START_TIME};
 
 /// A process carrying an originator tag that matched the requested tool.
 ///
@@ -80,6 +80,9 @@ impl TaggedProcess {
 /// Both env-derived populations, from one host pass.
 #[derive(Debug, Clone, Default)]
 pub struct EnvScan {
+    pub(crate) live: std::collections::HashMap<u32, ProcessIdentity>,
+    pub(crate) orphaned_children: HashSet<u32>,
+    pub(crate) api_session_ids: std::collections::HashMap<u32, String>,
     /// Processes whose originator tag matched the requested tool prefix.
     pub tagged: Vec<TaggedProcess>,
     /// PIDs of every process that declared itself a daemon.
@@ -89,6 +92,7 @@ pub struct EnvScan {
 /// The environment refresh both queries need, requested once.
 fn env_refresh() -> ProcessRefreshKind {
     ProcessRefreshKind::nothing()
+        .without_tasks()
         .with_environ(UpdateKind::Always)
         .with_cmd(UpdateKind::Always)
 }
@@ -243,24 +247,40 @@ impl Default for EnvScanCache {
 }
 
 /// The pure half of [`scan_env`], over an already-refreshed snapshot.
+pub(crate) const ORIGIN_START_ENV: &str = "CLUD_ORIGIN_START_TIME";
+
+fn origin_alive(
+    parent: Option<ProcessIdentity>,
+    recorded: Option<u64>,
+    observed: Option<u64>,
+    child_start: u64,
+) -> bool {
+    let Some(parent) = parent else {
+        return false;
+    };
+    match recorded.zip(observed) {
+        Some((recorded, observed)) => recorded == observed,
+        None => parent_is_plausible(Some(parent.start_time), child_start),
+    }
+}
+
 fn classify_scan(system: &System, tool: &str) -> EnvScan {
     let prefix = format!("{tool}:");
     let daemon_key = running_process::DAEMON_MARKER_ENV_VAR;
+    let mut origins = std::collections::HashMap::new();
     let originator_key = running_process::ORIGINATOR_ENV_VAR;
 
     let mut scan = EnvScan::default();
     for (pid, process) in system.processes() {
-        // `sysinfo` lists Linux *tasks* alongside processes — it walks
-        // `/proc/<pid>/task/` — and a thread shares its group leader's
-        // environment block, so every thread of one tagged process matched
-        // here. A leaked `__worker` with 19 threads was reported as "19
-        // env-tagged descendant(s)", and every reap decision (spare reason
-        // included) was taken 19 times over the same process. Threads are not
-        // reapable units: skip them and let the group leader stand for them.
+        // Tasks share their leader's environment and cannot be reaped separately.
         if process.thread_kind().is_some() {
             continue;
         }
 
+        let Some(identity) = ProcessIdentity::observe_in(system, pid.as_u32()) else {
+            continue;
+        };
+        scan.live.insert(pid.as_u32(), identity);
         let environ = process.environ();
 
         if env_value(environ, daemon_key).is_some_and(is_truthy_marker) {
@@ -277,10 +297,26 @@ fn classify_scan(system: &System, tool: &str) -> EnvScan {
             continue;
         };
 
+        if let Some(session) = env_value(environ, crate::daemon::API_SESSION_ENV) {
+            scan.api_session_ids
+                .insert(pid.as_u32(), session.to_owned());
+        }
         let start_time = process.start_time();
-        let parent_start_time = system
-            .process(Pid::from_u32(parent_pid))
-            .map(|parent| parent.start_time());
+        let origin = ProcessIdentity::observe_in(system, parent_pid);
+        let recorded = env_value(environ, ORIGIN_START_ENV)
+            .and_then(|value| value.parse::<u64>().ok())
+            .filter(|start| *start != UNKNOWN_START_TIME);
+        let observed = if recorded.is_some() {
+            *origins.entry(parent_pid).or_insert_with(|| {
+                origin.and_then(|identity| origin_start(parent_pid, identity.start_time))
+            })
+        } else {
+            None
+        };
+        let parent_alive = origin_alive(origin, recorded, observed, start_time);
+        if !parent_alive || crate::platform::process_identity::orphaned_parent(system, process) {
+            scan.orphaned_children.insert(pid.as_u32());
+        }
         let cmd = process.cmd();
         let command = if cmd.is_empty() {
             process.name().to_string_lossy().into_owned()
@@ -298,7 +334,7 @@ fn classify_scan(system: &System, tool: &str) -> EnvScan {
             command,
             originator: originator.to_string(),
             parent_pid,
-            parent_alive: parent_is_plausible(parent_start_time, start_time),
+            parent_alive,
         });
     }
     scan
@@ -475,6 +511,23 @@ mod tests {
         for not_declared in ["", "0", "false", "no", "off", "  ", "FALSE"] {
             assert!(!is_truthy_marker(not_declared), "{not_declared:?} must not");
         }
+    }
+
+    #[test]
+    fn a_recycled_windows_parent_in_the_same_second_is_not_the_recorded_parent() {
+        let observed = Some(ProcessIdentity::new(42, 100));
+        assert!(origin_alive(
+            observed,
+            Some(100_000_001),
+            Some(100_000_001),
+            100
+        ));
+        assert!(!origin_alive(
+            observed,
+            Some(100_000_001),
+            Some(100_000_002),
+            100
+        ));
     }
 
     /// Replicates the 0.30 `is_parent_alive` rule exactly: a "parent" that

@@ -135,9 +135,13 @@ acquires the advisory lock.
 
 **Env overrides:**
 
-- `CLUD_MAX_INSTANCES` (default 64; `0` disables the cap entirely;
+- `CLUD_MAX_INSTANCES` (default 32; `0` disables the cap entirely;
   `crates/clud-bin/src/session_registry.rs:70`).
 - `CLUD_WARN_INSTANCES` (default `cap/2`).
+
+The daemon also applies `CLUD_MAX_INSTANCES` to workers and captured API
+turns together. Admission reserves a slot before spawning and releases it
+when the process exits.
 - `CLUD_SESSION_DB`, `CLUD_SESSION_LOCK` — test overrides for the file paths.
 
 ## Clud daemon (single-owner data.redb)

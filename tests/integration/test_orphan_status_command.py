@@ -12,9 +12,13 @@ import json
 import time
 from pathlib import Path
 
+import pytest
+
 from tests import process
 
 from ._daemon_helpers import managed_env
+
+pytestmark = pytest.mark.integration
 
 
 def _run_orphan_status(

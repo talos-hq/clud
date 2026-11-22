@@ -31,6 +31,7 @@ mod registry_holder;
 mod rp_broker;
 mod runtime_config;
 mod server;
+mod session_admission;
 mod session_flags;
 pub mod session_new_client;
 mod session_state_sweep;
@@ -87,3 +88,7 @@ pub use http::{
 pub use paths::{default_state_dir, default_trash_dir};
 pub use types::GcWatchRoot;
 pub use types::{ListRow, RepoVisit, ENV_ALLOW_DAEMON_SPAWN};
+
+mod orphan_census;
+pub(crate) use api_turn_controller::BOARD_ID_ENV as API_SESSION_ENV;
+pub(crate) use orphan_census::census;

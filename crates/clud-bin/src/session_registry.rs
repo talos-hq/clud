@@ -16,7 +16,7 @@
 //!
 //! ## Configuration
 //!
-//! - `CLUD_MAX_INSTANCES` — overrides the cap (default 64). Setting `0`
+//! - `CLUD_MAX_INSTANCES` — overrides the cap (default 32). Setting `0`
 //!   disables the cap entirely.
 //! - `CLUD_WARN_INSTANCES` — overrides the warn threshold (default
 //!   `cap / 2`).
@@ -67,7 +67,7 @@ use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::{Deserialize, Serialize};
 
 /// Default maximum live sessions before `clud` refuses to launch.
-pub const DEFAULT_MAX_INSTANCES: u64 = 64;
+pub const DEFAULT_MAX_INSTANCES: u64 = 32;
 
 /// Bit value for "cap disabled" (set `CLUD_MAX_INSTANCES=0` to opt out).
 pub const CAP_DISABLED: u64 = 0;
@@ -101,6 +101,9 @@ const META: TableDefinition<&str, u64> = TableDefinition::new("meta");
 /// changes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct SessionRow {
+    /// Native creation time, in FILETIME ticks on Windows.
+    #[serde(default)]
+    process_start: u64,
     started_unix: i64,
     backend: Option<String>,
     launch_mode: Option<String>,
@@ -148,7 +151,7 @@ pub struct CapConfig {
 }
 
 impl CapConfig {
-    /// Default: `max = 64`, `warn = 32`.
+    /// Default: `max = 32`, `warn = 16`.
     pub fn defaults() -> Self {
         Self {
             max: DEFAULT_MAX_INSTANCES,
@@ -391,19 +394,22 @@ impl SessionRegistry {
     pub fn gc_dead_sessions(&self) -> Result<u64, RegistryError> {
         // Read-snapshot first so we don't hold the writer lock while we
         // probe the OS for liveness.
-        let pids: Vec<u32> = {
+        let identities = {
             let rtxn = self.db.begin_read()?;
             let table = rtxn.open_table(SESSIONS)?;
             let mut out = Vec::new();
             for entry in table.iter()? {
-                let (k, _v) = entry?;
-                out.push(k.value());
+                let (k, v) = entry?;
+                let start = serde_json::from_slice::<SessionRow>(v.value())
+                    .map_or(0, |row| row.process_start);
+                out.push((k.value(), start));
             }
             out
         };
-        let dead: Vec<u32> = pids
+        let dead: Vec<u32> = identities
             .into_iter()
-            .filter(|p| !self.probe.is_alive(*p))
+            .filter(|(pid, start)| !self.registered_process_alive(*pid, *start))
+            .map(|(pid, _)| pid)
             .collect();
         if dead.is_empty() {
             return Ok(0);
@@ -439,6 +445,15 @@ impl SessionRegistry {
     /// removes the row on graceful exit.
     pub fn register_self(&self, info: SessionInfo) -> Result<(), RegistryError> {
         let row = SessionRow {
+            process_start: if info.pid == std::process::id() {
+                crate::process_identity::origin_start(
+                    info.pid,
+                    crate::process_identity::self_start_time(),
+                )
+                .unwrap_or_default()
+            } else {
+                0
+            },
             started_unix: info.started_unix,
             backend: info.backend,
             launch_mode: info.launch_mode,
@@ -467,14 +482,14 @@ impl SessionRegistry {
         for entry in table.iter()? {
             let (k, v) = entry?;
             let pid = k.value();
-            if !self.probe.is_alive(pid) {
-                continue;
-            }
-            let bytes = v.value().to_vec();
-            let row: SessionRow = match serde_json::from_slice(&bytes) {
+            let bytes = v.value();
+            let row: SessionRow = match serde_json::from_slice(bytes) {
                 Ok(r) => r,
                 Err(_) => continue,
             };
+            if !self.registered_process_alive(pid, row.process_start) {
+                continue;
+            }
             out.push(LiveSession {
                 pid,
                 started_unix: row.started_unix,
@@ -484,6 +499,16 @@ impl SessionRegistry {
             });
         }
         Ok(out)
+    }
+
+    fn registered_process_alive(&self, pid: u32, start: u64) -> bool {
+        self.probe.is_alive(pid)
+            && (start == 0
+                || crate::process_identity::origin_start(
+                    pid,
+                    crate::process_identity::start_time_of(pid),
+                )
+                .is_none_or(|observed| observed == start))
     }
 
     /// Delete this process's row explicitly (issue #138). Unlike `Drop`,
@@ -655,6 +680,32 @@ pub fn run_startup_under_lock(
         decision,
         registered,
     })
+}
+
+/// Inspect registrations before startup or dashboard GC can discard stale rows.
+pub(crate) fn recorded_identities(
+) -> Result<Vec<crate::process_identity::ProcessIdentity>, RegistryError> {
+    let path =
+        std::env::var_os(ENV_SESSION_DB).map_or_else(default_db_path, |v| Ok(PathBuf::from(v)))?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let _lock = acquire_lock()?;
+    let registry = SessionRegistry::open_default()?;
+    let read = registry.db.begin_read()?;
+    let table = read.open_table(SESSIONS)?;
+    let mut identities = Vec::new();
+    for entry in table.iter()? {
+        let (pid, value) = entry?;
+        let Ok(row) = serde_json::from_slice::<SessionRow>(value.value()) else {
+            continue;
+        };
+        identities.push(crate::process_identity::ProcessIdentity::new(
+            pid.value(),
+            row.process_start,
+        ));
+    }
+    Ok(identities)
 }
 
 /// List every live session row under the cross-process lock, then close

@@ -191,7 +191,15 @@ fn run_list_api_only(state_dir: &Path, json: bool, origin: Option<SessionOrigin>
         .filter(|record| origin.is_none_or(|wanted| record.origin == wanted))
         .collect();
     if json {
-        let rows = api_list_rows(&records, None);
+        let census = super::orphan_census::census_with_api(state_dir, &records);
+        let mut rows = api_list_rows(&records, None);
+        for (row, record) in rows.iter_mut().zip(&records) {
+            row["orphaned_children"] = serde_json::json!(census
+                .orphans_by_session
+                .get(&record.id)
+                .copied()
+                .unwrap_or_default());
+        }
         println!("{}", serde_json::Value::Array(rows));
         return 0;
     }
@@ -222,6 +230,9 @@ pub(super) fn run_list(state_dir: &Path, json: bool, origin: Option<SessionOrigi
     }
     let sessions = list_background_sessions(state_dir);
     let api_sessions = ApiSessionStore::new(state_dir).list().unwrap_or_default();
+    let orphan_count =
+        super::orphan_census::census_with_api(state_dir, &api_sessions).orphan_count();
+    println!("Orphaned children: {orphan_count}");
     let has_api_sessions = !api_sessions.is_empty();
     let checkout_sessions = super::checkout_claims::all_live(state_dir).unwrap_or_default();
     if sessions.is_empty() && api_sessions.is_empty() && checkout_sessions.is_empty() {

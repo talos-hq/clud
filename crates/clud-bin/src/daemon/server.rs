@@ -1111,6 +1111,7 @@ fn daemon_create_session(
     workers: &Arc<Mutex<HashMap<String, Arc<NativeProcess>>>>,
     mut spec: WorkerLaunchSpec,
 ) -> io::Result<SessionSnapshot> {
+    let admission = super::session_admission::SessionAdmission::acquire()?;
     // Refresh before each admission as the low-latency path after an installer
     // or `setx` update. The timer is only the idle-daemon backstop.
     let admission_started = Instant::now();
@@ -1269,6 +1270,7 @@ fn daemon_create_session(
         Arc::clone(workers),
         session_id.clone(),
         worker,
+        admission,
     );
     Ok(snapshot)
 }
@@ -1287,8 +1289,10 @@ fn reap_worker_when_done(
     workers: Arc<Mutex<HashMap<String, Arc<NativeProcess>>>>,
     session_id: String,
     worker: Arc<NativeProcess>,
+    admission: super::session_admission::SessionAdmission,
 ) {
     thread::spawn(move || {
+        let _admission = admission;
         let started = Instant::now();
         daemon_events::log_event(
             &state_dir,
@@ -1543,7 +1547,7 @@ fn run_orphan_sweep(
             // daemon doesn't reap a live detached session across a restart.
             // Applied only on the periodic path — an explicit `clud slay` /
             // `ReapOrphans` request means "reap now", registry or not.
-            let spared = super::handover_registry::load(state_dir);
+            let mut spared = super::handover_registry::load(state_dir);
             let now = Instant::now();
             let mut observed: HashSet<u32> = HashSet::new();
             let mut admit = |pid: u32| {
@@ -1554,15 +1558,18 @@ fn run_orphan_sweep(
                 }
                 admitted
             };
-            let (outcome, observed_origins) = match env_scans {
-                Some((cache, max_age)) => orphan_reaper::reap_orphans_from_scan(
-                    (*cache.get("CLUD", max_age)).clone(),
-                    &opts,
-                    &spared,
-                    &mut admit,
-                ),
-                None => orphan_reaper::reap_orphans_filtered_sparing(&opts, &spared, &mut admit),
+            let mut scan = match env_scans {
+                Some((cache, max_age)) => (*cache.get("CLUD", max_age)).clone(),
+                None => crate::process_scan::scan_env("CLUD"),
             };
+            super::orphan_census::expand_stale_groups(
+                state_dir,
+                &mut scan,
+                &mut spared,
+                crate::session_registry::recorded_identities,
+            );
+            let (outcome, observed_origins) =
+                orphan_reaper::reap_orphans_from_scan(scan, &opts, &spared, &mut admit);
             // Drop bookkeeping for PIDs that are gone, so a long-lived daemon
             // doesn't accumulate an entry per orphan it has ever seen.
             first_seen.retain(|pid, _| observed.contains(pid));

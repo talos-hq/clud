@@ -614,7 +614,7 @@ fn dispatch_credential_command(args: &args::Args) -> Option<i32> {
                 eprintln!("doctor accepts no passthrough arguments");
                 return Some(2);
             }
-            clud::doctor::run(*json, *fix)
+            clud::doctor::run(*json, *fix, args.daemon_state_dir.as_deref())
         }
         args::Command::DshUpdate => {
             if !args.passthrough.is_empty() {

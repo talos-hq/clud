@@ -469,7 +469,7 @@ fn run_repeat_once(
         // Windows so each scheduled run doesn't pop a flash. No-op
         // elsewhere.
         creationflags: invisible_helper_creationflags(),
-        create_process_group: false,
+        create_process_group: true,
         stdin_mode: StdinMode::Null,
         nice: None,
         address_space_limit_bytes: None,
@@ -534,7 +534,7 @@ fn start_subprocess_session(
         // console would never be the user's interaction surface, so
         // suppress the conhost window on Windows. No-op elsewhere.
         creationflags: invisible_helper_creationflags(),
-        create_process_group: false,
+        create_process_group: true,
         stdin_mode: StdinMode::Null,
         nice: None,
         address_space_limit_bytes: None,

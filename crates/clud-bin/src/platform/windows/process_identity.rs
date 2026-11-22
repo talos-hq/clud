@@ -53,3 +53,36 @@ pub fn observe_process(pid: u32) -> Option<ProcessIdentity> {
     let start_time = (creation_ticks / TICKS_PER_SECOND).checked_sub(WINDOWS_TO_UNIX_EPOCH_SECS)?;
     Some(ProcessIdentity::new(pid, start_time))
 }
+
+pub(crate) fn orphaned_parent(system: &sysinfo::System, process: &sysinfo::Process) -> bool {
+    process.parent().is_none_or(|parent| {
+        ProcessIdentity::observe_in(system, parent.as_u32()).is_none_or(|identity| {
+            identity.start_time > process.start_time()
+                || (identity.start_time == process.start_time()
+                    && creation_ticks(parent.as_u32())
+                        .zip(creation_ticks(process.pid().as_u32()))
+                        .is_some_and(|(parent, child)| parent > child))
+        })
+    })
+}
+
+pub(crate) fn process_group(_pid: u32) -> Option<u32> {
+    // Worker Job Objects already contain descendants on Windows.
+    None
+}
+
+pub(crate) fn origin_start(pid: u32, _seconds: u64) -> Option<u64> {
+    creation_ticks(pid)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn launcher_identity_uses_native_creation_ticks() {
+        let pid = std::process::id();
+        let ticks = creation_ticks(pid).unwrap();
+        assert_eq!(origin_start(pid, 1), Some(ticks));
+    }
+}
