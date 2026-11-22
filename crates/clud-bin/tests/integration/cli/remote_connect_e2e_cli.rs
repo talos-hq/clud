@@ -290,13 +290,15 @@ impl Operator {
             from = seen.saturating_sub(needle.len());
             let now = Instant::now();
             if now >= idle_deadline || now >= cap {
+                let why = if now >= cap {
+                    "still arriving at the cap"
+                } else {
+                    "nothing new for WAIT"
+                };
                 let tail = &self.shell_output[seen.saturating_sub(400)..];
-                panic!(
-                    "server never received {:?} ({seen} bytes so far, {}); last bytes: {:?}",
-                    String::from_utf8_lossy(needle),
-                    if now >= cap { "still arriving at the cap" } else { "nothing new for WAIT" },
-                    String::from_utf8_lossy(tail)
-                );
+                let tail = String::from_utf8_lossy(tail);
+                let wanted = String::from_utf8_lossy(needle);
+                panic!("server never received {wanted:?} ({seen} bytes, {why}); tail {tail:?}");
             }
             self.pump_once();
             if self.shell_output.len() > seen {
