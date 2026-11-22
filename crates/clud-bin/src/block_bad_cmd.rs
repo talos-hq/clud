@@ -397,6 +397,10 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
     if event == crate::claude_worktree_hook::WORKTREE_REMOVE_EVENT {
         return crate::claude_worktree_hook::run_remove(&read_stdin_bounded().text);
     }
+    // Board identity for a Claude Code subagent; context only, never a denial.
+    if event == crate::board_subagent::SUBAGENT_START_EVENT {
+        return crate::board_subagent::run(&read_stdin_bounded().text);
+    }
 
     // #1984: the user's prompt may allow worktrees for this session. clud's
     // line records consent only, never denying or printing, so it skips the

@@ -172,6 +172,10 @@ pub fn worktree_hooks_fragment() -> Value {
     for event in [
         crate::claude_worktree_hook::WORKTREE_CREATE_EVENT,
         crate::claude_worktree_hook::WORKTREE_REMOVE_EVENT,
+        // Bulletin-board identity for each subagent (agent-board.md). Rides
+        // this version gate: every client that knows the worktree events
+        // knows SubagentStart.
+        crate::board_subagent::SUBAGENT_START_EVENT,
     ] {
         events.insert(
             event.to_string(),

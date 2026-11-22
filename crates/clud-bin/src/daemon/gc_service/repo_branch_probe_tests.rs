@@ -76,3 +76,24 @@ fn no_pr_lookup_means_no_remote_deletion() {
         Err("PR lookup unavailable".to_string())
     );
 }
+
+#[test]
+fn github_slugs_parse_from_https_and_ssh_remotes() {
+    for url in [
+        "https://github.com/zackees/clud.git",
+        "git@github.com:zackees/clud.git",
+        "https://github.com/zackees/clud/",
+        "ssh://git@github.com/zackees/clud",
+    ] {
+        assert_eq!(
+            super::github_slug_from_url(url).as_deref(),
+            Some("zackees/clud"),
+            "{url}"
+        );
+    }
+    assert_eq!(
+        super::github_slug_from_url("https://gitlab.com/a/b.git"),
+        None
+    );
+    assert_eq!(super::github_slug_from_url("https://github.com/a"), None);
+}

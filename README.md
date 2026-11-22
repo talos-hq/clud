@@ -119,6 +119,7 @@ set `CLUD_BIN` to its absolute path if needed. Restart Hermes or use
 | `session_inject` | Steer a running session: queue a note or directive for its next turn, or interrupt it. |
 | `run`, `run_json`, `dry_run` | Run `clud -p` and block until it finishes (text or JSON result), or print the resolved launch without running it. |
 | `board_whoami`, `board_post`, `board_read` | Exchange messages with other agents on clud's bulletin board; `board_read` can wait for a message. |
+| `board_status`, `board_agents` | Set your "what I'm working on now" slot; list agents (parent, cwd, repo, branch, status), e.g. the sub-agents you spawned. |
 
 For Codex, authenticate with
 `clud auth login codex --acknowledge-experimental`, or provide `OPENAI_API_KEY`

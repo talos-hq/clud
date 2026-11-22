@@ -101,7 +101,43 @@ struct CreateDto {
     /// reserved for records written before origins existed.
     #[serde(default = "daemon_origin")]
     origin: crate::session_origin::SessionOrigin,
+    /// Board id of the creating agent. The daemon files the new session's
+    /// card on the bulletin board under it (docs/architecture/agent-board.md).
+    #[serde(default)]
+    board_parent: Option<String>,
 }
+/// File a new API session's bulletin-board card: its id is the session id
+/// (the turn's `CLUD_BOARD_ID`), pre-populated with cwd, backend and parent.
+fn register_board_card(record: &super::api_sessions::ApiSessionRecord, parent: Option<String>) {
+    let update = super::board::AgentUpdate {
+        id: record.id.clone(),
+        parent: Some(parent.unwrap_or_default()),
+        // `\\?\` verbatim prefixes are an implementation detail of the
+        // canonicalized record path; agents compare against plain paths.
+        cwd: Some(
+            crate::path_norm::strip_verbatim(&record.cwd)
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        kind: Some(
+            match record.backend {
+                super::api_sessions::ApiSessionBackend::Claude => "claude",
+                super::api_sessions::ApiSessionBackend::Codex => "codex",
+            }
+            .to_string(),
+        ),
+        repo: super::gc_service::repo_branch_probe::origin_github_slug(&record.cwd),
+        branch: super::gc_service::repo_branch_probe::current_branch(&record.cwd),
+        working_on: None,
+    };
+    if let Err(error) = super::board::register_agent(update) {
+        eprintln!(
+            "[clud daemon] board card for {} not filed: {error}",
+            record.id
+        );
+    }
+}
+
 fn daemon_origin() -> crate::session_origin::SessionOrigin {
     crate::session_origin::SessionOrigin::Daemon
 }
@@ -361,6 +397,7 @@ pub(super) fn handle(
                 "expected typed backend and cwd",
             );
         };
+        let board_parent = body.board_parent.clone();
         return match store.create(CreateApiSession {
             backend: body.backend,
             cwd: body.cwd,
@@ -374,11 +411,14 @@ pub(super) fn handle(
                 routing_mode: None,
             },
         }) {
-            Ok(record) => respond_json(
-                request,
-                201,
-                &serde_json::to_vec(&record).unwrap_or_else(|_| b"{}".to_vec()),
-            ),
+            Ok(record) => {
+                register_board_card(&record, board_parent);
+                respond_json(
+                    request,
+                    201,
+                    &serde_json::to_vec(&record).unwrap_or_else(|_| b"{}".to_vec()),
+                )
+            }
             Err(value) => store_error(request, value),
         };
     }

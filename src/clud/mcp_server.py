@@ -38,6 +38,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import anyio
 from mcp.server.mcpserver import MCPServer
@@ -544,6 +545,9 @@ async def _start_turn(
             body["name"] = name
         if model:
             body["model"] = model
+        if _board_identity():
+            # The daemon files the new agent's board card under its creator.
+            body["board_parent"] = _board_identity()
         status, created = await _api(base, token, "POST", "/v1/sessions", body)
         if status != 201 or not isinstance(created, dict) or not created.get("id"):
             raise SessionError(f"create session failed ({status}): {created}")
@@ -1277,25 +1281,218 @@ def _board_identity() -> str:
     return os.environ.get("CLUD_BOARD_ID") or os.environ.get("CLUD_SESSION_ID", "")
 
 
-@server.tool()
-async def board_whoami() -> str:
-    """Return this agent's bulletin-board address, which others post to."""
-    return _dump({"id": _board_identity()})
+#: Per-subagent read state. Claude Code's subagents share their parent's
+#: bridge process, so a subagent names itself with ``agent_id`` (handed to it
+#: by clud's ``SubagentStart`` hook) and gets its own cursor here; the
+#: process's own identity keeps using ``_board_cursor`` above.
+_sub_cursors: dict[str, int] = {}
+_sub_first_read_done: set[str] = set()
+
+
+def _caller_identity(agent_id: str) -> str:
+    """The board id a tool call speaks for: ``agent_id`` or this process's."""
+    return (agent_id or "").strip() or _board_identity()
+
+
+def _is_sub(identity: str) -> bool:
+    return identity != _board_identity()
+
+
+def _cursor_for(identity: str) -> tuple[int, bool]:
+    """(cursor, first_read_done) for ``identity``."""
+    if _is_sub(identity):
+        return _sub_cursors.get(identity, 0), identity in _sub_first_read_done
+    return _board_cursor, _board_first_read_done
+
+
+def _store_cursor(identity: str, cursor: int) -> None:
+    global _board_cursor, _board_first_read_done
+    if _is_sub(identity):
+        _sub_cursors[identity] = cursor
+        _sub_first_read_done.add(identity)
+    else:
+        _board_cursor = cursor
+        _board_first_read_done = True
+
+
+def _github_slug(url: str) -> str:
+    """``owner/repo`` from an https or ssh GitHub remote URL, else ``""``."""
+    _, sep, rest = url.strip().partition("github.com")
+    if not sep:
+        return ""
+    rest = rest.lstrip(":/").rstrip("/")
+    rest = rest.removesuffix(".git")
+    parts = rest.split("/")
+    return rest if len(parts) == 2 and all(parts) else ""
+
+
+def _find_git_dir(cwd: str) -> Path | None:
+    """The git directory of the checkout containing ``cwd`` (worktrees too)."""
+    here = Path(cwd).resolve()
+    for root in (here, *here.parents):
+        dot_git = root / ".git"
+        if dot_git.is_dir():
+            return dot_git
+        if dot_git.is_file():
+            pointer = dot_git.read_text(encoding="utf-8").strip()
+            return (root / pointer.removeprefix("gitdir:").strip()).resolve()
+    return None
+
+
+def _origin_slug(config_text: str) -> str:
+    """GitHub slug of ``[remote "origin"]`` in a git config file's text."""
+    in_origin = False
+    for raw in config_text.splitlines():
+        line = raw.strip()
+        if line.startswith("["):
+            in_origin = line.replace(" ", "") == '[remote"origin"]'
+        elif in_origin and line.startswith("url"):
+            return _github_slug(line.partition("=")[2])
+    return ""
+
+
+def _git_facts(cwd: str) -> dict:
+    """``{"repo", "branch"}`` for ``cwd``, read from ``.git`` files directly.
+
+    No git process: the bridge may not spawn one (``subprocess`` is banned)
+    and these two facts are plain files. Missing facts are omitted.
+    """
+    facts: dict = {}
+    try:
+        git_dir = _find_git_dir(cwd)
+        if git_dir is None:
+            return facts
+        head = (git_dir / "HEAD").read_text(encoding="utf-8").strip()
+        if head.startswith("ref: refs/heads/"):
+            facts["branch"] = head.removeprefix("ref: refs/heads/")
+        common = git_dir
+        if (git_dir / "commondir").is_file():
+            pointer = (git_dir / "commondir").read_text(encoding="utf-8").strip()
+            common = (git_dir / pointer).resolve()
+        slug = _origin_slug((common / "config").read_text(encoding="utf-8"))
+        if slug:
+            facts["repo"] = slug
+    except OSError:
+        pass
+    return facts
+
+
+async def _agent_card(base: str, token: str, identity: str) -> dict:
+    """The daemon's card for ``identity``, or ``{}`` when none is filed."""
+    if not identity:
+        return {}
+    path = "/v1/board/agents/" + urllib.parse.quote(identity, safe="")
+    status, payload = await _api(base, token, "GET", path)
+    return payload if status == 200 and isinstance(payload, dict) else {}
 
 
 @server.tool()
-async def board_post(to: str, body: str) -> str:
-    """Post a message on clud's agent bulletin board.
+async def board_whoami(agent_id: str = "") -> str:
+    """Return this agent's bulletin-board address and its directory card.
+
+    The card carries `parent` (who spawned you), `cwd` and `working_on` (the
+    "what I'm working on now" slot; set it with `board_status`).
 
     Args:
-        to: The recipient's board id (see `board_whoami`), or "all".
-        body: The message text.
+        agent_id: A subagent's own board id, as given to it at start (clud's
+            SubagentStart context). Leave empty in a top-level agent.
+    """
+    identity = _caller_identity(agent_id)
+    try:
+        base, token = await _discover_api()
+        card = await _agent_card(base, token, identity)
+    except Exception:
+        card = {}
+    out: dict = {"id": identity}
+    for key in ("parent", "cwd", "kind", "repo", "branch", "working_on"):
+        if card.get(key):
+            out[key] = card[key]
+    if not identity:
+        out["note"] = "no board id: launch through clud or set CLUD_BOARD_ID"
+    return _dump(out)
+
+
+@server.tool()
+async def board_status(working_on: str, agent_id: str = "", cwd: str = "") -> str:
+    """Set your "what I'm working on now" slot on the board's agent directory.
+
+    Others see it through `board_agents`. Update it when you start a new step;
+    clear it with an empty string when you finish.
+
+    Args:
+        working_on: One line describing your current task.
+        agent_id: A subagent's own board id (see `board_whoami`); empty in a
+            top-level agent.
+        cwd: Your working directory; defaults to the bridge's (a subagent in
+            a different worktree should pass its own).
+    """
+    identity = _caller_identity(agent_id)
+    if not identity:
+        return _dump({"error": "no board id: launch through clud or set CLUD_BOARD_ID"})
+    try:
+        base, token = await _discover_api()
+    except Exception as exc:
+        return _dump(v.daemon_unavailable(exc).payload())
+    card: dict = {"id": identity, "working_on": working_on}
+    if cwd:
+        card["cwd"] = cwd
+    if _is_sub(identity):
+        # A subagent of this process: its parent is this process's agent.
+        existing = await _agent_card(base, token, identity)
+        if not existing.get("parent") and _board_identity():
+            card["parent"] = _board_identity()
+        if not existing.get("cwd") and not cwd:
+            card["cwd"] = os.getcwd()
+    else:
+        card.setdefault("cwd", os.getcwd())
+        parent = os.environ.get("CLUD_BOARD_PARENT", "")
+        if parent:
+            card["parent"] = parent
+    # Repo slug and branch of the checkout the agent reports from.
+    card.update(_git_facts(card.get("cwd") or cwd or os.getcwd()))
+    status, payload = await _api(base, token, "POST", "/v1/board/agents", card)
+    if status != 200:
+        return _dump({"error": f"status update failed ({status}): {payload}"})
+    return _dump(payload)
+
+
+@server.tool()
+async def board_agents(parent: str = "") -> str:
+    """List agents on the board: id, parent, cwd and what each is working on.
+
+    Args:
+        parent: Only this agent's direct children (pass your own id to see
+            the sub-agents you spawned). Empty lists everyone.
     """
     try:
         base, token = await _discover_api()
     except Exception as exc:
         return _dump(v.daemon_unavailable(exc).payload())
-    message = {"to": to, "from": _board_identity(), "body": body}
+    path = "/v1/board/agents"
+    if parent:
+        path += "?" + urllib.parse.urlencode({"parent": parent})
+    status, payload = await _api(base, token, "GET", path)
+    if status != 200 or not isinstance(payload, dict):
+        return _dump({"error": f"list failed ({status}): {payload}"})
+    return _dump_page(payload)
+
+
+@server.tool()
+async def board_post(to: str, body: str, agent_id: str = "") -> str:
+    """Post a message on clud's agent bulletin board.
+
+    Args:
+        to: The recipient's board id (see `board_whoami` / `board_agents`),
+            or "all".
+        body: The message text.
+        agent_id: A subagent's own board id, so the message is from it; empty
+            in a top-level agent.
+    """
+    try:
+        base, token = await _discover_api()
+    except Exception as exc:
+        return _dump(v.daemon_unavailable(exc).payload())
+    message = {"to": to, "from": _caller_identity(agent_id), "body": body}
     status, payload = await _api(base, token, "POST", "/v1/board/messages", message)
     if status != 201:
         return _dump({"error": f"post failed ({status}): {payload}"})
@@ -1364,7 +1561,7 @@ def _board_wait_budget(wait_seconds: int) -> float:
 
 
 @server.tool()
-async def board_read(after: int = -1, wait_seconds: int = 0) -> str:
+async def board_read(after: int = -1, wait_seconds: int = 0, agent_id: str = "") -> str:
     """Read new bulletin-board messages addressed to this agent or to "all".
 
     Each call returns only what arrived since the previous call. Act on any
@@ -1383,8 +1580,10 @@ async def board_read(after: int = -1, wait_seconds: int = 0) -> str:
         after: Cursor to read from; -1 (default) continues from the last read.
         wait_seconds: Block up to this many seconds for the next message
             (default 0 = return immediately). Capped at 540 s.
+        agent_id: A subagent's own board id, so it reads its own mail with
+            its own cursor; empty in a top-level agent.
     """
-    global _board_cursor, _board_first_read_done
+    identity = _caller_identity(agent_id)
     rejected = v.check_seconds("wait_seconds", wait_seconds, minimum=0, tool="board_read")
     if rejected is not None:
         return _dump(rejected.payload())
@@ -1392,13 +1591,14 @@ async def board_read(after: int = -1, wait_seconds: int = 0) -> str:
         base, token = await _discover_api()
     except Exception as exc:
         return _dump(v.daemon_unavailable(exc).payload())
-    cursor = _board_cursor if after < 0 else after
-    first_read = not _board_first_read_done and after < 0
+    stored_cursor, first_done = _cursor_for(identity)
+    cursor = stored_cursor if after < 0 else after
+    first_read = not first_done and after < 0
     budget = _board_wait_budget(wait_seconds)
     capped = budget < float(wait_seconds)
     started = time.monotonic()
     while True:
-        query = urllib.parse.urlencode({"to": _board_identity(), "after": cursor})
+        query = urllib.parse.urlencode({"to": identity, "after": cursor})
         status, payload = await _api(base, token, "GET", f"/v1/board/messages?{query}")
         if status != 200 or not isinstance(payload, dict):
             return _dump({"error": f"read failed ({status}): {payload}"})
@@ -1408,8 +1608,7 @@ async def board_read(after: int = -1, wait_seconds: int = 0) -> str:
         await asyncio.sleep(_WAIT_TICK_SECONDS)
     if first_read:
         payload = _bound_first_read(payload)
-    _board_first_read_done = True
-    _board_cursor = int(payload.get("next_cursor", cursor))
+    _store_cursor(identity, int(payload.get("next_cursor", cursor)))
     waited_s = round(time.monotonic() - started, 1)
     if not messages:
         # An empty read is the one moment the caller is deciding what to do

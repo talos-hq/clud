@@ -24,6 +24,7 @@ use std::time::{Duration, Instant};
 
 const CODEX_BRIDGE_PROBE_REQUEST: &str = include_str!("../assets/codex_bridge_probe_request.json");
 
+mod board;
 mod codex_app_server;
 mod platform;
 mod prompt_tools;
@@ -45,6 +46,8 @@ fn main() {
         std::fs::write(path, payload).expect("write recording-stub args");
         return;
     }
+
+    board::run_if_enabled();
 
     // `mock-agent serve …`: the scripted model backend for the real-harness
     // test tier (#1323). Everything below is the fake-`claude` behavior.

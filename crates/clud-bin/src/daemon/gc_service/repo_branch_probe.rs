@@ -198,6 +198,22 @@ fn checkout_root(cwd: &Path) -> Option<(PathBuf, bool)> {
     Some((top, git_dir.trim() == common.trim()))
 }
 
+/// `owner/repo` of `cwd`'s `origin` when it is a GitHub remote.
+pub(crate) fn origin_github_slug(cwd: &Path) -> Option<String> {
+    github_slug_from_url(git(cwd, &["remote", "get-url", "origin"])?.trim())
+}
+
+/// `owner/repo` from an https or ssh GitHub remote URL.
+pub(crate) fn github_slug_from_url(url: &str) -> Option<String> {
+    let (_, rest) = url.split_once("github.com")?;
+    let rest = rest.trim_start_matches([':', '/']).trim_end_matches('/');
+    let rest = rest.strip_suffix(".git").unwrap_or(rest);
+    let mut parts = rest.split('/');
+    let (owner, repo) = (parts.next()?, parts.next()?);
+    (parts.next().is_none() && !owner.is_empty() && !repo.is_empty())
+        .then(|| format!("{owner}/{repo}"))
+}
+
 /// The branch checked out at `cwd`, if any.
 pub(crate) fn current_branch(cwd: &Path) -> Option<String> {
     let name = git(cwd, &["symbolic-ref", "--quiet", "--short", "HEAD"])?;

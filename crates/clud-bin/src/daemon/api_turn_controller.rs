@@ -40,6 +40,9 @@ const EVENT_LINE_MAX_BYTES: usize = 8 * 1024;
 /// field; until then this is byte-for-byte the previous behaviour.
 /// Read by the MCP bridge's `board_*` tools (docs/architecture/agent-board.md).
 const BOARD_ID_ENV: &str = "CLUD_BOARD_ID";
+/// The board id of the agent that created the session (its card's `parent`),
+/// so the sub-agent can report back without being told who asked.
+const BOARD_PARENT_ENV: &str = "CLUD_BOARD_PARENT";
 
 fn api_turn_env(client_env: &[(String, String)]) -> Vec<(String, String)> {
     super::io_helpers::child_env_from(client_env)
@@ -64,8 +67,14 @@ fn turn_process_config(
     session_id: &str,
 ) -> ProcessConfig {
     let mut env = api_turn_env(client_env);
-    env.retain(|(key, _)| key != BOARD_ID_ENV);
+    env.retain(|(key, _)| key != BOARD_ID_ENV && key != BOARD_PARENT_ENV);
     env.push((BOARD_ID_ENV.to_string(), session_id.to_string()));
+    if let Some(parent) = super::board::agent_card(session_id)
+        .map(|card| card.parent)
+        .filter(|parent| !parent.is_empty())
+    {
+        env.push((BOARD_PARENT_ENV.to_string(), parent));
+    }
     ProcessConfig {
         command: crate::subprocess::command_spec_for_subprocess(command),
         cwd: Some(cwd),
@@ -578,5 +587,26 @@ mod tests {
         let env = config.env.as_deref().unwrap();
         assert_eq!(value_of(env, BOARD_ID_ENV), Some("sess-42"));
         assert_eq!(env.iter().filter(|(k, _)| k == BOARD_ID_ENV).count(), 1);
+    }
+
+    #[test]
+    fn the_board_card_parent_is_exported_to_the_turn() {
+        let temp = TempDir::new().unwrap();
+        crate::daemon::board::register_agent(crate::daemon::board::AgentUpdate {
+            id: "sess-parented".to_string(),
+            parent: Some("main-agent".to_string()),
+            ..crate::daemon::board::AgentUpdate::default()
+        })
+        .unwrap();
+        let client = vec![(BOARD_PARENT_ENV.to_string(), "stale".to_string())];
+        let config = turn_process_config(
+            vec!["codex".to_string()],
+            temp.path().to_path_buf(),
+            &client,
+            "sess-parented",
+        );
+        let env = config.env.as_deref().unwrap();
+        assert_eq!(value_of(env, BOARD_PARENT_ENV), Some("main-agent"));
+        assert_eq!(env.iter().filter(|(k, _)| k == BOARD_PARENT_ENV).count(), 1);
     }
 }

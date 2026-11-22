@@ -6,8 +6,15 @@
 //! what arrived since the last one. The board lives in daemon memory and is
 //! bounded: a daemon restart forgets it, and the oldest messages fall off once
 //! `MAX_MESSAGES` is reached.
+//!
+//! Alongside the messages the board keeps an **agent directory**
+//! (`/v1/board/agents`): one card per agent with its id, the id of the agent
+//! that spawned it, its working directory and a free-text "what I'm working on
+//! now" slot. The daemon writes a card when `session_start` creates a
+//! sub-agent session; agents (main or sub) upsert their own card through the
+//! bridge's `board_status` tool.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -44,6 +51,153 @@ struct PostDto {
 struct PageDto {
     messages: Vec<BoardMessage>,
     next_cursor: u64,
+}
+
+/// Most agent cards kept; the least recently updated card is dropped first.
+const MAX_AGENTS: usize = 512;
+const MAX_STATUS_CHARS: usize = 2048;
+const MAX_CWD_CHARS: usize = 4096;
+
+/// One agent's entry in the board's directory.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub(crate) struct AgentCard {
+    pub id: String,
+    /// Board id of the agent that spawned this one; empty for a root agent.
+    #[serde(default)]
+    pub parent: String,
+    #[serde(default)]
+    pub cwd: String,
+    /// `claude`, `codex`, a Claude Code subagent type, ...; informational.
+    #[serde(default)]
+    pub kind: String,
+    /// GitHub `owner/repo` of the agent's checkout, when it has one.
+    #[serde(default)]
+    pub repo: String,
+    /// Branch checked out in the agent's cwd.
+    #[serde(default)]
+    pub branch: String,
+    /// The "what I'm working on now" slot.
+    #[serde(default)]
+    pub working_on: String,
+    #[serde(default)]
+    pub updated_ms: u64,
+}
+
+/// A partial card: absent fields keep their stored value.
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct AgentUpdate {
+    pub id: String,
+    #[serde(default)]
+    pub parent: Option<String>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub repo: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default)]
+    pub working_on: Option<String>,
+}
+
+#[derive(Default)]
+pub(crate) struct Agents {
+    cards: BTreeMap<String, AgentCard>,
+}
+
+fn too_long(value: Option<&String>, max: usize) -> bool {
+    value.is_some_and(|v| v.chars().count() > max)
+}
+
+impl Agents {
+    /// Create or merge a card; returns the stored result.
+    pub(crate) fn upsert(
+        &mut self,
+        update: AgentUpdate,
+        at_ms: u64,
+    ) -> Result<AgentCard, &'static str> {
+        let id = update.id.trim();
+        if id.is_empty() || id.chars().count() > MAX_NAME_CHARS || id == BROADCAST {
+            return Err("`id` must be a non-empty agent id other than \"all\"");
+        }
+        if too_long(update.parent.as_ref(), MAX_NAME_CHARS)
+            || too_long(update.kind.as_ref(), MAX_NAME_CHARS)
+            || too_long(update.repo.as_ref(), MAX_NAME_CHARS)
+            || too_long(update.branch.as_ref(), MAX_NAME_CHARS)
+            || too_long(update.cwd.as_ref(), MAX_CWD_CHARS)
+            || too_long(update.working_on.as_ref(), MAX_STATUS_CHARS)
+        {
+            return Err("a card field is too long");
+        }
+        if !self.cards.contains_key(id) && self.cards.len() >= MAX_AGENTS {
+            if let Some(stalest) = self
+                .cards
+                .values()
+                .min_by_key(|card| card.updated_ms)
+                .map(|card| card.id.clone())
+            {
+                self.cards.remove(&stalest);
+            }
+        }
+        let card = self
+            .cards
+            .entry(id.to_string())
+            .or_insert_with(|| AgentCard {
+                id: id.to_string(),
+                ..AgentCard::default()
+            });
+        let fields = [
+            (&mut card.parent, update.parent),
+            (&mut card.cwd, update.cwd),
+            (&mut card.kind, update.kind),
+            (&mut card.repo, update.repo),
+            (&mut card.branch, update.branch),
+            (&mut card.working_on, update.working_on),
+        ];
+        for (slot, value) in fields {
+            if let Some(value) = value {
+                *slot = value.trim().to_string();
+            }
+        }
+        card.updated_ms = at_ms;
+        Ok(card.clone())
+    }
+
+    pub(crate) fn get(&self, id: &str) -> Option<AgentCard> {
+        self.cards.get(id).cloned()
+    }
+
+    /// Every card, or only the direct children of `parent` when it is set.
+    pub(crate) fn list(&self, parent: Option<&str>) -> Vec<AgentCard> {
+        self.cards
+            .values()
+            .filter(|card| parent.is_none_or(|p| card.parent == p))
+            .cloned()
+            .collect()
+    }
+}
+
+fn agents() -> &'static Mutex<Agents> {
+    static AGENTS: OnceLock<Mutex<Agents>> = OnceLock::new();
+    AGENTS.get_or_init(|| Mutex::new(Agents::default()))
+}
+
+/// Record (or merge) an agent's card. Used by the daemon when it creates a
+/// sub-agent session, so the card exists before the agent's first turn.
+pub(crate) fn register_agent(update: AgentUpdate) -> Result<AgentCard, &'static str> {
+    agents()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .upsert(update, now_ms())
+}
+
+/// The stored card for `id`, if any.
+pub(crate) fn agent_card(id: &str) -> Option<AgentCard> {
+    agents()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(id)
 }
 
 #[derive(Default)]
@@ -139,6 +293,10 @@ pub(super) fn handle(
     path: &str,
     url: &str,
 ) -> Option<Request> {
+    if path == "/v1/board/agents" || path.starts_with("/v1/board/agents/") {
+        handle_agents(request, method, path, url);
+        return None;
+    }
     if path != "/v1/board/messages" {
         return Some(request);
     }
@@ -198,6 +356,57 @@ pub(super) fn handle(
     None
 }
 
+fn respond_card(request: Request, status: u16, card: &AgentCard) {
+    respond_json(
+        request,
+        status,
+        &serde_json::to_vec(card).unwrap_or_else(|_| b"{}".to_vec()),
+    );
+}
+
+/// `/v1/board/agents`: `GET` lists cards (`?parent=<id>` narrows to one
+/// agent's children), `POST` upserts one; `GET /v1/board/agents/<id>` reads one.
+fn handle_agents(mut request: Request, method: &Method, path: &str, url: &str) {
+    let one = path
+        .strip_prefix("/v1/board/agents/")
+        .map(percent_decode)
+        .filter(|id| !id.is_empty());
+    match (method, one) {
+        (Method::Get, Some(id)) => match agent_card(&id) {
+            Some(card) => respond_card(request, 200, &card),
+            None => error(request, 404, "not_found", "no such agent"),
+        },
+        (Method::Get, None) => {
+            let parent = query_value(url, "parent").map(percent_decode);
+            let cards = agents()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .list(parent.as_deref());
+            let body = serde_json::json!({ "agents": cards });
+            respond_json(request, 200, body.to_string().as_bytes());
+        }
+        (Method::Post, None) => {
+            let Some(update) = read_body(&mut request)
+                .ok()
+                .and_then(|body| serde_json::from_slice::<AgentUpdate>(&body).ok())
+            else {
+                error(
+                    request,
+                    400,
+                    "invalid_request",
+                    "expected {id, parent?, cwd?, kind?, repo?, branch?, working_on?}",
+                );
+                return;
+            };
+            match register_agent(update) {
+                Ok(card) => respond_card(request, 200, &card),
+                Err(message) => error(request, 400, "invalid_request", message),
+            }
+        }
+        _ => error(request, 405, "method_not_allowed", "use GET or POST"),
+    }
+}
+
 fn percent_decode(raw: &str) -> String {
     let bytes = raw.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -228,6 +437,70 @@ fn percent_decode(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn update(id: &str) -> AgentUpdate {
+        AgentUpdate {
+            id: id.to_string(),
+            ..AgentUpdate::default()
+        }
+    }
+
+    #[test]
+    fn agent_cards_merge_partial_updates() {
+        let mut agents = Agents::default();
+        agents
+            .upsert(
+                AgentUpdate {
+                    parent: Some("main".into()),
+                    cwd: Some("/repo".into()),
+                    kind: Some("codex".into()),
+                    repo: Some("zackees/clud".into()),
+                    branch: Some("feat/x".into()),
+                    ..update("sub-1")
+                },
+                1,
+            )
+            .unwrap();
+        let card = agents
+            .upsert(
+                AgentUpdate {
+                    working_on: Some("fixing the parser".into()),
+                    ..update("sub-1")
+                },
+                2,
+            )
+            .unwrap();
+        assert_eq!(card.parent, "main");
+        assert_eq!(card.cwd, "/repo");
+        assert_eq!(card.working_on, "fixing the parser");
+        assert_eq!(card.repo, "zackees/clud");
+        assert_eq!(card.branch, "feat/x");
+        assert_eq!(card.updated_ms, 2);
+        agents.upsert(update("other"), 3).unwrap();
+        let children: Vec<_> = agents
+            .list(Some("main"))
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(children, ["sub-1"]);
+        assert_eq!(agents.list(None).len(), 2);
+    }
+
+    #[test]
+    fn agent_cards_reject_bad_ids_and_evict_the_stalest() {
+        let mut agents = Agents::default();
+        assert!(agents.upsert(update(" "), 0).is_err());
+        assert!(agents.upsert(update(BROADCAST), 0).is_err());
+        for i in 0..MAX_AGENTS {
+            agents
+                .upsert(update(&format!("a{i}")), i as u64 + 10)
+                .unwrap();
+        }
+        agents.upsert(update("newest"), 10_000).unwrap();
+        assert_eq!(agents.list(None).len(), MAX_AGENTS);
+        assert!(agents.get("a0").is_none());
+        assert!(agents.get("newest").is_some());
+    }
 
     #[test]
     fn read_returns_own_and_broadcast_messages_after_the_cursor() {

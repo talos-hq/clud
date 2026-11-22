@@ -14,6 +14,8 @@ const SERVER_NAME: &str = "clud";
 
 /// Appended to the system prompt of every launch that gets the bridge, so the
 /// agent polls clud's bulletin board for instructions from clud and Hermes.
+/// Keep it short: a Windows `claude.cmd` / `codex.cmd` launch is capped at
+/// 8191 chars by cmd.exe. `board_status` / `board_agents` describe themselves.
 pub(super) const BOARD_DIRECTIVE: &str = "You are connected to clud's agent \
 bulletin board through the `clud` MCP server. clud, Hermes and other agents \
 use it to message and steer you. Call `mcp__clud__board_read` when you start, \
@@ -78,15 +80,78 @@ fn bridge_host() -> Option<(String, PathBuf)> {
     Some((std::env::var("PATH").unwrap_or_default(), state_root))
 }
 
-fn config_arg_for(exe_dir: &Path, path_env: &str, state_root: &Path) -> Option<String> {
-    let server = match bridge_python(exe_dir) {
-        Some(python) => serde_json::json!({
+/// The bridge's stdio server entry, as Claude's `--mcp-config` spells it.
+fn server_for(exe_dir: &Path, path_env: &str, state_root: &Path) -> Option<serde_json::Value> {
+    match bridge_python(exe_dir) {
+        Some(python) => Some(serde_json::json!({
             "type": "stdio",
             "command": python.to_string_lossy(),
             "args": ["-m", "clud.mcp_server"],
-        }),
-        None => native_server(exe_dir, path_env, state_root)?,
+        })),
+        None => native_server(exe_dir, path_env, state_root),
+    }
+}
+
+/// `-c mcp_servers.clud.*` overrides registering the bridge with Codex, so a
+/// codex agent (e.g. a `session_start` sub-agent) gets the board tools too.
+/// Empty when the bridge cannot run.
+pub(super) fn codex_bridge_overrides() -> Vec<String> {
+    let Some((path_env, state_root)) = bridge_host() else {
+        return Vec::new();
     };
+    current_exe_dir()
+        .and_then(|exe_dir| server_for(&exe_dir, &path_env, &state_root))
+        .map(|server| codex_overrides_for(&server))
+        .unwrap_or_default()
+}
+
+/// [`codex_bridge_overrides`] for a given server entry.
+pub(super) fn codex_overrides_for(server: &serde_json::Value) -> Vec<String> {
+    let toml_of = |value: &serde_json::Value| -> Option<String> {
+        Some(match value {
+            serde_json::Value::String(s) => toml::Value::String(s.clone()).to_string(),
+            serde_json::Value::Array(items) => {
+                let items: Vec<String> = items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(|item| toml::Value::String(item.to_string()).to_string())
+                    .collect();
+                format!("[{}]", items.join(","))
+            }
+            serde_json::Value::Object(map) => {
+                let pairs: Vec<String> = map
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        Some(format!(
+                            "{k}={}",
+                            toml::Value::String(v.as_str()?.to_string())
+                        ))
+                    })
+                    .collect();
+                format!("{{{}}}", pairs.join(","))
+            }
+            _ => return None,
+        })
+    };
+    ["command", "args", "env"]
+        .iter()
+        .filter_map(|key| {
+            // A codex launched through a Windows `.cmd` wrapper has its argv
+            // re-parsed by cmd.exe, where `>` redirects: `>=3.11` / `mcp>=2.1`
+            // cut the rest of codex's argv off. `>` only occurs inside TOML
+            // strings here, where the `\u003E` escape means the same value.
+            let value = toml_of(server.get(*key)?)?.replace('>', "\\u003E");
+            Some([
+                "-c".to_string(),
+                format!("mcp_servers.{SERVER_NAME}.{key}={value}"),
+            ])
+        })
+        .flatten()
+        .collect()
+}
+
+fn config_arg_for(exe_dir: &Path, path_env: &str, state_root: &Path) -> Option<String> {
+    let server = server_for(exe_dir, path_env, state_root)?;
     let config = serde_json::json!({ "mcpServers": { SERVER_NAME: server } });
     Some(format!("--mcp-config={config}"))
 }
@@ -168,6 +233,33 @@ fn bridge_python(exe_dir: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_overrides_spell_the_same_server_as_toml() {
+        let server = serde_json::json!({
+            "type": "stdio",
+            "command": "/u/uv",
+            "args": ["run", "--python", ">=3.11", "-m", "clud.mcp_server"],
+            "env": {"PYTHONPATH": "/p", "CLUD_BIN": "/b/clud"},
+        });
+        let out = codex_overrides_for(&server);
+        assert_eq!(
+            out,
+            [
+                "-c",
+                "mcp_servers.clud.command=\"/u/uv\"",
+                "-c",
+                "mcp_servers.clud.args=[\"run\",\"--python\",\"\\u003E=3.11\",\"-m\",\"clud.mcp_server\"]",
+                "-c",
+                "mcp_servers.clud.env={PYTHONPATH=\"/p\",CLUD_BIN=\"/b/clud\"}",
+            ]
+        );
+        assert!(out.iter().all(|arg| !arg.contains('>')), "cmd.exe redirect");
+        let args = out[3].split_once('=').unwrap().1;
+        let parsed: toml::Value = toml::from_str(&format!("a={args}")).unwrap();
+        assert_eq!(parsed["a"][2].as_str(), Some(">=3.11"));
+        assert!(codex_overrides_for(&serde_json::json!({})).is_empty());
+    }
 
     #[test]
     fn a_missing_bridge_explains_how_to_connect_it() {
