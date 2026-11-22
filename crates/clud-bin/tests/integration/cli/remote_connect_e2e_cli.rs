@@ -1020,6 +1020,10 @@ fn a_server_without_encryption_is_used_with_a_warning() {
     let (client, mut operator, created) = accepted_session();
     // Not expected to encrypt (a loopback host), so the description is sent as before.
     assert!(created["client"].get("cwd").is_some(), "{created}");
+    // The operator tells machines apart by name (#2899).
+    let host = created["client"]["host"].as_str().unwrap_or_default();
+    assert!(!host.is_empty(), "{created}");
+    assert!(created["client"].get("user").is_some(), "{created}");
     client.wait_for("does not offer end-to-end encryption");
     operator.send(json!({"type":"disconnect"}));
     client.wait_for("clud.bot has ended a connection");
@@ -1035,6 +1039,7 @@ fn a_server_without_encryption_is_refused_when_encryption_is_required() {
     // Kept for the encrypted socket, never sent where TLS ends at the edge.
     assert!(created["client"].get("cwd").is_none(), "{created}");
     assert!(created["client"].get("host").is_none(), "{created}");
+    assert!(created["client"].get("user").is_none(), "{created}");
     let (mut operator, path) = Operator::accept_path(&listener);
     assert!(
         path.contains("&e2e=1"),
