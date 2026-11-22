@@ -113,6 +113,7 @@ pub(crate) fn run_composited(
         resize_rx,
         capture.clone(),
         ToastPumpOptions {
+            process_gear: false,
             hub,
             tier,
             fallback,

@@ -1117,6 +1117,7 @@ where
 /// The toast hit targets the mouse filter checks, snapshotted per chunk.
 #[derive(Debug, Clone, Copy)]
 struct ToastHitTargets {
+    gear: Option<crate::toast::text_tier::CellRect>,
     close: Option<crate::toast::text_tier::CellRect>,
     cpu: Option<crate::toast::text_tier::CellRect>,
     hover_armed: bool,
@@ -1149,7 +1150,7 @@ fn filter_user_input_chunk(
 ) -> crate::toast::mouse::MouseResult {
     let outgoing = paste.process(chunk);
     match targets {
-        Some(t) => mouse.process(&outgoing, t.close, t.cpu, t.hover_armed),
+        Some(t) => mouse.process_with_gear(&outgoing, t.close, t.cpu, t.hover_armed, t.gear),
         None => crate::toast::mouse::MouseResult {
             bytes: outgoing,
             ..Default::default()
@@ -1187,7 +1188,13 @@ fn flush_pending_user_input(
     match targets {
         Some(targets) => {
             let mut bytes = mouse
-                .process(&pending, targets.close, targets.cpu, targets.hover_armed)
+                .process_with_gear(
+                    &pending,
+                    targets.close,
+                    targets.cpu,
+                    targets.hover_armed,
+                    targets.gear,
+                )
                 .bytes;
             bytes.extend(mouse.flush_pending());
             bytes
@@ -1213,11 +1220,15 @@ fn forward_user_input<H: InteractiveHooks>(
     source: &str,
 ) {
     let targets = toast_input.map(|input| ToastHitTargets {
+        gear: input.gear_rect(),
         close: input.close_rect(),
         cpu: input.cpu_rect(),
         hover_armed: input.cpu_hover_armed(),
     });
     let result = filter_user_input_chunk(chunk, paste, mouse, targets);
+    if result.open_processes {
+        crate::ui::open_session_processes();
+    }
     if result.dismissed {
         if let Some(hub) = toast_hub {
             if targets.and_then(|target| target.cpu).is_some() {
@@ -1851,6 +1862,7 @@ impl PumpInputState {
     /// longer wait), and any toast mouse prefix after idle.
     fn flush_due_input(&mut self, process: &NativePtyProcess) {
         let targets = self.toast_input.as_ref().map(|input| ToastHitTargets {
+            gear: input.gear_rect(),
             close: input.close_rect(),
             cpu: input.cpu_rect(),
             hover_armed: input.cpu_hover_armed(),

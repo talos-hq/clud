@@ -267,6 +267,7 @@
       } else {
         document.getElementById(currentRoute.tab).classList.add('active');
       }
+      if (currentRoute.tab === 'processes' && lastState) renderProcesses(lastState);
     }
 
     document.querySelectorAll('.tab').forEach(tab => {
@@ -506,10 +507,36 @@
         </table>`;
     }
 
+    function processesForLaunch(rows, origin, start) {
+      if (rows.some(r => r.pid === origin && r.start_time !== start)) return [];
+      const children = new Map();
+      for (const row of rows) {
+        if (!children.has(row.ppid)) children.set(row.ppid, []);
+        children.get(row.ppid).push(row);
+      }
+      const root = rows.find(r => r.pid === origin && r.start_time === start);
+      const pending = root ? [root] : [];
+      const tree = new Set();
+      while (pending.length) {
+        const row = pending.pop();
+        if (tree.has(row.pid)) continue;
+        tree.add(row.pid);
+        for (const child of children.get(row.pid) || []) {
+          if (child.start_time >= row.start_time) pending.push(child);
+        }
+      }
+      return rows.filter(r => tree.has(r.pid) || (r.start_time >= start && r.originator_pid === origin));
+    }
+
     function renderProcesses(state) {
-      const rows = (state.process_tree && state.process_tree.rows) || [];
+      const sessionPath = location.pathname.match(/^\/processes\/(\d+)\/(\d+)\/?$/);
+      const origin = sessionPath ? Number(sessionPath[1]) : null;
+      const start = sessionPath ? Number(sessionPath[2]) : null;
+      const allRows = (state.process_tree && state.process_tree.rows) || [];
+      const rows = origin === null ? allRows : processesForLaunch(allRows, origin, start);
       const body = document.getElementById('processes-body');
-      document.getElementById('processes-count').textContent = rows.length ? `(${rows.length})` : '';
+      document.getElementById('processes-count').textContent =
+        origin === null ? (rows.length ? `(${rows.length})` : '') : `CLUD:${origin} · ${rows.length}`;
       if (!rows.length) { body.innerHTML = '<p class="empty">no clud-associated processes are currently sampled.</p>'; return; }
       const byParent = new Map(); const ids = new Set(rows.map(r => r.pid));
       rows.forEach(r => { const p = r.ppid; if (!byParent.has(p)) byParent.set(p, []); byParent.get(p).push(r); });
@@ -517,7 +544,7 @@
       const node = (r, isRoot = false) => {
         const kids = byParent.get(r.pid) || []; const tier = r.tier || 'cold';
         const cwd = r.cwd || '-';
-        return `<details class="process-node ${esc(tier)}" open><summary class="process-title"><span class="badge kind">${esc(isRoot ? 'CLUD' : 'child')}</span><span>${esc(r.command || 'process')}</span><span class="badge ${r.live ? 'live' : 'gone'}">${r.live ? 'live' : 'exited'}</span>${r.live && r.start_time ? `<button class="button danger reap" data-pid="${esc(r.pid)}" data-start="${esc(r.start_time)}" title="Kill this process and its descendants">reap subtree</button>` : ''}</summary><div class="process-meta">pid ${esc(r.pid)} · ppid ${esc(r.ppid ?? '-')} · cwd ${esc(cwd)} · ${esc(Number(r.cpu_pct || 0).toFixed(1))}% CPU · ${esc(Math.round((r.rss_bytes || 0) / 1048576))} MiB · age ${esc(r.age_secs || 0)}s</div>${kids.length ? `<div class="process-children">${kids.map(child => node(child)).join('')}</div>` : ''}</details>`;
+        return `<details class="process-node ${esc(tier)}" open><summary class="process-title"><span class="badge kind">${esc(isRoot ? 'CLUD' : 'child')}</span><span>${esc(r.command || 'process')}</span><span class="badge ${r.live ? 'live' : 'gone'}">${r.live ? 'live' : r.exited_at_ms ? 'exited' : 'zombie'}</span>${origin === null && r.live && r.start_time ? `<button class="button danger reap" data-pid="${esc(r.pid)}" data-start="${esc(r.start_time)}" title="Kill this process and its descendants">reap subtree</button>` : ''}</summary><div class="process-meta">pid ${esc(r.pid)} · ppid ${esc(r.ppid ?? '-')} · cwd ${esc(cwd)} · ${esc(Number(r.cpu_pct || 0).toFixed(1))}% CPU · ${esc(Math.round((r.rss_bytes || 0) / 1048576))} MiB · age ${esc(r.age_secs || 0)}s</div>${kids.length ? `<div class="process-children">${kids.map(child => node(child)).join('')}</div>` : ''}</details>`;
       };
       body.innerHTML = roots.map(root => node(root, true)).join('');
       body.querySelectorAll('button.reap').forEach(btn => btn.addEventListener('click', ev => {

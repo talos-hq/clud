@@ -1,5 +1,12 @@
 # Toasts
 
+In a Kitty graphics terminal with SGR mouse reporting, the upper-right gear
+opens the authenticated daemon dashboard at `/processes/<clud-pid>/<start>`. The
+dashboard filters the existing process sample by the launch's originator PID and start time,
+including tagged descendants that now have a different OS parent. An unreaped
+child appears as a zombie until it leaves the process sample. The gear uses
+mouse reports the child has enabled.
+
 How clud shows short, expiring messages (a CPU episode, "cpu back to normal")
 while a harness TUI owns the terminal. Introduced by #1189; the design choice
 is recorded in [DD-071](../DESIGN_DECISIONS.md#dd-071-toasts-are-composited-inside-the-terminal-stream-not-drawn-in-an-external-window).

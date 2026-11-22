@@ -78,6 +78,7 @@ pub struct ToastPumpOptions {
     pub rows: u16,
     pub cols: u16,
     pub image_id: u32,
+    pub process_gear: bool,
 }
 
 /// Shared with the stdin path: the close button to hit-test, present only
@@ -91,12 +92,21 @@ pub struct ToastInput {
 #[derive(Debug, Default)]
 struct InputState {
     close: Option<CellRect>,
+    gear: Option<CellRect>,
     cpu: Option<CellRect>,
     hover_armed: bool,
     hovering_cpu: bool,
 }
 
 impl ToastInput {
+    pub fn gear_rect(&self) -> Option<CellRect> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).gear
+    }
+
+    fn set_gear(&self, rect: Option<CellRect>) {
+        self.state.lock().unwrap_or_else(|e| e.into_inner()).gear = rect;
+    }
+
     pub fn close_rect(&self) -> Option<CellRect> {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).close
     }
@@ -154,6 +164,8 @@ pub struct Compositor {
     fallback: Fallback,
     usage_writer: Option<Arc<StatusStateWriter>>,
     image_id: u32,
+    process_gear: bool,
+    gear_drawn: bool,
     shadow: vt100::Parser,
     /// Rewrites the sequences `vt100` drops before they reach `shadow` (#2028).
     shadow_feed: super::shadow_input::ShadowFeed,
@@ -188,6 +200,8 @@ impl Compositor {
             fallback: options.fallback,
             usage_writer: options.usage,
             image_id: options.image_id,
+            process_gear: options.process_gear,
+            gear_drawn: false,
             shadow: vt100::Parser::new(rows, cols, 0),
             shadow_feed: super::shadow_input::ShadowFeed::default(),
             tracker: EscapeTracker::new(),
@@ -232,6 +246,7 @@ impl Compositor {
             return bytes.to_vec();
         }
         let mut out = Vec::with_capacity(bytes.len() + 64);
+        let gear_before = self.gear_target();
         self.sync_hub(now);
         self.sync_usage();
         self.sync_cpu_opacity(now);
@@ -252,6 +267,7 @@ impl Compositor {
         out.extend_from_slice(bytes);
         self.tracker.feed(bytes);
         self.shadow_feed.feed(&mut self.shadow, bytes);
+        self.pending |= gear_before != self.gear_target();
 
         let flags = self.tracker.take_burst();
         if flags.any() {
@@ -260,6 +276,8 @@ impl Compositor {
             self.transmitted = None;
             self.cpu_transmitted = None;
             self.cpu_drawn = false;
+            self.gear_drawn = false;
+            self.input.set_gear(None);
             if matches!(self.drawn, Drawn::Kitty { .. } | Drawn::Cells { .. }) {
                 self.drawn = Drawn::None;
             }
@@ -269,7 +287,7 @@ impl Compositor {
             // Images scroll with text: pin the toast back after every burst.
             self.pending = true;
         }
-        if self.cpu_drawn {
+        if self.cpu_drawn || self.gear_drawn {
             self.pending = true;
         }
         out.extend(self.render(now));
@@ -312,6 +330,7 @@ impl Compositor {
     pub fn finish(&mut self) -> Vec<u8> {
         let mut out = self.remove_drawn();
         out.extend(self.remove_cpu_drawn());
+        out.extend(self.remove_gear());
         if self.transmitted.take().is_some() {
             out.extend(kitty::delete_image(self.image_id));
         }
@@ -447,7 +466,9 @@ impl Compositor {
             )
             || self.repaint_screen
             || self.cpu_drawn
-            || self.cpu_target();
+            || self.cpu_target()
+            || self.gear_drawn
+            || self.gear_target();
         if needs_bytes && !self.injection_allowed(now) {
             return Vec::new();
         }
@@ -487,6 +508,7 @@ impl Compositor {
             }
         }
         out.extend(self.render_cpu(now));
+        out.extend(self.render_gear());
         out
     }
 
@@ -553,6 +575,53 @@ impl Compositor {
         }
     }
 
+    fn gear_image_id(&self) -> u32 {
+        self.image_id ^ 0x0080_0000
+    }
+
+    fn gear_target(&self) -> bool {
+        self.process_gear
+            && self.tier == ToastTier::Kitty
+            && self.shadow.screen().size().1 >= 4
+            && self.shadow.screen().mouse_protocol_mode() != MouseProtocolMode::None
+            && self.shadow.screen().mouse_protocol_encoding() == MouseProtocolEncoding::Sgr
+    }
+
+    fn render_gear(&mut self) -> Vec<u8> {
+        if !self.gear_target() {
+            return self.remove_gear();
+        }
+        let image_id = self.gear_image_id();
+        let mut out = Vec::new();
+        if !self.gear_drawn {
+            let Ok(png) = raster::render_gear_png() else {
+                return out;
+            };
+            out.extend(kitty::transmit_png(image_id, &png));
+            self.gear_drawn = true;
+        }
+        let col = self.shadow.screen().size().1 - 2;
+        let mut place = text_tier::cup(0, col).into_bytes();
+        place.extend(kitty::place(image_id, 3, 2, 1));
+        out.extend(self.with_cursor_parked(place));
+        self.input.set_gear(Some(CellRect {
+            row: 0,
+            col,
+            width: 2,
+            height: 1,
+        }));
+        out
+    }
+
+    fn remove_gear(&mut self) -> Vec<u8> {
+        self.input.set_gear(None);
+        if std::mem::take(&mut self.gear_drawn) {
+            kitty::delete_image(self.gear_image_id())
+        } else {
+            Vec::new()
+        }
+    }
+
     fn cpu_image_id(&self) -> u32 {
         self.image_id ^ 0x0040_0000
     }
@@ -586,7 +655,7 @@ impl Compositor {
             out.extend(kitty::transmit_png(image_id, &png));
             self.cpu_transmitted = Some(content);
         }
-        let col = term_cols.saturating_sub(cols + 1);
+        let col = term_cols.saturating_sub(cols + if self.gear_target() { 3 } else { 1 });
         let mut place = text_tier::cup(0, col).into_bytes();
         place.extend(kitty::place(image_id, kitty::CPU_PLACEMENT_ID, cols, rows));
         out.extend(self.with_cursor_parked(place));
@@ -645,12 +714,17 @@ impl Compositor {
             out.extend(kitty::transmit_png(self.image_id, &png));
             self.transmitted = Some(content);
         }
-        let col = term_cols.saturating_sub(cols + 1);
         let top_row = if self.cpu_target() {
             raster::TOAST_ROWS
         } else {
             0
         };
+        let margin = if top_row == 0 && self.gear_target() {
+            3
+        } else {
+            1
+        };
+        let col = term_cols.saturating_sub(cols + margin);
         let mut place = text_tier::cup(top_row, col).into_bytes();
         place.extend(kitty::place(
             self.image_id,

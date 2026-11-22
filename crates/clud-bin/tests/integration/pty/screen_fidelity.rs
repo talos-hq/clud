@@ -220,6 +220,7 @@ fn a_fullscreen_repaint_across_a_resize_reaches_the_terminal_cell_exact() {
         resize_rx,
         capture.clone(),
         ToastPumpOptions {
+            process_gear: false,
             hub: ToastHub::new(),
             tier: ToastTier::Off,
             fallback: Fallback::None,
