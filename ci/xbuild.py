@@ -802,12 +802,21 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command in {"compile", "wheel", "standalone", "candidate"}:
+        from ci.computer_use_bundle import prepare_build as prepare_computer_use
         from ci.lokr_bundle import prepare_build
 
         # Native installers stay self-contained. Release wheels carry only the
         # verified download identity to remain below the existing PyPI size cap.
         embed = args.profile != "release" or args.command in {"standalone", "candidate"}
         prepare_build(args.target, embed=embed)
+        # These release wheels are already near their 20 MiB / 90 MiB gates.
+        # They provision from the same checksum pin when Computer Use starts.
+        size_limited_wheel = not embed and args.target in {
+            "x86_64-unknown-linux-gnu",
+            "x86_64-pc-windows-msvc",
+        }
+        if args.profile == "release" and not size_limited_wheel:
+            prepare_computer_use(args.target, ROOT / "target")
 
     if args.strategy == "soldr":
         prepare_toolchain_locally(args.target)

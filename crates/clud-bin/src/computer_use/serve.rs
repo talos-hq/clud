@@ -24,8 +24,13 @@ fn ensure_driver() -> Result<Driver, String> {
     let (home, artifact) = home_and_artifact()?;
     let inputs = provision::host_inputs(&home, artifact);
     if matches!(provision::resolve(&inputs), Resolution::Missing) {
+        let operation = if provision::embedded_archive_available() {
+            "unpacking bundled"
+        } else {
+            "downloading pinned"
+        };
         eprintln!(
-            "[clud] computer use: downloading pinned cua-driver {} ({} MB, verified by SHA-256)",
+            "[clud] computer use: {operation} Computer Use {} ({} MB, verified by SHA-256)",
             pin::VERSION,
             artifact.size / 1_000_000
         );
@@ -123,7 +128,7 @@ fn tcc_marker(home: &Path) -> PathBuf {
     home.join(".clud")
         .join("state")
         .join("computer-use")
-        .join("tcc-grant-requested")
+        .join("tcc-grant-requested-com.taloshq.computer-use")
 }
 
 /// macOS cannot grant Accessibility or Screen Recording silently; the user
@@ -304,7 +309,7 @@ pub fn display_notes(display: DisplayKind) -> Vec<String> {
         )],
         DisplayKind::Native if host::MACOS => vec![note(
             "macOS: Accessibility and Screen Recording must be approved once for \
-             CuaDriver (System Settings > Privacy & Security); run `clud computer-use grant`.",
+             ComputerUse (System Settings > Privacy & Security); run `clud computer-use grant`.",
         )],
         DisplayKind::Native => vec![note(
             "Windows: works in an interactive desktop session, not in Session 0 (services/SSH).",

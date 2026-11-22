@@ -1,4 +1,4 @@
-//! Computer use, built in: the pinned trycua `cua-driver` registered as an
+//! Computer use, built in: the pinned Talos HQ `cua-driver` registered as an
 //! MCP server (`mcp__cua__*`) on clud's launches, provisioned on first use.
 //!
 //! - [`pin`] — the one pinned release, per host target, with digests.
@@ -48,11 +48,11 @@ pub enum Action {
         #[arg(long = "json")]
         json: bool,
     },
-    /// Download and verify the pinned cua-driver now (normally done on first use).
+    /// Provision and verify the pinned Computer Use driver (normally done on first use).
     Install,
     /// Run cua-driver's own diagnostics with clud's environment.
     Doctor,
-    /// macOS: request Accessibility and Screen Recording for CuaDriver once.
+    /// macOS: request Accessibility and Screen Recording for ComputerUse once.
     Grant,
     /// The stdio MCP server Claude Code and Codex start.
     #[command(hide = true)]
@@ -116,7 +116,7 @@ pub fn codex_config_overrides(exe: &Path, mode: PermissionMode) -> Vec<String> {
             session_env::MODE_ENV,
             mode.as_str()
         ),
-        // First use downloads the pinned driver before the server answers.
+        // First use provisions the pinned driver before the server answers.
         format!("{prefix}.startup_timeout_sec=180"),
         // Codex otherwise asks before each MCP tool call.
         format!("{prefix}.default_tools_approval_mode=\"approve\""),
