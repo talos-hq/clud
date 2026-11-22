@@ -112,7 +112,13 @@ fn register_board_card(record: &super::api_sessions::ApiSessionRecord, parent: O
     let update = super::board::AgentUpdate {
         id: record.id.clone(),
         parent: Some(parent.unwrap_or_default()),
-        cwd: Some(record.cwd.to_string_lossy().into_owned()),
+        // `\\?\` verbatim prefixes are an implementation detail of the
+        // canonicalized record path; agents compare against plain paths.
+        cwd: Some(
+            crate::path_norm::strip_verbatim(&record.cwd)
+                .to_string_lossy()
+                .into_owned(),
+        ),
         kind: Some(
             match record.backend {
                 super::api_sessions::ApiSessionBackend::Claude => "claude",

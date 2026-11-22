@@ -136,7 +136,11 @@ pub(super) fn codex_overrides_for(server: &serde_json::Value) -> Vec<String> {
     ["command", "args", "env"]
         .iter()
         .filter_map(|key| {
-            let value = toml_of(server.get(*key)?)?;
+            // A codex launched through a Windows `.cmd` wrapper has its argv
+            // re-parsed by cmd.exe, where `>` redirects: `>=3.11` / `mcp>=2.1`
+            // cut the rest of codex's argv off. `>` only occurs inside TOML
+            // strings here, where the `\u003E` escape means the same value.
+            let value = toml_of(server.get(*key)?)?.replace('>', "\\u003E");
             Some([
                 "-c".to_string(),
                 format!("mcp_servers.{SERVER_NAME}.{key}={value}"),
@@ -235,7 +239,7 @@ mod tests {
         let server = serde_json::json!({
             "type": "stdio",
             "command": "/u/uv",
-            "args": ["run", "-m", "clud.mcp_server"],
+            "args": ["run", "--python", ">=3.11", "-m", "clud.mcp_server"],
             "env": {"PYTHONPATH": "/p", "CLUD_BIN": "/b/clud"},
         });
         let out = codex_overrides_for(&server);
@@ -245,11 +249,15 @@ mod tests {
                 "-c",
                 "mcp_servers.clud.command=\"/u/uv\"",
                 "-c",
-                "mcp_servers.clud.args=[\"run\",\"-m\",\"clud.mcp_server\"]",
+                "mcp_servers.clud.args=[\"run\",\"--python\",\"\\u003E=3.11\",\"-m\",\"clud.mcp_server\"]",
                 "-c",
                 "mcp_servers.clud.env={PYTHONPATH=\"/p\",CLUD_BIN=\"/b/clud\"}",
             ]
         );
+        assert!(out.iter().all(|arg| !arg.contains('>')), "cmd.exe redirect");
+        let args = out[3].split_once('=').unwrap().1;
+        let parsed: toml::Value = toml::from_str(&format!("a={args}")).unwrap();
+        assert_eq!(parsed["a"][2].as_str(), Some(">=3.11"));
         assert!(codex_overrides_for(&serde_json::json!({})).is_empty());
     }
 
