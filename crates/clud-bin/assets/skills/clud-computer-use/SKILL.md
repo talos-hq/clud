@@ -61,7 +61,8 @@ Every `clud computer-use` flag: the [CLI grammar](https://github.com/talos-hq/cl
   unpacks it into `~/.clud/libexec/cua-driver/`. Run `clud computer-use install`
   to provision it ahead of a session, then reconnect with `/mcp` or restart the
   session. The Linux GNU x64 and Windows x64 wheels and development builds fetch that same
-  pinned archive on first use.
+  pinned archive on first use through the `clud-computer-use` PyPI wheel or the
+  GitHub release.
 - Set `CLUD_CUA_DRIVER=/abs/path/cua-driver` to use another binary.
 - `clud --no-computer-use` disabled it for this session. Headless one-shot
   runs (`clud -p`), gateway providers (OpenRouter, DeepSeek, Kimi, Codex

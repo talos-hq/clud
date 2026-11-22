@@ -232,10 +232,18 @@ pub fn argv_is_batch_wrapped(argv: &[String]) -> bool {
 /// invisible-helper policy. Readers run concurrently inside running-process.
 /// A deadline failure kills and reaps the child and is never a successful exit.
 pub fn capture_separate(argv: Vec<String>, timeout: Duration) -> Result<CapturedOutput, String> {
+    capture_separate_with_env(argv, timeout, None)
+}
+
+pub(crate) fn capture_separate_with_env(
+    argv: Vec<String>,
+    timeout: Duration,
+    env: Option<Vec<(String, String)>>,
+) -> Result<CapturedOutput, String> {
     let process = NativeProcess::new(ProcessConfig {
         command: command_spec_for_subprocess(argv),
         cwd: None,
-        env: None,
+        env,
         capture: true,
         stderr_mode: StderrMode::Pipe,
         creationflags: crate::win_creation_flags::invisible_helper_creationflags(),

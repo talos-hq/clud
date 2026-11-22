@@ -14,6 +14,7 @@ pub mod pin;
 pub mod provision;
 pub mod serve;
 pub mod session_env;
+mod uv_archive;
 
 #[cfg(test)]
 mod tests;

@@ -10,7 +10,8 @@
 //! reused: only setup and install may read Hermes' tree or environment
 //! (`setup_command::hermes`, #2609), and this runs on the MCP serve path.
 //!
-//! Otherwise [`ensure`] uses the embedded archive or fetches the pinned release,
+//! Otherwise [`ensure`] uses the embedded archive, the pinned PyPI wheel through
+//! uv, or the GitHub release archive. It
 //! checks its size and SHA-256 before unpacking anything, and publishes the
 //! unpacked tree with one rename so concurrent first uses converge.
 
@@ -112,7 +113,7 @@ pub fn ensure(inputs: &Inputs<'_>) -> Result<Driver, String> {
         if embedded_archive_available() {
             Ok(ARCHIVE.to_vec())
         } else {
-            download(artifact)
+            super::uv_archive::read(inputs.home, artifact).or_else(|_| download(artifact))
         }
     })
 }

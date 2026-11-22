@@ -83,8 +83,10 @@ serve path. Point `CLUD_CUA_DRIVER` at it to share one copy deliberately.
 
 Otherwise clud unpacks the archive embedded in its release binary. The Linux
 GNU x64 and Windows x64 wheels use a first-use download to meet release size gates.
-Development builds use the same download. The pin defines each archive's URL,
-size, and SHA-256. clud verifies the archive before extraction and publishes
+Development builds use the same path. clud first asks its uv runtime for the
+platform wheel from PyPI at the exact `clud-computer-use` version. If uv cannot
+resolve it, clud fetches the same archive from GitHub. The pin defines each
+archive's URL, size, and SHA-256. clud verifies the archive before extraction and publishes
 the installed tree atomically. A concurrent first use verifies the winner.
 
 The archive is unpacked when the MCP server starts or when the user runs
