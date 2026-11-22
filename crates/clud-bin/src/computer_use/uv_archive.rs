@@ -14,7 +14,7 @@ pub(super) fn read(home: &Path, artifact: &Artifact) -> Result<Vec<u8>, String> 
     let _lock = crate::shim_uv::acquire_install_lock(&install).map_err(|e| e.to_string())?;
     let tools = install.join("tools");
     let environment = tools.join("clud-computer-use");
-    if let Some(path) = archive_path(&environment, artifact, cfg!(windows)) {
+    if let Some(path) = archive_path(&environment, artifact, crate::platform::host::WINDOWS) {
         return read_bounded(&path, artifact.size);
     }
 
@@ -26,7 +26,7 @@ pub(super) fn read(home: &Path, artifact: &Artifact) -> Result<Vec<u8>, String> 
     if output.exit != 0 {
         return Err(format!("uv tool exited with status {}", output.exit));
     }
-    let path = archive_path(&environment, artifact, cfg!(windows))
+    let path = archive_path(&environment, artifact, crate::platform::host::WINDOWS)
         .ok_or("uv tool did not install the pinned archive")?;
     read_bounded(&path, artifact.size)
 }
