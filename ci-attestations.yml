@@ -17,13 +17,15 @@
 # A job entry reduces that job (or Dylint leg) in place: it still starts and
 # reports success, but skips its setup and checks. Dylint legs are the
 # `matrix.pass` entries of `_dylint.yml:dylint`, one entry per leg, so a
-# host that cannot run one cross pass still earns the others.
+# host that cannot run one cross pass still earns the others. The hosted-only
+# `crates` leg formats and tests all dylints/* libraries; no trailer can reduce
+# it. Dylint gates prove workspace linting and library loading, not unit/UI tests.
 version: 1
 mode: shadow
 gates:
   rust/x86_64-unknown-linux-gnu/clippy: {lane: clippy}    # xbuild clippy (workspace, all targets)
   rust/x86_64-unknown-linux-gnu/doctest: {lane: clippy}   # xbuild doctest, same job
-  rust/x86_64-unknown-linux-gnu/dylint: {lane: dylint}    # host leg: crate fmt/tests + workspace pass
+  rust/x86_64-unknown-linux-gnu/dylint: {lane: dylint}    # host leg: guarded workspace pass only
   rust/x86_64-pc-windows-msvc/dylint: {lane: dylint-x86_64-pc-windows-msvc}
   rust/aarch64-apple-darwin/dylint: {lane: dylint-aarch64-apple-darwin}
 jobs:

@@ -4,6 +4,8 @@ name: Dylint
 # and the Windows MSVC / macOS arm64 cross-check passes run as parallel legs
 # of one Linux matrix (#2061). Run back to back they made Dylint the slowest
 # required job once the build's dependency cook went warm.
+# The fourth leg (`crates`) owns lint-library formatting and unit/UI tests.
+# Workspace lint attestations never reduce this hosted-only leg.
 
 on:
   workflow_call:
@@ -46,7 +48,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pass: [host, x86_64-pc-windows-msvc, aarch64-apple-darwin]
+        pass: [host, x86_64-pc-windows-msvc, aarch64-apple-darwin, crates]
     timeout-minutes: 30
     env:
       # Steps branch on this inside their scripts rather than a step-level
@@ -65,7 +67,7 @@ jobs:
       - name: Proven by a prooft attestation
         id: attested
         env:
-          ATTESTED: ${{ contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}
+          ATTESTED: ${{ matrix.pass != 'crates' && contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}
         run: |
           if [ "$ATTESTED" = "true" ]; then
             echo "::notice::Dylint ${{ matrix.pass }} proven by a prooft Ci-Attestation on this head (DD-225); skipping"
@@ -193,16 +195,18 @@ jobs:
       - name: Check dylint formatting
         if: steps.skip.outputs.reduced != 'true'
         run: |
-          [ "$DYLINT_PASS" = "host" ] || { echo "not the host leg"; exit 0; }
+          [ "$DYLINT_PASS" = "crates" ] || { echo "not the crates leg"; exit 0; }
           soldr rustup component add --toolchain nightly-2026-08-15 rustfmt
-          (cd dylints/ban_manual_slash_normalize && soldr --no-cache cargo fmt --all -- --check)
-          (cd dylints/enforce_platform_boundary && soldr --no-cache cargo fmt --all -- --check)
-      - name: Test dylint crate
+          for manifest in dylints/*/Cargo.toml; do
+            (cd "$(dirname "$manifest")" && soldr cargo fmt --all -- --check)
+          done
+      - name: Test dylint crates
         if: steps.skip.outputs.reduced != 'true'
+        env:
+          RUSTUP_TOOLCHAIN: nightly-2026-08-15
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target/dylint-tests
         run: |
-          [ "$DYLINT_PASS" = "host" ] || { echo "not the host leg"; exit 0; }
-          # Run from the crate so its .cargo/config.toml applies (RUST-016).
-          (cd dylints/ban_manual_slash_normalize && RUSTUP_TOOLCHAIN=nightly-2026-08-15 soldr --no-cache cargo test)
+          [ "$DYLINT_PASS" = "crates" ] || { echo "not the crates leg"; exit 0; }
           # enforce_platform_boundary's UI test (`ui/boundary.rs`) launches
           # nested Cargo through dylint_testing, outside soldr's Dylint front
           # door: keep the rustup proxy visible and point the runner at the
@@ -217,9 +221,13 @@ jobs:
           test -d "${RUSTUP_HOME:?}/toolchains/$qualified"
           test -f "$DYLINT_DRIVER_PATH/nightly-2026-08-15/dylint-driver"
           ln -sfnT "$qualified" "$RUSTUP_HOME/toolchains/nightly-2026-08-15"
-          (cd dylints/enforce_platform_boundary && \
-            RUSTUP_TOOLCHAIN=nightly-2026-08-15 CARGO_TARGET_DIR="$GITHUB_WORKSPACE/target/dylint-tests" \
-            soldr cargo test)
+          # Discover every library, including ban_dirs_home_dir. Run from
+          # each crate so its linker config applies (RUST-016), sharing
+          # compatible test artifacts with the cache enabled. Nested UI
+          # builds can still require differently shaped artifacts.
+          for manifest in dylints/*/Cargo.toml; do
+            (cd "$(dirname "$manifest")" && soldr cargo test)
+          done
       - name: Run dylint over workspace
         if: steps.skip.outputs.reduced != 'true'
         run: |

@@ -120,7 +120,8 @@ def _clippy_context(*, proven: bool) -> dict[str, Any]:
 
 def _dylint_context(leg: str, attested_passes: str) -> dict[str, Any]:
     doc = _load("_dylint.yml")
-    proven = f",{leg}," in attested_passes
+    decision = doc["jobs"]["dylint"]["steps"][0]["env"]["ATTESTED"]
+    proven = _Expr({"matrix.pass": leg, "inputs.attested_passes": attested_passes}).truthy(decision)
     context: dict[str, Any] = {
         f"inputs.{k}": v for k, v in _call_inputs(doc, {"attested_passes": attested_passes}).items()
     }
@@ -178,3 +179,35 @@ def test_the_attested_decision_matches_the_lint_only_definition() -> None:
     assert lint_only is not None
     assert attested is not None
     assert attested.group(1) == lint_only.group(1)
+
+
+@pytest.mark.parametrize(
+    "proof", ["", ",host,", ",host,x86_64-pc-windows-msvc,aarch64-apple-darwin,crates,"]
+)
+def test_workspace_proofs_never_reduce_hosted_crate_checks(proof: str) -> None:
+    doc = _load("_dylint.yml")
+    names = _names(_executed(doc, "dylint", _dylint_context("crates", proof)))
+    assert {
+        "Checkout source",
+        "Set up soldr",
+        "Prepare verified Dylint prebuilts",
+        "Check dylint formatting",
+        "Test dylint crates",
+    } <= names
+
+
+def test_hosted_crate_checks_discover_all_libraries_and_share_cached_test_artifacts() -> None:
+    steps = _load("_dylint.yml")["jobs"]["dylint"]["steps"]
+    checks = {step["name"]: step for step in steps if "name" in step}
+    for name in ("Check dylint formatting", "Test dylint crates"):
+        script = checks[name]["run"]
+        assert '[ "$DYLINT_PASS" = "crates" ]' in script
+        assert "for manifest in dylints/*/Cargo.toml; do" in script
+        assert '(cd "$(dirname "$manifest")" && soldr cargo ' in script
+        assert "--no-cache" not in script
+    env = checks["Test dylint crates"]["env"]
+    assert env["RUSTUP_TOOLCHAIN"] == attest.DYLINT_TOOLCHAIN
+    assert env["CARGO_TARGET_DIR"] == "${{ github.workspace }}/target/dylint-tests"
+    assert 'test -f "$DYLINT_DRIVER_PATH/nightly-2026-08-15/dylint-driver"' in checks[
+        "Test dylint crates"
+    ]["run"]

@@ -69,3 +69,54 @@ crate was not created from Dylint's template. The linker config is required for 
 
 If the missing-alias failure ever recurs, check `.cargo/config.toml` before
 suspecting Dylint.
+
+
+## Local attestation cost
+
+`./push` runs `ci.attest clippy dylint`. The local `dylint` lane prepares the
+verified tools and runs the guarded workspace pass. Lint-library formatting
+and unit/UI tests belong to `_dylint.yml`'s hosted-only `crates` leg; workspace
+trailers cannot reduce it. This includes `ban_dirs_home_dir`, previously
+missing from the producer's two-entry `DYLINT_CRATES` list and CI's test list.
+
+The November 22 investigation found these distinct costs:
+
+- `soldr --version` reported **0.9.54**. `target/attest/dylint.log:1-9`
+  promptly resolved prebuilt cargo-dylint/link 6.2.0 and the matching driver.
+- The uncached manual-slash test finished in **11.80 s** (line 80), whereas
+  the platform-boundary test compiled `dylint`/`dylint_testing` and finished
+  its test build in **19m49s** (line 324). Its nested UI build finished in
+  **15m28s** (line 402). Counters are scoped to different commands; these
+  timestamps are not one cumulative clock.
+- Each crate has its own empty `[workspace]` and lockfile. The first test
+  used its default target directory with caching disabled; the UI test used
+  `target/dylint-tests`. Its graph has 123 packages versus 61 for each other
+  lint. Thus the first two crates do not depend on the whole testing stack.
+  UI nesting, test builds, release cdylibs and workspace checks have different
+  fingerprints. Sharing a target directory only shares compatible units.
+- `--no-cache` originated in `f31368f7` (#487), alongside `ZCCACHE_DISABLE=1`,
+  hand-built drivers and alias retries. It survived `4c177b50` (#577) and
+  `5c1f4e5b` (#611), then `291b4c22` (#2847) copied it into `ci.attest`.
+  No test-specific cache correctness requirement is documented there.
+  [Issue #911](https://github.com/talos-hq/clud/issues/911) requested retiring
+  compatibility machinery; `00afefac` (#951) fixed the missing linker config,
+  and `b47c84c5` documented an old soldr 0.9.10 driver-version mismatch.
+  Those do not justify disabling today's test cache. Soldr's CLI source
+  describes `--no-cache` as a deprecated compilation-cache kill switch.
+
+There is an independent cold workspace-pass cost. In the same log, line 438
+rejects a verdict replay without library-load evidence; the real retry builds
+`ban_dirs_home_dir`'s release cdylib in **31m02s** (line 735), then builds the
+other libraries. The inspected log ends before that pass finishes. Removing
+UI tests cannot guarantee a cold lane finishes in minutes. The existing
+empty-pass/replay guard stays intact: a fast hollow pass earns no trailer.
+
+`soldr dylint prepare` provides tools and the driver, not clud's source-specific
+lint cdylibs. For fast cold clones, soldr/soldr-toolchain or setup-soldr must
+restore compatible dependency cooks or cache/publish these libraries keyed
+by lint sources and lockfiles, Dylint version, exact nightly/compiler identity,
+host ABI, profile, features and rustflags. Artifacts must retain
+`lib<lint>@<toolchain>.so` names from `dylint-link` in the consumer's expected
+layout. Nightly workspace check artifacts form a separate cache from test
+harnesses and release libraries. That upstream cache/payload work is outside
+this patch; the lane still builds what it needs to prove workspace linting.

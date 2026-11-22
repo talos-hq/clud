@@ -433,7 +433,14 @@ repository's `./push` as its whole local gate
 ([grind.md](grind.md#coordinator-workflow-sequential-mode-2873)).
 
 `ci/attest.py` runs each lane in `ci-attestations.yml` with the hosted
-commands (`--list` prints them). Each lane that passes adds one
+commands (`--list` prints them). The host `dylint` lane runs only
+`soldr dylint prepare` and the guarded
+`soldr dylint --all -- --workspace --all-targets` pass. It proves workspace
+linting, including loading all lint libraries. Formatting and unit/UI tests
+for every `dylints/*` crate run in the separate hosted-only `crates` matrix
+leg, which no attestation can reduce. That leg shares `target/dylint-tests`
+with soldr caching enabled; its result contributes to the reusable workflow
+result required by `CI OK`. Each lane that passes adds one
 `Ci-Attestation:` trailer per gate, bound to the tree and parents. The
 `CI mode` job's "Judge prooft attestations" step runs the hash-pinned prooft
 `plan` against the base's policy and prints its decision to the run summary.
@@ -471,9 +478,9 @@ A lane that cannot run on the local host fails, stamps nothing, and runs
 hosted. All four lanes run at once (`--serial` runs them one at a time);
 each writes `target/attest/<lane>.log`, and a failing lane prints its tail.
 When every lane has finished on an unchanged HEAD and clean tree, each
-passing lane is stamped in turn. The host Dylint lane exports the verified
-driver root (`DYLINT_DRIVER_PATH`) that setup-soldr exports on a runner, so
-the `enforce_platform_boundary` UI test passes locally. The cross Dylint
+passing lane is stamped in turn. The hosted `crates` leg uses the verified
+driver root (`DYLINT_DRIVER_PATH`) exported by setup-soldr for the
+`enforce_platform_boundary` UI test. The cross Dylint
 lanes check in their own `target/attest-cross/<triple>` directories, so
 they do not wait on one cargo lock. Lanes drop `SOLDR_PORCELAIN` and keep
 soldr's verdict ledger on, so a lane whose inputs already passed replays in
@@ -1635,10 +1642,11 @@ gating in this workspace is by OS rather than architecture, `x86_64-unknown-linu
 plus `x86_64-pc-windows-msvc` type-check every `cfg(windows)` / `cfg(unix)`
 branch. The other four triples would pay a full extra pass for no new coverage.
 
-**Dylint is required in every mode.** `_dylint.yml` is one `ubuntu-24.04` job,
-not a runner matrix. A late lint only observes code that compiles for the
+**Dylint is required in every mode.** `_dylint.yml` runs an `ubuntu-24.04`
+matrix: three workspace passes and a hosted-only crate-test leg.
+A late lint only observes code that compiles for the
 checked target, so the host pass never reaches `cfg(windows)` or
-`cfg(target_os = "macos")` modules. The job therefore adds check-only passes
+`cfg(target_os = "macos")` modules. The matrix therefore adds check-only passes
 with `--target x86_64-pc-windows-msvc` and `--target aarch64-apple-darwin`.
 `soldr dylint prepare --target` installs the pinned nightly's `rust-std` for
 each target; Soldr's verified 6.2.0 tools and nightly driver stay prebuilt, so
