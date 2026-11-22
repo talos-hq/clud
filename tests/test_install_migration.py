@@ -7,7 +7,6 @@ from pathlib import Path
 
 from tests import process
 
-
 FAKE_KEY = "sk-or-v1-" + "0123456789abcdef" * 4
 
 
@@ -75,7 +74,8 @@ def test_explicit_provider_subset_keeps_codex_and_its_service_unconfigured(tmp_p
     assert result.returncode == 0, result.stdout + result.stderr
     assert "clud-codex" in result.stdout
     text = (Path(env["HOME"]) / ".hermes" / "config.yaml").read_text()
-    assert "openrouter:" in text and FAKE_KEY in text
+    assert "openrouter:" in text
+    assert FAKE_KEY in text
     assert "clud-codex:" not in text
     assert FAKE_KEY not in result.stdout + result.stderr
     assert not (Path(env["XDG_CONFIG_HOME"]) / "systemd/user/clud-serve-codex.service").exists()
@@ -101,4 +101,36 @@ def test_requested_unavailable_provider_copies_nothing(tmp_path: Path) -> None:
     )
     assert result.returncode == 1, result.stdout + result.stderr
     assert "no available credential" in result.stderr
+    assert not (Path(env["HOME"]) / ".hermes" / "config.yaml").exists()
+
+
+def test_configure_only_target_overrides_hermes_home(tmp_path: Path) -> None:
+    binary, env = _world(tmp_path)
+    env_home = tmp_path / "environment-hermes"
+    env_home.mkdir()
+    original = "# environment config\n"
+    (env_home / "config.yaml").write_text(original)
+    env["HERMES_HOME"] = str(env_home)
+    target = tmp_path / "desktop hermes"
+    result = process.run(
+        [
+            binary,
+            "install",
+            "hermes",
+            "--configure-only",
+            "--target",
+            str(target),
+            "--yes",
+            "--migrate-provider",
+            "openrouter",
+        ],
+        env=env,
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "openrouter:" in (target / "config.yaml").read_text()
+    assert (env_home / "config.yaml").read_text() == original
     assert not (Path(env["HOME"]) / ".hermes" / "config.yaml").exists()

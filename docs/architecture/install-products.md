@@ -52,9 +52,13 @@ failed. Every step reports what it found, so a rerun is safe.
   nothing, runs nothing, and writes nothing. Works without a terminal.
 - `--configure-only` skips the bootstrap and runs only the configure step.
   This is what `hermes setup clud` and `talos setup clud` call.
-- `--target DIR` names an existing install to configure, for
-  `--configure-only` and to skip the wizard's directory question. It is the
-  same value `--dir` gives the installer, and the two are mutually exclusive.
+- `--configure-only --target DIR` writes `DIR/config.yaml`: the explicit
+  Hermes home takes precedence over `HERMES_HOME`, then the default `~/.hermes`.
+  For example, `--target /path/to/desktop-hermes` configures the desktop home.
+  Without `--configure-only`, `--target` keeps its installer-directory meaning.
+  `--dir` always selects the bootstrap installation directory, not the config
+  home. It remains mutually exclusive with `--target`; normal installation
+  config still uses `HERMES_HOME` or `~/.hermes`. Dry runs print both paths.
 - `--no-configure` installs and stops.
 - `--yes` runs without prompts; it never migrates credentials unless
   `--migrate-credentials` or `--migrate-provider ID` is also given.

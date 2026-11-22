@@ -349,3 +349,69 @@ fn unavailable_migration_provider_does_not_copy_other_credentials() {
     assert!(output.contains("no available credential"), "{output}");
     assert_eq!(fs::read(config_path(&fx)).unwrap(), before);
 }
+
+#[test]
+fn configure_only_target_overrides_hermes_home_and_preserves_default_config() {
+    let fx = fixture();
+    seed_config(&fx);
+    let original = fs::read(config_path(&fx)).unwrap();
+    let env_home = fx.home.join("environment-hermes");
+    fs::create_dir_all(&env_home).unwrap();
+    fs::write(env_home.join("config.yaml"), "# environment home\n").unwrap();
+    let target = fx.home.join("desktop hermes");
+    let key = fake_key();
+    let (exit, output) = run(
+        &fx,
+        &[
+            ("OPENROUTER_API_KEY", &key),
+            ("HERMES_HOME", env_home.to_str().unwrap()),
+        ],
+        &[
+            "install",
+            "hermes",
+            "--configure-only",
+            "--target",
+            target.to_str().unwrap(),
+            "--yes",
+            "--migrate-provider",
+            "openrouter",
+        ],
+    );
+    assert_eq!(exit, 0, "{output}");
+    assert!(fs::read_to_string(target.join("config.yaml"))
+        .unwrap()
+        .contains("openrouter:"));
+    assert_eq!(fs::read(config_path(&fx)).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(env_home.join("config.yaml")).unwrap(),
+        "# environment home\n"
+    );
+    assert!(!target.join(".hermes/config.yaml").exists());
+}
+
+#[test]
+fn configure_only_target_dry_run_reports_config_without_writing() {
+    let fx = fixture();
+    let target = fx.home.join("desktop-hermes");
+    let (exit, output) = run(
+        &fx,
+        &[],
+        &[
+            "install",
+            "hermes",
+            "--configure-only",
+            "--target",
+            target.to_str().unwrap(),
+            "--dry-run",
+        ],
+    );
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        output.contains(&format!(
+            "install: config {}",
+            target.join("config.yaml").display()
+        )),
+        "{output}"
+    );
+    assert!(!target.exists());
+}
