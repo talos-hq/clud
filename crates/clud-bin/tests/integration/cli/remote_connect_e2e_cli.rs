@@ -230,9 +230,20 @@ impl Operator {
         self.socket.send(Message::Binary(frame.into())).unwrap();
     }
 
+    /// Read one frame. A heartbeat `ping` is answered like the real server
+    /// does: the client counts 35 s without a frame as a lost link, and a long
+    /// flood (Windows relays about 200 KB/s through ConPTY) outlasts that
+    /// while the operator only reads (#2887).
     fn pump_once(&mut self) {
         match self.socket.read() {
-            Ok(Message::Text(text)) => self.events.push(serde_json::from_str(&text).unwrap()),
+            Ok(Message::Text(text)) => {
+                let event: Value = serde_json::from_str(&text).unwrap();
+                if event["type"] == "ping" {
+                    self.send(json!({"type":"pong"}));
+                } else {
+                    self.events.push(event);
+                }
+            }
             Ok(Message::Binary(frame)) => {
                 assert_eq!(frame.first(), Some(&0), "output must use channel 0");
                 self.shell_output.extend_from_slice(&frame[1..]);
@@ -273,8 +284,14 @@ impl Operator {
 
     /// Like `wait_shell_output`, but searches only what arrived since the last
     /// look, for floods where rescanning everything would be quadratic.
+    ///
+    /// The deadline is `WAIT` without progress, not `WAIT` in total: a flood
+    /// moves at the runner's throughput (Windows runners relay about 200 KB/s
+    /// through ConPTY, #2887), and what this guards against is a link that
+    /// stops delivering, not a slow one.
     fn wait_shell_bytes(&mut self, needle: &[u8]) {
-        let deadline = Instant::now() + WAIT;
+        let mut deadline = Instant::now() + WAIT;
+        let mut seen = self.shell_output.len();
         let mut from = 0;
         loop {
             let window = &self.shell_output[from.min(self.shell_output.len())..];
@@ -282,11 +299,17 @@ impl Operator {
                 return;
             }
             from = self.shell_output.len().saturating_sub(needle.len());
+            if self.shell_output.len() > seen {
+                seen = self.shell_output.len();
+                deadline = Instant::now() + WAIT;
+            }
             assert!(
                 Instant::now() < deadline,
-                "server never received {:?} ({} bytes so far)",
+                "server never received {:?}: nothing new for {WAIT:?} ({} bytes so far), \
+                 last bytes: {}",
                 String::from_utf8_lossy(needle),
-                self.shell_output.len()
+                self.shell_output.len(),
+                self.shell_output[self.shell_output.len().saturating_sub(300)..].escape_ascii()
             );
             self.pump_once();
         }
@@ -1065,8 +1088,10 @@ fn a_stalled_link_paces_the_shell_and_loses_nothing() {
     operator.wait_shell_bytes(b"\n1000\r\n");
     // Stop reading: the server's receive buffer and the client's send buffer fill.
     std::thread::sleep(Duration::from_secs(12));
-    let last = format!("\n{LINES}\r\n");
-    operator.wait_shell_bytes(last.as_bytes());
+    // The bare number, not a framed line: ConPTY renders the screen, and after
+    // a stall it may repaint the last lines with escapes around them (#2887).
+    // No smaller line contains it, so it still marks the end of the flood.
+    operator.wait_shell_bytes(LINES.to_string().as_bytes());
     listener.set_nonblocking(true).unwrap();
     assert!(
         matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock),
