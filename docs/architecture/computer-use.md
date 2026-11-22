@@ -1,7 +1,7 @@
 # Computer use
 
-clud ships computer use built in: the pinned trycua
-[cua-driver](https://github.com/trycua/cua/tree/main/libs/cua-driver)
+clud ships computer use built in: the [Talos HQ Computer Use](https://github.com/talos-hq/computer-use)
+release
 registered as an MCP server named `cua`, so the agent sees `mcp__cua__*`
 tools (windows, screenshots, clicks, typing, real browsers) with no setup and
 no permission prompts. Rationale:
@@ -55,12 +55,12 @@ There are three layers, and none prompts:
      security prompts are refused, never asked.
    Any other value of the variable maps to `standard`, so a garbled or
    inherited value can only narrow.
-   On macOS `cua-driver mcp` proxies to the signed `CuaDriver.app` daemon
+   On macOS `cua-driver mcp` proxies to the signed `ComputerUse.app` daemon
    that LaunchServices starts. cua documents the environment form for Linux
    and Windows only, and this has not been verified on macOS: if the variables
    do not reach the daemon it runs cua's `standard` profile (still
    prompt-free; residual boundaries are refused). `--direct` would apply the
-   mode in-process but attribute TCC to the terminal instead of CuaDriver, so
+   mode in-process but attribute TCC to the terminal instead of ComputerUse, so
    clud does not use it.
 3. **OS.** macOS TCC (Accessibility, Screen Recording) cannot be granted
    silently; see [macOS](#macos).
@@ -81,22 +81,18 @@ setup and install may read Hermes' tree or environment (the boundary test in
 `setup_command/hermes_tests.rs`, #2609), and this resolution runs on the MCP
 serve path. Point `CLUD_CUA_DRIVER` at it to share one copy deliberately.
 
-Otherwise it downloads the pinned archive (`computer_use/pin.rs`: version,
-per-target URL, size, SHA-256 from the release's `SHA256SUMS`) from
-`github.com/trycua/cua/releases/download/cua-driver-rs-v<version>/` (redirects
-only to GitHub's asset CDN), rejects a wrong size or digest before unpacking,
-unpacks into a staging directory beside the target, and publishes it with one
-rename. A concurrent first use accepts the winner after the same verification;
-an unverifiable tree under the pinned name is replaced.
+Otherwise clud unpacks the archive embedded in its release binary. The Linux
+GNU x64 and Windows x64 wheels use a first-use download to meet release size gates.
+Development builds use the same download. The pin defines each archive's URL,
+size, and SHA-256. clud verifies the archive before extraction and publishes
+the installed tree atomically. A concurrent first use verifies the winner.
 
-Provisioning is lazy: launches do no filesystem or network work for computer
-use. Claude Code connects MCP servers in the background, so the first session
-pays the download (30 MB Linux/Windows, 70 MB macOS) without blocking the
-prompt. If that exceeds the MCP startup timeout, `clud computer-use install`
-finishes it and `/mcp` reconnects.
+The archive is unpacked when the MCP server starts or when the user runs
+`clud computer-use install`. After installing, reconnect the server with
+`/mcp` or restart the session.
 
-macOS uses the directory archive: only it carries the signed `CuaDriver.app`
-whose identity (`com.trycua.driver`) holds the TCC grants.
+macOS uses the directory archive: only it carries the signed `ComputerUse.app`
+whose identity (`com.taloshq.computer-use`) holds the TCC grants.
 
 ## Driver environment
 
@@ -139,10 +135,10 @@ depend on the display server.
 ## macOS
 
 macOS requires the user to approve Accessibility and Screen Recording for
-CuaDriver once. clud asks **once per machine**: the first `computer-use mcp`
+ComputerUse once. clud asks **once per machine**: the first `computer-use mcp`
 start on macOS writes `~/.clud/state/computer-use/tcc-grant-requested`, then
 runs `cua-driver permissions grant` in the background (dialogs are attributed
-to CuaDriver through LaunchServices). The marker is written first, so a
+to ComputerUse through LaunchServices). The marker is written first, so a
 declined or interrupted request is never raised again automatically.
 `clud computer-use grant` requests it again on demand.
 
@@ -162,7 +158,7 @@ stderr (Claude Code's MCP log).
 ## Bumping the pin
 
 Edit every row in `computer_use/pin.rs` from the new release's `SHA256SUMS`
-and asset sizes (`gh release view cua-driver-rs-v<v> -R trycua/cua --json
+and asset sizes (`gh release view computer-use-v<v> -R talos-hq/computer-use --json
 assets`), run `clud computer-use install` and the Xvfb proof below, and check
 `cua-driver manifest` still advertises `mcp` and the permission variables.
 

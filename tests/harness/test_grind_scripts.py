@@ -278,17 +278,17 @@ def test_l4_only_test_bat_on_linux_detects_nothing(harness: Harness) -> None:
 # ---- L5, L11, L12: what the integrator is told ---------------------------------
 
 
-def test_l5_integrator_prompt_runs_focused_test_then_lint_not_tests(harness: Harness) -> None:
+def test_l5_integrator_prompt_orders_focused_test_and_selected_scripts(harness: Harness) -> None:
     make_scripts(harness, delegate_to=True)
     _record_run_json(harness, SCRIPTS)
     roles = _goal_roles(harness, "g")
     result = _grind(harness, roles, scripts=SCRIPTS)
     text = result.prompt_text("integrator:g")
-    focused = text.index("1. planner's focused test:")
+    focused = text.index("1. the goal's focused test:")
     lint = text.index("2. bash ./lint")
+    test = text.index("3. bash ./test --integration")
     gate = text.index("MULTI-PLATFORM LINT GATE")
-    assert focused < lint < gate, text[:3000]
-    assert "bash ./test" not in text
+    assert focused < lint < test < gate, text[:3000]
     # The planner was told not to invent lint/test commands.
     assert "do not add lint or test commands" in result.prompt_text("planner:g")
     assert _merged(harness) == ["grind/g"]

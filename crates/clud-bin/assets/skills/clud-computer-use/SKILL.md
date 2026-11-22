@@ -1,6 +1,6 @@
 ---
 name: clud-computer-use
-description: Drive this machine's desktop through clud's built-in computer use (the `cua` MCP server, tools `mcp__cua__*`, backed by the pinned trycua cua-driver) - list and read windows, take screenshots, click, type, press keys, launch apps and control a real browser. Use when a task needs a GUI app, the user's screen, a desktop window or a browser page that no CLI or API reaches, or when asked for "computer use", "look at my screen" or "click/type in <app>". Covers getting the driver when it is missing, macOS/Windows/Linux X11 and Wayland limits, and the safety rules.
+description: Drive this machine's desktop through clud's built-in computer use (the `cua` MCP server, tools `mcp__cua__*`, backed by the bundled Talos HQ Computer Use) - list and read windows, take screenshots, click, type, press keys, launch apps and control a real browser. Use when a task needs a GUI app, the user's screen, a desktop window or a browser page that no CLI or API reaches, or when asked for "computer use", "look at my screen" or "click/type in <app>". Covers getting the driver when it is missing, macOS/Windows/Linux X11 and Wayland limits, and the safety rules.
 triggers:
   - When a task needs a desktop GUI application, a window, the screen, or a screenshot
   - When asked for computer use, desktop automation, or to click, type or read text in an app
@@ -51,16 +51,17 @@ Run, in Bash:
 
 ```bash
 clud computer-use status        # pinned version, driver path, display, notes
-clud computer-use install       # download + SHA-256 verify the pinned driver now
+clud computer-use install       # verify and unpack the pinned driver
 clud computer-use doctor        # cua-driver's own diagnostics, clud's environment
 ```
 
 Every `clud computer-use` flag: the [CLI grammar](https://github.com/talos-hq/clud/blob/main/docs/cli-grammar.md#clud-computer-use).
 
-- First use downloads the pinned driver (30-70 MB) into
-  `~/.clud/libexec/cua-driver/`; a slow link can outlast the MCP startup
-  timeout. Run `clud computer-use install`, then ask the user to reconnect the
-  server with `/mcp` (or restart the session). Do not retry in a loop.
+- The release binary carries a checksum-pinned Computer Use archive. First use
+  unpacks it into `~/.clud/libexec/cua-driver/`. Run `clud computer-use install`
+  to provision it ahead of a session, then reconnect with `/mcp` or restart the
+  session. The Linux GNU x64 and Windows x64 wheels and development builds fetch that same
+  pinned archive on first use.
 - Set `CLUD_CUA_DRIVER=/abs/path/cua-driver` to use another binary.
 - `clud --no-computer-use` disabled it for this session. Headless one-shot
   runs (`clud -p`), gateway providers (OpenRouter, DeepSeek, Kimi, Codex
@@ -73,15 +74,15 @@ Every `clud computer-use` flag: the [CLI grammar](https://github.com/talos-hq/cl
 ## Platform limits
 
 **macOS.** Accessibility and Screen Recording must be approved once by the
-user for **CuaDriver** (System Settings > Privacy & Security); macOS does not
-allow a silent grant. clud raises the request once, on first use. If
+user for **ComputerUse** (System Settings > Privacy & Security); macOS does not
+allow a silent grant. After migrating from the upstream driver, grant access
+to ComputerUse under its new identity. clud requests it once. If
 `check_permissions` still reports a missing grant, tell the user and suggest
 `clud computer-use grant`; never re-trigger it repeatedly and never click
 through a privacy or password dialog yourself.
 
 **Windows.** Works in an interactive desktop session (console or RDP), not in
-Session 0 (a service or plain SSH). A UIAccess helper (`cua-driver-uia.exe`)
-may trigger one SmartScreen notice; that is the user's call.
+Session 0 (a service or plain SSH). Elevated windows may be inaccessible.
 
 **Linux X11.** Window listing, window screenshots and input all work. AT-SPI
 (accessibility bus) is needed for element trees; `doctor` says when it is off.
