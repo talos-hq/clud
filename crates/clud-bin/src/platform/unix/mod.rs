@@ -31,6 +31,7 @@ pub mod job_orphan_reaper;
 pub mod large_file_guard;
 pub mod log_event;
 pub mod login_env;
+pub mod managed_codex;
 #[cfg(test)]
 mod nounset;
 pub mod optimize;

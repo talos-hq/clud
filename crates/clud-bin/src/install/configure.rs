@@ -353,6 +353,17 @@ pub fn run(
     }
     match apply(product, product_home, &stored(), out) {
         Outcome::Migrated { path, providers } => {
+            if let Err(error) = ensure_gateway(
+                &providers,
+                out,
+                &mut crate::platform::managed_codex::install,
+            ) {
+                eprintln!(
+                    "configure: providers written to {}; Codex gateway startup failed: {error}",
+                    path.display()
+                );
+                return 1;
+            }
             let _ = writeln!(
                 out,
                 "configure: wrote {} provider(s) to {}",
@@ -368,6 +379,23 @@ pub fn run(
         }
         Outcome::Declined | Outcome::NoTerminal => 0,
     }
+}
+
+/// Only a migrated Codex provider opts into a persistent gateway. Ordinary
+/// serve invocations and migrations of other providers keep their lifecycle.
+fn ensure_gateway(
+    providers: &[String],
+    out: &mut dyn Write,
+    install: &mut dyn FnMut() -> Result<&'static str, String>,
+) -> Result<(), String> {
+    if providers
+        .iter()
+        .any(|provider| provider == CODEX_GATEWAY_ID)
+    {
+        let notice = install()?;
+        let _ = writeln!(out, "configure: {notice}");
+    }
+    Ok(())
 }
 
 /// Write `credentials` into the product's config, atomically.
@@ -445,6 +473,52 @@ mod tests {
         assert_eq!(second.matches("api_mode:").count(), 1, "{second}");
         assert!(second.contains("api_mode: chat_completions"), "{second}");
         assert!(second.contains("\"new\""), "{second}");
+    }
+
+    #[test]
+    fn managed_codex_gateway_is_enabled_only_when_codex_was_migrated() {
+        let mut calls = 0;
+        let mut install = || {
+            calls += 1;
+            Ok("gateway enabled")
+        };
+        let mut out = Vec::new();
+        ensure_gateway(&[], &mut out, &mut install).unwrap();
+        ensure_gateway(&["openrouter".into()], &mut out, &mut install).unwrap();
+        assert!(out.is_empty());
+        ensure_gateway(&[CODEX_GATEWAY_ID.into()], &mut out, &mut install).unwrap();
+        assert_eq!(calls, 1);
+        assert!(
+            ensure_gateway(&[CODEX_GATEWAY_ID.into()], &mut out, &mut || Err(
+                "no manager".into()
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn unsupported_gateway_keeps_migration_successful_with_a_manual_startup_notice() {
+        let home = tempfile::tempdir().unwrap();
+        let product = super::super::products::find("hermes").unwrap();
+        let mut out = Vec::new();
+        let Outcome::Migrated { path, providers } = apply(
+            product,
+            home.path(),
+            &[codex_gateway("test-token".into())],
+            &mut out,
+        ) else {
+            panic!("migration must succeed");
+        };
+        ensure_gateway(&providers, &mut out, &mut || {
+            Ok("automatic startup unavailable; run `clud serve --codex` manually")
+        })
+        .unwrap();
+        let notice = String::from_utf8(out).unwrap();
+        assert!(notice.contains("run `clud serve --codex` manually"));
+        assert!(!notice.contains("test-token"));
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("clud-codex:"));
     }
 
     fn openrouter() -> Credential {
