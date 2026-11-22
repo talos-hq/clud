@@ -8896,3 +8896,71 @@ The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also rep
 **Consequences:**
 - The `dylint` lane checks a superset of the remote jobs: Clippy on the host and every `[workspace.metadata.soldr].targets` triple, Dylint on the host and each of those targets.
 - Dylint 6.2.0 reads `rust-toolchain.toml`; the bare `rust-toolchain` filename only mattered for 6.0.3.
+
+## DD-236: grind is one worker per goal, stacked dependents, and a haiku watcher escalating to an opus fixer
+
+**Context:** A `/grind` run over 14 sub-issues of a heavy C++ repository (a merge queue of 30-90 minutes per PR, #2873) wrote each goal in about five minutes yet idled for hours. Dependents waited on `landed`, which resolves only when the blocker's PR merges, so a four-deep chain of file-overlap edges cost four serial merge-queue round trips. Sequential mode ran goals in the graph's listed order, so one merge wait blocked independent goals. Each goal crossed five agents (plan, edit, review, integrate, then a chaperone), every chaperone was a large model that spent most of its life waiting, and the chosen `test` script never ran before a push. A hand-written workflow with one worker per goal and a haiku watcher per PR escalating to an opus fixer opened the remaining PRs back to back in the same session.
+
+**Decision:** Supersedes [DD-205](#dd-205-grind-is-one-editor-one-integrator-and-n-chaperones)'s pipeline, chaperone model and lint-only gate; its chains, fixup pool, budgets and red-base breaker stay.
+
+- The default `pipeline: "worker"` runs one `grind-worker` per goal: dedup, plan, edit, self-review, local CI and push in one context. The planner/editor/reviewer/integrator chain stays as `pipeline: "staged"`, run-wide or per goal.
+- Local CI is the push gate: the run's `test` script runs before every push, with lint and the multi-platform lint gate.
+- A `merged` blocker carries an `edge`. `file_overlap` (default) and `semantic` dependents wait on a `pushed` promise and stack on the parent's pushed branch; their PRs still target `<base>`. Only `edge: "merge"` waits for the merge.
+- Each chaperone chain runs WATCH on `haiku` (detect, mechanical enqueue, `green` for a stacked PR) and FIXUP on `opus`. A parent's merge wakes its stacked children (`parent_merged_needs_rebase`), whose fixer runs `git rebase --onto origin/<base> <parent head>`.
+- The approved graph is scheduled in critical-path order. A goal with `gate: "human"` and its dependents are reported as waiting and never scheduled. The validator names the allowed values and the fix.
+
+**Rationale:**
+- Generating a change is fast and a merge queue slow, so the producer must never wait on the queue; stacking turns an N-deep chain from N merge round trips into N pushes plus one rebase each.
+- A watcher mostly waits and reads exit codes; a small model does that. Diagnosis and fixes need the large one, and only on a problem.
+- One agent per goal keeps the context it built while planning for the edit and the push, and removes four hand-offs.
+- A red PR in a queue costs an hour; the suite locally costs minutes.
+
+**Alternatives Considered:**
+
+| Approach | Why not |
+|---|---|
+| Keep the merged gate and only reorder the queue | Moves the stall: a dependency chain still serializes on merges. |
+| Stack on every parent (merge their branches) | A PR with merge commits from several unmerged branches cannot be rebased with one `--onto`; the second parent waits for its merge instead. |
+| A large-model chaperone that also fixes (DD-205) | Pays a large model to wait; DD-195's haiku chaperone failed because it had to fix too, which the fixer escalation removes. |
+| Drop the staged chain | A risky goal may still want a separate reviewer. |
+
+**Consequences:**
+- A stacked PR shows its parent's commits until the parent merges, and its CI runs twice (before and after the rebase).
+- A child whose parent is still queued at Finish is reported `stacked` with the exact rebase command; nothing rebases it later.
+- A goal with two stacking parents that are not in one chain still waits for the second parent's merge.
+- The harness suites that script the staged roles pin `pipeline: "staged"`.
+
+## DD-237: sequential grind is a coordinator over one central checkout, and its tailored workflow is linted by simulation
+
+**Context:** [DD-236](#dd-236-grind-is-one-worker-per-goal-stacked-dependents-and-a-haiku-watcher-escalating-to-an-opus-fixer)'s pilot on FastLED (2026-11-20, #2873) landed 9 of 10 goals but created its own backpressure. A watcher started inside a workflow cannot receive a background completion notification (#2877), so each interim return started an opus fixer: 32 watchers and 25 fixers for 9 PRs, 18 of them no-ops. Fixers built in worktrees while the worker and the session's Stop hook built in the central checkout; the zccache daemon crashed, the build lock timed out, and the load average reached about 175 on 16 cores. The pilot was a hand-written script nobody had checked, and the fixed `grind-run.js` could only be reordered by stopping and restarting it.
+
+**Decision:** Sequential `/grind` runs a coordinator (`workflows/grind-coord.js`):
+- Triage is the existing orchestrator agent. After the question round the router tailors a copy of the template to the run (tasks, gate, policy, base) instead of passing args to a fixed engine.
+- One `grind-worker` at a time in the central checkout takes a task from `origin/<base>` to a pushed PR and ends with the checkout clean on `<base>`. A cleanup agent runs before anything else if it is not.
+- A `grind-chaperone` on Sonnet (or Haiku) per PR only watches, enqueues and reports. It never edits.
+- Every reported problem becomes a fixup in the same central checkout, scheduled before any new task. Problems are deduped by problem kind and head. A real Sonnet chaperone filled `evidence_id` with a timestamped log path, so that field cannot be the key.
+- No new task starts while `maxInFlight` PRs are pushed and unsettled. Watches, fixups and cleanups are capped.
+- A long-horizon plan passes a feature branch as the base. The checkout returns to it between tasks, and one final agent opens the feature PR.
+- The gate comes from `grind/detect_gate.py`, which prefers a repository's attested `./push` ([order](architecture/grind.md#coordinator-workflow-sequential-mode-2873)).
+- A tailored script launches only after `grind/lint_workflow.py` passes and an LLM review approves it. The linter applies static rules, then runs the script in Node against mock agents across scripted scenarios and checks the trace for the invariants.
+
+**Rationale:**
+- One checkout means one warm build cache and no two builds racing. On a heavy C++ or Rust repository, building is the scarce resource, and agents are not.
+- Fixing first is backpressure: production cannot outrun repair, so problems never pile up behind new PRs.
+- A chaperone that cannot fix has nothing to escalate on an interim return, so the storm's mechanism is gone, and a small model is enough.
+- A tailored script fits the run, but code written per run needs a machine check. Simulating it against the failure modes that already happened catches a broken coordinator before it costs an hour of merge queue. The template itself failed it once: a PR left in the queue was re-marked as not started and redone.
+
+**Alternatives Considered:**
+
+| Approach | Why not |
+|---|---|
+| Keep fixers in a worktree pool (DD-205/235) | Cold builds per slot, and fixers race the worker for CPU and the build lock. That was the 2026-11-20 overload. |
+| Static-only lint of the tailored script | Text rules cannot see ordering, caps or deadlocks. Each mutation test of the template changes one line that looks fine. |
+| Data-only tailoring (args to a fixed engine) | Reordering or reshaping a run needs a new engine release. The template plus the linter keeps the engine's guarantees with per-run shape. |
+| Let chaperones notify the main session directly | Workflow subagents cannot message the session mid-run. A chaperone's return value is the notification, and the script is the coordinator. |
+
+**Consequences:**
+- The linter needs Node. Claude Code already requires it.
+- Tasks run one at a time, so independent goals no longer build in parallel. Parallel mode stays `grind-run` with worktrees.
+- A PR whose watch budget runs out while it is still queued is reported `left_in_queue`. Its dependents are blocked, not restarted.
+- An inline `Workflow` script containing chaperone wording is refused by the command hook. The router launches tailored scripts by `scriptPath`.

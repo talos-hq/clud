@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from tests.harness.harness import Harness, RunResult
-from tests.harness.worlds import _issue, _world
+from tests.harness.worlds import STAGED, _issue, _world
 
 MARK = {
     "planner": "You are the /grind planner",
@@ -285,7 +285,9 @@ def _script(
         "feature": {"branch": FEATURE, "worktree": str(_wt(h)), "pr": PR_URL},
         "feature_merge": merge,
     }
-    workflow = {"tool_use": {"name": "Workflow", "input": {"name": "grind-run", "args": args}}}
+    workflow = {"tool_use": {"name": "Workflow", "input": {
+        "name": "grind-run", "args": {**STAGED, **args},
+    }}}
     steps = [*pre, _after(OK, workflow) if pre else workflow, *post, {"text": "GRIND_DONE"}]
     return {"default_text": "OK", "roles": [*roles, {"name": "main", "steps": steps}]}
 

@@ -86,20 +86,24 @@ def test_watcher_timeout_is_not_an_arbitrary_two_observation_cutoff() -> None:
     assert "same CI" in text
 
 
-def test_every_workflow_role_receives_the_selected_repository(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("pipeline", "roles"), [
+    ("staged", {"grind-prework", "grind-planner", "grind-editor", "grind-reviewer",
+                "grind-integrator", "grind-lander", "grind-chaperone"}),
+    ("worker", {"grind-prework", "grind-worker", "grind-lander", "grind-chaperone"}),
+])
+def test_every_workflow_role_receives_the_selected_repository(
+    tmp_path: Path, pipeline: str, roles: set[str]
+) -> None:
     result = probe(
         tmp_path, planOnly=False, mode="sequential", github_repo="fork/project",
         plan={"schema": "grind-plan/v1", "run_id": "1897", "meta": "10",
               "repo": "fork/project", "stages": []},
         feature={"branch": "feature", "worktree": str(tmp_path), "pr": "34"},
-        feature_merge="auto",
+        feature_merge="auto", pipeline=pipeline,
     )
     assert "error" not in result, result
     calls = [item for item in result["prompts"] if "role" in item]
-    assert {item["role"] for item in calls} == {
-        "grind-prework", "grind-planner", "grind-editor", "grind-reviewer",
-        "grind-integrator", "grind-lander", "grind-chaperone",
-    }, result
+    assert {item["role"] for item in calls} == roles, result
     for item in calls:
         assert "GitHub repository: fork/project" in item["prompt"], item
         starts = list(re.finditer(

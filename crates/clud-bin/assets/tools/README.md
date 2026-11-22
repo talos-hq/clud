@@ -107,6 +107,12 @@ it keeps waiting under the existing deadline if the run is no longer completed,
 the attempt changed, jobs remain active, or those reads fail (#2512). See
 [watch recovery](../../../../docs/architecture/hook-dispatch.md#watch-recovery-and-continuation-2004).
 
+`grind/lint_workflow.py` machine-checks a tailored `/grind` coordinator
+workflow: static rules, then simulated runs in Node against mock agents.
+`grind/detect_gate.py` picks the coordinator's local gate and landing
+strategy. Both are described in
+[grind.md](../../../../docs/architecture/grind.md#coordinator-workflow-sequential-mode-2873).
+
 `github/pr_merge.py` submits an exact GitHub PR head to an enforced merge
 queue, or performs a normal squash merge when no queue applies. It requires
 `--repo OWNER/REPO` and `--match-head-commit` with the full head SHA; it never

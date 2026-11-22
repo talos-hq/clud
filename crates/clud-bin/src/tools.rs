@@ -229,6 +229,29 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         quiet_ok: false,
     },
     BundledTool {
+        rel_path: "grind/lint_workflow.py",
+        body: include_str!("../assets/tools/grind/lint_workflow.py"),
+        // Machine check for a tailored /grind coordinator workflow (#2873):
+        // static rules plus simulated runs in Node against mock agents.
+        // It only reads the script and runs it offline; killing it loses
+        // nothing.
+        kill_semantics: KillSemantics::Resumable,
+        command_timeout: DEFAULT_RESUMABLE_TIMEOUT,
+        progress_timeout: None,
+        quiet_ok: false,
+    },
+    BundledTool {
+        rel_path: "grind/detect_gate.py",
+        body: include_str!("../assets/tools/grind/detect_gate.py"),
+        // The /grind coordinator's local gate and landing strategy (#2873):
+        // ./push first, then soldr host lint and tests for Rust, then the
+        // repo's scripts. Reads files and one gh API call.
+        kill_semantics: KillSemantics::Resumable,
+        command_timeout: DEFAULT_RESUMABLE_TIMEOUT,
+        progress_timeout: None,
+        quiet_ok: false,
+    },
+    BundledTool {
         rel_path: "code/outline.py",
         body: include_str!("../assets/tools/code/outline.py"),
         // Read-only parse (#1339 item 4): definitions and headings with line
@@ -646,6 +669,36 @@ mod tests {
         assert!(tool.body.contains("managed-by: clud"));
         assert!(!tool.body.contains("import subprocess"));
         assert!(tool.body.contains("\"ast-grep-cli=="));
+    }
+
+    #[test]
+    fn bundled_includes_grind_lint_workflow() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|t| t.rel_path == "grind/lint_workflow.py")
+            .expect("BUNDLED_TOOLS must include grind/lint_workflow.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
+        for rule in ["GS102", "GS103", "GS104", "GS106", "GS111"] {
+            assert!(
+                tool.body.contains(rule),
+                "lint_workflow.py lost rule {rule}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_includes_grind_detect_gate() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|t| t.rel_path == "grind/detect_gate.py")
+            .expect("BUNDLED_TOOLS must include grind/detect_gate.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
+        assert!(
+            tool.body.contains("soldr lint --host-only"),
+            "a Rust repo without ./push gates on soldr host lint"
+        );
     }
 
     #[test]

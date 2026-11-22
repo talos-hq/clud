@@ -94,6 +94,13 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
         body: include_str!("../assets/agents/grind-integrator.md"),
         procedure: Some("grind-integrate"),
     },
+    // One worker per goal (#2873): its own preamble, then the integrator's
+    // commit/rebase/gate/push procedure.
+    BundledClaudeFile {
+        rel_path: "agents/grind-worker.md",
+        body: include_str!("../assets/agents/grind-worker.md"),
+        procedure: Some("grind-integrate"),
+    },
     BundledClaudeFile {
         rel_path: "agents/grind-lander.md",
         body: include_str!("../assets/agents/grind-lander.md"),
@@ -109,6 +116,14 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
         body: include_str!("../assets/workflows/grind-run.js"),
         procedure: None,
     },
+    // The coordinator template (#2873): the /grind router tailors a copy per
+    // run and launches it only after `grind/lint_workflow.py` and an LLM
+    // review pass.
+    BundledClaudeFile {
+        rel_path: "workflows/grind-coord.js",
+        body: include_str!("../assets/workflows/grind-coord.js"),
+        procedure: None,
+    },
 ];
 
 /// Files clud used to install and has since retired or renamed. Each is
@@ -117,9 +132,10 @@ pub const BUNDLED_CLAUDE_FILES: &[BundledClaudeFile] = &[
 ///
 /// `workflows/grind.js` was renamed to `grind-run.js`: a workflow named
 /// `grind` listed a second `/grind` beside the router skill, and picking it
-/// skipped the router's questions. `agents/grind-worker.md` became
-/// `grind-editor.md` when /grind moved to one editor at a time.
-pub const PURGED_CLAUDE_FILES: &[&str] = &["workflows/grind.js", "agents/grind-worker.md"];
+/// skipped the router's questions. (`agents/grind-worker.md`, once renamed
+/// to `grind-editor.md`, is bundled again as the one worker per goal, #2873;
+/// installing it overwrites the old managed copy.)
+pub const PURGED_CLAUDE_FILES: &[&str] = &["workflows/grind.js"];
 
 /// Result of one install pass.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -230,6 +246,7 @@ mod tests {
             "editor",
             "reviewer",
             "integrator",
+            "worker",
             "lander",
             "chaperone",
         ] {
@@ -237,6 +254,7 @@ mod tests {
             assert!(paths.contains(&path.as_str()), "missing {path}");
         }
         assert!(paths.contains(&"workflows/grind-run.js"));
+        assert!(paths.contains(&"workflows/grind-coord.js"));
         assert!(!paths.contains(&"workflows/grind.js"));
     }
 
@@ -279,6 +297,7 @@ mod tests {
             "editor",
             "reviewer",
             "integrator",
+            "worker",
             "lander",
             "chaperone",
         ] {

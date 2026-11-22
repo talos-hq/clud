@@ -32,7 +32,7 @@ import json
 from typing import Any
 
 from tests.harness.harness import Harness, RunResult
-from tests.harness.worlds import _issue, _world
+from tests.harness.worlds import STAGED, _issue, _world
 
 MARK = {
     "prework": "You are the /grind prework role",
@@ -75,7 +75,9 @@ def _branch(goal: str) -> str:
 
 
 def _workflow(args: dict[str, Any]) -> dict[str, Any]:
-    return {"tool_use": {"name": "Workflow", "input": {"name": "grind-run", "args": args}}}
+    return {"tool_use": {"name": "Workflow", "input": {
+        "name": "grind-run", "args": {**STAGED, **args},
+    }}}
 
 
 # ---- world ---------------------------------------------------------------------

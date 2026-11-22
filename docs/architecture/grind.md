@@ -129,14 +129,15 @@ snapshots. They do not claim a real Claude Workflow or model integration.
 
 ## The DAG
 
-`/grind` is a router over bundled skills, one bundled workflow, and eight
+`/grind` is a router over bundled skills, one bundled workflow, and ten
 capped agent types:
 
 ```
 /grind ─ reconcile ─ /grind-intake (routing) ─ grind-run planOnly (classify) ─ preflight ─ ONE question round ─┐
   ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   ├─ parallel   ─┐
-  ├─ sequential ─┴─ workflow grind-run: prework → [bug stage, then feature stage]: plan → edit → review → integrate ⇒ chaperone per PR ─ Finish
+  ├─ sequential ─┴─ workflow grind-run: prework → [bug stage, then feature stage]: one worker per goal (critical-path order) ⇒ chaperone per PR (haiku watcher → opus fixer) ─ Finish
+  │                  (opt-in pipeline "staged": plan → edit → review → integrate ⇒ chaperone per PR)
   └─ cron ─ /grind-cron ─ /loop: one sequential run per tick
 ```
 
@@ -146,13 +147,14 @@ The sections below follow that order: [routing](#input-routing), the
 [preflight and the question round](#preflight-and-the-single-question-round),
 [problem reporting](#problem-reporting),
 [prework](#prework-and-the-plan-comment), the
-[two stages](#bug-stage-then-feature-stage) and
-[feature-branch mode](#feature-branch-mode).
+[two stages](#bug-stage-then-feature-stage),
+[feature-branch mode](#feature-branch-mode) and the
+[worker pipeline](#the-worker-pipeline-one-worker-per-goal-stacked-dependents-2873).
 
 | Asset | Source | Installed to |
 |---|---|---|
 | Skills `grind`, `grind-intake`, `grind-prework`, `grind-plan`, `grind-edit`, `grind-review`, `grind-integrate`, `grind-land`, `grind-cron` | `crates/clud-bin/assets/skills/` (`skills.rs::BUNDLED_SKILLS`) | `~/.claude/skills/`, `~/.codex/skills/` |
-| Agents `grind-orchestrator`, `grind-gate`, `grind-prework`, `grind-planner`, `grind-editor`, `grind-reviewer`, `grind-integrator`, `grind-chaperone`, `grind-lander` (final feature PR only) | `crates/clud-bin/assets/agents/` (`claude_files.rs`) | `~/.claude/agents/` |
+| Agents `grind-orchestrator`, `grind-gate`, `grind-prework`, `grind-worker`, `grind-planner`, `grind-editor`, `grind-reviewer`, `grind-integrator`, `grind-chaperone`, `grind-lander` (final feature PR only) | `crates/clud-bin/assets/agents/` (`claude_files.rs`) | `~/.claude/agents/` |
 | Workflow `grind-run` | `crates/clud-bin/assets/workflows/grind-run.js` (`claude_files.rs`) | `~/.claude/workflows/` |
 
 Each workflow agent runs as its `grind-<role>` type and is told to invoke
@@ -166,13 +168,19 @@ parallel mode. Its shell cap rejects output redirections and command-local
 environment overrides in addition to mutating commands. The router calls it
 once after intake and presents the graph for approval before classification.
 The approved graph travels as `orchestration`, separately from classification
-stages. Its selected goals run in topological order, and approved merge
-dependencies settle before downstream planning, even when a per-goal planner
-omits them. Each dependent role receives its approved blockers' settled
-outcomes, including their reported PR URL and optional release artifacts
-(`version`, `tag`, `release_url`). Reported artifacts do not satisfy a
-publication gate. Failed upstream goals block their dependents; independent
-goals can continue.
+stages. Its selected goals run in critical-path topological order, and
+approved dependencies settle before downstream work, even when a per-goal
+planner omits them: in the worker pipeline a `file_overlap` or `semantic`
+merged blocker settles at its push (the dependent stacks on it), and an
+`edge: "merge"` one at its merge; see the
+[worker pipeline](#the-worker-pipeline-one-worker-per-goal-stacked-dependents-2873).
+Each dependent role receives its approved blockers' settled
+outcomes, including their reported PR URL, branch, head and optional release
+artifacts (`version`, `tag`, `release_url`). Reported artifacts do not satisfy
+a publication gate. Failed upstream goals block their dependents, except that a
+`file_overlap` parent with no PR lets its dependent branch from `<base>`;
+independent goals can continue. A goal marked `gate: "human"` is never
+scheduled and is reported as waiting, with its dependents.
 
 Cross-stage resumption and separately rooted repository sessions remain under
 development in #1338 and #1422. The current graph path returns an explicit
@@ -278,8 +286,11 @@ everything first:
   sequential run. Parallel Rust worktrees keep private Cargo targets if builds
   or tests may overlap. The measured, opt-in shared-target option for strictly
   sequential work is in [skill-system.md](skill-system.md#worktree-cargo-targets-1685).
-- **Models** for planner, editor, reviewer and integrator (the lander shares
-  the integrator's). The default is the session's own model, whatever route
+- **Models** for the worker (with the opt-in staged pipeline: planner,
+  editor, reviewer and integrator; the lander shares the integrator's).
+  Chaperone watchers default to `haiku` and fixers to `opus`
+  (`models.watcher`, `models.fixer`; `models.chaperone` is the fixer's
+  legacy name). The default is the session's own model, whatever route
   resolved it; an unchanged default is omitted so the agent inherits it.
   `grind-run.js` maps `args.models` onto each `agent()`'s `model`. On a
   direct gateway route the launch is pinned (DD-077) and every
@@ -718,8 +729,10 @@ Issue [#1336](https://github.com/zackees/clud/issues/1336).
   test, then the lint script, then the multi-platform lint gate. A failure
   loops inside the integrator (fix, re-run), because nothing has been pushed
   yet. When scripts are chosen, the planner supplies only the focused test.
-  A chosen `test` script stays in the run facts but **no role runs it**
-  (DD-205): required CI runs the suites, and a chaperone fixes what it finds.
+  A chosen `test` script runs **before every push** too, by the worker, the
+  integrator and a fixing chaperone (#2873, superseding DD-205's lint-only
+  gate): a local iteration costs minutes, a red PR in a merge queue an hour.
+  Suites the run did not choose stay with required CI.
 - **No integrator stashes (#2451 item 6).** The integrator never mutates the
   shared stash stack; only `git stash list` is allowed. Sequential integration
   records its starting HEAD, creates the goal branch there, commits the worker
@@ -790,7 +803,152 @@ The rationale is in
   `did not land`, `is blocked`). In parallel mode a dependency that is still
   running is awaited before integration, as before.
 
+### Coordinator workflow (sequential mode, #2873)
+
+Sequential mode runs `workflows/grind-coord.js`, tailored per run by the
+router ([DD-237](../DESIGN_DECISIONS.md#dd-237-sequential-grind-is-a-coordinator-over-one-central-checkout-and-its-tailored-workflow-is-linted-by-simulation)).
+The router steps are in the `/grind` skill, section 4c.
+
+```
+triage (orchestrator) ─ questions ─ detect_gate ─ tailor coord.js ─ lint_workflow (static + simulated) ─ LLM review ─ launch by scriptPath
+coordinator loop (one central agent at a time):
+  dirty checkout? → cleanup:<n>
+  chaperone reports → merged | left_in_queue | stuck | base_red | needs_fix → fixQueue | waiting/queued → watch again (bounded)
+  fixQueue → fixup:<task>#k in the central checkout, then chaperone:<task>#n on the new head
+  ready task and in-flight < maxInFlight → work:<task> (critical path first), then chaperone:<task>#1
+  otherwise wait for the next chaperone report
+```
+
+| Label | Agent type | Model | Does |
+|---|---|---|---|
+| `work:<task>` | `grind-worker` | session (or `policy.workerModel`) | dedup, RED → GREEN, local gate, push, return the checkout clean on `<base>` |
+| `fixup:<task>#k` | `grind-worker` | session | fix the reported problem on the PR branch in the central checkout, gate, push with a lease |
+| `cleanup:<n>` | `grind-worker` | sonnet | park stray work on a branch, return the checkout to `origin/<base>` |
+| `chaperone:<task>#n` | `grind-chaperone` | sonnet/haiku | foreground wait, enqueue or pinned merge, report a verdict; never edits |
+| `feature-pr` | `grind-worker` | session | long-horizon only: open or update the feature PR into `<main>` |
+
+**Invariants**, which `clud tool run grind/lint_workflow.py` checks on every
+scenario's trace:
+
+| Rule | Invariant |
+|---|---|
+| GS102 | one central agent at a time; no two builds share the checkout |
+| GS103 | no `work:` starts while `maxInFlight` PRs are pushed and unsettled |
+| GS104 | a reported problem is fixed before any new task; a stale report (old head, or a problem already fixed on this head) is never fixed again |
+| GS105 | after a central agent returns `checkout_clean: false`, the next central agent is a cleanup |
+| GS106 | watches, fixups and total agents stay within the policy's bounds (the watcher-storm detector) |
+| GS107 | roles and models: chaperones run as `grind-chaperone` on sonnet or haiku and forbid `run_in_background`; central work runs as `grind-worker`, never on haiku |
+| GS108 | a task starts only after its `after` tasks merged (an open covering PR is not merged); human-gated tasks never start |
+| GS109 | every pushed head gets a chaperone |
+| GS112 | a task is worked once: a PR left in the queue is never re-marked unstarted |
+| GS113 | a problem already fixed on a head is never fixed again on that head |
+| GS100/GS110/GS111 | the run completes, reports every task, and never waits with no agent running (deadlock) |
+| GW001–GW005 | static: one pure `meta`, no `Date.now`/`Math.random`, no worktree isolation, known agent types, no nested `workflow()` |
+
+Scenarios: `lint_workflow.py --list-scenarios`. `tests/test_grind_coord_2873.py`
+runs the template through all of them, and has a one-line mutation of the
+template for every rule except GS100 and GS101 (GS101 shares its mutant
+with GW003).
+
+**Label contract.** The linter reads the trace by label, so a tailored copy
+keeps `work:<task>`, `fixup:<task>#<k>`, `cleanup:<n>`,
+`chaperone:<task>#<n>` and `feature-pr`, and every chaperone prompt names its
+head as `expected head <sha>.` (GS109 reads it). Workers return
+`checkout_clean`; a `covered` worker returns `covered_state` (`merged` or
+`open`). An agent call that fails returns null: its task fails or its PR is
+reported stuck, and the checkout counts as dirty. After `maxCleanups`
+failed cleanups the coordinator halts central work, lets the chaperones
+drain and still returns its result with a `checkout` problem.
+
+**Base branch.** `<main>` for bug work. A long-horizon plan passes
+`feature: {branch}`. Tasks branch from and target it, every central agent
+returns the checkout to it (`switch --discard-changes`, `fetch`,
+`merge --ff-only`), and the final `feature-pr` agent merges `origin/<main>`
+into it when that is clean, then opens or updates the PR into `<main>`.
+
+**Gate** (`grind/detect_gate.py`; this section owns the order). `./push`
+first: it proves the attested lanes and pushes, so hosted CI can reduce the
+proven work. Then a Rust workspace: `soldr lint --host-only` and the
+workspace tests on the host (`SOLDR_PORCELAIN=1 soldr cargo test
+--workspace`); cross-target lanes stay in hosted CI. Then
+`./lint`/`./test`.
+`land` is `merge_queue` or `merge` from the base branch's rules. The
+chaperone's `pr_merge.py` call is the same either way.
+
+### The worker pipeline: one worker per goal, stacked dependents (#2873)
+
+The default `pipeline: "worker"`
+([DD-236](../DESIGN_DECISIONS.md#dd-236-grind-is-one-worker-per-goal-stacked-dependents-and-a-haiku-watcher-escalating-to-an-opus-fixer)).
+A real run on a C++ repository with a 30-90 minute merge queue showed each
+goal written in about five minutes while the run idled for hours: dependents
+waited for their blocker to merge, goals ran in the graph's listed order, and
+each goal crossed five agents. The shape:
+
+```
+producer (critical-path order, one worker building at a time; `workers` in parallel mode)
+  grind-worker: dedup → plan → edit (RED → GREEN) → self-review → lint + test scripts → push   (never waits on CI)
+    └⇒ chaperone chain per PR, unlocked:
+         haiku WATCH: checks → pinned enqueue → queue; stacked: checks only, verdict green
+         problem ⇒ opus FIXUP in the pool → WATCH again          (journal: watcher -> fixer -> watcher)
+         stacked: parent merged ⇒ parent_merged_needs_rebase ⇒ FIXUP `git rebase --onto origin/<base> <parent head>` ⇒ WATCH enqueues
+```
+
+- **One worker per goal.** `grind-worker` owns dedup preflight, planning,
+  editing, self-review, local CI and the push in one context, then returns
+  `{status, pr_url, branch, head_sha, base_sha, local_ci, handoff}`;
+  `covered` and `no_change` end the goal without a PR, and a `failed` worker
+  that wrote files is parked like a staged goal (#1424). Its agent file is its
+  preamble plus the appended `/grind-integrate` procedure from the commit on.
+  The planner/editor/reviewer/integrator chain below remains as
+  `pipeline: "staged"`, run-wide or per goal (`goals[].pipeline`) for a risky
+  goal that should get a separate reviewer.
+- **Local CI is the push gate.** The worker runs the goal's focused test, the
+  run's lint **and test** scripts and the multi-platform lint gate before every
+  push; so does every fixer.
+- **Pushed gate, not merged gate.** Each goal has two promises: `pushed[goal]`
+  (settles with its result at push, or `null`) and `landed[goal]` (at merge).
+  A `merged` blocker's `edge` decides which one a dependent waits on:
+  `file_overlap` (the default) and `semantic` wait on `pushed` and **stack**;
+  `merge` waits on `landed`, as before. Publication conditions (`released`,
+  `tag`, `published`) are unchanged. The staged pipeline keeps the merge wait.
+- **Stacking.** A stacked worker branches from the parent's pushed branch,
+  records the parent head it was cut from as `base_sha`, and opens its PR
+  against `<base>` saying "Stacked on #P: merge after it". A `semantic`
+  dependent also reads the parent's diff. A goal stacks on one parent: a
+  blocker already inside another blocker's branch is dropped (transitive
+  reduction), and any further parent is waited on as a `merge` edge. A
+  `file_overlap` parent that pushed no PR leaves nothing to conflict with, so
+  the dependent branches from `<base>` and says so; a `semantic` one blocks it.
+- **The child registry and `parent_merged_needs_rebase`.** Every chain is
+  registered by goal (`CHAIN_OF`). A stacked chain watches its own checks
+  without enqueuing (verdict `green`; red checks still go to a fixer and are
+  pushed to the stacked branch), then waits on the parent's `landed`. The
+  parent's merge is the `parent_merged_needs_rebase` event: a fixer runs
+  `git rebase --onto origin/<base> <base_sha>` (falling back to the parent's
+  final head), verifies, force-pushes with lease, and the chain continues as
+  an ordinary PR whose next watch enqueues it. A parent that ends unmerged is
+  `parent_failed`: the fixer drops the parent's commits only when the change
+  stands alone, else the goal is `stuck`. A parent still queued at Finish
+  leaves the child `stacked`, with the exact rebase command in its note.
+- **Critical-path order.** The approved graph is scheduled in a topological
+  order that, among ready goals, puts one waiting for a merge or publication
+  last, then the head of the longest remaining chain, then the listed order.
+  A stacked chain is therefore produced back to back and never queues behind
+  a merge wait.
+- **Human gates.** A graph goal with `gate: "human"` (and an optional
+  `gate_reason`), or a router goal with `gate: "human"`, is never planned or
+  scheduled; it and every goal that needs it are reported
+  `{status: "waiting", gate: "human"}`. Classification (`planOnly`) still
+  places it.
+- **Actionable validation.** A blocker naming no goal of the graph
+  (`"maintainer decision"`, `"all"`), an unknown `checkout`, `gate` or
+  `edge` is rejected before any agent with the allowed values and the fix
+  (for example: mark the goal `gate: "human"`).
+
 ### Integration order: one editor, one integrator, N chaperones
+
+This is the opt-in `pipeline: "staged"`; its chaperones are the same chains
+as above.
 
 The shape ([DD-205](../DESIGN_DECISIONS.md#dd-205-grind-is-one-editor-one-integrator-and-n-chaperones)),
 in `grind-run.js`:
@@ -856,8 +1014,10 @@ plan (up to maxAgents) → editor (1) → review (up to maxAgents) → integrato
   agent removes the used slots. A failed cleanup is logged; the daemon's worktree
   reclaim is the backstop. A slot the daemon reclaimed mid-run is re-added by
   step 1 of the next fixup. A run with no exception creates no worktree.
-- **Handoff and context.** A chaperone runs the large model (`model: opus`;
-  `models.chaperone` overrides) from an **empty context**. Workflow `agent()`
+- **Handoff and context.** A chaperone chain runs two models (#2873): each
+  WATCH runs `haiku` (`models.watcher`) and only detects and does the
+  mechanical enqueue; each FIXUP runs `opus` (`models.fixer`, legacy
+  `models.chaperone`). Both start from an **empty context**. Workflow `agent()`
   documents no forked-history option, and the `Agent` tool's `fork` type
   would need a parent conversation and drop the capped role, so a true fork is
   unavailable. Instead each chaperone prompt starts with a handoff built from, in
@@ -907,7 +1067,8 @@ plan (up to maxAgents) → editor (1) → review (up to maxAgents) → integrato
 | `grind-reviewer` | same as editor | same as editor |
 | `grind-integrator` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | anything except non-`ci` bosn verbs, `bosn ci run` / `clud ci` when CI is off, `pkill`/`pgrep` on bosn, direct `act`/`docker`/`podman`, `git worktree add`, stash commands other than `git stash list`, and a shell loop around lint/test; `safe-rm` only inside its checkout |
 | `grind-lander` (final feature PR) | Read, Grep, Glob, Bash, Skill | `gh pr view\|checks\|diff\|list\|merge`, `gh pr ready` on the feature PR under `feature_merge: auto` only, `gh run view\|list\|rerun`, read-only git, plain `git push`, `pr_merge_watch`, `pr_merge.py` (enqueue) |
-| `grind-chaperone` | Read, Edit, Write, Grep, Glob, Bash (opus) | the integrator's build denylist (the stash restriction applies only to the integrator), plus: `git worktree add --detach\|remove` only on `.clud/worktrees/<repo>-wt-grind-fixup-<n>`; no bare force push, branch delete, `reset --hard` or `clean -x`; `gh` limited to reads, `gh run rerun --failed`, `gh pr merge` pinned with `--match-head-commit` and no `--admin` (or a goal PR into a recorded feature branch) and that feature landing's records; `safe-rm` only inside its checkout. The hook cannot confirm cwd, so "build only in the slot" is prompt-enforced |
+| `grind-worker` | Read, Edit, Write, Grep, Glob, Bash, WebSearch, WebFetch, Skill | the integrator's shell, including its stash restriction, plus `git worktree add` in parallel mode only (its goal's worktree); `safe-rm` only inside its checkout |
+| `grind-chaperone` | Read, Edit, Write, Grep, Glob, Bash (opus; the workflow runs WATCH on haiku) | the integrator's build denylist (the stash restriction applies only to the integrator and worker), plus: `git worktree add --detach\|remove` only on `.clud/worktrees/<repo>-wt-grind-fixup-<n>`; no bare force push, branch delete, `reset --hard` or `clean -x`; `gh` limited to reads, `gh run rerun --failed`, `gh pr merge` pinned with `--match-head-commit` and no `--admin` (or a goal PR into a recorded feature branch) and that feature landing's records; `safe-rm` only inside its checkout. The hook cannot confirm cwd, so "build only in the slot" is prompt-enforced |
 
 Claude Code enforces the tool lists. Shell commands are enforced by clud's
 native PreToolUse hook (`clud-block-bad-cmd`): the harness puts the calling
@@ -979,6 +1140,15 @@ it covers:
 - `tests/test_grind_editor_integrator_chaperones.py` (offline host, not a
   harness suite) — the editor, integrator, chaperone and pool scheduling of
   [Integration order](#integration-order-one-editor-one-integrator-n-chaperones).
+  The harness suites pin `pipeline: "staged"` (`worlds.STAGED`), since they
+  script the staged roles.
+- `tests/test_grind_worker_stacking_2873.py` (offline host) — the
+  [worker pipeline](#the-worker-pipeline-one-worker-per-goal-stacked-dependents-2873):
+  N independent goals produce N PRs before the first merge, an A → B → C
+  file-overlap chain opens three stacked PRs before A merges, A's merge drives
+  B's `rebase --onto` and enqueue, critical-path order, human gates, the
+  validator's errors, haiku watchers and opus fixers with a watcher → fixer →
+  watcher journal, and the test script before every push.
 - `test_grind_facts.py` — run facts: a workflow agent's payload carries the
   parent session id, `clud grind-facts path` names the file the hook reads,
   and each session is capped by its own run's facts.

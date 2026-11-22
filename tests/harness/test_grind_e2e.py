@@ -64,7 +64,7 @@ from typing import Any
 from tests import process
 from tests.harness.harness import Harness, RunResult
 from tests.harness.test_grind_meta_of_metas import PREVIOUS, V1, _regroup
-from tests.harness.worlds import _issue, meta_with_sub_issues, mixed, regroupable
+from tests.harness.worlds import STAGED, _issue, meta_with_sub_issues, mixed, regroupable
 
 MARK = {
     "prework": "You are the /grind prework role",
@@ -135,7 +135,9 @@ def _workflow_steps(args: dict[str, Any]) -> list[dict[str, Any]]:
     carries no `content_contains` check.
     """
     return [
-        {"tool_use": {"name": "Workflow", "input": {"name": "grind-run", "args": args}}},
+        {"tool_use": {"name": "Workflow", "input": {
+            "name": "grind-run", "args": {**STAGED, **args},
+        }}},
         {"text": "grind-run is running in the background; waiting for it to finish"},
     ]
 
