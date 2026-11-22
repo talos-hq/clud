@@ -230,9 +230,20 @@ impl Operator {
         self.socket.send(Message::Binary(frame.into())).unwrap();
     }
 
+    /// Read one frame. A heartbeat `ping` is answered like the real server
+    /// does: the client counts 35 s without a frame as a lost link, and a long
+    /// flood (Windows relays about 200 KB/s through ConPTY) outlasts that
+    /// while the operator only reads (#2887).
     fn pump_once(&mut self) {
         match self.socket.read() {
-            Ok(Message::Text(text)) => self.events.push(serde_json::from_str(&text).unwrap()),
+            Ok(Message::Text(text)) => {
+                let event: Value = serde_json::from_str(&text).unwrap();
+                if event["type"] == "ping" {
+                    self.send(json!({"type":"pong"}));
+                } else {
+                    self.events.push(event);
+                }
+            }
             Ok(Message::Binary(frame)) => {
                 assert_eq!(frame.first(), Some(&0), "output must use channel 0");
                 self.shell_output.extend_from_slice(&frame[1..]);
