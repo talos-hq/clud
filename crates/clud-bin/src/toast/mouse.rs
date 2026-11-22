@@ -22,6 +22,7 @@ pub struct MouseFilter {
 pub struct MouseResult {
     pub bytes: Vec<u8>,
     pub dismissed: bool,
+    pub open_processes: bool,
     /// `Some` only when the child has enabled any-motion SGR reporting.
     pub cpu_hover: Option<bool>,
 }
@@ -56,6 +57,7 @@ impl MouseFilter {
     /// Filter one stdin chunk. clud consumes only clicks on its own visible
     /// controls. CPU-panel hover is observed without consuming mouse reports;
     /// all other bytes reach the child unchanged.
+    #[cfg(test)]
     pub fn process(
         &mut self,
         chunk: &[u8],
@@ -63,7 +65,23 @@ impl MouseFilter {
         cpu: Option<CellRect>,
         hover_armed: bool,
     ) -> MouseResult {
-        if close.is_none() && cpu.is_none() && self.pending.is_empty() && !self.swallowing_release {
+        self.process_with_gear(chunk, close, cpu, hover_armed, None)
+    }
+
+    pub fn process_with_gear(
+        &mut self,
+        chunk: &[u8],
+        close: Option<CellRect>,
+        cpu: Option<CellRect>,
+        hover_armed: bool,
+        gear: Option<CellRect>,
+    ) -> MouseResult {
+        if close.is_none()
+            && cpu.is_none()
+            && gear.is_none()
+            && self.pending.is_empty()
+            && !self.swallowing_release
+        {
             return MouseResult {
                 bytes: chunk.to_vec(),
                 ..MouseResult::default()
@@ -106,7 +124,10 @@ impl MouseFilter {
                     if hover_armed {
                         result.cpu_hover = Some(cpu.is_some_and(|rect| rect.contains_1based(x, y)));
                     }
-                    if left_press && hit_close {
+                    if left_press && gear.is_some_and(|rect| rect.contains_1based(x, y)) {
+                        result.open_processes = true;
+                        self.swallowing_release = true;
+                    } else if left_press && hit_close {
                         result.dismissed = true;
                         self.swallowing_release = true;
                     } else if !press && self.swallowing_release {

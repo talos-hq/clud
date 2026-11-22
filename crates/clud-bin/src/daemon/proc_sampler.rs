@@ -36,7 +36,7 @@ pub(super) const PARKED_SAMPLE_INTERVAL_MS: u64 = 30_000;
 pub(super) const CONSUMER_IDLE_GRACE_MS: u64 = 30_000;
 
 const ORIGINATOR_SCAN_INTERVAL_MS: u64 = 30_000;
-const DEAD_ROW_RETENTION_MS: u64 = 60_000;
+pub(super) const DEAD_ROW_RETENTION_MS: u64 = 60_000;
 const MAX_TRACKED_PIDS: usize = 5_000;
 const EWMA_ALPHA: f32 = 0.3;
 
@@ -158,15 +158,13 @@ impl ProcSamplerHandle {
             .clone();
         snapshot.refresh_age();
         if include_dead_since_ms == 0 {
-            snapshot.rows.retain(|row| row.live);
+            // Unreaped zombies are still in the OS process table.
+            snapshot.rows.retain(|row| row.exited_at_ms.is_none());
         } else {
             let now = unix_millis_now();
             snapshot.rows.retain(|row| {
-                row.live
-                    || row
-                        .exited_at_ms
-                        .map(|exited| now.saturating_sub(exited) <= include_dead_since_ms)
-                        .unwrap_or(false)
+                row.exited_at_ms
+                    .is_none_or(|exited| now.saturating_sub(exited) <= include_dead_since_ms)
             });
         }
         snapshot.recompute_summary();
@@ -324,6 +322,13 @@ impl ProcSampler {
                 .without_tasks(),
         );
         self.refresh_originator_cache_if_due(cadence);
+        self.originator_cache.retain(|pid, tag| {
+            tag.start_time != 0
+                && self
+                    .system
+                    .process(Pid::from_u32(*pid))
+                    .is_some_and(|process| process.start_time() == tag.start_time)
+        });
 
         let now_ms = unix_millis_now();
         let parent_by_pid = parent_map(&self.system);
@@ -346,6 +351,7 @@ impl ProcSampler {
             };
             let Some(assignment) =
                 resolve_assignment(pid_u32, &parent_by_pid, &self.originator_cache, &sessions)
+                    .or_else(|| local_launch_assignment(pid_u32, &parent_by_pid, &self.system))
             else {
                 continue;
             };
@@ -374,7 +380,10 @@ impl ProcSampler {
                 command,
                 depth: depth_from_originator(pid_u32, assignment.originator_pid, &parent_by_pid),
                 tier: tier_for(cpu_pct, cpu_ewma_pct, rss_bytes),
-                live: true,
+                live: !matches!(
+                    process.status(),
+                    sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+                ),
                 exited_at_ms: None,
             };
             live_rows.insert(pid_u32, row.clone());
@@ -430,6 +439,7 @@ impl ProcSampler {
                         originator: process.originator,
                         originator_pid: process.parent_pid,
                         command: process.command,
+                        start_time: process.start_time,
                     },
                 )
             })
@@ -468,6 +478,7 @@ struct OriginatorTag {
     originator: String,
     originator_pid: u32,
     command: String,
+    start_time: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -593,6 +604,35 @@ fn is_clud_process(process: &sysinfo::Process) -> bool {
             .as_str(),
         "clud" | "clud.exe"
     )
+}
+
+fn local_launch_assignment(
+    pid: u32,
+    parents: &HashMap<u32, u32>,
+    system: &System,
+) -> Option<Assignment> {
+    let mut pid = pid;
+    let mut visited = HashSet::new();
+    while visited.insert(pid) {
+        let process = system.process(Pid::from_u32(pid))?;
+        if is_clud_process(process) {
+            return Some(Assignment {
+                originator: format!("CLUD:{pid}"),
+                originator_pid: Some(pid),
+                session_id: None,
+                session_name: None,
+            });
+        }
+        let parent_pid = *parents.get(&pid)?;
+        let parent_start = system
+            .process(Pid::from_u32(parent_pid))
+            .map(sysinfo::Process::start_time);
+        if !crate::process_scan::parent_is_plausible(parent_start, process.start_time()) {
+            return None;
+        }
+        pid = parent_pid;
+    }
+    None
 }
 
 fn include_subtree(

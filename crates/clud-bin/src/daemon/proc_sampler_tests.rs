@@ -127,6 +127,7 @@ fn originator_tag_wins_over_parent_chain_fallback() {
             originator: "CLUD:900".to_string(),
             originator_pid: 900,
             command: "tagged".to_string(),
+            start_time: 1,
         },
     )]);
     let sessions = session_index(SessionRoot {
@@ -224,10 +225,18 @@ fn proc_snapshot_filters_dead_rows_by_requested_window() {
             live: false,
             exited_at_ms: Some(unix_millis_now()),
         });
+        let mut zombie = snapshot.rows[0].clone();
+        zombie.pid = 11;
+        zombie.ppid = Some(1);
+        zombie.exited_at_ms = None;
+        snapshot.rows.push(zombie);
     }
 
-    assert!(handle.snapshot(0).rows.is_empty());
-    assert_eq!(handle.snapshot(5_000).rows.len(), 1);
+    let current = handle.snapshot(0);
+    assert_eq!(current.rows.len(), 1);
+    assert_eq!(current.rows[0].pid, 11);
+    assert!(!current.rows[0].live);
+    assert_eq!(handle.snapshot(5_000).rows.len(), 2);
 }
 
 #[test]

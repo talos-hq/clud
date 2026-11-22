@@ -605,7 +605,7 @@ pub(super) fn daemon_client_proc_snapshot_for_dashboard(
     match send_daemon_request_over_tcp(
         state_dir,
         &DaemonRequest::ProcSnapshot {
-            include_dead_since_ms: 0,
+            include_dead_since_ms: super::proc_sampler::DEAD_ROW_RETENTION_MS,
         },
         Some(SNAPSHOT_TIMEOUT),
     )? {

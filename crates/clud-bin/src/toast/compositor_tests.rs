@@ -14,6 +14,7 @@ const IMAGE: u32 = 77;
 fn compositor(tier: ToastTier, fallback: Fallback) -> (Compositor, Arc<ToastHub>) {
     let hub = ToastHub::new();
     let c = Compositor::new(ToastPumpOptions {
+        process_gear: false,
         hub: Arc::clone(&hub),
         tier,
         fallback,
@@ -32,6 +33,7 @@ fn compositor_with_usage(
 ) -> (Compositor, Arc<ToastHub>) {
     let hub = ToastHub::new();
     let c = Compositor::new(ToastPumpOptions {
+        process_gear: false,
         hub: Arc::clone(&hub),
         tier,
         fallback,
@@ -512,6 +514,25 @@ fn an_expiry_only_republish_is_mirrored_to_the_status_file() {
 }
 
 // ── dismiss, resize, off ──────────────────────────────────────────────────
+
+#[test]
+fn session_gear_arms_at_upper_right_and_opens_processes_on_click() {
+    let now = Instant::now();
+    let (mut c, _) = compositor(ToastTier::Kitty, Fallback::None);
+    c.process_gear = true;
+    assert!(c.on_tick(now).is_empty());
+    assert!(c.input().gear_rect().is_none());
+    let bytes = c.on_child(b"\x1b[?1000h\x1b[?1006h", now);
+    assert!(bytes.windows(3).any(|bytes| bytes == b"\x1b_G"));
+    let gear = c.input().gear_rect().unwrap();
+    assert_eq!((gear.row, gear.col), (0, COLS - 2));
+    let mut mouse = crate::toast::mouse::MouseFilter::new();
+    let result = mouse.process_with_gear(b"\x1b[<0;80;1M", None, None, false, Some(gear));
+    assert!(result.open_processes);
+    assert!(result.bytes.is_empty());
+    c.on_child(b"\x1b[?1006l", now);
+    assert!(c.input().gear_rect().is_none());
+}
 
 #[test]
 fn click_to_dismiss_is_armed_only_when_the_child_reports_sgr_mouse() {

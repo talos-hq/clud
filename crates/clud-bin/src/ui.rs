@@ -79,6 +79,34 @@ fn print_state_json(port: u16, token: &str) -> i32 {
     }
 }
 
+/// Open the authenticated process view without blocking the PTY input pump.
+pub(crate) fn open_session_processes() {
+    let pid = std::process::id();
+    let _ = std::thread::Builder::new()
+        .name("clud-process-browser".into())
+        .spawn(move || {
+            let Some(launch) = crate::process_identity::ProcessIdentity::observe(pid) else {
+                return;
+            };
+            let Ok(state) = daemon::default_state_dir() else {
+                return;
+            };
+            if ensure_daemon(&state).is_err() {
+                return;
+            }
+            let Ok(info) = read_dashboard_info(&state) else {
+                return;
+            };
+            if let (Some(port), Some(token)) =
+                (info.dashboard_port, info.dashboard_token.as_deref())
+            {
+                let start = launch.start_time;
+                let url = format!("http://127.0.0.1:{port}/processes/{pid}/{start}?token={token}");
+                let _ = open::that_detached(url);
+            }
+        });
+}
+
 fn open_browser(url: &str, info: &DashboardInfo) -> i32 {
     // The `open` crate handles macOS `open`, Linux `xdg-open`, and
     // Windows `cmd /c start` under the hood. Failures are non-fatal — we
