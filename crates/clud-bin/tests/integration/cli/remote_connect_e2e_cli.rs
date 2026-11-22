@@ -14,6 +14,8 @@ use std::time::{Duration, Instant};
 use tungstenite::{Message, WebSocket};
 
 const WAIT: Duration = Duration::from_secs(60);
+/// The longest a flood may take in all while it keeps arriving.
+const FLOOD_CAP: Duration = Duration::from_secs(300);
 const TOKEN: &str = "ct_remote_connect_e2e_123456";
 const KEYWORD: &str = "ABCDE-FGH23";
 
@@ -272,23 +274,34 @@ impl Operator {
     }
 
     /// Like `wait_shell_output`, but searches only what arrived since the last
-    /// look, for floods where rescanning everything would be quadratic.
+    /// look, for floods where rescanning everything would be quadratic. A
+    /// flood may take longer than `WAIT` in all (ConPTY renders it slowly), so
+    /// this fails only when nothing arrives for `WAIT`, or after `FLOOD_CAP`.
     fn wait_shell_bytes(&mut self, needle: &[u8]) {
-        let deadline = Instant::now() + WAIT;
+        let cap = Instant::now() + FLOOD_CAP;
+        let mut idle_deadline = Instant::now() + WAIT;
         let mut from = 0;
         loop {
             let window = &self.shell_output[from.min(self.shell_output.len())..];
             if window.windows(needle.len()).any(|w| w == needle) {
                 return;
             }
-            from = self.shell_output.len().saturating_sub(needle.len());
-            assert!(
-                Instant::now() < deadline,
-                "server never received {:?} ({} bytes so far)",
-                String::from_utf8_lossy(needle),
-                self.shell_output.len()
-            );
+            let seen = self.shell_output.len();
+            from = seen.saturating_sub(needle.len());
+            let now = Instant::now();
+            if now >= idle_deadline || now >= cap {
+                let tail = &self.shell_output[seen.saturating_sub(400)..];
+                panic!(
+                    "server never received {:?} ({seen} bytes so far, {}); last bytes: {:?}",
+                    String::from_utf8_lossy(needle),
+                    if now >= cap { "still arriving at the cap" } else { "nothing new for WAIT" },
+                    String::from_utf8_lossy(tail)
+                );
+            }
             self.pump_once();
+            if self.shell_output.len() > seen {
+                idle_deadline = Instant::now() + WAIT;
+            }
         }
     }
 
