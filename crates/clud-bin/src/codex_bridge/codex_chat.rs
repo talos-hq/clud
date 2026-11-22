@@ -99,7 +99,8 @@ fn parse_captured(raw: &[u8]) -> io::Result<Captured> {
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .ok_or_else(|| invalid("response head is incomplete"))?;
-    let head = std::str::from_utf8(&raw[..split]).map_err(|_| invalid("response head is not UTF-8"))?;
+    let head =
+        std::str::from_utf8(&raw[..split]).map_err(|_| invalid("response head is not UTF-8"))?;
     let mut lines = head.split("\r\n");
     let status = lines
         .next()
@@ -163,7 +164,8 @@ mod tests {
 
     #[test]
     fn a_content_length_response_is_split_into_status_type_and_body() {
-        let raw = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
+        let raw =
+            b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
         let captured = parse_captured(raw).unwrap();
         assert_eq!(captured.status, 200);
         assert_eq!(captured.content_type, "application/json");

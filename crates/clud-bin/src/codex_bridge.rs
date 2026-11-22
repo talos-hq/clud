@@ -8945,7 +8945,10 @@ Connection: close
         assert_eq!(status(&response), 200, "{response}");
         assert!(response.contains("\"chat.completion\""), "{response}");
         assert!(!codex.requests().is_empty(), "the turn must reach Codex");
-        assert!(anthropic.requests().is_empty(), "a Codex turn never reaches Claude");
+        assert!(
+            anthropic.requests().is_empty(),
+            "a Codex turn never reaches Claude"
+        );
         bridge.shutdown().unwrap();
     }
 

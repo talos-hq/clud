@@ -111,7 +111,9 @@ pub fn offer() -> Offer {
         }
     }
     if codex_available() {
-        found.providers.push(format!("{CODEX_GATEWAY_ID} (clud serve --codex)"));
+        found
+            .providers
+            .push(format!("{CODEX_GATEWAY_ID} (clud serve --codex)"));
     }
     found
 }
