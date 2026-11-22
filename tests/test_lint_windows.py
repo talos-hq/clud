@@ -30,24 +30,31 @@ def test_soldr_lint_runs_the_dylint_libraries() -> None:
     assert _soldr_metadata()["lint"]["steps"] == ["fmt", "clippy", "dylint"]
 
 
-def test_local_gate_lint_lanes_run_soldr_lint_on_the_host() -> None:
+LINT_JOBS = {"static-checks", "dylint", "lint-linux-x64"}
+
+
+def _gate() -> dict:
     with (ROOT / "local-gate.toml").open("rb") as fh:
-        gate = tomllib.load(fh)["gate"]
+        return tomllib.load(fh)["gate"]
+
+
+def test_soldr_lint_extra_runs_the_static_checks() -> None:
+    # A host `soldr lint` lane covers the Static checks job through this extra.
+    assert _soldr_metadata()["lint"]["extra"] == [["bash", "lint", "--static-only"]]
+
+
+def test_local_gate_lint_lanes_run_soldr_lint_on_the_host() -> None:
+    gate = _gate()
     lanes = gate["lanes"]
     assert lanes["dylint"]["run"] == ["soldr", "lint", "rust", "--check", "--cross-dylint"]
     assert lanes["clippy"]["run"] == ["soldr", "lint", "rust", "--check", "--host-only"]
     assert lanes["doctest"]["run"] == ["soldr", "cargo", "test", "--workspace", "--doc"]
     for name, lane in lanes.items():
-        if lane["run"][0] == "bosn":
-            # No lint job (dylint, lint-linux-x64, ...) is replayed under Bosn.
-            jobs = {arg.split("-")[0] for arg in lane["run"]}
-            assert not {"dylint", "lint", "clippy"} & jobs, name
-        else:
-            assert lane["tools"] == ["soldr"], name
-            assert "bosn" not in lane["run"], name
-    selected = {item["lane"] for item in gate["replay"]["selections"]}
-    assert not selected & {"dylint", "clippy", "doctest"}
+        if lane["run"][0] != "bosn":
+            assert lane["run"][0] == "soldr", name
+            assert "bosn" not in lane["tools"], name
     covered = gate["trust"]["covered-by"]
+    assert covered["ci.yml:static-checks"] == ["clippy"]
     assert covered["ci.yml:dylint"] == ["dylint"]
     assert covered["ci.yml:lint-linux-x64"] == ["clippy", "doctest"]
 
@@ -63,3 +70,23 @@ def test_host_only_skips_the_cross_targets() -> None:
         "rust",
         "--host-only",
     ]
+
+
+def test_local_gate_never_replays_a_lint_job_under_bosn() -> None:
+    # The bare `bosn ci run --trigger pr` plan includes the Static checks,
+    # Dylint and Clippy jobs, and `--job` takes one job. The gate command
+    # names the one Bosn job (the Linux unit suite), every Bosn lane is that
+    # command exactly, and no replay selection or job names a lint job.
+    gate = _gate()
+    assert "full-run" not in gate
+    run = gate["run"]
+    assert run[0] == "bosn"
+    assert run[-2:] == ["--job", "test-linux-x64-unit"]
+    for name, lane in gate["lanes"].items():
+        if lane["run"][0] == "bosn":
+            assert lane["run"] == run, name
+    replay = gate["replay"]
+    assert [item["job"] for item in replay["selections"]] == ["test-linux-x64-unit"]
+    for job in replay["jobs"]:
+        assert job["source-job"].split(":")[1] not in LINT_JOBS, job
+        assert job["source-job"] != "_dylint.yml:dylint", job

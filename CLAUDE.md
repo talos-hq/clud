@@ -56,8 +56,9 @@ and every merge-queue run, still executes in full
 ([DD-225](docs/DESIGN_DECISIONS.md#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them)).
 
 Use targeted local tests and lint for the edit loop. Rust commands still go
-through soldr. An optional `bosn ci run --workspace . --trigger pr` or
-`clud ci [JOB] [--filter RE]` can replay supported jobs in an isolated engine.
+through soldr. An optional `bosn ci run --workspace . --trigger pr --job JOB`
+(one non-lint job; never the bare plan, which includes the lint jobs) or
+`clud ci JOB [--filter RE]` can replay supported jobs in an isolated engine.
 If Bosn is unavailable or busy, use hosted CI. Stop only your own Bosn run;
 never kill other sessions' processes. Native Windows/macOS behavior needs the
 relevant native CI lane; a local run on another OS cannot prove it.
@@ -68,7 +69,7 @@ See [`docs/architecture/ci.md`](docs/architecture/ci.md#local-validation-before-
 for optional replay commands and coverage limits. Do not weaken a test or
 waive a hosted job to obtain a green result.
 
-Optional replay needs bosn 0.1.10 or newer. Run its full plan at most once per change;
+Optional replay needs bosn 0.1.10 or newer. Replay each non-lint job at most once per change (never the bare plan);
 see the [local CI budget](docs/architecture/ci.md#local-ci-budget). Never use
 `pkill` or `pgrep -f` against Bosn runs; cancel only your own run.
 
@@ -192,10 +193,10 @@ See [`docs/DESIGN_DECISIONS.md`](docs/DESIGN_DECISIONS.md) for full rationale.
 ## Code Quality Standards
 
 Lint never runs under Bosn. Locally, `bash lint` (or `soldr lint` for the Rust
-side alone) runs on the host; never replay `--job dylint` or
-`--job lint-linux-x64` through `bosn ci run`. `--job static-checks` runs
-formatting/Ruff/guards and `--job static` only resolves CI mode. Local checks
-are optional; the selected hosted jobs must pass.
+side alone, which ends with the static checks) runs on the host; never replay
+`--job static-checks`, `--job dylint` or `--job lint-linux-x64` through
+`bosn ci run`. `--job static` only resolves CI mode. Local checks are
+optional; the selected hosted jobs must pass.
 
 After any code edit, the relevant lint checks must pass. The hosted Static
 checks, Clippy and Dylint jobs fulfill this requirement. For local feedback,

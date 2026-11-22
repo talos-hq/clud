@@ -8891,6 +8891,8 @@ second) does not justify that yet.
 
 This supersedes DD-193's last point: `soldr lint`'s Dylint step is pinned by the libraries' own `rust-toolchain.toml`, so it is no longer a second, unpinned setup. Hosted CI is unchanged.
 
+The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also replays the lint jobs, and `--job` takes one job. So `[gate] run` itself names `--job test-linux-x64-unit`, the gate's only Bosn lane (bosn runs its `needs:` closure, so it also covers Build linux-x64), and local-gate.toml declares no `[gate.full-run]`. The Static checks job (`ci/lint.py --static-only`: ruff, repo guards, fmt) is lint too: Cargo.toml's `[workspace.metadata.soldr.lint] extra = [["bash", "lint", "--static-only"]]` runs it at the end of every host `soldr lint`, so the `clippy` lane covers it, and `ci/lint.py` sets `CLUD_LINT_STATIC_DONE=1` on its own `soldr lint` child so a full `bash lint` does not repeat it. The replay selections and jobs name only the unit job and its closure (forge-ci/ci.yml GATE-016 at d60ef7d1: 0 findings).
+
 **Consequences:**
 - The `dylint` lane checks a superset of the remote jobs: Clippy on the host and every `[workspace.metadata.soldr].targets` triple, Dylint on the host and each of those targets.
 - Dylint 6.2.0 reads `rust-toolchain.toml`; the bare `rust-toolchain` filename only mattered for 6.0.3.

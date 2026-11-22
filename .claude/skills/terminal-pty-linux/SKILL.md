@@ -91,11 +91,12 @@ helpers. Linux-only implementation changes need no full matrix.
 Linux is the one platform agents can fully validate locally:
 
 ```bash
-bosn ci run --workspace . --trigger pr --job static-checks --wait
-uvx --from git+https://github.com/zackees/ci.yml@98fd662a48df43fe016c45a1f845e345b52fecef ci-lint local-gate run   # bosn PR plan + stamp (attested skip)
+soldr lint --host-only   # host lint: fmt, Clippy, Dylint, then the static checks (never under bosn)
+bosn ci run --workspace . --trigger pr --job test-linux-x64-unit --wait
+uvx --from git+https://github.com/zackees/ci.yml@98fd662a48df43fe016c45a1f845e345b52fecef ci-lint local-gate run   # host lint lanes + bosn unit replay + stamp
 ```
 
-- Never run host `cargo`, `bash lint` or `bash test`.
+- Never run host `cargo` or `bash test`; lint runs on the host only through `soldr lint`.
 - Read terminal-pty.md § Validation for what a local run covers.
 - openpty-based tests work in act2's job containers.
 - Routine PRs run Linux x64 on GitHub. The `ci-test` label adds Linux
