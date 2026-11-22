@@ -889,8 +889,15 @@ fn build_launch_plan_for_target_at(
             backend,
             computer_use_exe().as_deref(),
         ));
-        // The board bridge, as Claude launches get it (agent-board.md).
-        let board_bridge = super::mcp_config::codex_bridge_overrides();
+        // The board bridge, as Claude launches get it (agent-board.md). Not
+        // through a Windows batch wrapper (npm's `codex.cmd`): cmd.exe caps
+        // a command line at 8191 chars, and the ~1.5 KB of overrides and
+        // directive pushed codex's trailing flags past it.
+        let board_bridge = if crate::subprocess::argv_is_batch_wrapped(&cmd[..1]) {
+            Vec::new()
+        } else {
+            super::mcp_config::codex_bridge_overrides()
+        };
         let board_registered = !board_bridge.is_empty();
         cmd.extend(board_bridge);
         let (mut instructions, has_user_instructions) =

@@ -13,7 +13,7 @@ launched with clud's MCP bridge reads its own mail.
 | MCP tools | `src/clud/mcp_server.py` | `board_whoami`, `board_post(to, body)`, `board_read(after=-1)`, `board_status(working_on)`, `board_agents(parent?)`; each takes an optional `agent_id` |
 | Subagent identity | `crates/clud-bin/src/board_subagent.rs` | `SubagentStart` hook: mints a Claude Code subagent's board id and hands it over as context |
 | Directive | `crates/clud-bin/src/command/mcp_config.rs` (`BOARD_DIRECTIVE`) | Appended to the system prompt of every Claude launch that registers the bridge, and to `developer_instructions` of every Codex launch |
-| Codex registration | `mcp_config::codex_bridge_overrides` | The same server entry as `-c mcp_servers.clud.{command,args,env}` overrides, so codex agents (including `session_start` sub-agents) get the board tools |
+| Codex registration | `mcp_config::codex_bridge_overrides` | The same server entry as `-c mcp_servers.clud.{command,args,env}` overrides, so codex agents (including `session_start` sub-agents) get the board tools. Skipped when codex is a Windows batch wrapper (npm's `codex.cmd`): cmd.exe's 8191-char command-line cap would cut codex's trailing flags |
 | Registration | `crates/clud-bin/src/command/mcp_config.rs` | A wheel install uses the `python` beside `clud`. A native install (`install.sh`) unpacks the bridge sources embedded in the binary to `~/.clud/state/mcp-bridge/<version>/` and runs them through `uv run --with mcp`; with no `uv` the launch prints how to get one and registers nothing |
 
 ## Addressing
