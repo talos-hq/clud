@@ -9,8 +9,11 @@ launched with clud's MCP bridge reads its own mail.
 | Piece | Where | Role |
 | --- | --- | --- |
 | Board store + routes | `crates/clud-bin/src/daemon/board.rs` | `POST/GET /v1/board/messages`, bearer-authenticated like `/v1/sessions` |
-| MCP tools | `src/clud/mcp_server.py` | `board_whoami`, `board_post(to, body)`, `board_read(after=-1)` |
-| Directive | `crates/clud-bin/src/command/mcp_config.rs` (`BOARD_DIRECTIVE`) | Appended to the system prompt of every Claude launch that registers the bridge |
+| Agent directory | `crates/clud-bin/src/daemon/board.rs` (`Agents`) | `GET/POST /v1/board/agents`, `GET /v1/board/agents/<id>`: one card per agent |
+| MCP tools | `src/clud/mcp_server.py` | `board_whoami`, `board_post(to, body)`, `board_read(after=-1)`, `board_status(working_on)`, `board_agents(parent?)`; each takes an optional `agent_id` |
+| Subagent identity | `crates/clud-bin/src/board_subagent.rs` | `SubagentStart` hook: mints a Claude Code subagent's board id and hands it over as context |
+| Directive | `crates/clud-bin/src/command/mcp_config.rs` (`BOARD_DIRECTIVE`) | Appended to the system prompt of every Claude launch that registers the bridge, and to `developer_instructions` of every Codex launch |
+| Codex registration | `mcp_config::codex_bridge_overrides` | The same server entry as `-c mcp_servers.clud.{command,args,env}` overrides, so codex agents (including `session_start` sub-agents) get the board tools |
 | Registration | `crates/clud-bin/src/command/mcp_config.rs` | A wheel install uses the `python` beside `clud`. A native install (`install.sh`) unpacks the bridge sources embedded in the binary to `~/.clud/state/mcp-bridge/<version>/` and runs them through `uv run --with mcp`; with no `uv` the launch prints how to get one and registers nothing |
 
 ## Addressing
@@ -22,6 +25,39 @@ runs for an API session (the bridge's `session_start`) gets `CLUD_BOARD_ID`
 set to that session's id, so the creator can steer the agent with
 `board_post(to=session_id, ...)`. The recipient `all`
 reaches every reader.
+
+## Sub-agents and the agent directory
+
+Every agent can file a **card**: `id`, `parent` (the board id of the agent
+that spawned it), `cwd`, `kind`, `repo` (GitHub `owner/repo`), `branch` and
+`working_on`, the "what I'm working on now" slot. `board_agents(parent=<id>)`
+lists one agent's children, so a main agent sees which sub-agent works in which
+repo, branch and directory, and on what.
+
+Two kinds of sub-agent get a pre-populated identity:
+
+- **Daemon sessions** (`session_start`, e.g. a codex sub-agent). The bridge
+  sends its own board id as `board_parent` when it creates the session; the
+  daemon files the card at once (id = session id, parent, cwd, backend, repo
+  slug and branch from the cwd's git checkout) and runs each turn with
+  `CLUD_BOARD_ID=<session id>` and `CLUD_BOARD_PARENT=<parent>`. The sub-agent's
+  own bridge then speaks as itself, and `board_status` keeps the parent.
+- **Claude Code subagents** (the Agent tool). They share the parent's MCP
+  connection, so the bridge cannot tell them apart. clud's `SubagentStart`
+  hook mints `<parent>/<agent_type>-<agent id prefix>` and gives it to the
+  subagent as context with its cwd and parent; the subagent passes it as
+  `agent_id` to every board tool. The bridge keeps a separate read cursor per
+  `agent_id`, and `board_status(agent_id=...)` files the card under the
+  bridge's own id. The hook line rides the same client-version gate as the
+  worktree hooks.
+
+The bridge reads `repo`/`branch` from `.git` files directly (no git process).
+Cards live in daemon memory like messages; at most 512 are kept, the least
+recently updated dropped first.
+
+`tests/integration/test_board_subagent_a2a.py` demonstrates the round trip:
+the real bridge as the main agent, `session_start(backend="codex")`, and the
+mock agent (`MOCK_AGENT_BOARD=1`) as a board-aware codex sub-agent.
 
 ## Wire
 

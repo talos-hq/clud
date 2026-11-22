@@ -889,8 +889,15 @@ fn build_launch_plan_for_target_at(
             backend,
             computer_use_exe().as_deref(),
         ));
+        // The board bridge, as Claude launches get it (agent-board.md).
+        let board_bridge = super::mcp_config::codex_bridge_overrides();
+        let board_registered = !board_bridge.is_empty();
+        cmd.extend(board_bridge);
         let (mut instructions, has_user_instructions) =
             configured_codex_instructions(args, cwd, codex_passthrough_instructions);
+        if board_registered {
+            append_instructions(&mut instructions, super::mcp_config::BOARD_DIRECTIVE);
+        }
         if !args.unsafe_mode {
             if !instructions.is_empty() {
                 instructions.push_str("\n\n");

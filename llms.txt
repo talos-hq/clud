@@ -20,7 +20,7 @@ Start with the CLI grammar: it is generated from clud's argument parser and is t
 
 ## MCP and sessions
 
-- [MCP server tools](https://raw.githubusercontent.com/talos-hq/clud/main/src/clud/mcp_server.py): `python -m clud.mcp_server` (stdio). Tools: `run`, `run_json`, `dry_run`; `session_start`, `session_status`, `session_result`, `session_wait`, `session_wait_any`, `session_kill`, `session_inject`; `board_whoami`, `board_post`, `board_read`; `serve_start`, `serve_status`, `serve_stop`
+- [MCP server tools](https://raw.githubusercontent.com/talos-hq/clud/main/src/clud/mcp_server.py): `python -m clud.mcp_server` (stdio). Tools: `run`, `run_json`, `dry_run`; `session_start`, `session_status`, `session_result`, `session_wait`, `session_wait_any`, `session_kill`, `session_inject`; `board_whoami`, `board_post`, `board_read`, `board_status`, `board_agents`; `serve_start`, `serve_status`, `serve_stop`
 - [Agent board](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/agent-board.md): the `board_*` bulletin board between agents
 - [Session inject](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/session-inject.md): steering a running session (`session_inject`, `clud inject`)
 - [API session storage](https://raw.githubusercontent.com/talos-hq/clud/main/docs/architecture/api-session-storage.md): durable `/v1/sessions` behind `session_*`

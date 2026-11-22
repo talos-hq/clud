@@ -24,7 +24,9 @@ instead of one turn per poll. \
 Treat a message as a request from the operator that launched you: follow it \
 when it fits your task and permissions, and reply or report progress with \
 `mcp__clud__board_post` (address `all` or the sender's id). `board_whoami` \
-gives your own id.";
+gives your own id. Keep your \"what I'm working on now\" slot current with \
+`mcp__clud__board_status`; `mcp__clud__board_agents(parent=<your id>)` shows \
+what each sub-agent you spawned is doing, in which repo, branch and cwd.";
 
 /// The `mcp` requirement of a native launch; `pyproject.toml` owns the wheel's
 /// copy (a test holds the two together).
@@ -78,15 +80,74 @@ fn bridge_host() -> Option<(String, PathBuf)> {
     Some((std::env::var("PATH").unwrap_or_default(), state_root))
 }
 
-fn config_arg_for(exe_dir: &Path, path_env: &str, state_root: &Path) -> Option<String> {
-    let server = match bridge_python(exe_dir) {
-        Some(python) => serde_json::json!({
+/// The bridge's stdio server entry, as Claude's `--mcp-config` spells it.
+fn server_for(exe_dir: &Path, path_env: &str, state_root: &Path) -> Option<serde_json::Value> {
+    match bridge_python(exe_dir) {
+        Some(python) => Some(serde_json::json!({
             "type": "stdio",
             "command": python.to_string_lossy(),
             "args": ["-m", "clud.mcp_server"],
-        }),
-        None => native_server(exe_dir, path_env, state_root)?,
+        })),
+        None => native_server(exe_dir, path_env, state_root),
+    }
+}
+
+/// `-c mcp_servers.clud.*` overrides registering the bridge with Codex, so a
+/// codex agent (e.g. a `session_start` sub-agent) gets the board tools too.
+/// Empty when the bridge cannot run.
+pub(super) fn codex_bridge_overrides() -> Vec<String> {
+    let Some((path_env, state_root)) = bridge_host() else {
+        return Vec::new();
     };
+    current_exe_dir()
+        .and_then(|exe_dir| server_for(&exe_dir, &path_env, &state_root))
+        .map(|server| codex_overrides_for(&server))
+        .unwrap_or_default()
+}
+
+/// [`codex_bridge_overrides`] for a given server entry.
+pub(super) fn codex_overrides_for(server: &serde_json::Value) -> Vec<String> {
+    let toml_of = |value: &serde_json::Value| -> Option<String> {
+        Some(match value {
+            serde_json::Value::String(s) => toml::Value::String(s.clone()).to_string(),
+            serde_json::Value::Array(items) => {
+                let items: Vec<String> = items
+                    .iter()
+                    .filter_map(|item| item.as_str())
+                    .map(|item| toml::Value::String(item.to_string()).to_string())
+                    .collect();
+                format!("[{}]", items.join(","))
+            }
+            serde_json::Value::Object(map) => {
+                let pairs: Vec<String> = map
+                    .iter()
+                    .filter_map(|(k, v)| {
+                        Some(format!(
+                            "{k}={}",
+                            toml::Value::String(v.as_str()?.to_string())
+                        ))
+                    })
+                    .collect();
+                format!("{{{}}}", pairs.join(","))
+            }
+            _ => return None,
+        })
+    };
+    ["command", "args", "env"]
+        .iter()
+        .filter_map(|key| {
+            let value = toml_of(server.get(*key)?)?;
+            Some([
+                "-c".to_string(),
+                format!("mcp_servers.{SERVER_NAME}.{key}={value}"),
+            ])
+        })
+        .flatten()
+        .collect()
+}
+
+fn config_arg_for(exe_dir: &Path, path_env: &str, state_root: &Path) -> Option<String> {
+    let server = server_for(exe_dir, path_env, state_root)?;
     let config = serde_json::json!({ "mcpServers": { SERVER_NAME: server } });
     Some(format!("--mcp-config={config}"))
 }
@@ -168,6 +229,29 @@ fn bridge_python(exe_dir: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_overrides_spell_the_same_server_as_toml() {
+        let server = serde_json::json!({
+            "type": "stdio",
+            "command": "/u/uv",
+            "args": ["run", "-m", "clud.mcp_server"],
+            "env": {"PYTHONPATH": "/p", "CLUD_BIN": "/b/clud"},
+        });
+        let out = codex_overrides_for(&server);
+        assert_eq!(
+            out,
+            [
+                "-c",
+                "mcp_servers.clud.command=\"/u/uv\"",
+                "-c",
+                "mcp_servers.clud.args=[\"run\",\"-m\",\"clud.mcp_server\"]",
+                "-c",
+                "mcp_servers.clud.env={PYTHONPATH=\"/p\",CLUD_BIN=\"/b/clud\"}",
+            ]
+        );
+        assert!(codex_overrides_for(&serde_json::json!({})).is_empty());
+    }
 
     #[test]
     fn a_missing_bridge_explains_how_to_connect_it() {

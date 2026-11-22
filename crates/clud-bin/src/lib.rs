@@ -34,6 +34,7 @@ pub mod backend;
 pub mod backend_bootstrap;
 pub mod block_bad_cmd;
 pub mod block_bad_cmd_rollout;
+pub mod board_subagent;
 pub mod bridge_log;
 pub mod cache_health;
 pub mod cache_heartbeat;

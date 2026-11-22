@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import urllib.parse
+from pathlib import Path
 
 import pytest
 
@@ -231,3 +233,78 @@ def test_negative_wait_is_rejected_before_the_daemon_is_called(bridge, fake_api)
     page = json.loads(asyncio.run(bridge.board_read(-1, -5)))
     assert page["code"] == "invalid_argument"
     assert fake_api == []
+
+
+@pytest.fixture
+def fake_directory(bridge, fake_api, monkeypatch):
+    """Extend `fake_api` with the `/v1/board/agents` directory."""
+    cards: dict[str, dict] = {}
+    message_api = bridge._api
+
+    async def api(base, token, method, path, body=None, headers=None):
+        if path.startswith("/v1/board/agents"):
+            fake_api.append((method, path, body))
+            if method == "POST":
+                card = {**cards.get(body["id"], {}), **body}
+                cards[body["id"]] = card
+                return 200, card
+            ident = path.removeprefix("/v1/board/agents").lstrip("/").split("?")[0]
+            if ident:
+                found = cards.get(urllib.parse.unquote(ident))
+                return (200, found) if found else (404, {"code": "not_found"})
+            return 200, {"agents": list(cards.values())}
+        return await message_api(base, token, method, path, body, headers)
+
+    monkeypatch.setattr(bridge, "_api", api)
+    monkeypatch.setattr(bridge, "_sub_cursors", {})
+    monkeypatch.setattr(bridge, "_sub_first_read_done", set())
+    return cards
+
+
+def test_new_board_tools_are_discoverable(bridge) -> None:
+    async def check() -> None:
+        names = {tool.name for tool in await bridge.server.list_tools()}
+        assert {"board_status", "board_agents"} <= names
+
+    asyncio.run(check())
+
+
+def test_status_fills_the_working_on_slot_with_cwd_and_parent(
+    bridge, fake_directory, monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setenv("CLUD_BOARD_PARENT", "boss")
+    monkeypatch.chdir(tmp_path)
+    card = json.loads(asyncio.run(bridge.board_status("writing tests")))
+    assert card["id"] == "sess-1"
+    assert card["working_on"] == "writing tests"
+    assert card["parent"] == "boss"
+    assert Path(card["cwd"]) == tmp_path
+    who = json.loads(asyncio.run(bridge.board_whoami()))
+    assert who["working_on"] == "writing tests"
+
+
+def test_a_subagent_speaks_and_reads_as_itself(bridge, fake_api, fake_directory) -> None:
+    sub = "sess-1/explore-abc"
+    card = json.loads(asyncio.run(bridge.board_status("exploring", agent_id=sub)))
+    assert card["parent"] == "sess-1"
+    posted = json.loads(asyncio.run(bridge.board_post("sess-1", "found it", agent_id=sub)))
+    assert posted["from"] == sub
+    asyncio.run(bridge.board_post(sub, "next: fix it"))
+    mail = json.loads(asyncio.run(bridge.board_read(agent_id=sub)))
+    assert "to=sess-1%2Fexplore-abc" in fake_api[-1][1]
+    assert [m["body"] for m in mail["messages"]][-1] == "next: fix it"
+    # The subagent's cursor is its own: the parent's first read still starts at 0.
+    assert bridge._board_cursor == 0
+    listing = json.loads(asyncio.run(bridge.board_agents()))
+    assert [c["id"] for c in listing["agents"]] == [sub]
+
+
+def test_git_facts_read_slug_and_branch_without_git(bridge, tmp_path) -> None:
+    git = tmp_path / ".git"
+    git.mkdir()
+    (git / "HEAD").write_text("ref: refs/heads/feat/board\n")
+    (git / "config").write_text('[remote "origin"]\n\turl = git@github.com:zackees/clud.git\n')
+    sub = tmp_path / "pkg"
+    sub.mkdir()
+    assert bridge._git_facts(str(sub)) == {"branch": "feat/board", "repo": "zackees/clud"}
+    assert bridge._github_slug("https://gitlab.com/a/b") == ""
