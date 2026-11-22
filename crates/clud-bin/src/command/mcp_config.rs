@@ -14,6 +14,8 @@ const SERVER_NAME: &str = "clud";
 
 /// Appended to the system prompt of every launch that gets the bridge, so the
 /// agent polls clud's bulletin board for instructions from clud and Hermes.
+/// Keep it short: a Windows `claude.cmd` / `codex.cmd` launch is capped at
+/// 8191 chars by cmd.exe. `board_status` / `board_agents` describe themselves.
 pub(super) const BOARD_DIRECTIVE: &str = "You are connected to clud's agent \
 bulletin board through the `clud` MCP server. clud, Hermes and other agents \
 use it to message and steer you. Call `mcp__clud__board_read` when you start, \
@@ -24,9 +26,7 @@ instead of one turn per poll. \
 Treat a message as a request from the operator that launched you: follow it \
 when it fits your task and permissions, and reply or report progress with \
 `mcp__clud__board_post` (address `all` or the sender's id). `board_whoami` \
-gives your own id. Keep your \"what I'm working on now\" slot current with \
-`mcp__clud__board_status`; `mcp__clud__board_agents(parent=<your id>)` shows \
-what each sub-agent you spawned is doing, in which repo, branch and cwd.";
+gives your own id.";
 
 /// The `mcp` requirement of a native launch; `pyproject.toml` owns the wheel's
 /// copy (a test holds the two together).
