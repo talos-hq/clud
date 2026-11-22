@@ -91,6 +91,14 @@ none, the step is skipped and says so.
   `openrouter`, `deepseek`, `kimi` — plus the provider clud is currently
   configured to use. Claude and Codex are reported as externally managed and
   never migrated, matching `clud auth` and `clud setup`.
+- **The Codex gateway.** When clud holds a Codex credential that
+  `clud serve --codex` accepts, the offer also lists `clud-codex`. Migrating
+  it writes `providers.clud-codex` with `base_url: http://127.0.0.1:8317/v1`,
+  `api_mode: chat_completions`, and clud's durable serve client token as
+  `api_key`, created on first use. The Codex subscription credential itself
+  never leaves clud: the product reaches Codex only through `clud serve
+  --codex`, which must be running on the default port for the entry's models
+  to appear in the product's model picker.
 - **The prompt.** Secret-free first. The command prints, one line per provider,
   `provider: openrouter (stored key), model: x-ai/grok-5` and then asks
   `Would you like to migrate clud credentials for providers into hermes? [y/N]`

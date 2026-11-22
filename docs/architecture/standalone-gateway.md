@@ -89,6 +89,21 @@ protocol:
 The translated doors are exposed only when the launch has a unified gateway,
 because the relay they share lives there.
 
+The Codex route answers every translated door too. Its pipeline writes
+Messages frames straight to a socket, so an OpenAI-shaped Codex turn is served
+into a loopback socket pair, the captured Messages response is read back, and it
+goes through the same translator as every other route
+(`codex_bridge/codex_chat.rs`). That translator already buffers the whole
+answer, so the capture adds no latency the client was not already paying.
+
+## Durable client token
+
+`CLUD_SERVE_CLIENT_TOKEN` wins when it is set. Without it, `clud serve` uses
+the token clud keeps in its credential store (`clud-serve` / `client-token`),
+which `clud install hermes --configure-only` creates on first use and writes
+into the product's provider entry. That makes a restart of the server, or of
+the product, keep working without re-pairing (`serve_client_token.rs`).
+
 ## OpenAI Responses client bodies
 
 `crates/clud-bin/src/responses_ingress.rs` translates one OpenAI Responses

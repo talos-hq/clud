@@ -3717,16 +3717,10 @@ fn dispatch_unified_attempt(
             )
         }
         ModelProvider::Codex if unified.codex_available && turn.chat.is_some() => {
-            // Codex's pipeline writes Messages frames straight to the client,
-            // so an OpenAI-shaped turn cannot be answered verbatim. Refuse
-            // rather than emit a body the client cannot parse; the Anthropic
-            // routes stay available for the same model.
-            let body = crate::openai_ingress::render_chat_error(
-                400,
-                "this model is served by the Codex route, which does not translate Anthropic responses back to OpenAI on this gateway",
-            );
-            let _ = write_response(stream, 400, "application/json", &body, false);
-            ProxyOutcome::local(400)
+            // Codex's pipeline writes Messages frames straight to a socket, so
+            // an OpenAI-shaped turn is captured and translated (codex_chat.rs).
+            let chat = turn.chat.expect("guarded by is_some above");
+            codex_chat::serve_codex_translated(stream, turn, payload, chat)
         }
         ModelProvider::Codex if unified.codex_available => {
             // Codex is a valid destination but never a probe source: its
@@ -6850,6 +6844,8 @@ fn resolve_test_upstream_override(
     }
 }
 
+mod codex_chat;
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -8934,10 +8930,10 @@ Connection: close
         bridge.shutdown().unwrap();
     }
 
-    /// Codex writes Messages frames directly, so an OpenAI-shaped turn for a
-    /// Codex model is refused in the client's shape instead of half-translated.
+    /// A Codex model on the OpenAI door is served: the Messages turn is
+    /// captured and translated back to a `chat.completion` (codex_chat.rs).
     #[test]
-    fn chat_completions_refuses_a_codex_model() {
+    fn chat_completions_serves_a_codex_model() {
         let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
         let codex = FakeResponses::start_with_response(None);
         let deepseek = FakeResponses::start_with_response(None);
@@ -8946,12 +8942,31 @@ Connection: close
         let body =
             r#"{"model":"codex-sol","messages":[{"role":"user","content":"hi"}],"stream":false}"#;
         let response = chat_request(&bridge, body, "chat-codex-session");
-        assert_eq!(status(&response), 400, "{response}");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(response.contains("\"chat.completion\""), "{response}");
+        assert!(!codex.requests().is_empty(), "the turn must reach Codex");
         assert!(
-            response.contains("api_error") || response.contains("invalid_request_error"),
-            "{response}"
+            anthropic.requests().is_empty(),
+            "a Codex turn never reaches Claude"
         );
-        assert!(response.contains("Codex route"), "{response}");
+        bridge.shutdown().unwrap();
+    }
+
+    /// The streamed Codex chat turn ends as OpenAI chunks and `[DONE]`.
+    #[test]
+    fn chat_completions_streams_a_codex_model() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body =
+            r#"{"model":"codex-sol","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
+        let response = chat_request(&bridge, body, "chat-codex-stream-session");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(response.contains("chat.completion.chunk"), "{response}");
+        assert!(response.contains("data: [DONE]"), "{response}");
+        assert!(!codex.requests().is_empty(), "the turn must reach Codex");
         bridge.shutdown().unwrap();
     }
 
