@@ -1070,7 +1070,14 @@ fn a_stalled_link_paces_the_shell_and_loses_nothing() {
     operator.wait_shell_bytes(b"\n1000\r\n");
     // Stop reading: the server's receive buffer and the client's send buffer fill.
     std::thread::sleep(Duration::from_secs(12));
-    let last = format!("\n{LINES}\r\n");
+    // POSIX relays the final line as printed. ConPTY renders the screen, so
+    // the number arrives after a cursor move rather than a newline; no other
+    // line contains it, since every number before it is smaller.
+    let last = if clud::platform::host::WINDOWS {
+        LINES.to_string()
+    } else {
+        format!("\n{LINES}\r\n")
+    };
     operator.wait_shell_bytes(last.as_bytes());
     listener.set_nonblocking(true).unwrap();
     assert!(
