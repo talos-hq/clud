@@ -40,6 +40,7 @@ fn raw_insert(reg: &SessionRegistry, pid: u32) {
 /// [`raw_insert`] for many rows in one transaction: each commit syncs to disk.
 fn raw_insert_all(reg: &SessionRegistry, pids: &[u32]) {
     let row = SessionRow {
+        process_start: 0,
         started_unix: 0,
         backend: None,
         launch_mode: None,

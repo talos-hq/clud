@@ -499,7 +499,7 @@ pub fn session_mismatch(session: Option<&Path>, active: &Path) -> Option<Finding
 
 /// `clud doctor`: print the report; exit 1 when an alias is wrong. With
 /// `fix`, repair first and report what remains.
-pub fn run(as_json: bool, fix: bool) -> i32 {
+pub fn run(as_json: bool, fix: bool, state_dir: Option<&Path>) -> i32 {
     let Ok(exe) = std::env::current_exe() else {
         eprintln!("clud doctor: cannot resolve the running executable");
         return 2;
@@ -531,12 +531,28 @@ pub fn run(as_json: bool, fix: bool) -> i32 {
         .ok()
         .and_then(|cwd| crate::block_bad_cmd::nearest_repo_root_public(&cwd));
     let coverage = coverage_report(home.as_deref(), repo.as_deref());
+    let census = state_dir
+        .map(Path::to_path_buf)
+        .or_else(|| crate::daemon::default_state_dir().ok())
+        .map(|dir| crate::daemon::census(&dir))
+        .unwrap_or_default();
     if as_json {
-        println!("{}", json_report(&own, &exe, active, &aliases, &coverage));
+        let mut report = json_report(&own, &exe, active, &aliases, &coverage);
+        report["session_census"] = serde_json::to_value(&census).expect("serializable census");
+        println!("{report}");
     } else {
         print_report(&own, &exe, active, &aliases, &coverage);
+        println!(
+            "Session census: {} orphaned children, {} stale records, {} unregistered children",
+            census.orphan_count(),
+            census.stale_sessions.len(),
+            census.unregistered_children.len()
+        );
+        for (session, count) in &census.orphans_by_session {
+            println!("  {session}: {count} orphaned children");
+        }
     }
-    i32::from(!aliases.findings.is_empty())
+    i32::from(!aliases.findings.is_empty() || census.has_findings())
 }
 
 #[cfg(test)]

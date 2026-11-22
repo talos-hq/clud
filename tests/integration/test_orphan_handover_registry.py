@@ -14,6 +14,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from ._daemon_helpers import (
     daemon_env,
     launch_detached,
@@ -21,6 +23,7 @@ from ._daemon_helpers import (
     wait_for_file,
 )
 
+pytestmark = pytest.mark.integration
 
 def test_detached_session_registers_daemon_pid_in_handover_registry(
     clud_binary: Path, mock_env: dict[str, str], tmp_path: Path

@@ -39,7 +39,7 @@ const EVENT_LINE_MAX_BYTES: usize = 8 * 1024;
 /// environment, so there is nothing to forward yet. #933 owns adding the
 /// field; until then this is byte-for-byte the previous behaviour.
 /// Read by the MCP bridge's `board_*` tools (docs/architecture/agent-board.md).
-const BOARD_ID_ENV: &str = "CLUD_BOARD_ID";
+pub(crate) const BOARD_ID_ENV: &str = "CLUD_BOARD_ID";
 
 fn api_turn_env(client_env: &[(String, String)]) -> Vec<(String, String)> {
     super::io_helpers::child_env_from(client_env)
@@ -210,15 +210,20 @@ pub fn launch_claimed_turn_with_client_env(
         client_env,
         session_id,
     )));
-    if let Err(error) = process.start() {
+    let admission = super::session_admission::SessionAdmission::acquire().and_then(|admission| {
+        process
+            .start()
+            .map_err(|error| io::Error::other(error.to_string()))?;
+        Ok(admission)
+    });
+    let admission = admission.inspect_err(|_| {
         let _ = store.finish_turn(
             session_id,
             &turn.id,
             ApiTurnState::Failed,
             Some("spawn_failed".to_string()),
         );
-        return Err(ApiTurnLaunchError::Io(io::Error::other(error.to_string())));
-    }
+    })?;
     if let Some(pid) = process.pid() {
         let _ = store.set_turn_root_identity(
             session_id,
@@ -247,6 +252,7 @@ pub fn launch_claimed_turn_with_client_env(
     let wait_turn = turn.id;
     thread::spawn(move || {
         let code = wait_process.wait(None).unwrap_or(1);
+        drop(admission);
         let _ = drain_handle.join();
         let state = if code == 0 {
             ApiTurnState::Completed

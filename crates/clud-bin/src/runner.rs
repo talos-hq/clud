@@ -153,7 +153,12 @@ pub fn unsafe_mode_enabled() -> bool {
 /// on Windows). `PATH` is deliberately absent — `activate_rm` prepends to
 /// whatever the base carried rather than owning the value.
 pub fn child_env_policy_keys() -> Vec<&'static str> {
-    let mut keys = vec!["IN_CLUD", "CLUD_EXE", running_process::ORIGINATOR_ENV_VAR];
+    let mut keys = vec![
+        "IN_CLUD",
+        "CLUD_EXE",
+        running_process::ORIGINATOR_ENV_VAR,
+        crate::process_scan::ORIGIN_START_ENV,
+    ];
     keys.push(UNSAFE_MODE_ENV);
     keys.extend(crate::gc::session_tmp::OVERRIDDEN_KEYS.iter().copied());
     keys.push(crate::shell::completion_guard::SUPPRESS_KEY);
@@ -239,7 +244,13 @@ fn apply_child_env_policy_with_nounset_opt_out(
         .iter()
         .any(|(key, value)| key == UNSAFE_MODE_ENV && value == "1");
 
-    let mut strip_keys: Vec<&str> = vec!["IN_CLUD", "CLUD_EXE", originator_key, UNSAFE_MODE_ENV];
+    let mut strip_keys: Vec<&str> = vec![
+        "IN_CLUD",
+        "CLUD_EXE",
+        originator_key,
+        UNSAFE_MODE_ENV,
+        crate::process_scan::ORIGIN_START_ENV,
+    ];
     if windows_stdio {
         strip_keys.extend(WINDOWS_STDIO_KEYS.iter().copied());
     }
@@ -270,6 +281,15 @@ fn apply_child_env_policy_with_nounset_opt_out(
 
     let originator_value = format!("CLUD:{}", std::process::id());
     env.push((originator_key.to_string(), originator_value));
+    if let Some(origin_start) = crate::process_identity::origin_start(
+        std::process::id(),
+        crate::process_identity::self_start_time(),
+    ) {
+        env.push((
+            crate::process_scan::ORIGIN_START_ENV.into(),
+            origin_start.to_string(),
+        ));
+    }
 
     if windows_stdio {
         env.push(("PYTHONIOENCODING".to_string(), "utf-8".to_string()));

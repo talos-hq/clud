@@ -145,6 +145,11 @@ pub fn creation_ticks(pid: u32) -> Option<u64> {
     crate::platform::process_identity::creation_ticks(pid)
 }
 
+/// The native creation time written into launcher tags and foreground rows.
+pub(crate) fn origin_start(pid: u32, seconds: u64) -> Option<u64> {
+    crate::platform::process_identity::origin_start(pid, seconds)
+}
+
 fn observe_process(pid: u32) -> Option<ProcessIdentity> {
     crate::platform::process_identity::observe_process(pid)
 }

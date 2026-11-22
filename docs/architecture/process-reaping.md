@@ -33,6 +33,25 @@ the job reaper needs its own retry-at-exit list for exits it abandons
 
 ---
 
+## Orphan census and stale process groups
+
+`clud doctor` counts orphaned children by session and exits nonzero for
+orphans, stale running records, or tagged children without a registration.
+`clud list` shows the total and JSON API-session rows report their own
+`orphaned_children` counts. The census takes one host process snapshot.
+On Unix an immediate parent of PID 1, an absent parent, or a dead launcher
+makes a tagged child an orphan. On Windows new launcher tags and foreground
+registrations carry the native creation time, which distinguishes a recycled
+PID even within the same second. Legacy tags use process creation order.
+
+The daemon's periodic sweep also checks stale worker snapshots. When a
+surviving tagged child corroborates a stale session's dedicated Unix process
+group, other members in that group become candidates under the same grace,
+spare, and identity checks. Windows worker and captured child launches use
+the existing kill-on-close Job Objects for group containment. A surviving
+worker or backend protects its session during handover.
+
+
 ## Explicit Command Prompt windows on Windows (#2007)
 
 The generated Bash startup file installs a Windows adapter for exactly
