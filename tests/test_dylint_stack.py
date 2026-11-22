@@ -57,7 +57,8 @@ def test_dylint_stack_versions_stay_in_lockstep() -> None:
     assert "SOLDR_DYLINT_TOOLCHAIN: nightly-2026-08-15" in workflow
     assert "dylint: true" in workflow
     assert "soldr rustup component add --toolchain nightly-2026-08-15 rustfmt" in workflow
-    assert "soldr --no-cache cargo fmt" in workflow
+    assert "soldr cargo fmt" in workflow
+    assert "--no-cache" not in workflow
     # Every nightly the workflow names must be the one the lint crate pins;
     # a stray second date means the driver and the lints disagree.
     assert set(re.findall(r"nightly-\d{4}-\d{2}-\d{2}", workflow)) == {DYLINT_NIGHTLY}

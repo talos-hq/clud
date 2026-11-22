@@ -8344,10 +8344,12 @@ trust-surface paths. Its merge queue never consumes client attestations.
 - *What is attested.* `ci-attestations.yml` declares five gates in four
   lanes: Clippy and doc-tests for x86_64 Linux (lane `clippy`, the two
   commands the hosted `Clippy linux-x64` job runs), the host Dylint leg
-  (lane `dylint`: crate formatting and tests, then the workspace pass), and
+  (lane `dylint`: preparation and the guarded workspace pass), and
   the two cross Dylint legs (`dylint-x86_64-pc-windows-msvc`,
   `dylint-aarch64-apple-darwin`). Each leg is its own lane, so a host that
-  cannot run one cross pass still earns the others. Static checks
+  cannot run one cross pass still earns the others. Lint-crate formatting
+  and unit/UI tests run in a hosted-only `crates` matrix leg, excluded from
+  attestation (see the DD-228 correction below). Static checks
   (formatting, Ruff, repo guards) stay hosted: they take under a minute and
   are not slow lanes. `python -m ci.attest` is the producer. It runs each
   lane through `prooft run`, using the lane's hosted commands
@@ -8630,6 +8632,28 @@ Clippy lane cannot share `bash lint`'s outputs: the hosted job runs
 target env, while `soldr lint rust` checks the host without `--target`, and
 the lane must run the hosted command (`tests/test_attest.py` pins it). It
 reuses a previous attest's target directory in the same checkout.
+
+### Correction: keep lint-library development tests out of local attestation
+
+The host gate `rust/x86_64-unknown-linux-gnu/dylint` now proves the guarded
+workspace lint pass only. Locally it prepares soldr's verified tools and runs
+that pass. The existing `_dylint.yml` gains a fourth matrix leg, `crates`, for
+formatting and unit/UI tests. It is explicitly excluded from attestation
+reduction, including an input that names `crates`. Its result contributes to
+the reusable workflow result required by `CI OK`. Exact-input main pass
+markers may reuse its hosted result under the existing cache policy.
+
+The crate leg discovers all `dylints/*/Cargo.toml`, including the previously
+omitted `ban_dirs_home_dir`. Tests run through soldr from each crate directory
+to preserve its linker configuration, with one absolute `CARGO_TARGET_DIR`
+and no `--no-cache`. The crates remain separate nightly workspaces: compatible
+dependency artifacts can be shared without merging lockfiles. Different
+features, profiles and the nested UI harness can still need distinct units.
+The old DD-228 local UI-driver export is superseded; hosted UI tests retain
+setup-soldr's verified driver and short-nightly alias checks.
+
+Investigation evidence and the remaining soldr boundary are recorded in
+[`dylints/README.md`](../dylints/README.md#local-attestation-cost).
 
 ## DD-229: the consenting user's terminal sets the remote session's size
 

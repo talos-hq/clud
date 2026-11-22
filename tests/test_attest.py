@@ -62,7 +62,8 @@ def test_policy_covers_only_clippy_and_the_dylint_legs() -> None:
 def test_dylint_legs_match_the_workflow_matrix() -> None:
     matrix = re.search(r"pass: \[([^\]]+)\]", DYLINT_YML)
     assert matrix is not None
-    assert tuple(p.strip() for p in matrix.group(1).split(",")) == DYLINT_PASSES
+    assert tuple(p.strip() for p in matrix.group(1).split(",")) == (*DYLINT_PASSES, "crates")
+    assert "_dylint.yml:dylint-crates" not in _policy().jobs
 
 
 def test_clippy_lane_runs_the_hosted_xbuild_commands() -> None:
@@ -105,17 +106,14 @@ def test_dylint_lanes_run_the_hosted_commands() -> None:
         assert all(("RUSTFLAGS", "-D warnings") in s.env for s in table[f"dylint-{target}"])
 
 
-def test_host_lane_points_nested_cargo_at_the_verified_driver(tmp_path: Path) -> None:
-    """The UI test's nested Cargo needs DYLINT_DRIVER_PATH, which only setup-soldr
-    exports on a runner; without it dylint_testing builds the driver from
-    crates.io and fails ("Could not parse toolchain")."""
-    root = tmp_path / "drivers"
-    steps = attest.lanes(environ={"DYLINT_DRIVER_PATH": str(root)})["dylint"]
-    ui = next(s for s in steps if s.cwd == attest.DYLINT_CRATES[1] and "test" in s.argv)
-    assert ("DYLINT_DRIVER_PATH", str(root)) in ui.env
-    check = [s for s in steps if s.argv[-1] == "--check-driver"]
-    assert len(check) == 1
-    assert steps.index(check[0]) < steps.index(ui)
+def test_host_lane_only_prepares_tools_and_lints_the_workspace() -> None:
+    steps = attest.lanes()["dylint"]
+    assert [step.argv for step in steps] == [
+        ("soldr", "dylint", "prepare"),
+        ("soldr", "dylint", "--all", "--", "--workspace", "--all-targets"),
+    ]
+    assert all(step.cwd == "." for step in steps)
+    assert steps[-1].dylint_guard
 
 
 def test_driver_path_follows_soldr_precedence(tmp_path: Path) -> None:
@@ -207,7 +205,7 @@ def test_empty_pass_guard_rejects_a_dylint_run_that_linted_nothing(
 def test_guard_libraries_are_the_workspace_dylint_libraries() -> None:
     cargo = (ROOT / "Cargo.toml").read_text(encoding="utf-8")
     assert 'libraries = [{ path = "dylints/*" }]' in cargo
-    assert attest.dylint_libraries() >= {Path(c).name for c in attest.DYLINT_CRATES}
+    assert attest.dylint_libraries() == LIBS
 
 
 def test_a_hollow_dylint_pass_that_exits_zero_fails_its_lane(tmp_path: Path) -> None:
@@ -508,7 +506,8 @@ def test_reduction_is_in_place_and_only_for_the_lint_only_call() -> None:
     # the caller's inputs); tests/test_attest_noop.py walks the steps.
     assert "ATTESTED: ${{ inputs.attested && inputs.clippy && !inputs.compile" in BUILD_YML
     assert (
-        "ATTESTED: ${{ contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}"
+        "ATTESTED: ${{ matrix.pass != 'crates' && "
+        "contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}"
         in DYLINT_YML
     )
     for text in (BUILD_YML, DYLINT_YML):

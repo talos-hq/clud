@@ -15,7 +15,9 @@ with its `Ci-Attestation:` trailers (forge-ci/prooft, pinned in pyproject),
 so run this before the first push, or push with `--force-with-lease` after.
 
 Every lane runs the same commands as the hosted job or Dylint leg it stands
-in for (`tests/test_attest.py` pins them against the workflows). A lane that
+in for (`tests/test_attest.py` pins them against the workflows). Lint-crate
+formatting and unit/UI tests run in a separate hosted-only `crates` leg;
+Dylint trailers prove workspace linting only. A lane that
 fails, or cannot run on this host, stamps nothing, and CI runs that job.
 """
 
@@ -44,7 +46,6 @@ LINUX = "x86_64-unknown-linux-gnu"
 # Must equal `SOLDR_DYLINT_TOOLCHAIN` in .github/workflows/_dylint.yml.
 DYLINT_TOOLCHAIN = "nightly-2026-08-15"
 DYLINT_CROSS_TARGETS = ("x86_64-pc-windows-msvc", "aarch64-apple-darwin")
-DYLINT_CRATES = ("dylints/ban_manual_slash_normalize", "dylints/enforce_platform_boundary")
 # Never inherited by a lane: hosted jobs do not set them, and they change what
 # a nested tool sees. SOLDR_PORCELAIN replaces the stdout of the `cargo
 # metadata` cargo-dylint runs through soldr's shim, so Dylint finds "No
@@ -165,35 +166,14 @@ def check_dylint_driver(environ: Mapping[str, str]) -> int:
     return 1
 
 
-def _dylint_host_lane(python: str, environ: Mapping[str, str]) -> tuple[Step, ...]:
-    """`Dylint (host)`: crate formatting and tests, then the workspace pass."""
-    nightly = (("RUSTUP_TOOLCHAIN", DYLINT_TOOLCHAIN),)
-    # The UI test launches nested Cargo through dylint_testing, outside
-    # soldr's Dylint front door, so it needs the driver root that
-    # setup-soldr exports on a runner (`_dylint.yml`'s Test dylint crate).
-    driver = (("DYLINT_DRIVER_PATH", str(dylint_driver_path(environ))),)
-    fmt = tuple(
-        Step(("soldr", "--no-cache", "cargo", "fmt", "--all", "--", "--check"), cwd=crate)
-        for crate in DYLINT_CRATES
-    )
-    tests = (
-        Step(("soldr", "--no-cache", "cargo", "test"), cwd=DYLINT_CRATES[0], env=nightly),
-        Step(
-            ("soldr", "cargo", "test"),
-            cwd=DYLINT_CRATES[1],
-            env=(
-                *nightly,
-                *driver,
-                ("CARGO_TARGET_DIR", str(ROOT / "target" / "dylint-tests")),
-            ),
-        ),
-    )
+def _dylint_host_lane() -> tuple[Step, ...]:
+    """`Dylint (host)`: verified tools and the guarded workspace pass.
+
+    Crate formatting and unit/UI tests belong to the hosted-only `crates`
+    leg. Its result cannot be reduced by a workspace lint attestation.
+    """
     return (
         _soldr_dylint("prepare"),
-        Step((python, "-m", "ci.attest", "--check-driver"), env=driver),
-        Step(("soldr", "rustup", "component", "add", "--toolchain", DYLINT_TOOLCHAIN, "rustfmt")),
-        *fmt,
-        *tests,
         _soldr_dylint("--all", "--", "--workspace", "--all-targets"),
     )
 
@@ -213,12 +193,9 @@ def _dylint_cross_lane(target: str) -> tuple[Step, ...]:
     )
 
 
-def lanes(
-    python: str = sys.executable, environ: Mapping[str, str] | None = None
-) -> dict[str, tuple[Step, ...]]:
+def lanes(python: str = sys.executable) -> dict[str, tuple[Step, ...]]:
     """Every lane in ci-attestations.yml, by name, in run order."""
-    environ = os.environ if environ is None else environ
-    out = {"clippy": _clippy_lane(python), "dylint": _dylint_host_lane(python, environ)}
+    out = {"clippy": _clippy_lane(python), "dylint": _dylint_host_lane()}
     for target in DYLINT_CROSS_TARGETS:
         out[f"dylint-{target}"] = _dylint_cross_lane(target)
     return out
