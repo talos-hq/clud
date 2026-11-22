@@ -287,12 +287,38 @@ pub(super) fn expects_e2e(base: &Url, require: Option<&str>) -> bool {
             .is_some_and(|host| ENCRYPTED_HOSTS.contains(&host))
 }
 
-/// What the edge must not read: the machine's name and working directory.
+/// What the edge must not read: the computer's name, the user's home folder
+/// name and the working directory. The operator tells machines apart by the
+/// first two (#2899).
 fn private_description() -> Value {
+    let env = |key: &str| std::env::var(key).ok();
     serde_json::json!({
-        "host": std::env::var("HOSTNAME").or_else(|_| std::env::var("COMPUTERNAME")).unwrap_or_default(),
+        "host": computer_name(
+            sysinfo::System::host_name(),
+            &[env("HOSTNAME"), env("COMPUTERNAME")],
+        ),
+        "user": home_folder_name(crate::home::user_home().as_deref()),
         "cwd": std::env::current_dir().ok().map(|p| p.display().to_string()),
     })
+}
+
+/// The OS's name for this computer. `HOSTNAME` is only a fallback: bash sets
+/// it without exporting it, so a child process rarely sees it.
+fn computer_name(from_os: Option<String>, from_env: &[Option<String>]) -> String {
+    std::iter::once(from_os)
+        .chain(from_env.iter().cloned())
+        .flatten()
+        .map(|name| name.trim().to_owned())
+        .find(|name| !name.is_empty())
+        .unwrap_or_default()
+}
+
+/// The last part of the user's home directory (`niteris` for `/home/niteris`).
+fn home_folder_name(home: Option<&std::path::Path>) -> Option<String> {
+    home?
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
 }
 
 /// Why one startup attempt failed.
@@ -370,8 +396,9 @@ fn create_once(base: &Url, mode: Option<&str>) -> Result<Session, Failure> {
     });
     // Sent as `client_info` inside the encrypted socket when it will be one.
     if !expected {
-        client["host"] = private["host"].clone();
-        client["cwd"] = private["cwd"].clone();
+        for (key, value) in private.as_object().into_iter().flatten() {
+            client[key] = value.clone();
+        }
     }
     let mut body = serde_json::json!({ "client": client });
     if let Some(mode) = mode {
@@ -747,5 +774,45 @@ mod tests {
         );
         // An old server's response: nothing says it offers encryption.
         assert!(!session.e2e_required && session.e2e.is_none());
+    }
+
+    #[test]
+    fn the_computer_name_prefers_the_os_and_skips_blank_fallbacks() {
+        let env = |a: Option<&str>, b: Option<&str>| [a.map(Into::into), b.map(Into::into)];
+        assert_eq!(
+            computer_name(Some("box".into()), &env(Some("x"), None)),
+            "box"
+        );
+        // bash's unexported HOSTNAME is usually absent; COMPUTERNAME is Windows.
+        assert_eq!(computer_name(None, &env(None, Some("WIN-PC"))), "WIN-PC");
+        assert_eq!(
+            computer_name(Some("  ".into()), &env(Some(""), Some("pc"))),
+            "pc"
+        );
+        assert_eq!(computer_name(None, &env(None, None)), "");
+    }
+
+    #[test]
+    fn the_user_is_the_home_folder_name() {
+        use std::path::Path;
+        assert_eq!(
+            home_folder_name(Some(Path::new("/home/niteris"))).as_deref(),
+            Some("niteris")
+        );
+        assert_eq!(home_folder_name(Some(Path::new("/"))), None);
+        assert_eq!(home_folder_name(None), None);
+    }
+
+    #[test]
+    fn the_private_description_names_this_computer() {
+        let private = private_description();
+        assert!(
+            !private["host"].as_str().unwrap_or_default().is_empty(),
+            "{private}"
+        );
+        assert!(
+            private.get("user").is_some() && private.get("cwd").is_some(),
+            "{private}"
+        );
     }
 }

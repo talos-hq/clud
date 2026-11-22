@@ -361,8 +361,9 @@ the wire format is owned by clud.bot's `SPEC.md` §4.2.4.
   require.
 - **What stays visible to the edge.** Session timing; the creation request
   (`clud_version`, `os`, and, unless the client already expects encryption,
-  host name and directory, which otherwise go inside the tunnel as
-  `client_info`); the creation response (keyword, bearer, `ws_url`, model);
+  computer name, home-folder user name and directory, which otherwise go
+  inside the tunnel as `client_info`; the operator console labels the
+  session with the first two, #2899); the creation response (keyword, bearer, `ws_url`, model);
   the bearer in the socket URL; the exchange's public values; every record's
   size, direction and timing; close codes; and the operator console leg below.
 - **Not defended:** an edge that actively swaps both ephemeral keys. The
