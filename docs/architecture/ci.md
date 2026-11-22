@@ -426,7 +426,7 @@ git push                      # after a pushed head: git push --force-with-lease
 
 `./push` (`ci/push.py`, #2873) does all three for a committed feature
 branch: it attests the host lanes (`clippy`, `dylint`; `--cross` adds the
-cross Dylint legs, `--test` runs `bash test --host` first), pushes with
+cross Dylint legs, `--test` runs `bash test --host` after they pass), pushes with
 `--force-with-lease`, and opens or reuses the PR. A failing lane stops the
 push. It refuses `main`, a detached HEAD and a dirty tree. `/grind` uses a
 repository's `./push` as its whole local gate

@@ -30,10 +30,11 @@ def test_default_plan_attests_host_lanes_pushes_and_opens_a_pr() -> None:
 
 def test_cross_and_test_flags_extend_the_plan() -> None:
     steps = push.plan("feat/x", python="py", cross=True, test=True, pr=False, base="dev")
-    assert [s.name for s in steps] == ["test", "attest", "push"]
-    assert _argv(steps)[0] == "bash test --host"
+    # Lint (the attested lanes) runs before the unit tests.
+    assert [s.name for s in steps] == ["attest", "test", "push"]
+    assert _argv(steps)[1] == "bash test --host"
     for lane in push.CROSS_LANES:
-        assert lane in _argv(steps)[1]
+        assert lane in _argv(steps)[0]
 
 
 @pytest.mark.parametrize(

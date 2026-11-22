@@ -2,7 +2,7 @@
 
     ./push                  attest the host lanes (clippy, dylint), push, open or reuse the PR
     ./push --cross          also attest the cross Dylint lanes (Windows, macOS)
-    ./push --test           run `bash test --host` first (Tier 0 tests)
+    ./push --test           also run `bash test --host` (Tier 0 tests), after the lint lanes pass
     ./push --no-pr          attest and push only
     ./push --dry-run        print the steps and run nothing
 
@@ -44,11 +44,13 @@ def plan(
     branch: str, *, python: str, cross: bool, test: bool, pr: bool, base: str = "main"
 ) -> list[Step]:
     """The steps `./push` runs, in order. Pure, so tests pin it."""
-    steps: list[Step] = []
+    # Lint first: the attested lanes are `soldr lint` (Clippy, Dylint), which
+    # fail in seconds on a warm cache, while the unit tests build and run the
+    # whole workspace. A lint failure must not cost a test run.
+    lanes = HOST_LANES + (CROSS_LANES if cross else ())
+    steps: list[Step] = [Step("attest", (python, "-m", "ci.attest", *lanes))]
     if test:
         steps.append(Step("test", ("bash", "test", "--host")))
-    lanes = HOST_LANES + (CROSS_LANES if cross else ())
-    steps.append(Step("attest", (python, "-m", "ci.attest", *lanes)))
     steps.append(
         Step(
             "push",
@@ -83,7 +85,7 @@ def _step(argv: Sequence[str]) -> int:
 def main(argv: Sequence[str] | None = None, *, run: Callable[[Sequence[str]], int] = _step) -> int:
     ap = argparse.ArgumentParser(prog="./push", description=__doc__.split("\n\n", 1)[0])
     ap.add_argument("--cross", action="store_true", help="also attest the cross Dylint lanes")
-    ap.add_argument("--test", action="store_true", help="run `bash test --host` first")
+    ap.add_argument("--test", action="store_true", help="also run `bash test --host` after lint")
     ap.add_argument("--no-pr", action="store_true", help="push without opening a PR")
     ap.add_argument("--base", default="main")
     ap.add_argument("--dry-run", action="store_true")
