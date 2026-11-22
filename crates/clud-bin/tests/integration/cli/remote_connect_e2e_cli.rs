@@ -273,8 +273,14 @@ impl Operator {
 
     /// Like `wait_shell_output`, but searches only what arrived since the last
     /// look, for floods where rescanning everything would be quadratic.
+    ///
+    /// The deadline is `WAIT` without progress, not `WAIT` in total: a flood
+    /// moves at the runner's throughput (Windows runners relay about 200 KB/s
+    /// through ConPTY, #2887), and what this guards against is a link that
+    /// stops delivering, not a slow one.
     fn wait_shell_bytes(&mut self, needle: &[u8]) {
-        let deadline = Instant::now() + WAIT;
+        let mut deadline = Instant::now() + WAIT;
+        let mut seen = self.shell_output.len();
         let mut from = 0;
         loop {
             let window = &self.shell_output[from.min(self.shell_output.len())..];
@@ -282,9 +288,13 @@ impl Operator {
                 return;
             }
             from = self.shell_output.len().saturating_sub(needle.len());
+            if self.shell_output.len() > seen {
+                seen = self.shell_output.len();
+                deadline = Instant::now() + WAIT;
+            }
             assert!(
                 Instant::now() < deadline,
-                "server never received {:?} ({} bytes so far)",
+                "server never received {:?}: nothing new for {WAIT:?} ({} bytes so far)",
                 String::from_utf8_lossy(needle),
                 self.shell_output.len()
             );
