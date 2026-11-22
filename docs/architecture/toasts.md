@@ -4,7 +4,8 @@ In a Kitty graphics terminal with SGR mouse reporting, the upper-right gear
 opens the authenticated daemon dashboard at `/processes/<clud-pid>/<start>`. The
 dashboard filters the existing process sample by the launch's originator PID and start time,
 including tagged descendants that now have a different OS parent. An unreaped
-child appears as a zombie until it leaves the process sample. The gear uses
+child appears as a zombie while it remains in the process table, then as
+exited for up to a minute. The gear uses
 mouse reports the child has enabled.
 
 How clud shows short, expiring messages (a CPU episode, "cpu back to normal")

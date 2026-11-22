@@ -36,7 +36,7 @@ pub(super) const PARKED_SAMPLE_INTERVAL_MS: u64 = 30_000;
 pub(super) const CONSUMER_IDLE_GRACE_MS: u64 = 30_000;
 
 const ORIGINATOR_SCAN_INTERVAL_MS: u64 = 30_000;
-const DEAD_ROW_RETENTION_MS: u64 = 60_000;
+pub(super) const DEAD_ROW_RETENTION_MS: u64 = 60_000;
 const MAX_TRACKED_PIDS: usize = 5_000;
 const EWMA_ALPHA: f32 = 0.3;
 
@@ -380,7 +380,10 @@ impl ProcSampler {
                 command,
                 depth: depth_from_originator(pid_u32, assignment.originator_pid, &parent_by_pid),
                 tier: tier_for(cpu_pct, cpu_ewma_pct, rss_bytes),
-                live: process.status() != sysinfo::ProcessStatus::Zombie,
+                live: !matches!(
+                    process.status(),
+                    sysinfo::ProcessStatus::Zombie | sysinfo::ProcessStatus::Dead
+                ),
                 exited_at_ms: None,
             };
             live_rows.insert(pid_u32, row.clone());
@@ -611,10 +614,8 @@ fn local_launch_assignment(
     let mut pid = pid;
     let mut visited = HashSet::new();
     while visited.insert(pid) {
-        if system
-            .process(Pid::from_u32(pid))
-            .is_some_and(is_clud_process)
-        {
+        let process = system.process(Pid::from_u32(pid))?;
+        if is_clud_process(process) {
             return Some(Assignment {
                 originator: format!("CLUD:{pid}"),
                 originator_pid: Some(pid),
@@ -622,7 +623,14 @@ fn local_launch_assignment(
                 session_name: None,
             });
         }
-        pid = *parents.get(&pid)?;
+        let parent_pid = *parents.get(&pid)?;
+        let parent_start = system
+            .process(Pid::from_u32(parent_pid))
+            .map(sysinfo::Process::start_time);
+        if !crate::process_scan::parent_is_plausible(parent_start, process.start_time()) {
+            return None;
+        }
+        pid = parent_pid;
     }
     None
 }

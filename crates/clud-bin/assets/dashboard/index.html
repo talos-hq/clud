@@ -509,6 +509,7 @@
 
     function processesForLaunch(rows, origin, start) {
       if (rows.some(r => r.pid === origin && r.start_time !== start)) return [];
+      const byPid = new Map(rows.map(row => [row.pid, row]));
       const children = new Map();
       for (const row of rows) {
         if (!children.has(row.ppid)) children.set(row.ppid, []);
@@ -525,7 +526,18 @@
           if (child.start_time >= row.start_time) pending.push(child);
         }
       }
-      return rows.filter(r => tree.has(r.pid) || (r.start_time >= start && r.originator_pid === origin));
+      function matchesTag(row) {
+        if (row.originator_pid !== origin) return false;
+        const seen = new Set();
+        while (row && row.originator_pid === origin && !seen.has(row.pid)) {
+          if (row.start_time < start) return false;
+          seen.add(row.pid);
+          const parent = byPid.get(row.ppid);
+          row = parent && parent.start_time <= row.start_time ? parent : null;
+        }
+        return true;
+      }
+      return rows.filter(r => tree.has(r.pid) || matchesTag(r));
     }
 
     function renderProcesses(state) {
@@ -533,7 +545,9 @@
       const origin = sessionPath ? Number(sessionPath[1]) : null;
       const start = sessionPath ? Number(sessionPath[2]) : null;
       const allRows = (state.process_tree && state.process_tree.rows) || [];
-      const rows = origin === null ? allRows : processesForLaunch(allRows, origin, start);
+      const rows = origin === null
+        ? allRows.filter(r => !r.exited_at_ms)
+        : processesForLaunch(allRows, origin, start);
       const body = document.getElementById('processes-body');
       document.getElementById('processes-count').textContent =
         origin === null ? (rows.length ? `(${rows.length})` : '') : `CLUD:${origin} · ${rows.length}`;
