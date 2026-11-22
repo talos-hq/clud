@@ -294,9 +294,11 @@ impl Operator {
             }
             assert!(
                 Instant::now() < deadline,
-                "server never received {:?}: nothing new for {WAIT:?} ({} bytes so far)",
+                "server never received {:?}: nothing new for {WAIT:?} ({} bytes so far), \
+                 last bytes: {}",
                 String::from_utf8_lossy(needle),
-                self.shell_output.len()
+                self.shell_output.len(),
+                self.shell_output[self.shell_output.len().saturating_sub(300)..].escape_ascii()
             );
             self.pump_once();
         }
@@ -1075,8 +1077,10 @@ fn a_stalled_link_paces_the_shell_and_loses_nothing() {
     operator.wait_shell_bytes(b"\n1000\r\n");
     // Stop reading: the server's receive buffer and the client's send buffer fill.
     std::thread::sleep(Duration::from_secs(12));
-    let last = format!("\n{LINES}\r\n");
-    operator.wait_shell_bytes(last.as_bytes());
+    // The bare number, not a framed line: ConPTY renders the screen, and after
+    // a stall it may repaint the last lines with escapes around them (#2887).
+    // No smaller line contains it, so it still marks the end of the flood.
+    operator.wait_shell_bytes(LINES.to_string().as_bytes());
     listener.set_nonblocking(true).unwrap();
     assert!(
         matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock),
