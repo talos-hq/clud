@@ -38,7 +38,7 @@ product's default branch. There is no compiled-in version of the product:
 ```
 clud install [--dry-run] [--yes|-y] [--dir DIR] [--target DIR] [--ref REF]
              [--version V] [--no-configure] [--configure-only]
-             [--migrate-credentials] <PRODUCT> [-- INSTALLER_ARGS...]
+             [--migrate-credentials] [--migrate-provider ID]... <PRODUCT> [-- INSTALLER_ARGS...]
 
 clud setup   ... same options ... <PRODUCT> [-- INSTALLER_ARGS...]
 ```
@@ -57,7 +57,7 @@ failed. Every step reports what it found, so a rerun is safe.
   same value `--dir` gives the installer, and the two are mutually exclusive.
 - `--no-configure` installs and stops.
 - `--yes` runs without prompts; it never migrates credentials unless
-  `--migrate-credentials` is also given.
+  `--migrate-credentials` or `--migrate-provider ID` is also given.
 - Without a terminal and without `--yes`, the command exits `2` at once naming
   `--yes`. It never waits for input it cannot get.
 
@@ -89,8 +89,7 @@ none, the step is skipped and says so.
 
 - **What is offered.** Every provider clud can read a stored key for —
   `openrouter`, `deepseek`, `kimi` — plus the provider clud is currently
-  configured to use. Claude and Codex are reported as externally managed and
-  never migrated, matching `clud auth` and `clud setup`.
+  configured to use. Claude subscription credentials are not migrated.
 - **The Codex gateway.** When clud holds a Codex credential that
   `clud serve --codex` accepts, the offer also lists `clud-codex`. Migrating
   it writes `providers.clud-codex` with `base_url: http://127.0.0.1:8317/v1`,
@@ -99,11 +98,23 @@ none, the step is skipped and says so.
   never leaves clud: the product reaches Codex only through `clud serve
   --codex`, which must be running on the default port for the entry's models
   to appear in the product's model picker.
-- **The prompt.** Secret-free first. The command prints, one line per provider,
-  `provider: openrouter (stored key), model: x-ai/grok-5` and then asks
-  `Would you like to migrate clud credentials for providers into hermes? [y/N]`
-  — default no. With no credentials it prints
-  `providers: nothing stored in clud; nothing to migrate` and asks nothing.
+- **Provider selection.** Interactive configuration shows a checkbox list of
+  available provider IDs, initially unchecked. Space toggles, Enter copies only
+  the selected providers, and Esc cancels. Credentials for unselected providers
+  are never copied. `--yes` alone still leaves every provider alone.
+  `--yes --migrate-credentials` retains the all-provider migration behavior.
+  `--migrate-provider ID` is repeatable and explicitly opts into only those
+  providers, even if `--migrate-credentials` is also present. Unknown IDs or
+  unavailable requested credentials fail before copying any provider.
+
+  To configure only the subscription gateway without importing OpenRouter:
+
+  ```sh
+  clud install hermes --configure-only --yes --migrate-provider clud-codex
+  ```
+
+  On Linux this also installs and enables the persistent user gateway; see
+  [managed Codex gateway](standalone-gateway.md#managed-codex-gateway-for-hermes).
 - **What is written.** The product's own config format, never another file of
   clud's: `providers.<name>.base_url` and `providers.<name>.api_key`. Model
   selection stays the product's own choice: clud has no saved model to hand
@@ -150,7 +161,9 @@ door is the clud binary the user installed.
 [`install/products.rs`](../../crates/clud-bin/src/install/products.rs) (the
 registry), [`install/command.rs`](../../crates/clud-bin/src/install/command.rs)
 (resolve, fetch, run), [`install/configure.rs`](../../crates/clud-bin/src/install/configure.rs)
-(the vault read and the config editor).
+(the vault read and the config editor), and
+[`install/migration.rs`](../../crates/clud-bin/src/install/migration.rs)
+(provider selection before credential values are copied).
 
 ## Testing
 
@@ -171,6 +184,11 @@ Unit tests live with the code and run in the `clud` lib target:
   values replaced in place, a missing key added, a document that does not parse
   refused byte-identical, the offer summary secret-free, and nothing stored
   writing nothing.
+
+- `install::migration` — an empty interactive selection, selecting only Codex,
+  cancellation, repeatable explicit subsets, and the migrate-all opt-in.
+- `tests/test_install_migration.py` — subprocess checks for provider selection
+  and explicit Hermes home precedence without changing a live gateway.
 
 - `tests/integration/cli/install_products_cli.rs` drives the command as a
   process: `--help` naming both products and the configure flags, `clud setup

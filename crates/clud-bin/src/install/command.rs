@@ -40,6 +40,8 @@ pub struct Options {
     pub configure_only: bool,
     /// Migrate credentials without asking; `--yes` alone never does this.
     pub migrate_credentials: bool,
+    /// Only these providers; an explicit opt-in even without migrate_credentials.
+    pub migrate_providers: Vec<String>,
     /// Arguments after `--`, forwarded to the product's installer.
     pub passthrough: Vec<String>,
 }
@@ -57,6 +59,7 @@ impl Default for Options {
             configure: true,
             configure_only: false,
             migrate_credentials: false,
+            migrate_providers: Vec::new(),
             passthrough: Vec::new(),
         }
     }
@@ -87,6 +90,12 @@ fn run_at(home: &Path, options: &Options, interactive: bool, out: &mut dyn Write
     if options.dir.is_some() && options.product_dir.is_some() {
         eprintln!("clud install: --dir and --target are mutually exclusive");
         return EXIT_USAGE;
+    }
+    for id in &options.migrate_providers {
+        if let Err(error) = super::migration::provider(id) {
+            eprintln!("clud install: {error}");
+            return EXIT_USAGE;
+        }
     }
     let branch = options
         .reference
@@ -173,6 +182,7 @@ fn configure(home: &Path, product: &Product, options: &Options, out: &mut dyn Wr
         product,
         &product_home,
         options.migrate_credentials,
+        &options.migrate_providers,
         options.yes,
         interactive,
         out,

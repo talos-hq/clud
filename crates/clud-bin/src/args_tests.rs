@@ -2207,3 +2207,31 @@ fn secret_message_alias_is_owned_by_the_subcommand() {
         assert!(options.dry_run);
     }
 }
+
+#[test]
+fn install_migration_provider_is_local_repeatable_and_validated() {
+    let parsed = Args::try_parse_from([
+        "clud",
+        "install",
+        "hermes",
+        "--configure-only",
+        "--yes",
+        "--migrate-provider",
+        "clud-codex",
+        "--migrate-provider",
+        "openrouter",
+    ])
+    .unwrap();
+    assert!(parsed.passthrough.is_empty());
+    let Some(Command::Install(options)) = parsed.command else {
+        panic!("install");
+    };
+    assert_eq!(
+        options.to_options().migrate_providers,
+        ["clud-codex", "openrouter"]
+    );
+    assert!(!options.migrate_credentials);
+    assert!(
+        Args::try_parse_from(["clud", "install", "hermes", "--migrate-provider", "typo"]).is_err()
+    );
+}

@@ -255,6 +255,7 @@ fn dispatch_before_startup(args: &args::Args) -> Option<i32> {
                     no_configure: false,
                     configure_only: false,
                     migrate_credentials: false,
+                    migrate_providers: Vec::new(),
                     passthrough: Vec::new(),
                 }
                 .with_passthrough(&args.passthrough)

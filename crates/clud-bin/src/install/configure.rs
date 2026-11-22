@@ -111,18 +111,19 @@ pub fn offer() -> Offer {
         }
     }
     if codex_available() {
-        found
-            .providers
-            .push(format!("{CODEX_GATEWAY_ID} (clud serve --codex)"));
+        found.providers.push(CODEX_GATEWAY_ID.to_string());
     }
     found
 }
 
-/// Read the credentials to migrate. A provider whose key cannot be read is
-/// skipped rather than failing the step.
-pub fn stored() -> Vec<Credential> {
+/// Read only selected credentials. Providers that became unreadable are skipped;
+/// the caller requires complete reading for explicit or interactive selections.
+pub fn stored(selected: &[String]) -> Vec<Credential> {
     let mut found = Vec::new();
     for descriptor in crate::provider_registry::ANTHROPIC_COMPAT_PROVIDERS {
+        if !selected.iter().any(|id| id == descriptor.settings_id) {
+            continue;
+        }
         let Ok(store) = crate::provider_auth::NativeSecretStore::new_for(
             descriptor.vault_service,
             descriptor.vault_account,
@@ -143,7 +144,7 @@ pub fn stored() -> Vec<Credential> {
             api_mode: None,
         });
     }
-    if codex_available() {
+    if selected.iter().any(|id| id == CODEX_GATEWAY_ID) && codex_available() {
         match crate::serve_client_token::stored_or_create() {
             Ok(token) => found.push(codex_gateway(token)),
             Err(error) => eprintln!("configure: skipping {CODEX_GATEWAY_ID}: {error}"),
@@ -310,48 +311,37 @@ pub fn run(
     product: &Product,
     product_home: &Path,
     migrate: bool,
+    providers: &[String],
     yes: bool,
     interactive: bool,
     out: &mut dyn Write,
 ) -> i32 {
     let found = offer();
     let _ = writeln!(out, "{}", found.summary());
-    if found.providers.is_empty() {
+    let selected =
+        match super::migration::choose(&found.providers, providers, migrate, yes, interactive, out)
+        {
+            Ok(selected) => selected,
+            Err(error) => {
+                eprintln!("configure: {error}");
+                return 1;
+            }
+        };
+    if selected.is_empty() {
+        let _ = writeln!(out, "configure: leaving providers alone; rerun with --migrate-credentials or --migrate-provider ID to copy them");
         return 0;
     }
-    let wanted = if migrate {
-        true
-    } else if yes || !interactive {
-        let _ = writeln!(
-            out,
-            "configure: leaving {} alone; rerun with --migrate-credentials to copy them",
-            product.display
-        );
-        return 0;
-    } else {
-        let _ = write!(
-            out,
-            "{}",
-            crate::yes_no::question(
-                &format!(
-                    "Would you like to migrate clud credentials for providers into {}?",
-                    product.display
-                ),
-                crate::yes_no::Default::No,
-            )
-        );
-        let _ = out.flush();
-        let mut answer = String::new();
-        if std::io::stdin().read_line(&mut answer).is_err() {
-            return 0;
-        }
-        crate::yes_no::answer(&answer, crate::yes_no::Default::No)
-    };
-    if !wanted {
-        let _ = writeln!(out, "configure: left {} unchanged", product.display);
-        return 0;
+    let credentials = stored(&selected);
+    // Preserve migrate-all's existing skip-on-read-failure behavior.
+    if (!migrate || !providers.is_empty())
+        && selected
+            .iter()
+            .any(|id| !credentials.iter().any(|credential| credential.id == id))
+    {
+        eprintln!("configure: a selected credential could not be read; nothing migrated");
+        return 1;
     }
-    match apply(product, product_home, &stored(), out) {
+    match apply(product, product_home, &credentials, out) {
         Outcome::Migrated { path, providers } => {
             if let Err(error) = ensure_gateway(
                 &providers,

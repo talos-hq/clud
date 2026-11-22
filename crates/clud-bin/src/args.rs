@@ -745,6 +745,9 @@ pub struct InstallArgs {
     /// Migrate clud's stored provider credentials without asking.
     #[arg(long = "migrate-credentials")]
     pub migrate_credentials: bool,
+    /// Copy only this provider (repeatable); implies credential migration.
+    #[arg(long = "migrate-provider", value_name = "ID", value_parser = crate::install::migration::provider)]
+    pub migrate_providers: Vec<String>,
     /// Arguments after `--`, which belong to the product's own installer.
     #[arg(skip)]
     pub passthrough: Vec<String>,
@@ -771,6 +774,7 @@ impl InstallArgs {
             configure: !self.no_configure,
             configure_only: self.configure_only,
             migrate_credentials: self.migrate_credentials,
+            migrate_providers: self.migrate_providers.clone(),
             passthrough: self.passthrough.clone(),
         }
     }

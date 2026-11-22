@@ -12,4 +12,5 @@
 
 pub mod command;
 pub mod configure;
+pub mod migration;
 pub mod products;
