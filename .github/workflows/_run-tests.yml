@@ -50,7 +50,9 @@ jobs:
     # costs in scarce macOS/Windows runner time. When it does fire, the
     # per-line tee in ci/run_bundle.py plus the always()-uploaded artifact
     # below are what name the wedged test (#1168).
-    timeout-minutes: 20
+    # Windows ARM64 executes both the native Rust harnesses and the unsharded
+    # Python unit suite. The suite is still running at the 20-minute ceiling.
+    timeout-minutes: ${{ inputs.target == 'aarch64-pc-windows-msvc' && inputs.suite == 'unit' && 35 || 20 }}
     env:
       RUST_BACKTRACE: "1"
       PYTHONUTF8: "1"
