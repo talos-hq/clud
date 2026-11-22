@@ -8930,10 +8930,10 @@ Connection: close
         bridge.shutdown().unwrap();
     }
 
-    /// Codex writes Messages frames directly, so an OpenAI-shaped turn for a
-    /// Codex model is refused in the client's shape instead of half-translated.
+    /// A Codex model on the OpenAI door is served: the Messages turn is
+    /// captured and translated back to a `chat.completion` (codex_chat.rs).
     #[test]
-    fn chat_completions_refuses_a_codex_model() {
+    fn chat_completions_serves_a_codex_model() {
         let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
         let codex = FakeResponses::start_with_response(None);
         let deepseek = FakeResponses::start_with_response(None);
@@ -8942,12 +8942,28 @@ Connection: close
         let body =
             r#"{"model":"codex-sol","messages":[{"role":"user","content":"hi"}],"stream":false}"#;
         let response = chat_request(&bridge, body, "chat-codex-session");
-        assert_eq!(status(&response), 400, "{response}");
-        assert!(
-            response.contains("api_error") || response.contains("invalid_request_error"),
-            "{response}"
-        );
-        assert!(response.contains("Codex route"), "{response}");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(response.contains("\"chat.completion\""), "{response}");
+        assert!(!codex.requests().is_empty(), "the turn must reach Codex");
+        assert!(anthropic.requests().is_empty(), "a Codex turn never reaches Claude");
+        bridge.shutdown().unwrap();
+    }
+
+    /// The streamed Codex chat turn ends as OpenAI chunks and `[DONE]`.
+    #[test]
+    fn chat_completions_streams_a_codex_model() {
+        let anthropic = FakeResponses::start_with_response(Some(chat_messages_response()));
+        let codex = FakeResponses::start_with_response(None);
+        let deepseek = FakeResponses::start_with_response(None);
+        let mut bridge =
+            BridgeHandle::start(unified_config(&anthropic, &codex, &deepseek)).unwrap();
+        let body =
+            r#"{"model":"codex-sol","messages":[{"role":"user","content":"hi"}],"stream":true}"#;
+        let response = chat_request(&bridge, body, "chat-codex-stream-session");
+        assert_eq!(status(&response), 200, "{response}");
+        assert!(response.contains("chat.completion.chunk"), "{response}");
+        assert!(response.contains("data: [DONE]"), "{response}");
+        assert!(!codex.requests().is_empty(), "the turn must reach Codex");
         bridge.shutdown().unwrap();
     }
 
