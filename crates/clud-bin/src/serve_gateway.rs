@@ -112,8 +112,7 @@ fn start(
         crate::codex_upstream::ResolvedCredentials::preflight_default()
             .map_err(|error| error.to_string())?;
     }
-    let client_token = std::env::var("CLUD_SERVE_CLIENT_TOKEN")
-        .map_err(|_| "set CLUD_SERVE_CLIENT_TOKEN to a random client token".to_string())?;
+    let client_token = crate::serve_client_token::resolve()?;
     let openrouter_key = openrouter
         .then(|| {
             let vault =

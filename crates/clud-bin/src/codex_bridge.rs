@@ -3717,16 +3717,10 @@ fn dispatch_unified_attempt(
             )
         }
         ModelProvider::Codex if unified.codex_available && turn.chat.is_some() => {
-            // Codex's pipeline writes Messages frames straight to the client,
-            // so an OpenAI-shaped turn cannot be answered verbatim. Refuse
-            // rather than emit a body the client cannot parse; the Anthropic
-            // routes stay available for the same model.
-            let body = crate::openai_ingress::render_chat_error(
-                400,
-                "this model is served by the Codex route, which does not translate Anthropic responses back to OpenAI on this gateway",
-            );
-            let _ = write_response(stream, 400, "application/json", &body, false);
-            ProxyOutcome::local(400)
+            // Codex's pipeline writes Messages frames straight to a socket, so
+            // an OpenAI-shaped turn is captured and translated (codex_chat.rs).
+            let chat = turn.chat.expect("guarded by is_some above");
+            codex_chat::serve_codex_translated(stream, turn, payload, chat)
         }
         ModelProvider::Codex if unified.codex_available => {
             // Codex is a valid destination but never a probe source: its
@@ -6849,6 +6843,8 @@ fn resolve_test_upstream_override(
         None
     }
 }
+
+mod codex_chat;
 
 #[cfg(test)]
 mod tests {

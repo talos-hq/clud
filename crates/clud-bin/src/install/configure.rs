@@ -28,6 +28,36 @@ pub struct Credential {
     pub base_url: String,
     /// The secret. Never printed; written straight into the product's file.
     pub key: String,
+    /// The product's wire protocol for this provider, written explicitly when
+    /// set (`chat_completions` for the Codex gateway, so a product never has
+    /// to guess it from the URL).
+    pub api_mode: Option<&'static str>,
+}
+
+/// The provider id the Codex gateway is written under.
+pub const CODEX_GATEWAY_ID: &str = "clud-codex";
+
+/// Where `clud serve --codex` listens by default; the product's config points
+/// here. Loopback only, so the entry is useful on this machine alone.
+pub const CODEX_GATEWAY_BASE_URL: &str = "http://127.0.0.1:8317/v1";
+
+/// The Codex gateway as a product provider: clud serves the user's Codex
+/// subscription on loopback, and the product authenticates with clud's durable
+/// serve client token, never with the subscription credential itself.
+fn codex_gateway(token: String) -> Credential {
+    Credential {
+        id: CODEX_GATEWAY_ID,
+        display: "Codex via clud serve",
+        base_url: CODEX_GATEWAY_BASE_URL.to_string(),
+        key: token,
+        api_mode: Some("chat_completions"),
+    }
+}
+
+/// Whether clud can serve Codex: a clud-owned subscription login or an
+/// OpenAI API key that `clud serve --codex` accepts.
+fn codex_available() -> bool {
+    crate::codex_upstream::ResolvedCredentials::preflight_default().is_ok()
 }
 
 /// What the offer found.
@@ -80,6 +110,9 @@ pub fn offer() -> Offer {
             found.providers.push(descriptor.settings_id.to_string());
         }
     }
+    if codex_available() {
+        found.providers.push(format!("{CODEX_GATEWAY_ID} (clud serve --codex)"));
+    }
     found
 }
 
@@ -105,7 +138,14 @@ pub fn stored() -> Vec<Credential> {
             display: descriptor.display_name,
             base_url: openai_base_url(descriptor.anthropic_base_url),
             key,
+            api_mode: None,
         });
+    }
+    if codex_available() {
+        match crate::serve_client_token::stored_or_create() {
+            Ok(token) => found.push(codex_gateway(token)),
+            Err(error) => eprintln!("configure: skipping {CODEX_GATEWAY_ID}: {error}"),
+        }
     }
     found
 }
@@ -150,6 +190,14 @@ pub fn plan(document: &str, credentials: &[Credential]) -> Result<String, Config
                 credential.id
             )));
         }
+        if credential.api_mode.is_some()
+            && value.get("api_mode").and_then(|v| v.as_str()) != credential.api_mode
+        {
+            return Err(ConfigError(format!(
+                "providers.{}.api_mode did not land",
+                credential.id
+            )));
+        }
         if added_provider_key && value.get("api_key").and_then(|v| v.as_str()).is_none() {
             return Err(ConfigError(format!(
                 "providers.{}.api_key did not land",
@@ -162,11 +210,14 @@ pub fn plan(document: &str, credentials: &[Credential]) -> Result<String, Config
 
 /// Insert or update one provider inside the `providers:` mapping.
 fn upsert_provider(lines: &[String], credential: &Credential) -> Vec<String> {
-    let block = vec![
+    let mut block = vec![
         format!("  {}:", credential.id),
         format!("    base_url: \"{}\"", credential.base_url),
         format!("    api_key: \"{}\"", credential.key),
     ];
+    if let Some(mode) = credential.api_mode {
+        block.push(format!("    api_mode: {mode}"));
+    }
     let Some(providers_at) = lines.iter().position(|line| line == "providers:") else {
         let mut out = lines.to_vec();
         if !out.is_empty() && out.last().is_some_and(|line| !line.trim().is_empty()) {
@@ -197,6 +248,7 @@ fn upsert_provider(lines: &[String], credential: &Credential) -> Vec<String> {
     let mut out = lines.to_vec();
     let mut replaced_base = false;
     let mut replaced_key = false;
+    let mut replaced_mode = false;
     let mut index = existing + 1;
     while index < provider_end {
         let trimmed = out[index].trim_start();
@@ -206,10 +258,20 @@ fn upsert_provider(lines: &[String], credential: &Credential) -> Vec<String> {
         } else if trimmed.starts_with("api_key:") {
             out[index] = format!("    api_key: \"{}\"", credential.key);
             replaced_key = true;
+        } else if let Some(mode) = credential
+            .api_mode
+            .filter(|_| trimmed.starts_with("api_mode:"))
+        {
+            out[index] = format!("    api_mode: {mode}");
+            replaced_mode = true;
         }
         index += 1;
     }
     let mut insert_at = provider_end;
+    if let Some(mode) = credential.api_mode.filter(|_| !replaced_mode) {
+        out.insert(insert_at, format!("    api_mode: {mode}"));
+        insert_at += 1;
+    }
     if !replaced_key {
         out.insert(insert_at, format!("    api_key: \"{}\"", credential.key));
         insert_at += 1;
@@ -358,7 +420,29 @@ mod tests {
             display: id,
             base_url: base.to_string(),
             key: key.to_string(),
+            api_mode: None,
         }
+    }
+
+    #[test]
+    fn the_codex_gateway_is_written_with_its_wire_protocol() {
+        let text = plan("", &[codex_gateway("tok".into())]).unwrap();
+        let parsed: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+        let entry = &parsed["providers"][CODEX_GATEWAY_ID];
+        assert_eq!(entry["base_url"].as_str(), Some(CODEX_GATEWAY_BASE_URL));
+        assert_eq!(entry["api_mode"].as_str(), Some("chat_completions"));
+        assert_eq!(entry["api_key"].as_str(), Some("tok"));
+    }
+
+    #[test]
+    fn a_rerun_replaces_the_codex_gateway_in_place() {
+        let first = plan("", &[codex_gateway("old".into())]).unwrap();
+        let edited = first.replace("api_mode: chat_completions", "api_mode: anthropic_messages");
+        let second = plan(&edited, &[codex_gateway("new".into())]).unwrap();
+        assert_eq!(second.matches(CODEX_GATEWAY_ID).count(), 1, "{second}");
+        assert_eq!(second.matches("api_mode:").count(), 1, "{second}");
+        assert!(second.contains("api_mode: chat_completions"), "{second}");
+        assert!(second.contains("\"new\""), "{second}");
     }
 
     fn openrouter() -> Credential {
