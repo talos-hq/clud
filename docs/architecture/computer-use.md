@@ -9,6 +9,10 @@ no permission prompts. Rationale:
 
 Code: [`crates/clud-bin/src/computer_use/`](../../crates/clud-bin/src/computer_use/mod.rs).
 Skill: [`clud-computer-use`](../../crates/clud-bin/assets/skills/clud-computer-use/SKILL.md).
+Global launch setup installs it into the selected harness's skills directory.
+For an existing Claude Code and Codex setup, run `clud install-assets` to
+install the bundled skills in both directories. Start a new harness session
+to load them.
 
 ## Registration
 
@@ -30,6 +34,10 @@ directive.
 | Gateway providers (OpenRouter, Kimi, unified), Codex/DeepSeek on the Claude harness | only with `--computer-use` |
 | Codex harness | only with `--computer-use` (`-c mcp_servers.cua.*`, `default_tools_approval_mode="approve"`, `startup_timeout_sec=180`) |
 | any launch with `--no-computer-use` | no |
+
+When Codex registers the server, Clud adds the skill directive to
+`developer_instructions`. Claude uses its appended system prompt for the same
+directive.
 
 A headless one-shot stays off because `claude -p` waits for every pending MCP
 server before its first turn, which would add the driver's start (and, once,

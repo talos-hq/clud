@@ -35,7 +35,7 @@ pub const MCP_ARGS: [&str; 2] = ["computer-use", "mcp"];
 
 /// Appended to the system prompt of a launch that registers the server.
 pub const DIRECTIVE: &str = "Computer use is available: the `cua` MCP server \
-(`mcp__cua__*` tools, loaded through tool search) drives this machine's desktop \
+(`mcp__cua__*` tools) drives this machine's desktop \
 — windows, screenshots, clicks, typing, real browsers. Use the `clud-computer-use` \
 skill before the first desktop action; it covers setup, platform limits and \
 safety rules.";

@@ -261,16 +261,17 @@ pub(super) fn computer_use_claude_tokens(
 /// request (`--computer-use`), since Codex loads every tool schema.
 pub(super) fn computer_use_codex_overrides(
     args: &Args,
-    backend: Backend,
     exe: Option<&Path>,
+    instructions: &mut String,
 ) -> Vec<String> {
-    let (Backend::Codex, Some(exe)) = (backend, exe) else {
+    let Some(exe) = exe else {
         return Vec::new();
     };
     if !crate::computer_use::registered_for(false, args.computer_use, args.no_computer_use) {
         return Vec::new();
     }
     let mode = crate::computer_use::PermissionMode::for_launch(args.safe);
+    append_instructions(instructions, crate::computer_use::DIRECTIVE);
     crate::computer_use::codex_config_overrides(exe, mode)
         .into_iter()
         .flat_map(|value| ["-c".to_string(), value])
@@ -884,10 +885,12 @@ fn build_launch_plan_for_target_at(
         let matcher = CODEX_HOOK_MATCHER;
         cmd.extend(["-c".into(), format!("hooks.PreToolUse=[{{matcher=\"{matcher}\",hooks=[{{type=\"command\",command=\"{scan}\"}}]}}]")]);
         cmd.extend(["-c".into(), format!("hooks.state={{\"/<session-flags>/config.toml:pre_tool_use:0:0\"={{trusted_hash=\"{}\"}}}}", codex_hook_hash(scan))]);
+        let (mut instructions, has_user_instructions) =
+            configured_codex_instructions(args, cwd, codex_passthrough_instructions);
         cmd.extend(computer_use_codex_overrides(
             args,
-            backend,
             computer_use_exe().as_deref(),
+            &mut instructions,
         ));
         // The board bridge, as Claude launches get it (agent-board.md). Not
         // through a Windows batch wrapper (npm's `codex.cmd`): cmd.exe caps
@@ -900,8 +903,6 @@ fn build_launch_plan_for_target_at(
         };
         let board_registered = !board_bridge.is_empty();
         cmd.extend(board_bridge);
-        let (mut instructions, has_user_instructions) =
-            configured_codex_instructions(args, cwd, codex_passthrough_instructions);
         if board_registered {
             append_instructions(&mut instructions, super::mcp_config::BOARD_DIRECTIVE);
         }

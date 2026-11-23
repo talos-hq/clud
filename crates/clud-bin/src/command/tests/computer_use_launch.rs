@@ -78,18 +78,21 @@ fn gateway_routes_get_it_only_on_request() {
 #[test]
 fn codex_registers_only_with_the_flag() {
     let args = parse(&["clud", "--codex"]);
+    let mut instructions = String::new();
     let none = super::super::builder::computer_use_codex_overrides(
         &args,
-        Backend::Codex,
         Some(Path::new(EXE)),
+        &mut instructions,
     );
     assert!(none.is_empty());
+    assert!(instructions.is_empty());
     let args = parse(&["clud", "--codex", "--computer-use", "--safe"]);
     let overrides = super::super::builder::computer_use_codex_overrides(
         &args,
-        Backend::Codex,
         Some(Path::new(EXE)),
+        &mut instructions,
     );
+    assert!(instructions.contains("clud-computer-use"));
     assert_eq!(overrides.first().map(String::as_str), Some("-c"));
     assert!(overrides.contains(&format!("mcp_servers.cua.command=\"{EXE}\"")));
     assert!(overrides

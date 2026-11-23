@@ -634,6 +634,17 @@ def test_dry_run_codex() -> None:
     assert not any("terra" in arg or arg == "medium" for arg in data["command"])
 
 
+@pytest.mark.parametrize("enabled", [False, True])
+def test_dry_run_codex_computer_use_advertises_skill_when_registered(enabled: bool) -> None:
+    flag = "--computer-use" if enabled else "--no-computer-use"
+    result = _run("--dry-run", "--codex", "--harness", "codex", flag)
+    assert result.returncode == 0, result.stderr
+    command = json.loads(result.stdout)["command"]
+    assert any(arg.startswith("mcp_servers.cua.command=") for arg in command) is enabled
+    instructions = next(arg for arg in command if arg.startswith("developer_instructions="))
+    assert ("`clud-computer-use`" in instructions) is enabled
+
+
 @pytest.mark.parametrize(
     ("verb", "target", "prompt_fragment"),
     [

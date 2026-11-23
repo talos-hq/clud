@@ -11,13 +11,16 @@ triggers:
 
 # Computer use (`mcp__cua__*`)
 
-clud registers the `cua` MCP server on every first-party Claude launch. Its
-~65 tools load through tool search: find them with ToolSearch (query `cua`,
-or `select:mcp__cua__list_windows,mcp__cua__get_window_state,...`). Calls
-never prompt: clud allow-lists `mcp__cua` and starts the driver in its
-`unrestricted` profile (`standard` under `clud --safe`, which refuses rather
-than asks). Nothing here needs the user's permission to *call*; the safety
-rules below decide what you may *do*.
+Clud registers the `cua` MCP server by default for interactive first-party
+Claude launches. On Claude, find its tools through ToolSearch (query `cua`).
+Launch Codex with `clud --harness codex --computer-use` to register the server.
+Codex exposes the tools directly as `mcp__cua__*`.
+
+On a fresh setup, select Globally when Clud asks for setup scope to install
+this skill for the selected harness. Session-only setup skips writing skill
+files. Run `clud install-assets` to install bundled skills for both harnesses
+when their configuration directories already exist. Under `clud --safe`,
+the driver uses its standard permission profile.
 
 ## When to use it
 
@@ -59,12 +62,12 @@ Every `clud computer-use` flag: the [CLI grammar](https://github.com/talos-hq/cl
 
 - The release binary carries a checksum-pinned Computer Use archive. First use
   unpacks it into `~/.clud/libexec/cua-driver/`. Run `clud computer-use install`
-  to provision it ahead of a session, then reconnect with `/mcp` or restart the
-  session. The Linux GNU x64 and Windows x64 wheels and development builds fetch that same
+  to provision it ahead of a session, then restart Clud with the desired
+  harness and computer-use flag. The Linux GNU x64 and Windows x64 wheels and development builds fetch that same
   pinned archive on first use through the `clud-computer-use` PyPI wheel or the
   GitHub release.
 - Set `CLUD_CUA_DRIVER=/abs/path/cua-driver` to use another binary.
-- `clud --no-computer-use` disabled it for this session. Headless one-shot
+- `clud --no-computer-use` disables the server for that launch. Headless one-shot
   runs (`clud -p`), gateway providers (OpenRouter, DeepSeek, Kimi, Codex
   bridge) and the Codex harness get it only with `clud --computer-use`: a
   one-shot waits for every MCP server before its first turn, and the others
