@@ -245,7 +245,10 @@ while a handshake waits on an unreachable host. Backoff is capped exponential
 with jitter: 0.5 s doubling to 15 s, each wait 50-100 % of its step; the first
 attempt after a `server_restart` waits about 2 s. It gives up after
 `RESUME_WINDOW` (5 minutes; `CLUD_REMOTE_RESUME_WINDOW_SECS` may only shorten
-it, for tests) with a non-zero exit. Every connection, the first included, uses
+it, for tests) with a non-zero exit. The dial's deadlines stop at the end of
+that window. Cancelling while DNS or candidate dialing is pending prevents
+the worker from attempting a new WebSocket upgrade. Every connection, the
+first included, uses
 `ws_url&resume=1` with the same client token; the server lets the newest such
 connection replace an older one and closes the older with 4409, which the
 client treats as final ("This session was resumed from another connection.").

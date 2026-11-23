@@ -643,12 +643,35 @@ fn dns_wait(peer: Option<SocketAddr>) -> Duration {
     }
 }
 
+pub(super) struct DialControl {
+    pub deadline: Instant,
+    pub cancelled: Arc<AtomicBool>,
+}
+
+impl DialControl {
+    fn stopped(&self) -> bool {
+        self.cancelled.load(Ordering::Relaxed) || Instant::now() >= self.deadline
+    }
+}
+
 pub(super) fn connect_socket(session: &Session) -> Result<Socket, ConnectError> {
+    dial(session, None)
+}
+
+pub(super) fn reconnect_socket(
+    session: &Session,
+    control: &DialControl,
+) -> Result<Socket, ConnectError> {
+    dial(session, Some(control))
+}
+
+fn dial(session: &Session, control: Option<&DialControl>) -> Result<Socket, ConnectError> {
     let peer = last_peer(session);
     connect_socket_with(
         session,
         |host, port, wait| session.resolver.with_fallback(host, port, wait, peer),
         tls_config,
+        control,
     )
 }
 
@@ -656,9 +679,17 @@ pub(super) fn connect_socket_with(
     session: &Session,
     resolve: impl FnOnce(&str, u16, Duration) -> io::Result<Vec<SocketAddr>>,
     tls_config: impl FnOnce() -> Result<Arc<ureq::rustls::ClientConfig>, String>,
+    control: Option<&DialControl>,
 ) -> Result<Socket, ConnectError> {
     let ws_url = socket_url(session);
     let unreachable = |reason: &str| ConnectError::Unreachable(reason.into());
+    let check_running = || {
+        if control.is_some_and(DialControl::stopped) {
+            return Err(unreachable("remote reconnect ended"));
+        }
+        Ok(())
+    };
+    check_running()?;
     let url = Url::parse(&ws_url).map_err(|_| unreachable("invalid remote WebSocket URL"))?;
     let host = url
         .host_str()
@@ -668,14 +699,22 @@ pub(super) fn connect_socket_with(
     let port = url
         .port_or_known_default()
         .ok_or_else(|| unreachable("missing remote port"))?;
-    let resolved = resolve(host, port, dns_wait(peer));
+    let mut wait = dns_wait(peer);
+    if let Some(control) = control {
+        wait = wait.min(control.deadline.saturating_duration_since(Instant::now()));
+    }
+    let resolved = resolve(host, port, wait);
+    check_running()?;
     let candidates = dial_addresses(resolved, peer)?;
     let config = if url.scheme() == "wss" {
         Some(tls_config().map_err(ConnectError::Unreachable)?)
     } else {
         None
     };
-    let deadline = Instant::now() + Duration::from_secs(15);
+    let mut deadline = Instant::now() + Duration::from_secs(15);
+    if let Some(control) = control {
+        deadline = deadline.min(control.deadline);
+    }
     let upgrade_timeout = if candidates.len() > 1 {
         Duration::from_secs(5)
     } else {
@@ -683,13 +722,27 @@ pub(super) fn connect_socket_with(
     };
     let streams = race_candidates(candidates, host, config, deadline);
     let mut reason = "cannot reach remote host".into();
-    while let Ok((address, mut stream)) = streams
-        .ready
-        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-    {
+    loop {
+        check_running()?;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let wait = if control.is_some() {
+            remaining.min(Duration::from_millis(100))
+        } else {
+            remaining
+        };
+        let (address, mut stream) = match streams.ready.recv_timeout(wait) {
+            Ok(candidate) => candidate,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        check_running()?;
         stream.set_deadline(deadline.min(Instant::now() + upgrade_timeout));
         match upgrade(&ws_url, stream, session) {
             Ok(socket) => {
+                check_running()?;
                 if url.scheme() == "wss" {
                     *session
                         .last_peer
@@ -954,6 +1007,52 @@ mod tests {
         // A timeout is not a would-block: only a non-blocking socket is retried.
         let timed_out = std::io::Error::from(std::io::ErrorKind::TimedOut);
         assert!(queued(Err(tungstenite::Error::Io(timed_out))).is_err());
+    }
+
+    #[test]
+    fn cancellation_during_dns_prevents_an_upgrade() {
+        let url = Url::parse("wss://example.test/ws/client?token=test").unwrap();
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "keyword": "ABCDE-FGH23",
+            "ws_url": url.as_str(),
+            "client_token": "test",
+        }))
+        .unwrap();
+        let control = DialControl {
+            deadline: Instant::now() + Duration::from_secs(5),
+            cancelled: Arc::new(AtomicBool::new(false)),
+        };
+        let result = connect_socket_with(
+            &session,
+            |_, _, _| {
+                control.cancelled.store(true, Ordering::Relaxed);
+                Ok(vec!["192.0.2.42:443".parse().unwrap()])
+            },
+            || panic!("a cancelled dial must not start TLS"),
+            Some(&control),
+        );
+        assert!(matches!(result, Err(ConnectError::Unreachable(_))));
+    }
+
+    #[test]
+    fn an_expired_resume_window_prevents_dns_and_dial() {
+        let session: Session = serde_json::from_value(serde_json::json!({
+            "keyword": "ABCDE-FGH23",
+            "ws_url": "wss://example.test/ws/client?token=test",
+            "client_token": "test",
+        }))
+        .unwrap();
+        let control = DialControl {
+            deadline: Instant::now(),
+            cancelled: Arc::new(AtomicBool::new(false)),
+        };
+        let result = connect_socket_with(
+            &session,
+            |_, _, _| panic!("an expired dial must not resolve"),
+            || panic!("an expired dial must not start TLS"),
+            Some(&control),
+        );
+        assert!(matches!(result, Err(ConnectError::Unreachable(_))));
     }
 
     #[test]
