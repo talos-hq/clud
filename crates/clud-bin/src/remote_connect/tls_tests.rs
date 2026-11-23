@@ -55,10 +55,8 @@ fn client_config() -> Arc<ClientConfig> {
     )
 }
 
-/// Serve one connection: send `FROM_SERVER` bytes, then return what the
-/// client sends until it has sent `FROM_CLIENT` bytes.
-fn serve(listener: TcpListener) -> std::thread::JoinHandle<Vec<u8>> {
-    let config = Arc::new(
+fn server_config() -> Arc<ServerConfig> {
+    Arc::new(
         ServerConfig::builder_with_provider(provider())
             .with_safe_default_protocol_versions()
             .unwrap()
@@ -68,7 +66,13 @@ fn serve(listener: TcpListener) -> std::thread::JoinHandle<Vec<u8>> {
                 PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(KEY.to_vec())),
             )
             .unwrap(),
-    );
+    )
+}
+
+/// Serve one connection: send `FROM_SERVER` bytes, then return what the
+/// client sends until it has sent `FROM_CLIENT` bytes.
+fn serve(listener: TcpListener) -> std::thread::JoinHandle<Vec<u8>> {
+    let config = server_config();
     std::thread::spawn(move || {
         let (tcp, _) = listener.accept().unwrap();
         tcp.set_read_timeout(Some(Duration::from_secs(30))).unwrap();
@@ -109,7 +113,7 @@ fn a_full_uplink_queues_large_writes_and_still_delivers_what_arrived() {
         full: Arc::clone(&full),
     };
     let mut client = TlsStream::new(client_config(), "localhost", gate).unwrap();
-    // The handshake, blocking, as `connect_url` runs it.
+    // The handshake, blocking, as `connect_socket` runs it.
     client.flush().unwrap();
     tcp.set_nonblocking(true).unwrap();
 
@@ -135,4 +139,51 @@ fn a_full_uplink_queues_large_writes_and_still_delivers_what_arrived() {
     full.store(false, Ordering::SeqCst);
     until_ready(|| client.flush());
     assert_eq!(server.join().unwrap(), payload);
+}
+
+#[test]
+fn a_tls_session_reconnects_using_its_previous_peer_after_dns_fails() {
+    use super::super::transport::{connect_socket_with, Session};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let session: Session = serde_json::from_value(serde_json::json!({
+        "keyword": "ABCDE-FGH23",
+        "ws_url": format!("wss://localhost:{}/ws/client?token=test", address.port()),
+        "client_token": "test",
+    }))
+    .unwrap();
+    let server = std::thread::spawn(move || {
+        let config = server_config();
+        for _ in 0..2 {
+            let (tcp, _) = listener.accept().unwrap();
+            tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let tls = StreamOwned::new(ServerConnection::new(Arc::clone(&config)).unwrap(), tcp);
+            let mut socket = tungstenite::accept(tls).unwrap();
+            socket
+                .send(tungstenite::Message::Text(r#"{"type":"hello"}"#.into()))
+                .unwrap();
+        }
+    });
+    let tls = || Ok(client_config());
+    let dns_down = |_: &str, _: u16| Err(io::ErrorKind::NotFound.into());
+    assert!(connect_socket_with(&session, dns_down, tls).is_err());
+    drop(
+        connect_socket_with(
+            &session,
+            |host, port| {
+                assert_eq!(host, "localhost");
+                assert_eq!(port, address.port());
+                Ok(vec![address])
+            },
+            tls,
+        )
+        .unwrap(),
+    );
+    let mut resumed = connect_socket_with(&session.clone(), dns_down, tls).unwrap();
+    assert!(matches!(
+        resumed.read().unwrap(),
+        tungstenite::Message::Text(_)
+    ));
+    server.join().unwrap();
 }
