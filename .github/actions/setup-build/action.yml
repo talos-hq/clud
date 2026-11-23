@@ -110,6 +110,7 @@ runs:
         SOLDR_S3_CACHE_ACCESS_KEY: ${{ inputs.s3-access-key }}
         SOLDR_S3_CACHE_SECRET_KEY: ${{ inputs.s3-secret-key }}
       with:
+        version: latest
         toolchain: ${{ inputs.toolchain }}
         cache: true
         # Remote S3 build cache: bucket forge-ci-cache in DigitalOcean Spaces sfo3.
