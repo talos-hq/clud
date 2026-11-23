@@ -30,6 +30,7 @@ import asyncio
 import codecs
 import hashlib
 import json
+import logging
 import os
 import shlex
 import time
@@ -43,6 +44,7 @@ from pathlib import Path
 import anyio
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
+from mcp.server.session import ServerSession
 
 from clud import mcp_validate as v
 from clud.serve_mcp import GatewayManager
@@ -54,6 +56,7 @@ from clud.serve_mcp import GatewayManager
 _RESULT_CHAR_CAP = 1_000_000
 _LOG_LINE_CAP = 2_000
 
+_logger = logging.getLogger(__name__)
 _gateway = GatewayManager()
 
 
@@ -281,6 +284,8 @@ _CLIENT_TOOL_DEADLINE_S = 600
 #: same 96 children. Callers on a tighter client deadline pass a smaller value
 #: explicitly; nothing here clamps an explicit budget.
 _DEFAULT_WAIT_SECONDS = 540
+_SEAL_WATCH_SECONDS = 24 * 60 * 60
+_seal_watchers: set[asyncio.Task[None]] = set()
 #: Session states in which no turn can still be running.
 _TERMINAL_SESSION_STATES = frozenset({"idle", "failed", "terminated"})
 #: Turn states that mean "this turn is over, for good or ill".
@@ -586,6 +591,56 @@ async def _wait_for_turn(
         await asyncio.sleep(_WAIT_TICK_SECONDS)
 
 
+def _seal_message(record: dict, session_id: str, turn_id: str) -> str:
+    turn = _turn_entry(record, turn_id)
+    disposition = turn.get("disposition") or ""
+    exit_code = None
+    if disposition.startswith("exit_"):
+        try:
+            exit_code = int(disposition.removeprefix("exit_"))
+        except ValueError:
+            pass
+    created = turn.get("created_at_ms")
+    completed = turn.get("completed_at_ms")
+    if isinstance(created, int) and isinstance(completed, int):
+        elapsed_ms = max(0, completed - created)
+    else:
+        elapsed_ms = int(_elapsed_s(turn or record) * 1000)
+    # Use the same retained output as session_result, from the sealed snapshot.
+    events = [event for event in record.get("events", []) if event.get("turn_id") == turn_id]
+    text = _extract_text(events)
+    first_line = text.splitlines()[0] if text else ""
+    return json.dumps(
+        {
+            "kind": "clud.session.sealed",
+            "schema": 1,
+            "session_id": session_id,
+            "turn_id": turn_id,
+            "state": "idle" if turn.get("state") in ("completed", "interrupted") else "failed",
+            "exit_code": exit_code,
+            "summary": first_line[:400],
+            "elapsed_ms": elapsed_ms,
+        }
+    )
+
+
+async def _announce_seal(
+    session: ServerSession, base: str, token: str, session_id: str, turn_id: str
+) -> None:
+    """Watch one submitted turn and make one delivery attempt when it seals."""
+    try:
+        with anyio.move_on_after(_SEAL_WATCH_SECONDS):
+            record, _ = await _wait_for_turn(base, token, session_id, turn_id, _SEAL_WATCH_SECONDS)
+            if _turn_done(record, turn_id):
+                await session.send_log_message(
+                    level="info",
+                    logger="clud.session",
+                    data=_seal_message(record, session_id, turn_id),
+                )
+    except (asyncio.CancelledError, Exception):
+        _logger.debug("Seal watcher stopped for %s/%s", session_id, turn_id, exc_info=True)
+
+
 _MAX_WAIT_ANY_SESSIONS = 16
 
 
@@ -859,10 +914,10 @@ async def session_start(
     `session_result`, block with `session_wait`) even if this call's client
     stops waiting. Nothing here kills the run.
 
-    `wait_seconds` is the optional synchronous shortcut: 0 (default) returns the
-    handle the instant the turn is submitted; a positive value blocks — with an
-    early return the moment the turn seals — up to that many seconds, then
-    returns the partial result with `done: false`. Keep a positive value below
+    At `wait_seconds=0` (default), this returns the handle as soon as the turn
+    is submitted and schedules a seal notification. A positive value blocks
+    until the turn seals or the wait expires, returning a partial result with
+    `done: false` on expiry. Keep a positive value below
     the client's tool-call deadline (Hermes: `timeouts.tools.sequential_call`,
     420 s by default) or the client will abandon the wait while the turn keeps
     running. For longer work, return immediately and wait out-of-band.
@@ -897,6 +952,9 @@ async def session_start(
         return _dump(exc.payload())
 
     if not wait_seconds:
+        watcher = asyncio.create_task(_announce_seal(ctx.session, base, token, session_id, turn_id))
+        _seal_watchers.add(watcher)
+        watcher.add_done_callback(_seal_watchers.discard)
         return _dump(
             {
                 "session_id": session_id,
