@@ -1,6 +1,6 @@
 """`./push`: attest a committed branch, push it, and open its PR.
 
-    ./push                  attest the host lanes (clippy, dylint), push, open or reuse the PR
+    ./push                  attest Clippy, Dylint and rustfmt, push, open or reuse the PR
     ./push --cross          also attest the cross Dylint lanes (Windows, macOS)
     ./push --test           also run `bash test --host` (Tier 0 tests), after the lint lanes pass
     ./push --no-pr          attest and push only
@@ -29,7 +29,7 @@ from pathlib import Path
 from ci import process
 
 ROOT = Path(__file__).resolve().parents[1]
-HOST_LANES = ("clippy", "dylint")
+HOST_LANES = ("clippy", "dylint", "rustfmt")
 CROSS_LANES = ("dylint-x86_64-pc-windows-msvc", "dylint-aarch64-apple-darwin")
 PROTECTED = ("main", "master")
 
@@ -44,9 +44,7 @@ def plan(
     branch: str, *, python: str, cross: bool, test: bool, pr: bool, base: str = "main"
 ) -> list[Step]:
     """The steps `./push` runs, in order. Pure, so tests pin it."""
-    # Lint first: the attested lanes are `soldr lint` (Clippy, Dylint), which
-    # fail in seconds on a warm cache, while the unit tests build and run the
-    # whole workspace. A lint failure must not cost a test run.
+    # Run the lint lanes before any explicitly requested tests.
     lanes = HOST_LANES + (CROSS_LANES if cross else ())
     steps: list[Step] = [Step("attest", (python, "-m", "ci.attest", *lanes))]
     if test:

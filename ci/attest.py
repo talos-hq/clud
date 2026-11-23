@@ -35,6 +35,7 @@ from pathlib import Path
 from running_process import RunningProcess
 
 from ci import process
+from ci.lint import RUSTFMT_ARGS
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY = ROOT / "ci-attestations.yml"
@@ -127,10 +128,10 @@ def _soldr_dylint(*args: str, env: tuple[tuple[str, str], ...] = ()) -> Step:
 
 
 def _clippy_lane(python: str) -> tuple[Step, ...]:
-    """`Clippy linux-x64`: _build-target.yml's Clippy and Doc tests steps."""
+    """`Clippy linux-x64`: _build-target.yml's Clippy step."""
     xbuild = (python, "-m", "ci.xbuild")
     common = ("--target", LINUX, "--strategy", "soldr")
-    return (Step((*xbuild, "clippy", *common)), Step((*xbuild, "doctest", *common)))
+    return (Step((*xbuild, "clippy", *common)),)
 
 
 def dylint_driver_path(environ: Mapping[str, str]) -> Path:
@@ -196,6 +197,7 @@ def _dylint_cross_lane(target: str) -> tuple[Step, ...]:
 def lanes(python: str = sys.executable) -> dict[str, tuple[Step, ...]]:
     """Every lane in ci-attestations.yml, by name, in run order."""
     out = {"clippy": _clippy_lane(python), "dylint": _dylint_host_lane()}
+    out["rustfmt"] = (Step(("soldr", "cargo", *RUSTFMT_ARGS)),)
     for target in DYLINT_CROSS_TARGETS:
         out[f"dylint-{target}"] = _dylint_cross_lane(target)
     return out
