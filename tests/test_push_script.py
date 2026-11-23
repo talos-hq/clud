@@ -22,7 +22,7 @@ def _argv(steps: list[push.Step]) -> list[str]:
 def test_default_plan_attests_host_lanes_pushes_and_opens_a_pr() -> None:
     steps = push.plan("feat/x", python="py", cross=False, test=False, pr=True)
     assert [s.name for s in steps] == ["attest", "push", "pr"]
-    assert _argv(steps)[0] == "py -m ci.attest clippy dylint"
+    assert _argv(steps)[0] == "py -m ci.attest clippy dylint rustfmt"
     # prooft amends HEAD's message, so the push needs a lease.
     assert _argv(steps)[1] == "git push --force-with-lease -u origin HEAD:refs/heads/feat/x"
     assert _argv(steps)[2] == "gh pr create --fill --base main --head feat/x"
