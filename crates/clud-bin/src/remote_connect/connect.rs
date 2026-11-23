@@ -369,7 +369,7 @@ fn run_proxy_session(host: &str) -> Result<i32, String> {
         Ok(socket) => socket,
         Err(error) => {
             // The operator may have decided while the handshake was in flight.
-            if let Some(message) = transport::terminal_status(&base, &session.keyword)
+            if let Some(message) = transport::terminal_status(&base, &session)
                 .as_deref()
                 .and_then(super::end_message)
             {

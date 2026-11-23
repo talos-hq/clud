@@ -1,10 +1,10 @@
 //! Same-origin HTTP and WebSocket transport; bearer tokens never enter diagnostics.
 use super::tls;
-use super::{dns, e2e};
+use super::{dns, e2e, peer_cache::PeerCache};
 use serde::Deserialize;
 use serde_json::Value;
 use std::io::{self, Read, Write};
-use std::net::{SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -389,10 +389,19 @@ fn creation_failure(error: &ureq::Error) -> Failure {
 /// server expires unused.
 pub(super) fn create(base: &Url, mode: Option<&str>) -> Result<Session, String> {
     let host = base.host_str().unwrap_or("the remote server").to_owned();
-    retrying(&host, || create_once(base, mode))
+    let peer = PeerCache::for_url(base).and_then(|cache| cache.load());
+    let resolver = Arc::new(dns::Resolver::default());
+    retrying(&host, || {
+        create_once(base, mode, Arc::clone(&resolver), peer)
+    })
 }
 
-fn create_once(base: &Url, mode: Option<&str>) -> Result<Session, Failure> {
+fn create_once(
+    base: &Url,
+    mode: Option<&str>,
+    resolver: Arc<dns::Resolver>,
+    peer: Option<SocketAddr>,
+) -> Result<Session, Failure> {
     let fatal = |reason: &str| Failure::Fatal(reason.into());
     let expected = expects_e2e(base, std::env::var(REQUIRE_E2E).ok().as_deref());
     let private = private_description();
@@ -410,11 +419,8 @@ fn create_once(base: &Url, mode: Option<&str>) -> Result<Session, Failure> {
     if let Some(mode) = mode {
         body["mode"] = mode.into();
     }
-    let response = ureq::AgentBuilder::new()
-        .tls_config(tls_config().map_err(Failure::Fatal)?)
-        .redirects(0)
-        .timeout(Duration::from_secs(15))
-        .build()
+    let response = relay_agent(base, Arc::clone(&resolver), peer)
+        .map_err(Failure::Fatal)?
         .post(base.join("api/remote/sessions").unwrap().as_str())
         .set("Content-Type", "application/json")
         .send_string(&body.to_string())
@@ -453,6 +459,8 @@ fn create_once(base: &Url, mode: Option<&str>) -> Result<Session, Failure> {
     {
         return Err(fatal("remote session bearer does not match its socket"));
     }
+    session.resolver = resolver;
+    session.last_peer = Arc::new(Mutex::new(peer));
     Ok(session)
 }
 
@@ -620,10 +628,26 @@ fn dial_addresses(
     Ok(addresses)
 }
 
+fn last_peer(session: &Session) -> Option<SocketAddr> {
+    *session
+        .last_peer
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+}
+
+fn dns_wait(peer: Option<SocketAddr>) -> Duration {
+    if peer.is_some() {
+        Duration::from_millis(500)
+    } else {
+        Duration::from_secs(5)
+    }
+}
+
 pub(super) fn connect_socket(session: &Session) -> Result<Socket, ConnectError> {
+    let peer = last_peer(session);
     connect_socket_with(
         session,
-        |host, port, wait| session.resolver.resolve(host, port, wait),
+        |host, port, wait| session.resolver.with_fallback(host, port, wait, peer),
         tls_config,
     )
 }
@@ -640,19 +664,11 @@ pub(super) fn connect_socket_with(
         .host_str()
         .ok_or_else(|| unreachable("missing remote host"))?
         .trim_matches(['[', ']']);
-    let peer = *session
-        .last_peer
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
+    let peer = last_peer(session);
     let port = url
         .port_or_known_default()
         .ok_or_else(|| unreachable("missing remote port"))?;
-    let dns_wait = if peer.is_some() {
-        Duration::from_millis(500)
-    } else {
-        Duration::from_secs(5)
-    };
-    let resolved = resolve(host, port, dns_wait);
+    let resolved = resolve(host, port, dns_wait(peer));
     let candidates = dial_addresses(resolved, peer)?;
     let config = if url.scheme() == "wss" {
         Some(tls_config().map_err(ConnectError::Unreachable)?)
@@ -679,6 +695,9 @@ pub(super) fn connect_socket_with(
                         .last_peer
                         .lock()
                         .unwrap_or_else(|error| error.into_inner()) = Some(address);
+                    if let Some(cache) = PeerCache::for_url(&url) {
+                        cache.remember(address);
+                    }
                 }
                 return Ok(socket);
             }
@@ -774,14 +793,46 @@ fn upgrade(ws_url: &str, stream: tls::Stream, session: &Session) -> Result<Socke
     Ok(socket)
 }
 
-pub(super) fn terminal_status(base: &Url, keyword: &str) -> Option<String> {
-    let response = ureq::AgentBuilder::new()
-        .tls_config(tls_config().ok()?)
+fn relay_agent(
+    base: &Url,
+    resolver: Arc<dns::Resolver>,
+    peer: Option<SocketAddr>,
+) -> Result<ureq::Agent, String> {
+    relay_agent_with(base, peer, tls_config()?, move |host, port, wait| {
+        resolver.with_fallback(host, port, wait, peer)
+    })
+}
+
+pub(super) fn relay_agent_with(
+    base: &Url,
+    peer: Option<SocketAddr>,
+    config: Arc<ureq::rustls::ClientConfig>,
+    resolve: impl Fn(&str, u16, Duration) -> io::Result<Vec<SocketAddr>> + Send + Sync + 'static,
+) -> Result<ureq::Agent, String> {
+    let host = base.host_str().ok_or("missing remote host")?.to_owned();
+    let port = base.port_or_known_default().ok_or("missing remote port")?;
+    let netloc = format!("{host}:{port}");
+    Ok(ureq::AgentBuilder::new()
+        .tls_config(config)
+        .resolver(move |lookup: &str| {
+            if lookup != netloc {
+                // A configured HTTP proxy has a separate DNS name and must
+                // never use the remembered relay address.
+                return lookup.to_socket_addrs().map(Iterator::collect);
+            }
+            let addresses = resolve(host.trim_matches(['[', ']']), port, dns_wait(peer));
+            dial_addresses(addresses, peer).map_err(|error| io::Error::other(String::from(error)))
+        })
         .redirects(0)
         .timeout(Duration::from_secs(15))
-        .build()
+        .build())
+}
+
+pub(super) fn terminal_status(base: &Url, session: &Session) -> Option<String> {
+    let response = relay_agent(base, Arc::clone(&session.resolver), last_peer(session))
+        .ok()?
         .get(base.join("api/remote/status").ok()?.as_str())
-        .query("keyword", keyword)
+        .query("keyword", &session.keyword)
         .call()
         .ok()?;
     let mut bytes = Vec::new();

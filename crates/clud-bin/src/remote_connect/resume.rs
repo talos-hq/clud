@@ -212,8 +212,8 @@ pub(super) enum Attempt {
 }
 
 /// The status the server reports for a refused token, as the end message.
-fn ended(base: &url::Url, keyword: &str) -> Option<&'static str> {
-    transport::terminal_status(base, keyword)
+fn ended(base: &url::Url, session: &transport::Session) -> Option<&'static str> {
+    transport::terminal_status(base, session)
         .as_deref()
         .and_then(super::end_message)
 }
@@ -284,14 +284,14 @@ impl Reconnector {
     fn start(&self) -> mpsc::Receiver<Attempt> {
         let (tx, rx) = mpsc::sync_channel(1);
         let session = self.session.clone();
-        let (base, keyword) = (self.base.clone(), self.session.keyword.clone());
+        let base = self.base.clone();
         // Detached: an abandoned attempt ends at its own handshake timeout.
         std::thread::spawn(move || {
             // A fresh exchange: every socket has its own ephemeral keys.
             let outcome = match transport::connect_socket(&session) {
                 Ok(socket) => Attempt::Connected(Box::new(socket)),
                 Err(ConnectError::Refused) => {
-                    ended(&base, &keyword).map_or(Attempt::Failed, Attempt::Ended)
+                    ended(&base, &session).map_or(Attempt::Failed, Attempt::Ended)
                 }
                 Err(ConnectError::Unreachable(_)) => Attempt::Failed,
                 Err(ConnectError::Insecure(message)) => Attempt::Insecure(message),
