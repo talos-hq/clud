@@ -283,13 +283,12 @@ impl Reconnector {
 
     fn start(&self) -> mpsc::Receiver<Attempt> {
         let (tx, rx) = mpsc::sync_channel(1);
-        let url = transport::socket_url(&self.session);
         let session = self.session.clone();
         let (base, keyword) = (self.base.clone(), self.session.keyword.clone());
         // Detached: an abandoned attempt ends at its own handshake timeout.
         std::thread::spawn(move || {
             // A fresh exchange: every socket has its own ephemeral keys.
-            let outcome = match transport::connect_url(&url, &session) {
+            let outcome = match transport::connect_socket(&session) {
                 Ok(socket) => Attempt::Connected(Box::new(socket)),
                 Err(ConnectError::Refused) => {
                     ended(&base, &keyword).map_or(Attempt::Failed, Attempt::Ended)

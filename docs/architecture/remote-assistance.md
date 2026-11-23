@@ -252,6 +252,13 @@ client treats as final ("This session was resumed from another connection.").
 A deliberate exit closes with 1000 so the server ends the session at once
 rather than waiting out its grace window.
 
+The client remembers the last usable TLS WebSocket address in memory for the
+current session. Reconnect still resolves the relay hostname and tries fresh
+addresses first. If DNS fails or returns no addresses, it can dial the
+remembered address, keeping the original hostname for certificate verification
+and the WebSocket upgrade. Every socket still completes the required end-to-end
+handshake before use.
+
 **While disconnected** the PTY's output is still drained at the local
 terminal's pace, mirrored there and held in `Outage`, at most 1 MiB, oldest
 dropped first; the `pty_exit` of a shell that ended offline is never dropped.
