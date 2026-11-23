@@ -16,10 +16,55 @@ use crate::provider_catalog;
 /// Every section this build validates. A section missing here is treated as
 /// unknown: kept verbatim in the cache, never decoded.
 pub(crate) const SECTIONS: &[SectionSpec] = &[
+    SectionSpec::of::<CodexCompatibility>(),
     SectionSpec::of::<DeepSeekSettings>(),
     SectionSpec::of::<ModelContexts>(),
     SectionSpec::of::<PerTurnEffort>(),
 ];
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct CodexCompatibility {
+    pub(crate) client_version: String,
+}
+
+impl Section for CodexCompatibility {
+    const KEY: &'static str = "codex_compatibility";
+
+    fn validate(&self) -> Result<(), String> {
+        let mut parts = self.client_version.split('.');
+        let valid = (0..3).all(|_| {
+            parts.next().is_some_and(|part| {
+                part.parse::<u16>()
+                    .is_ok_and(|number| number.to_string() == part)
+            })
+        }) && parts.next().is_none();
+        valid
+            .then_some(())
+            .ok_or_else(|| "expected a numeric Codex CLI release version".to_string())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn codex_compatibility_accepts_only_canonical_release_versions() {
+    for (version, valid) in [
+        ("0.171.0", true),
+        ("1.0.0", true),
+        ("0.171", false),
+        ("0.0171.0", false),
+        ("0.171.0-beta.1", false),
+        ("0.171.0\r\nHost: example.test", false),
+    ] {
+        let settings = CodexCompatibility {
+            client_version: version.to_string(),
+        };
+        assert_eq!(settings.validate().is_ok(), valid, "{version:?}");
+    }
+
+    let settings: CodexCompatibility =
+        serde_json::from_str(r#"{"client_version":"0.171.0","future_field":true}"#).unwrap();
+    assert!(settings.validate().is_ok());
+}
 
 /// DeepSeek model names. DeepSeek renames API slugs in place
 /// (`deepseek-v4-flash` became `deepseek-flash` with V4.1-Flash), so these

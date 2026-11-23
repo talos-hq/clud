@@ -36,6 +36,9 @@ use std::time::{Duration, Instant, SystemTime};
 use crate::codex_auth::{self, SubscriptionCredentials};
 use crate::codex_model::ModelSpec;
 
+mod compatibility;
+use compatibility::{subscription_client_version, Lookup};
+
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 /// ChatGPT-subscription auth is a *different backend*, not just a different
 /// token (`openai/codex` `model-provider-info`). Endpoint, system-prompt
@@ -51,6 +54,7 @@ pub const CODEX_ORIGINATOR: &str = "codex_cli_rs";
 /// The guard test keeps it and the Bosn CLI pin aligned with the catalog's
 /// recorded probe version; update that record when verifying newer models.
 pub const CODEX_CLIENT_VERSION: &str = "0.171.0";
+
 const CODEX_BETA_HEADER_VALUE: &str = "responses=experimental";
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Idle timeout between reads, not a cap on the whole turn: a model may think
@@ -136,6 +140,7 @@ pub struct UpstreamFailure {
     /// control flow may use the allowlisted value without carrying upstream
     /// payloads into logs or errors.
     context_length_exceeded: bool,
+    model_not_found: bool,
     /// `x-request-id`. Opaque correlation handle, safe to log and to name in a
     /// client-facing message.
     request_id: Option<String>,
@@ -162,6 +167,10 @@ impl UpstreamFailure {
 
     pub fn is_context_length_exceeded(&self) -> bool {
         self.context_length_exceeded
+    }
+
+    pub fn is_model_not_found(&self) -> bool {
+        self.model_not_found
     }
 
     pub fn request_id(&self) -> Option<&str> {
@@ -236,11 +245,19 @@ impl UpstreamFailure {
         let resets_in = parse_resets_in(body_prefix);
         let detail = error_detail(body_prefix);
         let class = classify(status, body_prefix);
-        let context_length_exceeded = context_length_exceeded(body_prefix);
+        let parsed = serde_json::from_str::<serde_json::Value>(body_prefix).ok();
+        let has_code = |code| {
+            parsed.as_ref().is_some_and(|value| {
+                ["/error/code", "/code"].iter().any(|pointer| {
+                    value.pointer(pointer).and_then(serde_json::Value::as_str) == Some(code)
+                })
+            })
+        };
         Self {
             status,
             class,
-            context_length_exceeded,
+            context_length_exceeded: has_code("context_length_exceeded"),
+            model_not_found: matches!(status, 400 | 404) && has_code("model_not_found"),
             request_id,
             cf_ray,
             retry_after,
@@ -248,16 +265,6 @@ impl UpstreamFailure {
             detail,
         }
     }
-}
-
-fn context_length_exceeded(body_prefix: &str) -> bool {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(body_prefix) else {
-        return false;
-    };
-    ["/error/code", "/code"].into_iter().any(|pointer| {
-        value.pointer(pointer).and_then(serde_json::Value::as_str)
-            == Some("context_length_exceeded")
-    })
 }
 
 /// Body signatures that mean "this request will never succeed as written".
@@ -556,6 +563,8 @@ impl UpstreamError {
 #[derive(Clone)]
 pub struct UpstreamTarget {
     base_url: String,
+    official_subscription: bool,
+    client_version: Option<String>,
     authorization: String,
     extra_headers: Vec<(String, String)>,
     model_override: Option<ModelSpec>,
@@ -566,13 +575,21 @@ pub struct UpstreamTarget {
 impl UpstreamTarget {
     pub fn new(base_url: impl Into<String>, authorization: impl Into<String>) -> Self {
         Self {
+            official_subscription: false,
             base_url: base_url.into(),
+            client_version: None,
             authorization: authorization.into(),
             extra_headers: Vec::new(),
             model_override: None,
             account_id: None,
             prompt_cache_key: None,
         }
+    }
+
+    fn subscription(authorization: String) -> Self {
+        let mut target = Self::new(CODEX_BACKEND_BASE_URL, authorization);
+        target.official_subscription = true;
+        target
     }
 
     /// ChatGPT account id. Sent as `ChatGPT-Account-ID`, and its presence is
@@ -716,6 +733,7 @@ pub use codex_upstream_credentials::{
 pub struct UpstreamClient<C: CredentialSource> {
     credentials: C,
     config: UpstreamConfig,
+    compatibility_version: fn(Lookup) -> String,
     /// Stable upstream cache/session identity.
     session_id: String,
     retry_observer: Option<RetryObserver>,
@@ -786,6 +804,7 @@ impl<C: CredentialSource> UpstreamClient<C> {
         Self {
             credentials,
             config,
+            compatibility_version: subscription_client_version,
             session_id: new_session_id(),
             retry_observer: None,
             shutdown_sockets: None,
@@ -892,27 +911,7 @@ impl<C: CredentialSource> UpstreamClient<C> {
         }
         let target = self.credentials.resolve()?;
         let body = self.redacted_body(body, &target)?;
-        let agent = self.agent();
-        let mut request = agent
-            .post(&target.compact_url())
-            .set("Content-Type", "application/json")
-            .set("Accept", "application/json")
-            .set("Authorization", &target.authorization)
-            .set("originator", CODEX_ORIGINATOR)
-            .set("version", CODEX_CLIENT_VERSION)
-            .set("session-id", &self.session_id)
-            .set("thread-id", &self.session_id)
-            .set("x-client-request-id", &self.session_id)
-            .set(
-                "User-Agent",
-                &format!("{CODEX_ORIGINATOR}/{CODEX_CLIENT_VERSION} (clud)"),
-            );
-        if let Some(account_id) = target.account_id.as_deref() {
-            request = request.set("ChatGPT-Account-ID", account_id);
-        }
-        for (name, value) in &target.extra_headers {
-            request = request.set(name, value);
-        }
+        let request = self.request(&target, &target.compact_url(), "application/json", false);
         let response = match request.send_bytes(&body) {
             Ok(response) => response,
             Err(ureq::Error::Status(status, response)) => {
@@ -969,11 +968,18 @@ impl<C: CredentialSource> UpstreamClient<C> {
         sink: &mut dyn FnMut(&[u8]) -> Result<(), UpstreamError>,
         delivered: &AtomicBool,
     ) -> Result<StreamOutcome, UpstreamError> {
+        if cancel.load(Ordering::Acquire) {
+            return Err(UpstreamError::Cancelled);
+        }
         let mut target = self.credentials.resolve()?;
         let deadline = Instant::now() + self.config.overall_timeout;
         let mut attempt = 0_u32;
         let mut slept = Duration::ZERO;
         let mut auth_retried = false;
+        let mut compatibility_retried = false;
+        if target.official_subscription {
+            target.client_version = Some((self.compatibility_version)(Lookup::Current));
+        }
 
         loop {
             attempt += 1;
@@ -992,6 +998,32 @@ impl<C: CredentialSource> UpstreamClient<C> {
                     })
                 }
                 Err(error) => {
+                    if target.official_subscription
+                        && !compatibility_retried
+                        && !delivered.load(Ordering::Acquire)
+                        && !cancel.load(Ordering::Acquire)
+                        && deadline.saturating_duration_since(Instant::now())
+                            > crate::server_settings::REFRESH_SECTION_TIMEOUT
+                        && error
+                            .failure()
+                            .is_some_and(UpstreamFailure::is_model_not_found)
+                    {
+                        compatibility_retried = true;
+                        let refreshed = (self.compatibility_version)(Lookup::Refresh);
+                        if cancel.load(Ordering::Acquire) {
+                            return Err(UpstreamError::Cancelled);
+                        }
+                        if Instant::now() < deadline
+                            && !delivered.load(Ordering::Acquire)
+                            && target.client_version.as_deref() != Some(refreshed.as_str())
+                        {
+                            if let Some(observer) = &self.retry_observer {
+                                observer(&error, attempt, attempt + 1, Some(Duration::ZERO));
+                            }
+                            target.client_version = Some(refreshed);
+                            continue;
+                        }
+                    }
                     if !auth_retried
                         && !delivered.load(Ordering::Acquire)
                         && !cancel.load(Ordering::Acquire)
@@ -1004,7 +1036,13 @@ impl<C: CredentialSource> UpstreamClient<C> {
                             self.credentials.recover_after_unauthorized(&target)?
                         {
                             auth_retried = true;
+                            let version = target.client_version.take();
                             target = recovered;
+                            if target.official_subscription {
+                                target.client_version = version.or_else(|| {
+                                    Some((self.compatibility_version)(Lookup::Current))
+                                });
+                            }
                             continue;
                         }
                     }
@@ -1017,27 +1055,15 @@ impl<C: CredentialSource> UpstreamClient<C> {
                         && error.is_retryable()
                         && attempt < budget
                         && Instant::now() < deadline;
-                    if !retry_allowed {
-                        if let Some(observer) = &self.retry_observer {
-                            observer(&error, attempt, budget, None);
-                        }
-                        return Err(error);
-                    }
-                    // A server hint wins over our own guess, but is clamped by
-                    // the same ceiling so it cannot pin the turn open.
-                    let backoff = match error.retry_hint() {
-                        Some(hint) => hint.min(self.config.max_retry_delay),
-                        None => backoff_delay(attempt, &self.config, jitter_fraction()),
-                    };
-                    if slept + backoff > self.config.max_retry_elapsed {
-                        if let Some(observer) = &self.retry_observer {
-                            observer(&error, attempt, budget, None);
-                        }
-                        return Err(error);
-                    }
+                    let backoff = retry_allowed
+                        .then(|| self.retry_backoff(&error, attempt))
+                        .filter(|delay| slept + *delay <= self.config.max_retry_elapsed);
                     if let Some(observer) = &self.retry_observer {
-                        observer(&error, attempt, budget, Some(backoff));
+                        observer(&error, attempt, budget, backoff);
                     }
+                    let Some(backoff) = backoff else {
+                        return Err(error);
+                    };
                     slept += backoff;
                     if wait_or_cancel(backoff, cancel) {
                         return Err(UpstreamError::Cancelled);
@@ -1047,12 +1073,35 @@ impl<C: CredentialSource> UpstreamClient<C> {
         }
     }
 
+    fn retry_backoff(&self, error: &UpstreamError, attempt: u32) -> Duration {
+        // Server hints outrank jittered backoff and share its ceiling.
+        error.retry_hint().map_or_else(
+            || backoff_delay(attempt, &self.config, jitter_fraction()),
+            |hint| hint.min(self.config.max_retry_delay),
+        )
+    }
+
     /// One upstream request carrying clud's full identity header set.
     ///
     /// Every header is constructed here and nothing from the downstream request
     /// is copied, so the harness's Anthropic bearer cannot travel upstream.
     /// `session-id`/`thread-id` are hyphenated upstream, not underscored.
     fn identity_request(&self, target: &UpstreamTarget, url: &str, accept: &str) -> ureq::Request {
+        self.request(target, url, accept, true)
+    }
+
+    fn request(
+        &self,
+        target: &UpstreamTarget,
+        url: &str,
+        accept: &str,
+        beta: bool,
+    ) -> ureq::Request {
+        let version = match &target.client_version {
+            Some(version) => version.clone(),
+            None if target.official_subscription => (self.compatibility_version)(Lookup::Current),
+            None => CODEX_CLIENT_VERSION.to_string(),
+        };
         let mut request = self
             .agent()
             .post(url)
@@ -1060,15 +1109,17 @@ impl<C: CredentialSource> UpstreamClient<C> {
             .set("Accept", accept)
             .set("Authorization", &target.authorization)
             .set("originator", CODEX_ORIGINATOR)
-            .set("OpenAI-Beta", CODEX_BETA_HEADER_VALUE)
-            .set("version", CODEX_CLIENT_VERSION)
+            .set("version", &version)
             .set("session-id", &self.session_id)
             .set("thread-id", &self.session_id)
             .set("x-client-request-id", &self.session_id)
             .set(
                 "User-Agent",
-                &format!("{CODEX_ORIGINATOR}/{CODEX_CLIENT_VERSION} (clud)"),
+                &format!("{CODEX_ORIGINATOR}/{version} (clud)"),
             );
+        if beta {
+            request = request.set("OpenAI-Beta", CODEX_BETA_HEADER_VALUE);
+        }
         if let Some(account_id) = target.account_id.as_deref() {
             request = request.set("ChatGPT-Account-ID", account_id);
         }
@@ -1384,6 +1435,7 @@ impl<C: CredentialSource> UpstreamClient<C> {
             .config
             .first_frame_timeout
             .map(|timeout| Instant::now() + timeout);
+        let send_deadline = attempt_deadline.map_or(deadline, |at| at.min(deadline));
 
         // Every header is constructed in `identity_request`; nothing from the
         // downstream request is copied, so the harness's Anthropic bearer
@@ -1391,12 +1443,11 @@ impl<C: CredentialSource> UpstreamClient<C> {
         // upstream, not underscored.
         let request = self.identity_request(target, &target.responses_url(), "text/event-stream");
 
-        let response = match match attempt_deadline {
-            Some(deadline) => request
-                .timeout(deadline.saturating_duration_since(Instant::now()))
-                .send_bytes(&body),
-            None => request.send_bytes(&body),
-        } {
+        let remaining = send_deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(UpstreamError::Timeout);
+        }
+        let response = match request.timeout(remaining).send_bytes(&body) {
             Ok(response) => response,
             // The response is *read*, not discarded. Its headers carry the
             // `cf-ray` that distinguishes an edge failure from an application
@@ -1411,9 +1462,7 @@ impl<C: CredentialSource> UpstreamClient<C> {
             }
             Err(ureq::Error::Transport(error)) => {
                 return Err(
-                    if attempt_deadline.is_some_and(|at| Instant::now() >= at)
-                        && is_timeout_transport(&error)
-                    {
+                    if Instant::now() >= send_deadline && is_timeout_transport(&error) {
                         UpstreamError::Timeout
                     } else {
                         UpstreamError::Transport("connection failed")
@@ -1441,8 +1490,9 @@ impl<C: CredentialSource> UpstreamClient<C> {
                 Ok(count) => count,
                 Err(error) if error.kind() == std::io::ErrorKind::TimedOut => {
                     return Err(
-                        if !delivered.load(Ordering::Acquire)
-                            && first_frame_deadline.is_some_and(|at| Instant::now() >= at)
+                        if Instant::now() >= deadline
+                            || (!delivered.load(Ordering::Acquire)
+                                && first_frame_deadline.is_some_and(|at| Instant::now() >= at))
                         {
                             UpstreamError::Timeout
                         } else {
@@ -1569,6 +1619,11 @@ mod tests {
             .expect("verified version ends at the closing backtick")
             .0;
         assert_eq!(CODEX_CLIENT_VERSION, verified);
+        assert_eq!(
+            crate::server_settings::built_in::<crate::server_settings::CodexCompatibility>()
+                .client_version,
+            verified
+        );
         let image = include_str!("../../../bosn/Dockerfile");
         let package = format!("@openai/codex@{verified}");
         assert!(image.split_whitespace().any(|word| word == package));
@@ -2237,6 +2292,136 @@ mod tests {
         // The harness's own downstream bearer must never appear upstream.
         assert!(!request.contains("x-api-key"));
         assert!(!request.to_lowercase().contains("anthropic"));
+    }
+
+    #[test]
+    fn subscription_model_rejection_replays_with_a_verified_identity_once() {
+        let rejected = r#"{"detail":"unavailable","code":"model_not_found"}"#;
+        let server = FakeUpstream::start(vec![
+            body_response(400, rejected, &[]),
+            sse_response("data: recovered\n\n"),
+        ]);
+        let target = subscription_test_target(&server);
+        let mut client = UpstreamClient::new(TestTarget(target), fast_config());
+        client.compatibility_version = test_compatibility_version;
+        let body = br#"{"model":"gpt-6.2-sol","input":[]}"#;
+        let mut output = Vec::new();
+        let outcome = client
+            .stream(body, &AtomicBool::new(false), &mut |chunk| {
+                output.extend_from_slice(chunk);
+                Ok(())
+            })
+            .unwrap();
+        assert_eq!(outcome.attempts, 2);
+        assert_eq!(output, b"data: recovered\n\n");
+        let requests = server.requests();
+        for (request, version) in requests.iter().zip(["0.164.0", "0.171.0"]) {
+            assert!(request.contains(&format!("\r\nversion: {version}\r\n")));
+            assert!(request.contains(&format!("codex_cli_rs/{version} (clud)")));
+            assert!(request.contains("Authorization: Bearer unchanged"));
+            assert!(request.contains(&format!("session-id: {}", client.session_id)));
+            assert_eq!(request.split_once("\r\n\r\n").unwrap().1.as_bytes(), body);
+        }
+    }
+
+    struct TestTarget(UpstreamTarget);
+
+    impl CredentialSource for TestTarget {
+        fn resolve(&self) -> Result<UpstreamTarget, UpstreamError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    fn subscription_test_target(server: &FakeUpstream) -> UpstreamTarget {
+        let mut target = UpstreamTarget::subscription("Bearer unchanged".to_string());
+        target.base_url.clone_from(&server.base_url);
+        target
+    }
+
+    fn test_compatibility_version(lookup: Lookup) -> String {
+        match lookup {
+            Lookup::Current => "0.164.0",
+            Lookup::Refresh => "0.171.0",
+        }
+        .to_string()
+    }
+
+    #[test]
+    fn compatibility_recovery_requires_exact_uncommitted_subscription_rejection() {
+        let exact = r#"{"error":{"code":"model_not_found"}}"#;
+        let generic = r#"{"error":{"message":"model_not_found"}}"#;
+        for (body, official, committed, updated, hits) in [
+            (exact, true, false, true, 2),
+            (exact, true, false, false, 1),
+            (exact, false, false, true, 1),
+            (exact, true, true, true, 1),
+            (generic, true, false, true, 1),
+        ] {
+            let server = FakeUpstream::start(vec![body_response(404, body, &[])]);
+            let target = if official {
+                subscription_test_target(&server)
+            } else {
+                UpstreamTarget::new(&server.base_url, "Bearer unchanged")
+            };
+            let mut client = UpstreamClient::new(TestTarget(target), fast_config());
+            client.compatibility_version = if updated {
+                test_compatibility_version
+            } else {
+                |_| "0.164.0".to_string()
+            };
+            let error = client
+                .stream_with_commit(
+                    b"{}",
+                    &AtomicBool::new(false),
+                    &mut |_| panic!("no response stream expected"),
+                    &AtomicBool::new(committed),
+                )
+                .unwrap_err();
+            assert_eq!(error.failure().unwrap().status(), 404);
+            assert_eq!(
+                server.hits(),
+                hits,
+                "{body} {official} {committed} {updated}"
+            );
+        }
+    }
+
+    #[test]
+    fn compatibility_recovery_leaves_room_for_the_refresh_within_the_deadline() {
+        let server = FakeUpstream::start(vec![body_response(
+            400,
+            r#"{"code":"model_not_found"}"#,
+            &[],
+        )]);
+        let mut client = UpstreamClient::new(
+            TestTarget(subscription_test_target(&server)),
+            UpstreamConfig {
+                overall_timeout: crate::server_settings::REFRESH_SECTION_TIMEOUT,
+                ..fast_config()
+            },
+        );
+        client.compatibility_version = |lookup| {
+            assert!(matches!(lookup, Lookup::Current));
+            "0.164.0".to_string()
+        };
+        let error = client
+            .stream(b"{}", &AtomicBool::new(false), &mut |_| Ok(()))
+            .unwrap_err();
+        assert!(error.failure().unwrap().is_model_not_found());
+        assert_eq!(server.hits(), 1);
+    }
+
+    #[test]
+    fn cancelled_subscription_stream_never_looks_up_an_identity() {
+        let server = FakeUpstream::start(vec![sse_response("data: unused\n\n")]);
+        let mut client =
+            UpstreamClient::new(TestTarget(subscription_test_target(&server)), fast_config());
+        client.compatibility_version = |_| panic!("no version lookup expected");
+        let error = client
+            .stream(b"{}", &AtomicBool::new(true), &mut |_| Ok(()))
+            .unwrap_err();
+        assert!(matches!(error, UpstreamError::Cancelled));
+        assert_eq!(server.hits(), 0);
     }
 
     #[test]

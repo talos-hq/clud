@@ -29,5 +29,8 @@ test enforces that relationship: the ChatGPT backend uses the `version` header
 to gate model access (#2299). Update the record and both consumers together
 when verifying a newer Codex release.
 
+For the bridge recovery path and the verification procedure, see
+[Codex bridge compatibility after #2932](../docs/architecture/codex-bridge-compatibility.md).
+
 Model-only publication also preserves same-origin binary links from the installer
 page; see [download naming](../docs/architecture/installer-pages.md#download-page-detection).

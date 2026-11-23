@@ -212,12 +212,9 @@ impl CludSubscriptionCredentials {
         }
         let email = credentials.email.clone();
         Ok(Self {
-            target: UpstreamTarget::new(
-                CODEX_BACKEND_BASE_URL,
-                format!("Bearer {}", credentials.access_token),
-            )
-            .with_account_id(credentials.account_id)
-            .with_header("originator", CODEX_ORIGINATOR),
+            target: UpstreamTarget::subscription(format!("Bearer {}", credentials.access_token))
+                .with_account_id(credentials.account_id)
+                .with_header("originator", CODEX_ORIGINATOR),
             home: None,
             email,
         })
@@ -365,7 +362,7 @@ impl CodexCliCredentials {
             expires_at_unix,
         };
         Ok(Self {
-            target: UpstreamTarget::new(CODEX_BACKEND_BASE_URL, format!("Bearer {access_token}"))
+            target: UpstreamTarget::subscription(format!("Bearer {access_token}"))
                 .with_account_id(account_id),
             record,
         })
