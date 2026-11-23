@@ -676,7 +676,7 @@ def test_hosted_pr_checks_do_not_require_local_bosn_receipts() -> None:
     for job in ROUTINE_PR_JOBS:
         block = _job_block(text, job)
         condition = (
-            block.split("\n    if:", 1)[1].split("\n    uses:", 1)[0]
+            block.split("\n    if:", 1)[1].splitlines()[0]
             if "\n    if:" in block
             else ""
         )
