@@ -77,6 +77,28 @@ states are observations from output, not judgments of whether polling was needed
 The report contains no commands, paths, transcript contents, or session IDs;
 byte counts are not provider token counts.
 
+Pass multiple JSONL paths to aggregate a cohort without joining call histories:
+
+```sh
+clud tool run diagnostics/codex_audit.py -- first.jsonl second.jsonl
+```
+
+Run once per harness or time period to compare cohorts. The report gives total
+matching results and the number of transcripts containing a recognizable hook
+refusal, output-cap marker, or result over 32 KiB of included text. Marker
+counts can overlap, and a command that prints marker-like text can be counted.
+Use one path per session. If an input cannot be read, the command exits without
+printing a partial report.
+
+1. Use a completion notification or deadline-bounded watcher when available.
+   Keep the same live handle after an observation timeout.
+2. Request bounded summaries and keep full diagnostics available for ranged reads.
+3. Use the supported command forms in the repository's hook guidance.
+4. Batch related state probes. Recheck after changes and use the changed-text
+   count to interpret repeated reads.
+5. Before a handoff, record the branch or PR, active job handle, last verified
+   result, and next action so work can resume after compaction.
+
 `diagnostics/transcript_report.py` reports repeated tool-call bursts,
 compactions, context jumps, context errors and the history premium — the
 tokens a session re-sent above `--context-floor` (default 100k), which is the
