@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "generated_at": "2026-11-22T12:49:24Z",
+  "generated_at": "2026-11-23T15:17:17Z",
   "source": "https://openrouter.ai/api/v1/models",
   "pricing_estimate": {
     "label": "lowest-priced eligible models by weighted token-mix estimate; not a quality ranking",
@@ -1699,7 +1699,7 @@
       "name": "DeepSeek: DeepSeek V4 Flash 0731",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 4.43e-08,
+      "input_price_per_token": 4.34e-08,
       "output_price_per_token": 3e-07,
       "cached_input_price_per_token": 3.5e-08,
       "supports_tools": true,
@@ -1939,6 +1939,29 @@
         ],
         "default_effort": "high",
         "default_enabled": true,
+        "mandatory": false
+      },
+      "supports_vision": true,
+      "eligible_for_coding": true,
+      "ineligibility_reasons": []
+    },
+    {
+      "id": "dots-studio/dots-3-note-preview:free",
+      "name": "Dots Studio: Dots3-Note Preview (free)",
+      "provider": "dots-studio",
+      "context_length": 512000,
+      "input_price_per_token": 0.0,
+      "output_price_per_token": 0.0,
+      "cached_input_price_per_token": 0.0,
+      "supports_tools": true,
+      "supports_text_input": true,
+      "supports_text_output": true,
+      "supports_reasoning": true,
+      "supports_reasoning_effort": false,
+      "reasoning": {
+        "supported_efforts": null,
+        "default_effort": null,
+        "default_enabled": null,
         "mandatory": false
       },
       "supports_vision": true,
@@ -3108,8 +3131,8 @@
       "provider": "google",
       "context_length": 131072,
       "input_price_per_token": 8e-08,
-      "output_price_per_token": 4.5e-07,
-      "cached_input_price_per_token": 4e-08,
+      "output_price_per_token": 1.6e-07,
+      "cached_input_price_per_token": 8e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3155,9 +3178,9 @@
       "name": "Google: Gemma 4 26B A4B",
       "provider": "google",
       "context_length": 262144,
-      "input_price_per_token": 6.75e-08,
-      "output_price_per_token": 2.25e-07,
-      "cached_input_price_per_token": 3.75e-08,
+      "input_price_per_token": 9e-08,
+      "output_price_per_token": 3e-07,
+      "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -3418,7 +3441,7 @@
       "id": "inclusionai/ling-3.1-flash",
       "name": "inclusionAI: Ling 3.1 Flash",
       "provider": "inclusionai",
-      "context_length": 1000000,
+      "context_length": 1048576,
       "input_price_per_token": 6e-08,
       "output_price_per_token": 1.8e-07,
       "cached_input_price_per_token": 1.2e-08,
@@ -4183,9 +4206,9 @@
       "name": "MiniMax: MiniMax M3.1 Flash",
       "provider": "minimax",
       "context_length": 1048576,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 6e-07,
-      "cached_input_price_per_token": 1.5e-08,
+      "input_price_per_token": 7.5e-08,
+      "output_price_per_token": 3e-07,
+      "cached_input_price_per_token": 7.5e-09,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -8195,9 +8218,9 @@
       "name": "OpenAI: gpt-oss-120b",
       "provider": "openai",
       "context_length": 131072,
-      "input_price_per_token": 9e-08,
-      "output_price_per_token": 3.6e-07,
-      "cached_input_price_per_token": 9e-08,
+      "input_price_per_token": 5e-08,
+      "output_price_per_token": 2.5e-07,
+      "cached_input_price_per_token": 5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -8249,9 +8272,9 @@
       "name": "OpenAI: gpt-oss-20b",
       "provider": "openai",
       "context_length": 131072,
-      "input_price_per_token": 7.5e-08,
-      "output_price_per_token": 3e-07,
-      "cached_input_price_per_token": 3.75e-08,
+      "input_price_per_token": 3e-08,
+      "output_price_per_token": 1.3e-07,
+      "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -9532,8 +9555,8 @@
       "name": "Qwen: Qwen3.6 35B A3B",
       "provider": "qwen",
       "context_length": 262144,
-      "input_price_per_token": 1e-07,
-      "output_price_per_token": 9e-07,
+      "input_price_per_token": 5e-08,
+      "output_price_per_token": 7e-07,
       "cached_input_price_per_token": 2.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -11687,8 +11710,8 @@
       "name": "Z.ai: GLM 5.3 Flash",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 1.5e-07,
-      "output_price_per_token": 5e-07,
+      "input_price_per_token": 3.99e-08,
+      "output_price_per_token": 7.4e-08,
       "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -12018,7 +12041,7 @@
       "provider": "deepseek",
       "context_length": 1048576,
       "input_price_per_token": 9.99e-08,
-      "output_price_per_token": 8e-06,
+      "output_price_per_token": 5e-06,
       "cached_input_price_per_token": 9.99e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -12045,9 +12068,9 @@
       "name": "DeepSeek: DeepSeek V4 Flash Latest",
       "provider": "deepseek",
       "context_length": 1048576,
-      "input_price_per_token": 4.4e-08,
-      "output_price_per_token": 1.32e-07,
-      "cached_input_price_per_token": 1.4e-09,
+      "input_price_per_token": 4.34e-08,
+      "output_price_per_token": 3e-07,
+      "cached_input_price_per_token": 3.5e-08,
       "supports_tools": true,
       "supports_text_input": true,
       "supports_text_output": true,
@@ -12354,8 +12377,8 @@
       "name": "Z.ai: GLM Flash Latest",
       "provider": "z-ai",
       "context_length": 1048576,
-      "input_price_per_token": 4.65e-08,
-      "output_price_per_token": 7.29e-08,
+      "input_price_per_token": 3.99e-08,
+      "output_price_per_token": 7.4e-08,
       "cached_input_price_per_token": 3e-08,
       "supports_tools": true,
       "supports_text_input": true,
@@ -12407,6 +12430,10 @@
   "cheapest_programming": [
     {
       "id": "baidu/ernie-5.5-flash-preview:free",
+      "weighted_usd_per_million_tokens": 0.0
+    },
+    {
+      "id": "dots-studio/dots-3-note-preview:free",
       "weighted_usd_per_million_tokens": 0.0
     },
     {
@@ -12474,16 +12501,12 @@
       "weighted_usd_per_million_tokens": 0.0416
     },
     {
-      "id": "qwen/qwen3.7-flash",
-      "weighted_usd_per_million_tokens": 0.0476
+      "id": "z-ai/glm-5.3-flash",
+      "weighted_usd_per_million_tokens": 0.04573
     },
     {
       "id": "~z-ai/glm-flash-latest",
-      "weighted_usd_per_million_tokens": 0.05013
-    },
-    {
-      "id": "openai/gpt-oss-120b:batch",
-      "weighted_usd_per_million_tokens": 0.05088
+      "weighted_usd_per_million_tokens": 0.04573
     }
   ]
 }
