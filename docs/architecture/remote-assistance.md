@@ -291,7 +291,8 @@ sent on the new socket, and the shell waits. Local consent stays authoritative:
   view; revoking control while away drops sudo with the shell;
 - the client reports the terminal it still holds (`resume`), then sends the
   held output, preceded by `pty_gap` when output was dropped, and prints
-  `Reconnected.`
+  `Reconnected.` If that socket fails during replay, any gap or frames the
+  socket rejected stay queued with their PTY identity for the next resume.
 
 **Proxy mode** (`clud connect` → Use Proxy) reconnects the same way in the
 background; the user's agent keeps running and is not interrupted.

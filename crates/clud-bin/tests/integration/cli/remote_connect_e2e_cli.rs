@@ -858,6 +858,27 @@ fn a_lost_connection_resumes_the_same_shell_with_output_from_the_outage() {
 }
 
 #[test]
+fn a_silent_socket_is_replaced_and_the_same_shell_resumes() {
+    let (client, mut silent, listener) = resumable_session(None);
+    open_shell(&client, &mut silent);
+    let (remember, recall, recalled) = remember_and_recall();
+    silent.type_into_shell(remember);
+    silent.wait_shell_output(remember);
+
+    // Keep the TCP stream open and stop reading or answering heartbeats.
+    // The client must detect loss without a close frame, FIN, or RST.
+    client.wait_for(LOST);
+    let mut operator = resume_with(&listener, json!({"control":"granted","grant_id":"grant"}));
+    assert_eq!(operator.wait_event("resume")["pty"]["pty_id"], "shell");
+    drop(silent);
+
+    operator.type_into_shell(recall);
+    operator.wait_shell_output(recalled);
+    operator.send(json!({"type":"disconnect"}));
+    assert_eq!(client.wait_exit(), 0);
+}
+
+#[test]
 fn control_revoked_while_away_is_not_regained_on_resume() {
     let (client, mut operator, listener) = resumable_session(None);
     open_shell(&client, &mut operator);
