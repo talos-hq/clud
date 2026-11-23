@@ -253,10 +253,13 @@ A deliberate exit closes with 1000 so the server ends the session at once
 rather than waiting out its grace window.
 
 The client remembers the last usable TLS WebSocket address in memory for the
-current session. Reconnect still resolves the relay hostname and tries fresh
-addresses first. If DNS fails or returns no addresses, it can dial the
-remembered address, keeping the original hostname for certificate verification
-and the WebSocket upgrade. Every socket still completes the required end-to-end
+current session. On reconnect, it gives DNS 500 ms to return fresh addresses
+before falling back to the remembered address. A slow lookup remains pending
+across retries, so a later reconnect can still use its answer. The dial
+interleaves IPv4 and IPv6 candidates and starts them 250 ms apart. TCP and
+TLS can run in parallel, while each WebSocket upgrade uses the session token
+in sequence. Every candidate keeps the original hostname for TLS and the
+upgrade, and the chosen socket still completes the required end-to-end
 handshake before use.
 
 **While disconnected** the PTY's output is still drained at the local

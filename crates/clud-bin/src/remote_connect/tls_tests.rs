@@ -166,12 +166,12 @@ fn a_tls_session_reconnects_using_its_previous_peer_after_dns_fails() {
         }
     });
     let tls = || Ok(client_config());
-    let dns_down = |_: &str, _: u16| Err(io::ErrorKind::NotFound.into());
+    let dns_down = |_: &str, _: u16, _: Duration| Err(io::ErrorKind::NotFound.into());
     assert!(connect_socket_with(&session, dns_down, tls).is_err());
     drop(
         connect_socket_with(
             &session,
-            |host, port| {
+            |host, port, _| {
                 assert_eq!(host, "localhost");
                 assert_eq!(port, address.port());
                 Ok(vec![address])
@@ -185,5 +185,50 @@ fn a_tls_session_reconnects_using_its_previous_peer_after_dns_fails() {
         resumed.read().unwrap(),
         tungstenite::Message::Text(_)
     ));
+    server.join().unwrap();
+}
+
+#[test]
+fn a_stalled_tls_candidate_does_not_block_a_healthy_candidate() {
+    use super::super::transport::{connect_socket_with, Session};
+
+    let stalled = TcpListener::bind("127.0.0.1:0").unwrap();
+    let first = stalled.local_addr().unwrap();
+    let healthy = TcpListener::bind("127.0.0.1:0").unwrap();
+    let second = healthy.local_addr().unwrap();
+    let session: Session = serde_json::from_value(serde_json::json!({
+        "keyword": "ABCDE-FGH23",
+        "ws_url": "wss://localhost/ws/client?token=test",
+        "client_token": "test",
+    }))
+    .unwrap();
+    let (release, wait) = std::sync::mpsc::channel();
+    let blackhole = std::thread::spawn(move || {
+        let (_tcp, _) = stalled.accept().unwrap();
+        let _ = wait.recv_timeout(Duration::from_secs(20));
+    });
+    let server = std::thread::spawn(move || {
+        let (tcp, _) = healthy.accept().unwrap();
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let tls = StreamOwned::new(ServerConnection::new(server_config()).unwrap(), tcp);
+        let mut socket = tungstenite::accept(tls).unwrap();
+        socket
+            .send(tungstenite::Message::Text(r#"{"type":"hello"}"#.into()))
+            .unwrap();
+    });
+    let started = Instant::now();
+    let mut socket = connect_socket_with(
+        &session,
+        |_, _, _| Ok(vec![first, second]),
+        || Ok(client_config()),
+    )
+    .unwrap();
+    assert!(matches!(
+        socket.read().unwrap(),
+        tungstenite::Message::Text(_)
+    ));
+    assert!(started.elapsed() < Duration::from_secs(5));
+    release.send(()).unwrap();
+    blackhole.join().unwrap();
     server.join().unwrap();
 }

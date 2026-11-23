@@ -19,6 +19,7 @@
 use std::io::{self, Read, Write};
 use std::net::TcpStream;
 use std::sync::Arc;
+use std::time::Instant;
 use ureq::rustls::pki_types::ServerName;
 use ureq::rustls::{ClientConfig, ClientConnection};
 
@@ -38,10 +39,6 @@ impl<S: Read + Write> TlsStream<S> {
         // Unbounded: a capped buffer turns a full uplink into `Ok(0)`, a reset.
         conn.set_buffer_limit(None);
         Ok(Self { conn, sock })
-    }
-
-    pub(super) fn get_ref(&self) -> &S {
-        &self.sock
     }
 
     /// Finish the handshake first: before it, nothing else can move.
@@ -108,18 +105,78 @@ impl<S: Read + Write> Write for TlsStream<S> {
     }
 }
 
+/// Bound the whole handshake, including a peer that sends one byte at a time.
+pub(super) struct HandshakeTcp {
+    tcp: TcpStream,
+    deadline: Option<Instant>,
+}
+
+impl HandshakeTcp {
+    pub(super) fn new(tcp: TcpStream, deadline: Instant) -> Self {
+        Self {
+            tcp,
+            deadline: Some(deadline),
+        }
+    }
+
+    fn remaining(&self) -> io::Result<Option<std::time::Duration>> {
+        self.deadline
+            .map(|deadline| {
+                deadline
+                    .checked_duration_since(Instant::now())
+                    .filter(|remaining| !remaining.is_zero())
+                    .ok_or_else(|| io::ErrorKind::TimedOut.into())
+            })
+            .transpose()
+    }
+}
+
+impl Read for HandshakeTcp {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if let Some(remaining) = self.remaining()? {
+            self.tcp.set_read_timeout(Some(remaining))?;
+        }
+        self.tcp.read(buf)
+    }
+}
+
+impl Write for HandshakeTcp {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if let Some(remaining) = self.remaining()? {
+            self.tcp.set_write_timeout(Some(remaining))?;
+        }
+        self.tcp.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.tcp.flush()
+    }
+}
+
 /// The session socket's byte stream: TLS for `wss://`, plain for loopback `ws://`.
 pub(super) enum Stream {
-    Plain(TcpStream),
-    Tls(Box<TlsStream<TcpStream>>),
+    Plain(HandshakeTcp),
+    Tls(Box<TlsStream<HandshakeTcp>>),
 }
 
 impl Stream {
-    pub(super) fn tcp(&self) -> &TcpStream {
+    fn handshake_tcp(&mut self) -> &mut HandshakeTcp {
         match self {
             Self::Plain(tcp) => tcp,
-            Self::Tls(tls) => tls.get_ref(),
+            Self::Tls(tls) => &mut tls.sock,
         }
+    }
+
+    pub(super) fn set_deadline(&mut self, deadline: Instant) {
+        self.handshake_tcp().deadline = Some(deadline);
+    }
+
+    pub(super) fn finish_handshake(&mut self) -> io::Result<()> {
+        let stream = self.handshake_tcp();
+        stream.tcp.set_nonblocking(true)?;
+        stream.deadline = None;
+        let _ = stream.tcp.set_nodelay(true);
+        Ok(())
     }
 }
 
