@@ -204,10 +204,9 @@ impl Operator {
             },
         )
         .unwrap();
-        socket
-            .get_ref()
-            .set_read_timeout(Some(Duration::from_millis(50)))
-            .unwrap();
+        // A timed-out blocking recv can leave a Windows socket unusable.
+        socket.get_ref().set_read_timeout(None).unwrap();
+        socket.get_ref().set_nonblocking(true).unwrap();
         (
             Self {
                 socket,
@@ -219,9 +218,27 @@ impl Operator {
     }
 
     fn send(&mut self, event: Value) {
-        self.socket
-            .send(Message::Text(event.to_string().into()))
-            .unwrap();
+        self.send_frame(Message::Text(event.to_string().into()));
+    }
+
+    fn send_frame(&mut self, frame: Message) {
+        match self.socket.send(frame) {
+            Ok(()) => return,
+            Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {}
+            Err(error) => panic!("cannot send operator frame: {error}"),
+        }
+        // The frame was already queued. Retry its flush without sending it twice.
+        let deadline = Instant::now() + WAIT;
+        loop {
+            match self.socket.flush() {
+                Ok(()) => return,
+                Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {
+                    assert!(Instant::now() < deadline, "operator socket did not drain");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(error) => panic!("cannot flush operator frame: {error}"),
+            }
+        }
     }
 
     fn type_into_shell(&mut self, command: &str) {
@@ -232,7 +249,7 @@ impl Operator {
         };
         let mut frame = vec![1];
         frame.extend_from_slice(format!("{command}{submit}").as_bytes());
-        self.socket.send(Message::Binary(frame.into())).unwrap();
+        self.send_frame(Message::Binary(frame.into()));
     }
 
     /// Read one frame. A heartbeat `ping` is answered like the real server
@@ -254,8 +271,9 @@ impl Operator {
                 self.shell_output.extend_from_slice(&frame[1..]);
             }
             Ok(_) => {}
-            Err(tungstenite::Error::Io(error))
-                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {}
+            Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
             Err(error) => panic!("client socket failed: {error}"),
         }
     }
@@ -294,7 +312,7 @@ impl Operator {
     /// moves at the runner's throughput (Windows runners relay about 200 KB/s
     /// through ConPTY, #2887), and what this guards against is a link that
     /// stops delivering, not a slow one.
-    fn wait_shell_bytes(&mut self, needle: &[u8]) {
+    fn wait_shell_bytes(&mut self, needle: &[u8], client: &Client, listener: &TcpListener) {
         let mut deadline = Instant::now() + WAIT;
         let mut seen = self.shell_output.len();
         let mut from = 0;
@@ -308,14 +326,20 @@ impl Operator {
                 seen = self.shell_output.len();
                 deadline = Instant::now() + WAIT;
             }
-            assert!(
-                Instant::now() < deadline,
-                "server never received {:?}: nothing new for {WAIT:?} ({} bytes so far), \
-                 last bytes: {}",
-                String::from_utf8_lossy(needle),
-                self.shell_output.len(),
-                self.shell_output[self.shell_output.len().saturating_sub(300)..].escape_ascii()
-            );
+            if Instant::now() >= deadline {
+                let client_text = client.text();
+                let client_tail = &client_text.as_bytes()[client_text.len().saturating_sub(600)..];
+                panic!(
+                    "server never received {:?}: nothing new for {WAIT:?} ({} bytes so far), \
+                     last bytes: {}; client exit: {:?}, reconnect waiting: {}, client tail: {}",
+                    String::from_utf8_lossy(needle),
+                    self.shell_output.len(),
+                    self.shell_output[self.shell_output.len().saturating_sub(300)..].escape_ascii(),
+                    client.process.returncode(),
+                    listener.accept().is_ok(),
+                    client_tail.escape_ascii(),
+                );
+            }
             self.pump_once();
         }
     }
@@ -1095,13 +1119,13 @@ fn a_stalled_link_paces_the_shell_and_loses_nothing() {
     open_shell(&client, &mut operator);
     let (_dir, print) = numbered_file(LINES);
     operator.type_into_shell(&print);
-    operator.wait_shell_bytes(b"\n1000\r\n");
+    operator.wait_shell_bytes(b"\n1000\r\n", &client, &listener);
     // Stop reading: the server's receive buffer and the client's send buffer fill.
     std::thread::sleep(Duration::from_secs(12));
     // The bare number, not a framed line: ConPTY renders the screen, and after
     // a stall it may repaint the last lines with escapes around them (#2887).
     // No smaller line contains it, so it still marks the end of the flood.
-    operator.wait_shell_bytes(LINES.to_string().as_bytes());
+    operator.wait_shell_bytes(LINES.to_string().as_bytes(), &client, &listener);
     listener.set_nonblocking(true).unwrap();
     assert!(
         matches!(listener.accept(), Err(error) if error.kind() == ErrorKind::WouldBlock),
