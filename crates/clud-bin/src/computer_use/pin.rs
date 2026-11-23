@@ -7,7 +7,7 @@
 use crate::platform::host;
 
 /// The pinned cua-driver version.
-pub const VERSION: &str = "0.57.1";
+pub const VERSION: &str = "0.57.2";
 
 /// The release tag the archives are published under.
 const TAG_PREFIX: &str =
@@ -45,26 +45,26 @@ impl Artifact {
 /// macOS needs the directory archive: only it carries the signed
 /// `ComputerUse.app`, whose identity (com.taloshq.computer-use) holds the TCC grants.
 const DARWIN: (&str, &str, u64, &str) = (
-    "computer-use-0.57.1-darwin-universal.tar.gz",
-    "508f1f103dceb9a62caa88a5ee9bbeeb72fc5825a149b80028ee5acc4451ce26",
-    24_864_305,
+    "computer-use-0.57.2-darwin-universal.tar.gz",
+    "9ecfbba8c1b13100bf1f2a869c1d2a0ecbd5a326555fcc394c9a3581747d6a7d",
+    24_863_380,
     "ComputerUse.app/Contents/MacOS/cua-driver",
 );
 
 pub const ARTIFACTS: &[Artifact] = &[
     Artifact {
         target: "linux-x64",
-        asset: "computer-use-0.57.1-linux-x86_64.tar.gz",
-        sha256: "2bacb5aad2e058197070296967c7c713865085d2a13f3125b53a9f252b2b1af4",
-        size: 16_588_526,
+        asset: "computer-use-0.57.2-linux-x86_64.tar.gz",
+        sha256: "529857b9ebcb1a22e4b7450f2f7e935e96374df2c60385a9d84115e5e15002e8",
+        size: 16_549_799,
         kind: ArchiveKind::TarGz,
         binary: "cua-driver",
     },
     Artifact {
         target: "linux-arm64",
-        asset: "computer-use-0.57.1-linux-aarch64.tar.gz",
-        sha256: "60895da81cfc421a2ae3f3ea5ad669cf580a52759751d846d4be0d007fd949a8",
-        size: 15_593_797,
+        asset: "computer-use-0.57.2-linux-aarch64.tar.gz",
+        sha256: "cffe922c0d9ca6e281cbd358cc21677f1fbb7beb80c488234521d5a50fbd060e",
+        size: 15_596_744,
         kind: ArchiveKind::TarGz,
         binary: "cua-driver",
     },
@@ -86,17 +86,17 @@ pub const ARTIFACTS: &[Artifact] = &[
     },
     Artifact {
         target: "win32-x64",
-        asset: "computer-use-0.57.1-windows-x86_64.zip",
-        sha256: "b9028e8d716c05cf54c6a731a4a89285ab1e7ea91afa51f014059cfd66e380fb",
-        size: 26_366_400,
+        asset: "computer-use-0.57.2-windows-x86_64.zip",
+        sha256: "919309cf98213c341c24810ff65e7441b5cb02aaa83f7587aec429620a48a997",
+        size: 26_365_036,
         kind: ArchiveKind::Zip,
         binary: "cua-driver.exe",
     },
     Artifact {
         target: "win32-arm64",
-        asset: "computer-use-0.57.1-windows-aarch64.zip",
-        sha256: "ad52d3dbe5aeacdee092f809201988151bc75d24c275c434f1d98314622d31f3",
-        size: 24_357_982,
+        asset: "computer-use-0.57.2-windows-aarch64.zip",
+        sha256: "cd199f5d2fb89b3a157b8b304f5db05c08ed9517af560f6d027092fea1185135",
+        size: 24_418_552,
         kind: ArchiveKind::Zip,
         binary: "cua-driver.exe",
     },

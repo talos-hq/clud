@@ -6,13 +6,13 @@ from pathlib import Path
 
 from ci.lokr_bundle import atomic_write, download_release
 
-VERSION = "0.57.1"
+VERSION = "0.57.2"
 ASSETS = {
-    "darwin-universal.tar.gz": "508f1f103dceb9a62caa88a5ee9bbeeb72fc5825a149b80028ee5acc4451ce26",
-    "linux-aarch64.tar.gz": "60895da81cfc421a2ae3f3ea5ad669cf580a52759751d846d4be0d007fd949a8",
-    "linux-x86_64.tar.gz": "2bacb5aad2e058197070296967c7c713865085d2a13f3125b53a9f252b2b1af4",
-    "windows-aarch64.zip": "ad52d3dbe5aeacdee092f809201988151bc75d24c275c434f1d98314622d31f3",
-    "windows-x86_64.zip": "b9028e8d716c05cf54c6a731a4a89285ab1e7ea91afa51f014059cfd66e380fb",
+    "darwin-universal.tar.gz": "9ecfbba8c1b13100bf1f2a869c1d2a0ecbd5a326555fcc394c9a3581747d6a7d",
+    "linux-aarch64.tar.gz": "cffe922c0d9ca6e281cbd358cc21677f1fbb7beb80c488234521d5a50fbd060e",
+    "linux-x86_64.tar.gz": "529857b9ebcb1a22e4b7450f2f7e935e96374df2c60385a9d84115e5e15002e8",
+    "windows-aarch64.zip": "cd199f5d2fb89b3a157b8b304f5db05c08ed9517af560f6d027092fea1185135",
+    "windows-x86_64.zip": "919309cf98213c341c24810ff65e7441b5cb02aaa83f7587aec429620a48a997",
 }
 
 
