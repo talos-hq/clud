@@ -18,9 +18,10 @@ live ChatGPT backend probe succeeds.
 `python -m models.refresh_openrouter`; the command reads OpenRouter’s public
 `/api/v1/models` endpoint and requires Sol, Terra, and Luna rows.
 
-The Sol 6.1 block was removed after `codex-cli 0.164.0` successfully completed
-an authenticated ChatGPT Codex request with `gpt-6.1-sol` at low effort on
-2026-10-27 UTC. The same probe succeeded for `gpt-6.1-terra`.
+`codex-cli 0.171.0` successfully completed an authenticated ChatGPT Codex
+request with `gpt-6.2-sol` on 2026-11-23 UTC (#2932). The Sol 6.1 block was
+previously removed after Codex CLI 0.164.0 completed authenticated requests
+with `gpt-6.1-sol` and `gpt-6.1-terra` at low effort on 2026-10-27 UTC.
 
 The upstream client's advertised compatibility version and the existing Bosn
 Codex CLI pin must match this verified probe version. A `codex_upstream` guard
