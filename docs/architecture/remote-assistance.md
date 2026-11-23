@@ -262,6 +262,13 @@ in sequence. Every candidate keeps the original hostname for TLS and the
 upgrade, and the chosen socket still completes the required end-to-end
 handshake before use.
 
+For the official `clud.bot:443` relay, Clud also keeps the last verified
+address for up to seven days in its local cache. A new process can use it
+for session creation when DNS fails. HTTP status checks share the live
+session's resolver and address fallback. The cache holds an address and
+timestamp. Each request still uses the original TLS hostname, and each new
+session still requires consent.
+
 **While disconnected** the PTY's output is still drained at the local
 terminal's pace, mirrored there and held in `Outage`, at most 1 MiB, oldest
 dropped first; the `pty_exit` of a shell that ended offline is never dropped.

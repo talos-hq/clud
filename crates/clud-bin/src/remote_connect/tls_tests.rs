@@ -232,3 +232,59 @@ fn a_stalled_tls_candidate_does_not_block_a_healthy_candidate() {
     blackhole.join().unwrap();
     server.join().unwrap();
 }
+
+#[test]
+fn http_can_dial_a_remembered_address_without_changing_the_tls_hostname() {
+    use super::super::transport::relay_agent_with;
+    use std::io::{BufRead, BufReader};
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let origin = url::Url::parse(&format!("https://localhost:{}/", address.port())).unwrap();
+    let server = std::thread::spawn(move || {
+        let (tcp, _) = listener.accept().unwrap();
+        tcp.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let mut tls = StreamOwned::new(ServerConnection::new(server_config()).unwrap(), tcp);
+        let mut request = BufReader::new(&mut tls);
+        let mut line = String::new();
+        request.read_line(&mut line).unwrap();
+        assert_eq!(line, "GET /api/remote/status HTTP/1.1\r\n");
+        let mut host = None;
+        loop {
+            line.clear();
+            assert_ne!(request.read_line(&mut line).unwrap(), 0);
+            if line == "\r\n" {
+                break;
+            }
+            if line.to_ascii_lowercase().starts_with("host:") {
+                host = Some(line[5..].trim().to_owned());
+            }
+        }
+        assert_eq!(host.unwrap(), format!("localhost:{}", address.port()));
+        tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+            .unwrap();
+        tls.flush().unwrap();
+    });
+    let agent = relay_agent_with(
+        &origin,
+        Some(address),
+        client_config(),
+        move |host, port, _| {
+            assert_eq!(host, "localhost");
+            assert_eq!(port, address.port());
+            Err(io::ErrorKind::NotFound.into())
+        },
+    )
+    .unwrap();
+    let url = origin.join("api/remote/status").unwrap();
+    assert_eq!(
+        agent
+            .get(url.as_str())
+            .call()
+            .unwrap()
+            .into_string()
+            .unwrap(),
+        "{}"
+    );
+    server.join().unwrap();
+}

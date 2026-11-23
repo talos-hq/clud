@@ -14,6 +14,7 @@ pub(crate) mod leader;
 mod mirror;
 mod open_url;
 mod paste;
+mod peer_cache;
 pub mod proxy;
 mod resume;
 mod size;
@@ -95,7 +96,7 @@ fn run_session(host: &str, mode: Option<connect::Mode>) -> Result<i32, String> {
     let socket = match transport::connect(&mut session) {
         Ok(socket) => socket,
         Err(error) => {
-            if let Some(message) = transport::terminal_status(&base, &session.keyword)
+            if let Some(message) = transport::terminal_status(&base, &session)
                 .as_deref()
                 .and_then(end_message)
             {

@@ -35,9 +35,8 @@ fn accept_before_deadline(listener: &TcpListener) -> TcpStream {
     }
 }
 
-fn serve_session_creation(listener: &TcpListener) -> Value {
-    let port = listener.local_addr().unwrap().port();
-    let mut stream = accept_before_deadline(listener);
+fn read_session_creation(listener: &TcpListener) -> (TcpStream, Value) {
+    let stream = accept_before_deadline(listener);
     stream.set_read_timeout(Some(WAIT)).unwrap();
     let mut reader = BufReader::new(stream.try_clone().unwrap());
     let mut first = String::new();
@@ -56,6 +55,12 @@ fn serve_session_creation(listener: &TcpListener) -> Value {
     }
     let mut request = vec![0; length];
     reader.read_exact(&mut request).unwrap();
+    (stream, serde_json::from_slice(&request).unwrap())
+}
+
+fn serve_session_creation(listener: &TcpListener) -> Value {
+    let port = listener.local_addr().unwrap().port();
+    let (mut stream, request) = read_session_creation(listener);
     let body = json!({
         "keyword": KEYWORD,
         "client_token": TOKEN,
@@ -69,7 +74,7 @@ fn serve_session_creation(listener: &TcpListener) -> Value {
         body.len()
     )
     .unwrap();
-    serde_json::from_slice(&request).unwrap()
+    request
 }
 
 /// The foreground `clud remote connect`, with its output collected as it arrives.
@@ -1121,9 +1126,12 @@ fn a_dropped_first_attempt_at_startup_is_retried() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let client = Client::start_with(&origin, None);
-    // Reset before any answer: the creation request is lost.
-    drop(accept_before_deadline(&listener));
-    serve_session_creation(&listener);
+    // The relay receives a complete create request, then its response is lost.
+    // The unclaimed server-side session expires. A retry must reach consent
+    // using only the token from the second HTTP response.
+    let (first, body) = read_session_creation(&listener);
+    drop(first);
+    assert_eq!(serve_session_creation(&listener), body);
     // The socket's first handshake is lost too.
     drop(accept_before_deadline(&listener));
     let (mut operator, path) = Operator::accept_path(&listener);
