@@ -158,45 +158,42 @@ impl Outage {
         self.bytes
     }
 
-    /// The gap notice, if output was dropped, then the held frames in order.
-    /// Leaves the buffer empty for the next outage.
-    pub(super) fn take(&mut self) -> (Option<Value>, VecDeque<Message>) {
-        let pty_id = self
-            .pty
-            .take()
-            .and_then(|pty| pty["pty_id"].as_str().map(str::to_owned));
-        let dropped = std::mem::take(&mut self.dropped);
-        self.bytes = 0;
-        let gap =
-            (dropped > 0).then(|| json!({"type":"pty_gap", "pty_id":pty_id, "bytes":dropped}));
-        (gap, std::mem::take(&mut self.frames))
+    /// Describe dropped bytes without removing the notice before it can be sent.
+    pub(super) fn gap(&self) -> Option<Value> {
+        (self.dropped > 0).then(|| {
+            let pty_id = self.pty.as_ref().and_then(|pty| pty["pty_id"].as_str());
+            json!({"type":"pty_gap", "pty_id":pty_id, "bytes":self.dropped})
+        })
     }
 
-    /// Forget everything: control ended, so none of it may be sent.
+    pub(super) fn gap_sent(&mut self) {
+        self.dropped = 0;
+        self.clear_drained_pty();
+    }
+
+    /// Forget everything when the grant no longer permits replay.
     pub(super) fn discard(&mut self) {
-        let _ = self.take();
+        *self = Self::default();
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.frames.is_empty()
+        self.frames.is_empty() && self.dropped == 0
     }
 
-    /// The oldest held frame, to send now.
-    pub(super) fn pop_front(&mut self) -> Option<Message> {
-        let frame = self.frames.pop_front()?;
-        if let Message::Binary(bytes) = &frame {
+    pub(super) fn front(&self) -> Option<&Message> {
+        self.frames.front()
+    }
+
+    pub(super) fn frame_sent(&mut self) {
+        if let Some(Message::Binary(bytes)) = self.frames.pop_front() {
             self.bytes -= bytes.len().saturating_sub(1);
         }
-        Some(frame)
+        self.clear_drained_pty();
     }
 
-    /// Put frames that could not be sent back in front, for the next attempt.
-    pub(super) fn requeue(&mut self, frames: VecDeque<Message>) {
-        for frame in frames.into_iter().rev() {
-            if let Message::Binary(bytes) = &frame {
-                self.bytes += bytes.len().saturating_sub(1);
-            }
-            self.frames.push_front(frame);
+    pub(super) fn clear_drained_pty(&mut self) {
+        if self.is_empty() {
+            self.pty = None;
         }
     }
 }
@@ -259,6 +256,10 @@ impl Reconnector {
     }
 
     pub(super) fn poll(&mut self) -> Poll {
+        let now = Instant::now();
+        if now >= self.deadline {
+            return Poll::GaveUp;
+        }
         if let Some(pending) = &self.pending {
             match pending.try_recv() {
                 Ok(Attempt::Connected(socket)) => return Poll::Connected(socket),
@@ -270,10 +271,6 @@ impl Reconnector {
                 }
                 Err(mpsc::TryRecvError::Empty) => {}
             }
-        }
-        let now = Instant::now();
-        if now >= self.deadline {
-            return Poll::GaveUp;
         }
         if self.pending.is_none() && now >= self.next {
             self.pending = Some(self.start());
@@ -306,6 +303,23 @@ impl Reconnector {
 mod tests {
     use super::*;
     use tungstenite::protocol::frame::coding::CloseCode;
+
+    #[test]
+    fn a_late_attempt_cannot_extend_the_resume_window() {
+        let base = url::Url::parse("https://example.test").unwrap();
+        let session = serde_json::from_value(json!({
+            "keyword": "ABCDE-FGH23",
+            "ws_url": "wss://example.test/ws/client?token=test",
+            "client_token": "test",
+        }))
+        .unwrap();
+        let mut reconnect = Reconnector::new(&base, &session, false);
+        let (tx, rx) = mpsc::sync_channel(1);
+        tx.send(Attempt::Ended("late response")).unwrap();
+        reconnect.pending = Some(rx);
+        reconnect.deadline = Instant::now();
+        assert!(matches!(reconnect.poll(), Poll::GaveUp));
+    }
 
     #[test]
     fn backoff_doubles_to_its_cap_with_jitter_in_the_upper_half() {
@@ -372,20 +386,32 @@ mod tests {
         }
         outage.push(Message::Text(r#"{"type":"pty_exit"}"#.into()));
         assert!(outage.held_bytes() <= OUTAGE_BYTES);
-        let (gap, frames) = outage.take();
-        let gap = gap.expect("dropped output is reported");
+        let gap = outage.gap().expect("dropped output is reported");
         assert_eq!(gap["pty_id"], "shell");
         assert_eq!(
             gap["bytes"].as_u64().unwrap() as usize,
             200 * 16 * 1024 - OUTAGE_BYTES
         );
+
+        // A second disconnect before replay starts keeps both the gap and PTY.
+        outage.begin(None);
+        assert_eq!(outage.gap(), Some(gap));
+        outage.gap_sent();
+        assert_eq!(outage.pty().unwrap()["pty_id"], "shell");
+        assert!(outage.gap().is_none());
+
+        for _ in 0..OUTAGE_BYTES / (16 * 1024) {
+            assert!(matches!(outage.front(), Some(Message::Binary(_))));
+            outage.frame_sent();
+        }
         assert!(
-            matches!(frames.back(), Some(Message::Text(_))),
+            matches!(outage.front(), Some(Message::Text(_))),
             "exit kept last"
         );
-        assert_eq!(frames.len(), OUTAGE_BYTES / (16 * 1024) + 1);
+        outage.frame_sent();
+        assert!(outage.is_empty());
         assert_eq!(outage.held_bytes(), 0);
-        assert!(outage.take().0.is_none(), "one gap per outage");
+        assert!(outage.pty().is_none());
     }
 
     #[test]
@@ -393,11 +419,10 @@ mod tests {
         let mut outage = Outage::default();
         outage.push(output(3));
         outage.push(output(5));
-        let (gap, mut frames) = outage.take();
-        assert!(gap.is_none());
-        let first = frames.pop_front().unwrap();
-        outage.requeue(frames);
+        assert!(outage.gap().is_none());
+        assert!(matches!(outage.front(), Some(Message::Binary(b)) if b.len() == 4));
+        outage.frame_sent();
         assert_eq!(outage.held_bytes(), 5);
-        assert!(matches!(first, Message::Binary(b) if b.len() == 4));
+        assert!(matches!(outage.front(), Some(Message::Binary(b)) if b.len() == 6));
     }
 }

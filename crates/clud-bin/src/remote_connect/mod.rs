@@ -636,15 +636,20 @@ impl State {
     fn drain_outage(&mut self, socket: &mut transport::Socket) -> Option<bool> {
         let mut sent = false;
         while !socket.backed_up() {
-            let Some(frame) = self.outage.pop_front() else {
+            if let Some(gap) = self.outage.gap() {
+                send(socket, gap).ok()?;
+                self.outage.gap_sent();
+                sent = true;
+                continue;
+            }
+            let Some(frame) = self.outage.front() else {
                 break;
             };
-            if socket.send(frame.clone()).is_err() {
-                self.outage.requeue([frame].into());
-                return None;
-            }
+            socket.send(frame.clone()).ok()?;
+            self.outage.frame_sent();
             sent = true;
         }
+        self.outage.clear_drained_pty();
         Some(sent)
     }
 
@@ -847,13 +852,6 @@ impl State {
         if !self.granted {
             self.outage.discard();
             return Ok(());
-        }
-        let (gap, frames) = self.outage.take();
-        // Held again: what the network cannot take now goes out from the
-        // session loop at the link's pace (`forward`), ahead of newer output.
-        self.outage.requeue(frames);
-        if let Some(gap) = gap {
-            send(socket, gap)?;
         }
         match self.drain_outage(socket) {
             Some(_) => Ok(()),
