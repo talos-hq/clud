@@ -157,13 +157,17 @@ worktree pins it. See
 |---|---|---|---|---|
 | 1 | **Job-object membership** | `IsProcessInJob` — false ⇒ broke away | — | anything using `spawn_daemon_breaking_away_from_job`; cheapest and strongest, we already own the job handle |
 | 2 | **Session / service context** | `ProcessIdToSessionId` == 0 ⇒ service | — | **dockerd** / Docker Desktop |
-| 3 | **Session leader** | — | another session than the reaper's that the process leads (`getsid(pid) == pid`) or whose leader is alive (#1870) | double-fork daemons, language servers |
+| 3 | **Session leader** | — | another session than the reaper's that the candidate itself leads (`getsid(pid) == pid`) | detached session leaders |
 | 4 | **Token owner** | process cannot be opened for termination | `euid` differs | services; also cases where the kill would fail anyway |
 | 5 | **Declared daemon** | `RUNNING_PROCESS_IS_DAEMON` | same | **zccache**, **soldr** — everything that opted in |
 | 6 | **Listening endpoint** | `GetExtendedTcpTable` over `AF_INET` **and** `AF_INET6` | `/proc/net/tcp{,6}` + `/proc/net/unix`, matched to `/proc/<pid>/fd` | **sccache**, **FBuildWorker**, language servers |
 | 7 | **Active desktop shell** | `GetShellWindow` + `GetWindowThreadProcessId` | unavailable | Explorer intentionally restarted to restore the taskbar (#746) |
 | 8 | **Docker Desktop family** | `Docker Desktop.exe` / `com.docker.*` roots | same | Docker Desktop backend plus its WSL runtime subtree (#773) |
 | 9 | **Configured spare-list** | `CLUD_REAPER_SPARE_IMAGES` | same | operator escape hatch; ships empty |
+
+On POSIX, a live session leader does not by itself protect the other
+processes in its session. Tagged workers can inherit a session from a PTY or
+wrapper and are evaluated for their own daemon signals.
 
 Cheap and authoritative first, expensive last. 1–4 are one syscall each and no
 memory read, and every PID they rule out is a PID whose environment is never

@@ -338,6 +338,8 @@ def main() -> int:
     # half of the same suite. Its sccache-shaped stub must detach on its own
     # and carry an inherited CLUD: originator tag *without* the daemon marker;
     # NativeProcess would set that marker and erase the signal under test.
+    # reaper_session_members.rs is exempt because a native process wrapper
+    # can change containment and daemon markers in the session fixture.
     # reaper_batch_drain_windows.rs is exempt (#706) — the completion-port
     # drain test needs a burst of children to land in the *tracker's* job so
     # their notifications queue on its port. NativeProcess would attach its own
@@ -370,6 +372,7 @@ def main() -> int:
         "reaper_batch_drain_windows.rs",
         "reaper_daemon_survival_windows.rs",
         "reaper_orphan_sweep_survival.rs",
+        "reaper_session_members.rs",
         "process_tree.rs",
         "win32_hooking_probe.rs",
         "shim_main.rs",

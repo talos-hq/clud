@@ -252,7 +252,7 @@ pub type SpareList = HashMap<u32, SpareReason>;
 ///    other work. A process outside our job was never ours to kill.
 /// 2. **Service session** — a session-0 process is a Windows service. It is
 ///    spared even if it somehow carries a `CLUD:` tag.
-/// 3. **Session leader** — the primary POSIX signal; a double-fork daemon.
+/// 3. **Session leader** — a process that leads its own detached POSIX session.
 /// 4. **Foreign token owner** — a kill would generally fail anyway.
 /// 5. **Declared daemon** — the cooperative marker, ranked below every OS
 ///    signal precisely because opting in is optional.
@@ -293,17 +293,6 @@ pub fn spare_signal(facts: &dyn ProcessFacts, pid: u32, image_name: &str) -> Opt
         return Some(SpareReason::ConfiguredSpareList);
     }
     None
-}
-
-/// #1870: whether a process's POSIX session says it meant to outlive its
-/// starter. Being in another session than the reaper is not enough: the
-/// daemon runs in its own `setsid` session, so that test spared every
-/// orphan of a terminal session, including CPU-burning loops whose shell
-/// had exited. Spare only a process that leads its own session (it called
-/// `setsid`) or that belongs to a session whose leader is still alive.
-#[must_use]
-pub fn session_spares(pid: u32, session: u32, own_session: u32, leader_alive: bool) -> bool {
-    session != own_session && (session == pid || leader_alive)
 }
 
 /// Evaluate [`spare_signal`] over a bounded candidate set.
@@ -400,20 +389,6 @@ mod tests {
             f.unavailable.insert(Signal::ListeningEndpoint);
         });
         assert_eq!(spare_signal(&facts, 7, "sccache"), None);
-    }
-
-    #[test]
-    fn an_orphan_of_a_dead_session_is_not_a_session_leader() {
-        // The daemon's own session (40) differs from the orphan's (20).
-        // The orphan's session leader (20) has exited.
-        assert!(!session_spares(77, 20, 40, false));
-        // Its leader still running (a live terminal or daemon) spares it.
-        assert!(session_spares(77, 20, 40, true));
-        // A process that called setsid leads its session.
-        assert!(session_spares(77, 77, 40, false));
-        // The reaper's own session is never spared by this rule.
-        assert!(!session_spares(77, 40, 40, true));
-        assert!(!session_spares(40, 40, 40, true));
     }
 
     #[test]

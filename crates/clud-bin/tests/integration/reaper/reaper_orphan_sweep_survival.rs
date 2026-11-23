@@ -92,7 +92,7 @@ fn pid_is_alive(pid: u32) -> bool {
 /// #994 reaper flake). The constant sits above Linux's `pid_max` (4,194,304)
 /// so no process can ever hold it; `orphan_reap` uses the same value for the
 /// same reason and is stable on every CI lane.
-fn a_dead_originator_pid() -> u32 {
+pub(super) fn a_dead_originator_pid() -> u32 {
     99_999_999
 }
 
@@ -122,7 +122,7 @@ fn start_tagged_stub(temp: &Path, label: &str, mode: &str, originator: u32) -> u
     wait_for_pid_file(&pid_path)
 }
 
-fn quiet() -> ReapOpts {
+pub(super) fn quiet() -> ReapOpts {
     ReapOpts {
         quiet: true,
         ..ReapOpts::default()
@@ -133,7 +133,7 @@ fn quiet() -> ReapOpts {
 /// the child's row is missing from the first pass ("candidates=[]", the #994
 /// reaper flake). Retry the sweep until the PID is observed or the deadline
 /// passes. Test-only robustness — production reap semantics are unchanged.
-fn sweep_until_selected(
+pub(super) fn sweep_until_selected(
     pid: u32,
     mut sweep: impl FnMut() -> orphan_reaper::ReapOutcome,
 ) -> orphan_reaper::ReapOutcome {
