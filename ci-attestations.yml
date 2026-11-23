@@ -14,7 +14,7 @@
 # tag runs everything. A gate without a valid, fresh (24 h) trailer runs
 # hosted. Merge groups, main pushes, nightlies and releases never consult it.
 #
-# A job entry reduces that job (or Dylint leg) in place: it still starts and
+# A job entry reduces the matching check in place: it still starts and
 # reports success, but skips its setup and checks. Dylint legs are the
 # `matrix.pass` entries of `_dylint.yml:dylint`, one entry per leg, so a
 # host that cannot run one cross pass still earns the others. The hosted-only
@@ -24,14 +24,14 @@ version: 1
 mode: shadow
 gates:
   rust/x86_64-unknown-linux-gnu/clippy: {lane: clippy}    # xbuild clippy (workspace, all targets)
-  rust/x86_64-unknown-linux-gnu/doctest: {lane: clippy}   # xbuild doctest, same job
+  rust/x86_64-unknown-linux-gnu/rustfmt: {lane: rustfmt}  # workspace formatting
   rust/x86_64-unknown-linux-gnu/dylint: {lane: dylint}    # host leg: guarded workspace pass only
   rust/x86_64-pc-windows-msvc/dylint: {lane: dylint-x86_64-pc-windows-msvc}
   rust/aarch64-apple-darwin/dylint: {lane: dylint-aarch64-apple-darwin}
 jobs:
   ci.yml:lint-linux-x64:
     - rust/x86_64-unknown-linux-gnu/clippy
-    - rust/x86_64-unknown-linux-gnu/doctest
+  ci.yml:rustfmt: [rust/x86_64-unknown-linux-gnu/rustfmt]
   _dylint.yml:dylint-host: [rust/x86_64-unknown-linux-gnu/dylint]
   _dylint.yml:dylint-x86_64-pc-windows-msvc: [rust/x86_64-pc-windows-msvc/dylint]
   _dylint.yml:dylint-aarch64-apple-darwin: [rust/aarch64-apple-darwin/dylint]

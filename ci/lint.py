@@ -25,6 +25,9 @@ def _cargo(subcommand: list[str]) -> list[str]:
     return cargo_argv(subcommand, env=clean_env())
 
 
+RUSTFMT_ARGS = ("fmt", "--all", "--check", "--", "--config-path", ".rustfmt.toml")
+
+
 # How many read-only artifacts to look at before concluding the tree is
 # cache-linked. The check runs before every lint, so it stops at the first hit
 # in the common (healthy) case and never walks the whole tree.
@@ -201,12 +204,11 @@ def main(argv: list[str] | None = None) -> int:  # noqa: C901
     # setup-soldr's cargo shim can otherwise omit repository discovery for
     # `.rustfmt.toml` on some runner/architecture combinations. Pin the
     # checked formatting contract explicitly so local and CI layout agree.
-    fmt_args = ["fmt", "--all", "--check", "--", "--config-path", ".rustfmt.toml"]
-    fmt_argv = _cargo(fmt_args)
-    if run(fmt_argv) != 0:
-        # #1158: the toolchain's own message names an arbitrary dependency.
-        explain_readonly_failure(fmt_argv)
-        return 1
+    if "--attested-rustfmt" not in argv:
+        fmt_argv = _cargo(list(RUSTFMT_ARGS))
+        if run(fmt_argv) != 0:
+            explain_readonly_failure(fmt_argv)
+            return 1
 
     if static_only:
         return 0

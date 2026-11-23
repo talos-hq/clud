@@ -50,13 +50,14 @@ def test_policy_lanes_are_exactly_the_producer_lanes() -> None:
     assert set(_policy().lanes) == set(attest.lanes())
 
 
-def test_policy_covers_only_clippy_and_the_dylint_legs() -> None:
+def test_policy_covers_only_clippy_rustfmt_and_the_dylint_legs() -> None:
     jobs = _policy().jobs
-    assert set(jobs) == {CLIPPY_JOB, *(f"_dylint.yml:dylint-{p}" for p in DYLINT_PASSES)}
-    assert jobs[CLIPPY_JOB] == (
-        "rust/x86_64-unknown-linux-gnu/clippy",
-        "rust/x86_64-unknown-linux-gnu/doctest",
-    )
+    assert set(jobs) == {
+        CLIPPY_JOB,
+        "ci.yml:rustfmt",
+        *(f"_dylint.yml:dylint-{p}" for p in DYLINT_PASSES),
+    }
+    assert jobs[CLIPPY_JOB] == ("rust/x86_64-unknown-linux-gnu/clippy",)
 
 
 def test_dylint_legs_match_the_workflow_matrix() -> None:
@@ -70,7 +71,7 @@ def test_clippy_lane_runs_the_hosted_xbuild_commands() -> None:
     steps = attest.lanes("PY")["clippy"]
     assert [s.argv[1:] for s in steps] == [
         ("-m", "ci.xbuild", verb, "--target", attest.LINUX, "--strategy", "soldr")
-        for verb in ("clippy", "doctest")
+        for verb in ("clippy",)
     ]
     for verb in ("clippy", "doctest"):
         assert f"-m ci.xbuild {verb} --target ${{{{ inputs.target }}}}" in BUILD_YML
@@ -301,7 +302,6 @@ def test_a_passing_lane_stamps_its_gates_and_reduces_its_job(repo: Path) -> None
     gates = {a.gate for a in Trailers.parse(_git(repo, "log", "-1", "--format=%B")).attestations}
     assert gates == {
         "rust/x86_64-unknown-linux-gnu/clippy",
-        "rust/x86_64-unknown-linux-gnu/doctest",
     }
     plan = _plan(repo)
     assert plan[CLIPPY_JOB] is True
@@ -320,7 +320,6 @@ def test_parallel_attest_stamps_only_the_lanes_that_passed(repo: Path) -> None:
     gates = {a.gate for a in Trailers.parse(_git(repo, "log", "-1", "--format=%B")).attestations}
     assert gates == {
         "rust/x86_64-unknown-linux-gnu/clippy",
-        "rust/x86_64-unknown-linux-gnu/doctest",
     }
     plan = _plan(repo)
     assert plan[CLIPPY_JOB] is True
@@ -446,13 +445,13 @@ def test_untrusted_heads_reduce_nothing(
 def test_the_base_policy_judges_not_the_head(repo: Path) -> None:
     """The base's policy decides which gates a job needs, whatever the head says."""
     Repo(repo).lane("clippy").run(list(PASS))
-    # Base policy still demands both gates; both were stamped, so it skips.
+    # The base demands Clippy and the lane stamped it.
     assert _plan(repo)[CLIPPY_JOB] is True
-    # Remove the doctest trailer: the base policy now refuses the reduction.
+    # Remove the Clippy trailer and the base refuses the reduction.
     message = "\n".join(
         line
         for line in _git(repo, "log", "-1", "--format=%B").splitlines()
-        if "doctest" not in line
+        if not line.startswith("Ci-Attestation:")
     )
     _git(repo, "commit", "-q", "--amend", "-m", message)
     assert _plan(repo)[CLIPPY_JOB] is False
@@ -469,14 +468,8 @@ def test_ci_consumes_every_policy_job_output() -> None:
     static = _static_block()
     for job in _policy().jobs:
         name = job.split(":", 1)[1]
-        for step in ("prooft", "prooft_queue"):
-            assert f"steps.{step}.outputs['skip_{name}']" in static, (step, job)
-    for leg in DYLINT_PASSES:
-        either = (
-            f"(steps.prooft.outputs['skip_dylint-{leg}'] || "
-            f"steps.prooft_queue.outputs['skip_dylint-{leg}']) == 'true' && '{leg}'"
-        )
-        assert either in static, leg
+        assert f"steps.prooft.outputs['skip_{name}']" in static, job
+    assert "prooft_queue" not in static
 
 
 def test_verifier_is_pinned_base_judged_same_repo_and_fail_open() -> None:
@@ -507,8 +500,7 @@ def test_reduction_is_in_place_and_only_for_the_lint_only_call() -> None:
     assert "ATTESTED: ${{ inputs.attested && inputs.clippy && !inputs.compile" in BUILD_YML
     assert (
         "ATTESTED: ${{ matrix.pass != 'crates' && "
-        "contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}"
-        in DYLINT_YML
+        "contains(inputs.attested_passes, format(',{0},', matrix.pass)) }}" in DYLINT_YML
     )
     for text in (BUILD_YML, DYLINT_YML):
         # Every check is gated on the combined decision; nothing still keys
@@ -535,53 +527,32 @@ _DYLINT_CASES = [
 ]
 
 
-@pytest.mark.parametrize("judge", ["prooft", "prooft_queue"])
 @pytest.mark.parametrize(("outputs", "expected"), _DYLINT_CASES)
 def test_attested_dylint_expression_selects_only_proven_legs(
-    judge: str, outputs: dict[str, str], expected: set[str]
+    outputs: dict[str, str], expected: set[str]
 ) -> None:
-    """Evaluate the format() output the way Actions does, then each leg's contains().
-
-    Exactly one judge runs per event (PR or merge group); the other step's
-    outputs are empty strings, which `||` passes over.
-    """
+    """Evaluate the format() output the way Actions does, then each leg's contains()."""
     expr = _static_block().split("attested_dylint: >-", 1)[1].split("    steps:", 1)[0]
     legs = re.findall(
-        r"\(steps\.prooft\.outputs\['skip_dylint-([^']+)'\] \|\| "
-        r"steps\.prooft_queue\.outputs\['skip_dylint-\1'\]\) == 'true' && '([^']+)'",
+        r"steps\.prooft\.outputs\['skip_dylint-([^']+)'\]\) == 'true' && '([^']+)'",
         expr,
     )
     assert [leg for leg, _ in legs] == list(DYLINT_PASSES)
-    steps = {"prooft": {}, "prooft_queue": {}}
-    steps[judge] = outputs
-    value = []
-    for leg, name in legs:
-        key = f"skip_dylint-{leg}"
-        either = steps["prooft"].get(key, "") or steps["prooft_queue"].get(key, "")
-        value.append(name if either == "true" else "")
+    value = [name if outputs.get(f"skip_dylint-{leg}") == "true" else "" for leg, name in legs]
     joined = "," + ",".join(value) + ","
     assert {leg for leg in DYLINT_PASSES if f",{leg}," in joined} == expected
 
 
-def test_queue_judge_runs_only_in_merge_groups_from_the_base() -> None:
-    step = (
-        _static_block()
-        .split("- name: Judge merge-queue attestation forwarding", 1)[1]
-        .split("\n      - name:", 1)[0]
-    )
-    assert "if: github.event_name == 'merge_group'" in step
-    assert "continue-on-error: true" in step
-    # The shipped "off" costs no fetch or install: the base switch is read
-    # first, and only on/shadow continues.
-    gate = step.index('git show "$BASE_SHA:ci-attestations-queue.toml"')
-    assert gate < step.index("git fetch") < step.index("pip install")
-    # The judge and its policy come from the queue's base, never the PR.
-    assert 'git archive "$BASE_SHA" ci' in step
-    assert "python -I -c" in step
-    assert "from ci.attest_queue import main" in step
-    # The same hash-pinned prooft the PR judge installs.
-    pin = re.search(r"prooft==([0-9.]+) --hash=sha256:([0-9a-f]{64})", step)
-    pr_pin = re.search(r"prooft==([0-9.]+) --hash=sha256:([0-9a-f]{64})", _static_block())
-    assert pin is not None
-    assert pr_pin is not None
-    assert pin.groups() == pr_pin.groups()
+def test_queue_ignores_attestations_and_pass_markers() -> None:
+    assert "Judge merge-queue attestation forwarding" not in _static_block()
+    for workflow in (BUILD_YML, DYLINT_YML):
+        step = workflow.split("id: pass\n", 1)[1].split("uses:", 1)[0]
+        assert "github.event_name != 'merge_group'" in step
+
+
+def test_clippy_proof_leaves_doctests_enabled() -> None:
+    assert 'if [ "$DOCTEST" != "true" ]; then' in BUILD_YML
+    clippy = BUILD_YML.split("- name: Clippy\n", 1)[1].split("- name:", 1)[0]
+    assert "steps.attested.outputs.clippy != 'true'" in clippy
+    doctest = BUILD_YML.split("- name: Doc tests\n", 1)[1].split("- name:", 1)[0]
+    assert "steps.attested.outputs.clippy" not in doctest

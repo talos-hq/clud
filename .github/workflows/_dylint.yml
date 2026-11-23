@@ -99,7 +99,7 @@ jobs:
           echo "key=pass-v1-dylint-${{ matrix.pass }}-${digest}" >> "$GITHUB_OUTPUT"
       - name: Look up pass marker
         id: pass
-        if: steps.attested.outputs.proven != 'true'
+        if: ${{ github.event_name != 'merge_group' && steps.attested.outputs.proven != 'true' }}
         uses: actions/cache/restore@v4
         with:
           path: .pass-marker

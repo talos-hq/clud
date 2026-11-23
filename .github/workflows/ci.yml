@@ -134,15 +134,14 @@ jobs:
       # DD-225: a same-repo PR head whose prooft trailers prove a lane runs
       # that job (or Dylint leg) reduced: it starts and reports success but
       # skips its checks. Consumers compare to 'true'/a pass name, so an
-      # absent or failed verifier reduces nothing. DD-227: a merge group
-      # reads the queue judge instead. The two steps run on disjoint events,
-      # so the one that did not run yields '' and `||` picks the other.
-      attested_clippy: ${{ steps.prooft.outputs['skip_lint-linux-x64'] || steps.prooft_queue.outputs['skip_lint-linux-x64'] }}
+      # absent or failed verifier reduces nothing. The judge runs only on PRs.
+      attested_rustfmt: ${{ steps.prooft.outputs['skip_rustfmt'] }}
+      attested_clippy: ${{ steps.prooft.outputs['skip_lint-linux-x64'] }}
       attested_dylint: >-
         ${{ format(',{0},{1},{2},',
-            (steps.prooft.outputs['skip_dylint-host'] || steps.prooft_queue.outputs['skip_dylint-host']) == 'true' && 'host' || '',
-            (steps.prooft.outputs['skip_dylint-x86_64-pc-windows-msvc'] || steps.prooft_queue.outputs['skip_dylint-x86_64-pc-windows-msvc']) == 'true' && 'x86_64-pc-windows-msvc' || '',
-            (steps.prooft.outputs['skip_dylint-aarch64-apple-darwin'] || steps.prooft_queue.outputs['skip_dylint-aarch64-apple-darwin']) == 'true' && 'aarch64-apple-darwin' || '') }}
+            (steps.prooft.outputs['skip_dylint-host']) == 'true' && 'host' || '',
+            (steps.prooft.outputs['skip_dylint-x86_64-pc-windows-msvc']) == 'true' && 'x86_64-pc-windows-msvc' || '',
+            (steps.prooft.outputs['skip_dylint-aarch64-apple-darwin']) == 'true' && 'aarch64-apple-darwin' || '') }}
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -212,7 +211,7 @@ jobs:
       # PRs only; prooft itself refuses heads that touch the policy,
       # .github/, ci.toml or local-gate.toml, or carry a [ci-full] title tag.
       # A verifier failure is never a CI failure: it reduces nothing.
-      - name: Judge prooft attestations (Clippy, Dylint)
+      - name: Judge prooft attestations (Clippy, Dylint, rustfmt)
         id: prooft
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
         continue-on-error: true
@@ -228,43 +227,6 @@ jobs:
           python -I -c 'import sys; sys.path.insert(0, sys.argv.pop(1)); from prooft.cli import main; sys.exit(main(sys.argv[1:]))' \
             "$lib" -C . plan --base "$BASE_SHA" --head "$HEAD_SHA" --title "$PR_TITLE" --github-output | tee "$RUNNER_TEMP/prooft-plan.txt"
           { echo '### prooft attestations (DD-225)'; echo; echo '```'; cat "$RUNNER_TEMP/prooft-plan.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-      # DD-227: a merge group may inherit its PR head's proofs, but only when
-      # the BASE's ci-attestations-queue.toml turns forwarding on (it ships
-      # "off"), the entry is first in its group with the PR head's exact
-      # tree, and GitHub verified the head's signature by an allowlisted
-      # signer. The judge (ci/attest_queue.py) and its policy come from the
-      # base commit, imported with -I beside the same hash-pinned prooft;
-      # nothing from the queued PR runs. Fail-open like the PR step.
-      - name: Judge merge-queue attestation forwarding (Clippy, Dylint)
-        id: prooft_queue
-        if: github.event_name == 'merge_group'
-        continue-on-error: true
-        env:
-          BASE_SHA: ${{ github.event.merge_group.base_sha }}
-          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
-          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # Fast path for the shipped default: no fetch or install unless the
-          # base switch says on/shadow (the judge re-reads and validates it).
-          if ! git show "$BASE_SHA:ci-attestations-queue.toml" 2>/dev/null | grep -Eq '^forward *= *"(on|shadow)"'; then
-            echo "forwarding off at the base; the queue runs every lane"
-            exit 0
-          fi
-          pr=$(printf '%s\n' "$QUEUE_REF" | sed -n 's#^refs/heads/gh-readonly-queue/[^/]*/pr-\([0-9][0-9]*\)-[0-9a-f]*$#\1#p')
-          [ -n "$pr" ] || { echo "not a merge-queue ref: $QUEUE_REF"; exit 0; }
-          git fetch --no-tags --quiet origin "+refs/pull/$pr/head:refs/prooft/pr-head"
-          base="$RUNNER_TEMP/prooft-base"
-          mkdir -p "$base"
-          git archive "$BASE_SHA" ci | tar -x -C "$base"
-          lib="$RUNNER_TEMP/prooft-lib"
-          printf 'prooft==0.2.0 --hash=sha256:4571ead6be9e2c770c051245cd021cd9738091c65bc158e63bace0c791e1d733\n' > "$RUNNER_TEMP/prooft.txt"
-          python -m pip install --quiet --no-deps --require-hashes --only-binary :all: --target "$lib" -r "$RUNNER_TEMP/prooft.txt"
-          python -I -c 'import sys; sys.path[:0] = [sys.argv.pop(1), sys.argv.pop(1)]; from ci.attest_queue import main; sys.exit(main(sys.argv[1:]))' \
-            "$base" "$lib" -C . --base "$BASE_SHA" --queue-head "$QUEUE_SHA" --queue-ref "$QUEUE_REF" \
-            --pr-head "$(git rev-parse refs/prooft/pr-head)" --github-output | tee "$RUNNER_TEMP/prooft-queue.txt"
-          { echo '### prooft merge-queue forwarding (DD-227)'; echo; echo '```'; cat "$RUNNER_TEMP/prooft-queue.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: Resolve CI mode and candidate SHA
         id: mode
         env:
@@ -426,7 +388,14 @@ jobs:
       # so `uv run` would sync the project and kick off a full PEP 517 maturin
       # build of the Rust binary. See lint:8-24 for the same workaround.
       - name: Static checks
-        run: .venv/bin/python -m ci.lint --static-only
+        env:
+          ATTESTED_RUSTFMT: ${{ needs.static.outputs.attested_rustfmt }}
+        run: |
+          args=(--static-only)
+          if [[ "$ATTESTED_RUSTFMT" == true ]]; then
+            args+=(--attested-rustfmt)
+          fi
+          .venv/bin/python -m ci.lint "${args[@]}"
 
   # ------------------------------------------------------------ cache-maint --
   # zackees/ci.yml CACHE-004 / rule CACHE-034: `[flow.main]` declares
@@ -545,8 +514,7 @@ jobs:
       # Doc-tests ride here, beside the build rather than ahead of the unit
       # lanes (_build-target.yml's Doc tests step).
       doctest: true
-      # DD-225: true only when a valid prooft trailer proves Clippy and
-      # doc-tests on this same-repo PR head.
+      # DD-225: a valid Clippy trailer skips only the Clippy step.
       attested: ${{ needs.static.outputs.attested_clippy == 'true' }}
       save-cache: "false"
 
