@@ -22,14 +22,28 @@ from collections import Counter
 MAX_ROW_BYTES = 16 * 1024 * 1024
 MAX_TRACKED = 100_000
 MAX_NESTED_MENTIONS = 1000
+FRICTION_MARKERS = {
+    "hook_refusal": re.compile(
+        r"^(?:Script error: )?Command blocked by PreToolUse hook:"
+        r"|^[ \t]*PreToolUse[^\n]{0,160}\b(?:blocked\b|denied\b|Refused a )"
+        r"|^[ \t]*(?:\[[a-z][a-z-]+\] )?Refused a ",
+        re.I | re.M,
+    ),
+    "output_cap": re.compile(
+        r"^(?:Warning: truncated output\b|Original token count:|\[TRUNCATED:)",
+        re.I | re.M,
+    ),
+}
 READ = re.compile(r"(?:^|[\s;'\"(])(?:cat|head|tail|sed|rg|grep|read_file)(?:[\s;'\")]|$)")
 FAIL = re.compile(
     r"(?:\berror(?:\[[^]\n]{1,32}\])?:|##\[error\]|\bcould not compile\b|"
-    r"(?:^|\n)\s*(?:FAIL(?:ED)?\b|panic\b))",
+    r"(?:^|\n)[ \t]*(?:FAIL(?:ED)?\b|panic\b))",
     re.I,
 )
-WARNING = re.compile(r"(?:\bwarning(?:\[[^]\n]{1,32}\])?:|##\[warning\]|(?:^|\n)\s*warn\b)", re.I)
-SUCCESS = re.compile(r"(?:^|\n)\s*(?:test result: ok\b|\d+ passed\b|PASS\b|finished `)", re.I)
+WARNING = re.compile(
+    r"(?:\bwarning(?:\[[^]\n]{1,32}\])?:|##\[warning\]|(?:^|\n)[ \t]*warn\b)", re.I
+)
+SUCCESS = re.compile(r"(?:^|\n)[ \t]*(?:test result: ok\b|\d+ passed\b|PASS\b|finished `)", re.I)
 ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))")
 PROGRESS = re.compile(
     r"(?:^|\n)[^\n]{0,160}(?:soldr\[cache\]|Compiling\s+\w|test\s+\S+\s+\.\.\.\s+ok\b|PASS\s+\[)",
@@ -243,6 +257,7 @@ def analyze(rows, *, salt=None):
         "nested_interpretation": "static mentions and literal shapes; not necessarily executed",
         "output_bytes": 0,
         "largest_output_bytes": 0,
+        "friction_results": dict.fromkeys((*FRICTION_MARKERS, "over_32_kib"), 0),
         "incomplete_results": 0,
         "malformed_rows": 0,
         "turns": 0,
@@ -445,6 +460,10 @@ def record_result(event, salt, result, calls, seen_results, read_states, uncerta
     result["largest_output_bytes"] = max(result["largest_output_bytes"], size)
     result["incomplete_results"] += int(incomplete)
     record_output_classes(text, incomplete, result)
+    friction = result["friction_results"]
+    friction["over_32_kib"] += int(size > 32 * 1024)
+    for name, pattern in FRICTION_MARKERS.items():
+        friction[name] += int(bool(pattern.search(text)))
     call = calls.get(call_identity)
     if call is None:
         result["unmatched_results"] += 1
@@ -526,21 +545,50 @@ class SafeParser(argparse.ArgumentParser):
         raise ValueError("invalid arguments")
 
 
+def merge_report(total, report):
+    """Combine counts from independent transcripts using the fixed audit schema."""
+    for key, value in report.items():
+        if isinstance(value, dict):
+            merge_report(total[key], value)
+        elif isinstance(value, bool):
+            total[key] |= value
+        elif key == "largest_output_bytes":
+            total[key] = max(total[key], value)
+        elif isinstance(value, int) and key != "schema_version":
+            total[key] += value
+
+
+def audit_transcripts(paths):
+    total = None
+    prevalence = dict.fromkeys((*FRICTION_MARKERS, "over_32_kib"), 0)
+    for path in paths:
+        stats = Counter(oversized_rows=0, malformed_json_rows=0)
+        report = analyze(read_rows(path, stats))
+        report.update(stats)
+        for marker, count in report["friction_results"].items():
+            prevalence[marker] += int(count > 0)
+        if total is None:
+            total = report
+        else:
+            merge_report(total, report)
+    total["transcripts"] = len(paths)
+    total["transcripts_with_friction"] = prevalence
+    return total
+
+
 def main(argv=None):
     parser = SafeParser(description=__doc__)
-    parser.add_argument("transcript")
+    parser.add_argument("transcript", nargs="+")
     try:
         args = parser.parse_args(argv)
     except ValueError:
         print("codex_audit: invalid arguments", file=sys.stderr)
         return 2
-    stats = Counter(oversized_rows=0, malformed_json_rows=0)
     try:
-        result = analyze(read_rows(args.transcript, stats))
+        result = audit_transcripts(args.transcript)
     except OSError:
         print("codex_audit: could not read transcript", file=sys.stderr)
         return 1
-    result.update(stats)
     print(json.dumps(result, sort_keys=True, separators=(",", ":")))
     return 0
 

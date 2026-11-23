@@ -1,5 +1,13 @@
 # Benchmarks
 
+The Linux process inspection prototype is read-only. Run
+`python -m bench.session_processes <clud-pid>` for a live launch. Each row
+shows whether it matched the launch root, an inherited originator tag, or
+its parent chain, and whether the kernel reports it as a zombie. For an
+exited owner, pass its previously recorded `--owner-start` from the same
+boot. If another launch has already used that PID, pass its known
+`--next-owner-start` to bound the matching interval.
+
 Standalone, opt-in benchmarks live here rather than under `tests/`: they may
 intentionally exceed the repository's 90-second pytest timeout and must never
 be collected by default CI. See [idle_cpu](idle_cpu/README.md) for the

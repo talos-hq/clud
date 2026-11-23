@@ -578,7 +578,7 @@ clud computer-use status [OPTIONS]
 
 ### `clud computer-use install`
 
-Download and verify the pinned cua-driver now (normally done on first use)
+Provision and verify the pinned Computer Use driver (normally done on first use)
 
 ```text
 clud computer-use install [OPTIONS]
@@ -602,7 +602,7 @@ clud computer-use doctor [OPTIONS]
 
 ### `clud computer-use grant`
 
-macOS: request Accessibility and Screen Recording for CuaDriver once
+macOS: request Accessibility and Screen Recording for ComputerUse once
 
 ```text
 clud computer-use grant [OPTIONS]

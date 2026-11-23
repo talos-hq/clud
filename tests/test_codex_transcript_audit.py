@@ -426,3 +426,71 @@ def test_conflicting_unknown_call_ids_do_not_expand_uncertainty_tracking(audit):
             "event", str(index).encode(), b"text", False, salt, result, seen, uncertain, known
         )
     assert uncertain == {b"known"}
+
+
+def test_cohort_preserves_file_identity_and_counts_friction(audit, tmp_path, capsys):
+    codex_path = tmp_path / "private-codex.jsonl"
+    claude_path = tmp_path / "private-claude.jsonl"
+    refusal = "Command blocked by PreToolUse hook: private-content"
+    capped = "Warning: truncated output\n" + "x" * 32768
+    first_result = codex("function_call_output", call_id="private-id", id="shared", output=refusal)
+    codex_rows = [
+        codex("function_call", call_id="private-id", name="wait", arguments="{}"),
+        first_result,
+        first_result,
+        codex("function_call", call_id="followup", name="wait", arguments="{}"),
+        codex("function_call_output", call_id="followup", id="other", output=capped),
+        {"type": "compacted"},
+    ]
+    claude_rows = [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "private-id",
+                        "name": "Bash",
+                        "input": {"command": "cat file"},
+                    }
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "uuid": "claude-result",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "private-id",
+                        "content": "PreToolUse hook: [hand-written-wait] Refused a private-command",
+                    }
+                ]
+            },
+        },
+    ]
+    for path, rows in ((codex_path, codex_rows), (claude_path, claude_rows)):
+        path.write_text("".join(json.dumps(row) + "\n" for row in rows))
+
+    assert audit.main([str(codex_path), str(claude_path)]) == 0
+    output = capsys.readouterr().out
+    report = json.loads(output)
+    assert report["transcripts"] == 2
+    assert report["tool_calls"] == report["tool_results"] == 3
+    assert report["duplicate_results"] == 1
+    assert report["repeated_by_category"]["wait"] == 1
+    assert report["compactions"] == 1
+    assert report["largest_output_bytes"] == len(capped)
+    assert report["friction_results"] == {"hook_refusal": 2, "output_cap": 1, "over_32_kib": 1}
+    assert report["transcripts_with_friction"] == {
+        "hook_refusal": 2,
+        "output_cap": 1,
+        "over_32_kib": 1,
+    }
+    assert "private-" not in output
+
+    assert audit.main([str(codex_path), str(tmp_path / "private-missing")]) == 1
+    failure = capsys.readouterr()
+    assert not failure.out
+    assert failure.err == "codex_audit: could not read transcript\n"

@@ -1,5 +1,6 @@
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     bundle_lokr()?;
+    bundle_computer_use()?;
     println!("cargo:rerun-if-changed=../../proto/clud_v1.proto");
     println!("cargo:rerun-if-changed=build.rs");
 
@@ -130,5 +131,24 @@ fn bundle_image(
     println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}SHA256={digest}");
     println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}URL={url}");
     println!("cargo:rustc-env=CLUD_BUNDLED_LOKR_{prefix}SIZE={size}");
+    Ok(())
+}
+
+fn bundle_computer_use() -> Result<(), Box<dyn std::error::Error>> {
+    println!("cargo:rerun-if-env-changed=CLUD_COMPUTER_USE_ARCHIVE");
+    let path = std::path::PathBuf::from(std::env::var("OUT_DIR")?).join("computer-use.archive");
+    if let Some(source) = std::env::var_os("CLUD_COMPUTER_USE_ARCHIVE") {
+        println!(
+            "cargo:rerun-if-changed={}",
+            std::path::Path::new(&source).display()
+        );
+        std::fs::copy(source, &path)?;
+    } else {
+        std::fs::write(&path, [])?;
+    }
+    println!(
+        "cargo:rustc-env=CLUD_BUNDLED_COMPUTER_USE_PATH={}",
+        path.display()
+    );
     Ok(())
 }

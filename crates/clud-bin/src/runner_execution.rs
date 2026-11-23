@@ -399,6 +399,7 @@ pub fn run_plan_pty(
                 rows,
                 cols,
                 image_id: crate::toast::kitty::image_id_for_process(std::process::id()),
+                process_gear: true,
             });
         let exit_code = session::run_raw_pty_pump_with_extras(
             &process,

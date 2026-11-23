@@ -99,7 +99,7 @@ jobs:
           echo "key=pass-v1-dylint-${{ matrix.pass }}-${digest}" >> "$GITHUB_OUTPUT"
       - name: Look up pass marker
         id: pass
-        if: steps.attested.outputs.proven != 'true'
+        if: ${{ github.event_name != 'merge_group' && steps.attested.outputs.proven != 'true' }}
         uses: actions/cache/restore@v4
         with:
           path: .pass-marker
@@ -141,10 +141,12 @@ jobs:
         if: steps.skip.outputs.reduced != 'true'
         uses: forge-ci/setup-soldr@v0
         env:
+          SOLDR_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Remote S3 build cache credentials; absent secrets disable it.
           SOLDR_S3_CACHE_ACCESS_KEY: ${{ secrets.SOLDR_S3_CACHE_ACCESS_KEY }}
           SOLDR_S3_CACHE_SECRET_KEY: ${{ secrets.SOLDR_S3_CACHE_SECRET_KEY }}
         with:
+          version: latest
           # Remote S3 build cache: bucket forge-ci-cache in DigitalOcean Spaces sfo3.
           # The 50G high watermark is enforced only on the merge-queue
           # (merge_group) singleton; unset bucket/creds disables it entirely.

@@ -650,7 +650,7 @@ def test_hosted_pr_checks_do_not_require_local_bosn_receipts() -> None:
     """A stamp-free PR runs real hosted checks; Bosn receipts cannot waive them.
 
     DD-225 adds exactly one consumer of local evidence: prooft trailers may
-    reduce Clippy and the Dylint legs IN PLACE (the job still runs and
+    reduce Clippy, rustfmt and the Dylint legs IN PLACE (the job still runs and
     reports). No routine job is skipped at the job level by local evidence,
     and the final gate never reads it.
     """
@@ -669,17 +669,14 @@ def test_hosted_pr_checks_do_not_require_local_bosn_receipts() -> None:
     assert "attested" not in gate
     assert "continue-on-error" not in gate
     assert "|| true" not in static + gate
-    # The prooft verifiers (PR, DD-225; merge queue, DD-227) are the only
-    # steps allowed to fail open (each reduces nothing when it fails), and
-    # they are the only continue-on-error here.
-    assert static.count("continue-on-error") == 2
-    for name in ("Judge prooft attestations", "Judge merge-queue attestation forwarding"):
-        step = static.split(f"- name: {name}", 1)[1].split("\n      - name:", 1)[0]
-        assert "continue-on-error: true" in step, name
+    # The PR verifier fails open so invalid or missing proof runs hosted.
+    assert static.count("continue-on-error") == 1
+    step = static.split("- name: Judge prooft attestations", 1)[1].split("\n      - name:", 1)[0]
+    assert "continue-on-error: true" in step
     for job in ROUTINE_PR_JOBS:
         block = _job_block(text, job)
         condition = (
-            block.split("\n    if:", 1)[1].split("\n    uses:", 1)[0]
+            block.split("\n    if:", 1)[1].splitlines()[0]
             if "\n    if:" in block
             else ""
         )

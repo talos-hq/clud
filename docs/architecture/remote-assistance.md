@@ -252,6 +252,16 @@ client treats as final ("This session was resumed from another connection.").
 A deliberate exit closes with 1000 so the server ends the session at once
 rather than waiting out its grace window.
 
+The client remembers the last usable TLS WebSocket address in memory for the
+current session. On reconnect, it gives DNS 500 ms to return fresh addresses
+before falling back to the remembered address. A slow lookup remains pending
+across retries, so a later reconnect can still use its answer. The dial
+interleaves IPv4 and IPv6 candidates and starts them 250 ms apart. TCP and
+TLS can run in parallel, while each WebSocket upgrade uses the session token
+in sequence. Every candidate keeps the original hostname for TLS and the
+upgrade, and the chosen socket still completes the required end-to-end
+handshake before use.
+
 **While disconnected** the PTY's output is still drained at the local
 terminal's pace, mirrored there and held in `Outage`, at most 1 MiB, oldest
 dropped first; the `pty_exit` of a shell that ended offline is never dropped.

@@ -97,7 +97,7 @@ def _action_input_default(source_name: str, text: str, input_name: str) -> str:
         if candidate.startswith("  ") and not candidate.startswith("    "):
             break
         match = re.fullmatch(
-            r"""    default:\s*(?P<quote>["']?)(?P<version>[\d.]+)(?P=quote)\s*""",
+            r"""    default:\s*(?P<quote>["']?)(?P<version>latest|[\d.]+)(?P=quote)\s*""",
             candidate,
         )
         if match is not None:
@@ -163,7 +163,7 @@ def _setup_soldr_steps_in_text(  # noqa: C901
                 if indent != content_indent + 2:
                     continue
                 literal = re.fullmatch(
-                    r"""version:\s*(?P<quote>["']?)(?P<version>[\d.]+)(?P=quote)\s*""",
+                    r"""version:\s*(?P<quote>["']?)(?P<version>latest|[\d.]+)(?P=quote)\s*""",
                     stripped,
                 )
                 if literal is not None:
@@ -177,7 +177,7 @@ def _setup_soldr_steps_in_text(  # noqa: C901
                     version = _action_input_default(source_name, text, forwarded.group("input"))
                     break
 
-        version = version or "latest"
+        version = version or "action default"
         steps.append((source_name, uses.group("ref"), version))
     return steps
 
@@ -208,7 +208,9 @@ jobs:
         with:
           cache: true
 """
-    assert _setup_soldr_steps_in_text("bad.yml", workflow) == [("bad.yml", "v0.9.66", "latest")]
+    assert _setup_soldr_steps_in_text("bad.yml", workflow) == [
+        ("bad.yml", "v0.9.66", "action default")
+    ]
 
 
 def test_pip_build_uses_soldr_pep517_backend() -> None:

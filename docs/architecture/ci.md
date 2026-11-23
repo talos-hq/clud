@@ -413,9 +413,8 @@ Do not auto-install tools or prune Docker resources. See the bundled `clud-bosn`
 
 ### Attested Clippy and Dylint (prooft, DD-225)
 
-A same-repo PR may prove `Clippy linux-x64` and any of the three Dylint legs
-locally with [forge-ci/prooft](https://github.com/forge-ci/prooft); every
-other hosted job always runs. Design and trust model:
+A same-repo PR may prove Clippy, workspace rustfmt, and any of the three
+Dylint legs locally with [forge-ci/prooft](https://github.com/forge-ci/prooft). Design and trust model:
 [DD-225](../DESIGN_DECISIONS.md#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them).
 
 ```bash
@@ -425,7 +424,7 @@ git push                      # after a pushed head: git push --force-with-lease
 ```
 
 `./push` (`ci/push.py`, #2873) does all three for a committed feature
-branch: it attests the host lanes (`clippy`, `dylint`; `--cross` adds the
+branch: it attests the host lanes (`clippy`, `dylint`, `rustfmt`; `--cross` adds the
 cross Dylint legs, `--test` runs `bash test --host` after they pass), pushes with
 `--force-with-lease`, and opens or reuses the PR. A failing lane stops the
 push. It refuses `main`, a detached HEAD and a dirty tree. `/grind` uses a
@@ -444,38 +443,19 @@ result required by `CI OK`. Each lane that passes adds one
 `Ci-Attestation:` trailer per gate, bound to the tree and parents. The
 `CI mode` job's "Judge prooft attestations" step runs the hash-pinned prooft
 `plan` against the base's policy and prints its decision to the run summary.
-A proven job or leg then logs `proven by a prooft Ci-Attestation on this head
-(DD-225); skipping` and passes without setup. That decision is its first
-step, ahead of checkout and disk cleanup, so a proven job runs two shell
-steps and no action: runner start plus about 3 s
-([DD-226](../DESIGN_DECISIONS.md#dd-226-a-proven-clippy-job-or-dylint-leg-decides-in-its-first-step-and-does-nothing-else);
-`tests/test_attest_noop.py`). It is not skipped at the job level, because
-`ci-lint gate` does not accept a skip output as coverage. Anything else runs it in full:
-no trailer, an edit or rebase after attesting, more than 24 hours, a fork, a
-`[ci-full]`/`[no-attest]` title, or a PR touching `.github/`,
-`ci-attestations.yml`, `ci.toml` or `local-gate.toml`. `main`, nightly and
-release runs never read trailers. Merge groups run every lane on the merged
-tree unless the forwarding switch below is on.
+A valid proof skips the corresponding check. The Clippy job still runs its
+doctests. Static checks still runs its other checks when rustfmt is proven.
+A proven Dylint leg skips setup and workspace linting. Jobs still report
+results for the CI gate.
 
-#### Merge-queue forwarding (DD-227, ships off)
-
-`ci-attestations-queue.toml` at the repo root holds `forward = "off" |
-"shadow" | "on"` and a `signers` allowlist. In a `merge_group` run, the
-`CI mode` job's "Judge merge-queue attestation forwarding" step extracts the
-**base** commit's `ci/` and runs `ci/attest_queue.py` from it, so the switch,
-the policy and the judge all come from `main`, never from the queued PR. With
-`on`, an entry reduces Clippy or a Dylint leg in place (exactly like a PR,
-DD-226) only when it is the first entry of its group, its tree equals its PR
-head's tree (the branch already contained the main tip), GitHub verified the
-head's signature by an allowlisted signer, and `prooft queue` accepts the
-head's trailers. Anything else runs hosted, and `shadow` only prints the
-decision to the run summary. To maximise hits, rebase onto `origin/main`
-and run `ci.attest` just before enqueueing. Trust options and the
-recommendation:
-[DD-227](../DESIGN_DECISIONS.md#dd-227-a-merge-queue-entry-may-inherit-its-pr-heads-attestations-behind-a-base-owned-switch-that-ships-off).
+Missing, stale, or invalid proof runs the check in full. Forks,
+`[ci-full]`/`[no-attest]` titles, and PRs touching `.github/`,
+`ci-attestations.yml`, `ci.toml` or `local-gate.toml` also run the checks.
+Merge groups run Clippy, rustfmt, doctests and all Dylint legs on the merged
+tree. Main, nightly and release runs do not read trailers.
 
 A lane that cannot run on the local host fails, stamps nothing, and runs
-hosted. All four lanes run at once (`--serial` runs them one at a time);
+hosted. Selected lanes run at once (`--serial` runs them one at a time);
 each writes `target/attest/<lane>.log`, and a failing lane prints its tail.
 When every lane has finished on an unchanged HEAD and clean tree, each
 passing lane is stamped in turn. The hosted `crates` leg uses the verified

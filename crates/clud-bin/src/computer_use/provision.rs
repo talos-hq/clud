@@ -10,7 +10,8 @@
 //! reused: only setup and install may read Hermes' tree or environment
 //! (`setup_command::hermes`, #2609), and this runs on the MCP serve path.
 //!
-//! Otherwise the driver is missing and [`ensure`] downloads the pinned archive,
+//! Otherwise [`ensure`] uses the embedded archive, the pinned PyPI wheel through
+//! uv, or the GitHub release archive. It
 //! checks its size and SHA-256 before unpacking anything, and publishes the
 //! unpacked tree with one rename so concurrent first uses converge.
 
@@ -23,6 +24,7 @@ use super::pin::{self, ArchiveKind, Artifact};
 
 /// Explicit driver override; an absolute path to an executable.
 pub const OVERRIDE_ENV: &str = "CLUD_CUA_DRIVER";
+const ARCHIVE: &[u8] = include_bytes!(env!("CLUD_BUNDLED_COMPUTER_USE_PATH"));
 /// Records the archive digest and the unpacked binary's digest.
 const MARKER: &str = ".clud-pin";
 
@@ -102,8 +104,18 @@ pub fn resolve(inputs: &Inputs<'_>) -> Resolution {
 }
 
 /// Resolves the driver, installing the pinned archive when it is missing.
+pub fn embedded_archive_available() -> bool {
+    !ARCHIVE.is_empty()
+}
+
 pub fn ensure(inputs: &Inputs<'_>) -> Result<Driver, String> {
-    ensure_with_fetch(inputs, download)
+    ensure_with_fetch(inputs, |artifact| {
+        if embedded_archive_available() {
+            Ok(ARCHIVE.to_vec())
+        } else {
+            super::uv_archive::read(inputs.home, artifact).or_else(|_| download(artifact))
+        }
+    })
 }
 
 pub fn ensure_with_fetch(
@@ -237,7 +249,7 @@ pub fn validate_location(value: &str, initial: bool) -> Result<(), String> {
     let parsed = url::Url::parse(value).map_err(|_| "invalid cua-driver download URL")?;
     let release = parsed.host_str() == Some("github.com")
         && parsed.path().starts_with(&format!(
-            "/trycua/cua/releases/download/cua-driver-rs-v{}/",
+            "/talos-hq/computer-use/releases/download/computer-use-v{}/",
             pin::VERSION
         ));
     let cdn = matches!(
@@ -297,4 +309,26 @@ fn download(artifact: &Artifact) -> Result<Vec<u8>, String> {
         return Ok(bytes);
     }
     Err("too many cua-driver release redirects".into())
+}
+
+#[cfg(test)]
+mod embedded_tests {
+    use super::*;
+
+    #[test]
+    fn embedded_archive_provisions_without_network() {
+        if ARCHIVE.is_empty() {
+            return;
+        }
+        let home = tempfile::tempdir().unwrap();
+        let artifact = pin::for_host().expect("embedded archive requires a supported host");
+        let driver = ensure(&Inputs {
+            home: home.path(),
+            artifact,
+            override_path: None,
+        })
+        .unwrap();
+        assert_eq!(driver.source, Source::Managed);
+        assert!(driver.path.is_file());
+    }
 }

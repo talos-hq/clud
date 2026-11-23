@@ -1,11 +1,12 @@
 //! Same-origin HTTP and WebSocket transport; bearer tokens never enter diagnostics.
-use super::e2e;
 use super::tls;
+use super::{dns, e2e};
 use serde::Deserialize;
 use serde_json::Value;
-use std::io::Read;
-use std::net::{TcpStream, ToSocketAddrs};
-use std::sync::Arc;
+use std::io::{self, Read, Write};
+use std::net::{SocketAddr, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 use tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
 use tungstenite::{Message, WebSocket};
@@ -217,7 +218,7 @@ pub(super) struct Session {
     #[serde(default)]
     pub session_id: Option<String>,
     pub keyword: String,
-    pub ws_url: String,
+    ws_url: String,
     pub client_token: String,
     #[serde(default = "default_proxy_model")]
     pub proxy_model: String,
@@ -235,6 +236,11 @@ pub(super) struct Session {
     /// request, to be sent inside the encrypted socket instead.
     #[serde(skip)]
     pub withheld: Option<Value>,
+    /// A usable TLS peer learned by this session and shared with its reconnect worker.
+    #[serde(skip)]
+    last_peer: Arc<Mutex<Option<SocketAddr>>>,
+    #[serde(skip)]
+    resolver: Arc<dns::Resolver>,
 }
 
 fn default_proxy_model() -> String {
@@ -495,7 +501,7 @@ impl From<ConnectError> for String {
 /// that understands it keeps the session through a lost socket, and lets a
 /// newer connection with this token replace an older one. `e2e=1` asks for an
 /// encrypted socket. Servers ignore what they do not understand.
-pub(super) fn socket_url(session: &Session) -> String {
+fn socket_url(session: &Session) -> String {
     format!("{}&resume=1&e2e={}", session.ws_url, e2e::VERSION)
 }
 
@@ -509,7 +515,7 @@ pub(super) fn connect(session: &mut Session) -> Result<Socket, String> {
         .unwrap_or_else(|| "the remote server".into());
     // The same token every time; an unreachable server is retried, a refusal
     // or an unsafe socket is not.
-    let mut socket = retrying(&host, || match connect_url(&socket_url(session), session) {
+    let mut socket = retrying(&host, || match connect_socket(session) {
         Ok(socket) => Ok(socket),
         Err(ConnectError::Unreachable(reason)) => Err(Failure::Retry(reason)),
         Err(error) => Err(Failure::Fatal(String::from(error))),
@@ -573,59 +579,198 @@ fn secure(mut ws: Raw, session: &Session) -> Result<Socket, ConnectError> {
     })
 }
 
-pub(super) fn connect_url(ws_url: &str, session: &Session) -> Result<Socket, ConnectError> {
-    let config = tungstenite::protocol::WebSocketConfig::default()
-        .max_message_size(Some(128 * 1024))
-        .max_frame_size(Some(128 * 1024));
+fn dial_addresses(
+    resolved: std::io::Result<Vec<SocketAddr>>,
+    last_peer: Option<SocketAddr>,
+) -> Result<Vec<SocketAddr>, ConnectError> {
+    const MAX_ADDRESSES: usize = 4;
+    let mut addresses = Vec::new();
+    let resolved = resolved.unwrap_or_default();
+    if let Some(first) = resolved.first().copied() {
+        let (mut preferred, mut alternate): (Vec<_>, Vec<_>) = resolved
+            .into_iter()
+            .partition(|address| address.is_ipv6() == first.is_ipv6());
+        preferred.reverse();
+        alternate.reverse();
+        while addresses.len() < MAX_ADDRESSES && (!preferred.is_empty() || !alternate.is_empty()) {
+            for family in [&mut preferred, &mut alternate] {
+                if addresses.len() == MAX_ADDRESSES {
+                    break;
+                }
+                while let Some(address) = family.pop() {
+                    if !addresses.contains(&address) {
+                        addresses.push(address);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if let Some(peer) = last_peer.filter(|peer| !addresses.contains(peer)) {
+        if addresses.len() == MAX_ADDRESSES {
+            addresses.pop();
+        }
+        addresses.push(peer);
+    }
+    if addresses.is_empty() {
+        return Err(ConnectError::Unreachable(
+            "cannot resolve remote host".into(),
+        ));
+    }
+    Ok(addresses)
+}
+
+pub(super) fn connect_socket(session: &Session) -> Result<Socket, ConnectError> {
+    connect_socket_with(
+        session,
+        |host, port, wait| session.resolver.resolve(host, port, wait),
+        tls_config,
+    )
+}
+
+pub(super) fn connect_socket_with(
+    session: &Session,
+    resolve: impl FnOnce(&str, u16, Duration) -> io::Result<Vec<SocketAddr>>,
+    tls_config: impl FnOnce() -> Result<Arc<ureq::rustls::ClientConfig>, String>,
+) -> Result<Socket, ConnectError> {
+    let ws_url = socket_url(session);
     let unreachable = |reason: &str| ConnectError::Unreachable(reason.into());
-    let url = Url::parse(ws_url).map_err(|_| unreachable("invalid remote WebSocket URL"))?;
+    let url = Url::parse(&ws_url).map_err(|_| unreachable("invalid remote WebSocket URL"))?;
     let host = url
         .host_str()
         .ok_or_else(|| unreachable("missing remote host"))?
         .trim_matches(['[', ']']);
-    let addresses = (
-        host,
-        url.port_or_known_default()
-            .ok_or_else(|| unreachable("missing remote port"))?,
-    )
-        .to_socket_addrs()
-        .map_err(|_| unreachable("cannot resolve remote host"))?;
-    let timeout = Duration::from_secs(15);
-    let tcp = addresses
-        .take(4)
-        .find_map(|address| TcpStream::connect_timeout(&address, timeout).ok())
-        .ok_or_else(|| unreachable("cannot reach remote host"))?;
-    tcp.set_read_timeout(Some(timeout))
-        .map_err(|_| unreachable("cannot set handshake timeout"))?;
-    tcp.set_write_timeout(Some(timeout))
-        .map_err(|_| unreachable("cannot set handshake timeout"))?;
-    // TLS through `tls::TlsStream`, which stays sound once the socket is
-    // non-blocking (rustls's own stream does not; see `tls.rs`).
-    let stream = if url.scheme() == "wss" {
-        let config = tls_config().map_err(ConnectError::Unreachable)?;
-        tls::Stream::Tls(Box::new(
-            tls::TlsStream::new(config, host, tcp)
-                .map_err(|_| unreachable("invalid remote host name"))?,
-        ))
+    let peer = *session
+        .last_peer
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    let port = url
+        .port_or_known_default()
+        .ok_or_else(|| unreachable("missing remote port"))?;
+    let dns_wait = if peer.is_some() {
+        Duration::from_millis(500)
     } else {
-        tls::Stream::Plain(tcp)
+        Duration::from_secs(5)
     };
-    // One handshake; redirects are never followed.
+    let resolved = resolve(host, port, dns_wait);
+    let candidates = dial_addresses(resolved, peer)?;
+    let config = if url.scheme() == "wss" {
+        Some(tls_config().map_err(ConnectError::Unreachable)?)
+    } else {
+        None
+    };
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let upgrade_timeout = if candidates.len() > 1 {
+        Duration::from_secs(5)
+    } else {
+        Duration::from_secs(15)
+    };
+    let streams = race_candidates(candidates, host, config, deadline);
+    let mut reason = "cannot reach remote host".into();
+    while let Ok((address, mut stream)) = streams
+        .ready
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+    {
+        stream.set_deadline(deadline.min(Instant::now() + upgrade_timeout));
+        match upgrade(&ws_url, stream, session) {
+            Ok(socket) => {
+                if url.scheme() == "wss" {
+                    *session
+                        .last_peer
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner()) = Some(address);
+                }
+                return Ok(socket);
+            }
+            Err(ConnectError::Unreachable(error)) => reason = error,
+            Err(error) => return Err(error),
+        }
+    }
+    Err(ConnectError::Unreachable(reason))
+}
+
+struct CandidateRace {
+    ready: mpsc::Receiver<(SocketAddr, tls::Stream)>,
+    finished: Arc<AtomicBool>,
+}
+
+impl Drop for CandidateRace {
+    fn drop(&mut self) {
+        self.finished.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Candidates may complete TCP and TLS in parallel. Only the caller can
+/// present the bearer token and replace the relay's current socket.
+fn race_candidates(
+    addresses: Vec<SocketAddr>,
+    host: &str,
+    config: Option<Arc<ureq::rustls::ClientConfig>>,
+    deadline: Instant,
+) -> CandidateRace {
+    let (ready, streams) = mpsc::channel();
+    let finished = Arc::new(AtomicBool::new(false));
+    for (position, address) in addresses.into_iter().enumerate() {
+        let ready = ready.clone();
+        let host = host.to_owned();
+        let config = config.clone();
+        let finished = Arc::clone(&finished);
+        std::thread::spawn(move || {
+            // A short head start preserves the system resolver's preference.
+            std::thread::sleep(Duration::from_millis(250 * position as u64));
+            if finished.load(Ordering::Relaxed) {
+                return;
+            }
+            if let Ok(stream) = preconnect(address, &host, config, deadline) {
+                let _ = ready.send((address, stream));
+            }
+        });
+    }
+    CandidateRace {
+        ready: streams,
+        finished,
+    }
+}
+
+fn preconnect(
+    address: SocketAddr,
+    host: &str,
+    config: Option<Arc<ureq::rustls::ClientConfig>>,
+    deadline: Instant,
+) -> io::Result<tls::Stream> {
+    let timeout = deadline.saturating_duration_since(Instant::now());
+    if timeout.is_zero() {
+        return Err(io::ErrorKind::TimedOut.into());
+    }
+    let tcp = tls::HandshakeTcp::new(TcpStream::connect_timeout(&address, timeout)?, deadline);
+    if let Some(config) = config {
+        let mut stream = tls::TlsStream::new(config, host, tcp)?;
+        stream.flush()?;
+        Ok(tls::Stream::Tls(Box::new(stream)))
+    } else {
+        Ok(tls::Stream::Plain(tcp))
+    }
+}
+
+fn upgrade(ws_url: &str, stream: tls::Stream, session: &Session) -> Result<Socket, ConnectError> {
+    let config = tungstenite::protocol::WebSocketConfig::default()
+        .max_message_size(Some(128 * 1024))
+        .max_frame_size(Some(128 * 1024));
+    // One upgrade at a time. Redirects are never followed.
     let (socket, _) = tungstenite::client::client_with_config(ws_url, stream, Some(config))
         .map_err(|error| match error {
-            tungstenite::HandshakeError::Failure(tungstenite::Error::Http(_)) => {
+            tungstenite::HandshakeError::Failure(tungstenite::Error::Http(response))
+                if !response.status().is_server_error()
+                    && !matches!(response.status().as_u16(), 408 | 429) =>
+            {
                 ConnectError::Refused
             }
-            _ => unreachable("could not connect remote session"),
+            _ => ConnectError::Unreachable("could not connect remote session".into()),
         })?;
-    // The exchange runs under the handshake's timeouts.
-    let socket = secure(socket, session)?;
-    let tcp = socket.ws.get_ref().tcp();
-    // Non-blocking from here on (see `Socket`); the session loop paces itself.
-    tcp.set_nonblocking(true)
-        .map_err(|_| unreachable("cannot make the remote socket non-blocking"))?;
-    // Keystrokes and their echo are small: send them now, not after an ACK.
-    let _ = tcp.set_nodelay(true);
+    let mut socket = secure(socket, session)?;
+    socket.ws.get_mut().finish_handshake().map_err(|_| {
+        ConnectError::Unreachable("cannot make the remote socket non-blocking".into())
+    })?;
     Ok(socket)
 }
 
@@ -758,6 +903,43 @@ mod tests {
         // A timeout is not a would-block: only a non-blocking socket is retried.
         let timed_out = std::io::Error::from(std::io::ErrorKind::TimedOut);
         assert!(queued(Err(tungstenite::Error::Io(timed_out))).is_err());
+    }
+
+    #[test]
+    fn address_selection_interleaves_families_before_applying_the_dial_limit() {
+        let v6: Vec<SocketAddr> = (1..=4)
+            .map(|suffix| format!("[2001:db8::{suffix}]:443").parse().unwrap())
+            .collect();
+        let v4: Vec<SocketAddr> = (1..=4)
+            .map(|suffix| format!("192.0.2.{suffix}:443").parse().unwrap())
+            .collect();
+        for (preferred, alternate) in [(&v6, &v4), (&v4, &v6)] {
+            let resolved = preferred.iter().chain(alternate).copied().collect();
+            assert_eq!(
+                dial_addresses(Ok(resolved), None).unwrap(),
+                [preferred[0], alternate[0], preferred[1], alternate[1]]
+            );
+        }
+    }
+
+    #[test]
+    fn reconnect_uses_a_previous_address_when_dns_fails_or_returns_no_records() {
+        let previous = "192.0.2.42:443".parse().unwrap();
+        let fresh = "[2001:db8::1]:443".parse().unwrap();
+        let failure = std::io::Error::from(std::io::ErrorKind::NotFound);
+        assert_eq!(
+            dial_addresses(Err(failure), Some(previous)).unwrap(),
+            [previous]
+        );
+        assert_eq!(
+            dial_addresses(Ok(vec![]), Some(previous)).unwrap(),
+            [previous]
+        );
+        assert_eq!(
+            dial_addresses(Ok(vec![fresh, previous]), Some(previous)).unwrap(),
+            [fresh, previous]
+        );
+        assert!(dial_addresses(Ok(vec![]), None).is_err());
     }
 
     #[test]

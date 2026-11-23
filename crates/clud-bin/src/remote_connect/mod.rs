@@ -2,6 +2,7 @@
 mod bridge;
 pub mod connect;
 mod console;
+mod dns;
 mod e2e;
 // The leader half runs only where `platform::remote_shell` is supported; on
 // hosts with the stub (Windows) only the client half is reachable.

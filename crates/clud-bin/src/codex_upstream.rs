@@ -46,11 +46,11 @@ pub const CODEX_ORIGINATOR: &str = "codex_cli_rs";
 /// Codex release verified against the ChatGPT backend in `models/README.md`.
 ///
 /// The backend gates model availability on the `version` request header:
-/// 0.157.1 rejects GPT-6.1 Sol/Terra with `model_not_found`; 0.164.0 allows them
-/// (issue #2299). This is a compatibility version, not clud's package version.
+/// 0.164.0 enables GPT-6.1 Sol/Terra (#2299), but rejects GPT-6.2 Sol
+/// with `model_not_found` (#2932). Advertise the verified compatibility version.
 /// The guard test keeps it and the Bosn CLI pin aligned with the catalog's
 /// recorded probe version; update that record when verifying newer models.
-pub const CODEX_CLIENT_VERSION: &str = "0.164.0";
+pub const CODEX_CLIENT_VERSION: &str = "0.171.0";
 const CODEX_BETA_HEADER_VALUE: &str = "responses=experimental";
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// Idle timeout between reads, not a cap on the whole turn: a model may think
@@ -1931,7 +1931,7 @@ mod tests {
         let request = server.requests().remove(0);
         assert!(request.starts_with("POST /v1/responses/compact HTTP/1.1"));
         assert!(request.contains("Accept: application/json"));
-        assert!(request.contains("version: 0.164.0"));
+        assert!(request.contains("version: 0.171.0"));
     }
 
     #[test]
@@ -2231,8 +2231,8 @@ mod tests {
         assert!(request.contains("OpenAI-Beta: responses=experimental"));
         // openai/codex sends `codex_cli_rs/<Codex version>` and a
         // separate `version` header. Keep clud's own version out of both.
-        assert!(request.contains("User-Agent: codex_cli_rs/0.164.0 (clud)"));
-        assert!(request.contains("version: 0.164.0"));
+        assert!(request.contains("User-Agent: codex_cli_rs/0.171.0 (clud)"));
+        assert!(request.contains("version: 0.171.0"));
         assert!(request.contains(r#"{"model":"m"}"#));
         // The harness's own downstream bearer must never appear upstream.
         assert!(!request.contains("x-api-key"));

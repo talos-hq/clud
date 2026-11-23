@@ -76,7 +76,7 @@ fn target_labels_cover_every_published_host() {
 fn macos_uses_the_signed_app_bundle_for_tcc() {
     for target in ["darwin-x64", "darwin-arm64"] {
         let artifact = pin::ARTIFACTS.iter().find(|a| a.target == target).unwrap();
-        assert!(artifact.binary.starts_with("CuaDriver.app/"), "{target}");
+        assert!(artifact.binary.starts_with("ComputerUse.app/"), "{target}");
         assert!(!artifact.asset.contains("-binary"), "{target}");
     }
 }
@@ -84,13 +84,13 @@ fn macos_uses_the_signed_app_bundle_for_tcc() {
 #[test]
 fn downloads_stay_on_the_pinned_release_and_its_cdn() {
     let ok = format!(
-        "https://github.com/trycua/cua/releases/download/cua-driver-rs-v{}/x.tar.gz",
+        "https://github.com/talos-hq/computer-use/releases/download/computer-use-v{}/x.tar.gz",
         pin::VERSION
     );
     provision::validate_location(&ok, true).unwrap();
     for bad in [
         ok.replace("https://", "http://"),
-        ok.replace("trycua/cua", "evil/cua"),
+        ok.replace("talos-hq/computer-use", "evil/cua"),
         ok.replace(pin::VERSION, "0.0.1"),
         "https://example.invalid/x.tar.gz".to_string(),
         format!("{ok}?token=1"),
@@ -151,13 +151,13 @@ fn wrong_size_or_digest_never_unpacks() {
 fn a_wrapped_archive_is_flattened_to_its_single_top_directory() {
     let home = tempfile::tempdir().unwrap();
     let archive = fake_tar(&[
-        ("pkg/CuaDriver.app/Contents/MacOS/cua-driver", b"app"),
+        ("pkg/ComputerUse.app/Contents/MacOS/cua-driver", b"app"),
         ("pkg/LICENSE", b"mit"),
     ]);
     let artifact = artifact_for(
         &archive,
         ArchiveKind::TarGz,
-        "CuaDriver.app/Contents/MacOS/cua-driver",
+        "ComputerUse.app/Contents/MacOS/cua-driver",
     );
     let inputs = inputs(home.path(), &artifact);
     let driver = provision::ensure_with_fetch(&inputs, |_| Ok(archive.clone())).unwrap();
@@ -165,7 +165,7 @@ fn a_wrapped_archive_is_flattened_to_its_single_top_directory() {
         driver.path,
         inputs
             .managed_dir()
-            .join("CuaDriver.app/Contents/MacOS/cua-driver")
+            .join("ComputerUse.app/Contents/MacOS/cua-driver")
     );
     assert!(inputs.managed_dir().join("LICENSE").is_file());
 }

@@ -112,6 +112,28 @@ pub fn render_cpu_png(
     Ok(png)
 }
 
+/// Transparent canvas with a translucent eight-tooth gear.
+pub fn render_gear_png() -> io::Result<Vec<u8>> {
+    let (width, height) = pixel_size(2, 1);
+    let image = image::RgbaImage::from_fn(width, height, |x, y| {
+        let dx = x as f32 + 0.5 - width as f32 / 2.0;
+        let dy = y as f32 + 0.5 - height as f32 / 2.0;
+        let radius = dx.hypot(dy);
+        let tooth = (8.0 * dy.atan2(dx)).cos() > 0.25;
+        let alpha = if radius > 5.0 && (radius < 10.0 || tooth && radius < 14.0) {
+            192
+        } else {
+            0
+        };
+        image::Rgba([236, 238, 242, alpha])
+    });
+    let mut png = Vec::new();
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(&mut Cursor::new(&mut png), image::ImageFormat::Png)
+        .map_err(io::Error::other)?;
+    Ok(png)
+}
+
 pub fn pixel_size(cols: u16, rows: u16) -> (u32, u32) {
     (u32::from(cols) * CELL_W_PX, u32::from(rows) * CELL_H_PX)
 }
