@@ -36,8 +36,19 @@ def require_run(run: dict, jobs: list[dict], tag: str, sha: str) -> None:
         or run.get("conclusion") != "failure"
     ):
         raise ValueError("resume requires a completed failed release run for the unchanged tag")
+    # Reusable build workflows report a separate runner selection job. Only
+    # the jobs that actually build the artifacts are release proof.
+    builds = ("Build wheels (", "Build static musl clud (")
+    proof_jobs = [
+        job
+        for job in jobs
+        if not (
+            job.get("name", "").startswith(builds)
+            and job["name"].partition(" / ")[2].startswith("Select runner (")
+        )
+    ]
     for prefix, count in REQUIRED.items():
-        rows = [job for job in jobs if job.get("name", "").startswith(prefix)]
+        rows = [job for job in proof_jobs if job.get("name", "").startswith(prefix)]
         if len(rows) != count or any(job.get("conclusion") != "success" for job in rows):
             raise ValueError(f"original release proof is incomplete: {prefix}")
 
@@ -82,7 +93,13 @@ def require_recovery_changes(paths: list[str]) -> None:
         "crates/clud-bin/assets/openrouter-catalog.json",
         "crates/clud-bin/assets/server-settings.json",
     }
-    if any(path not in model_data and not path.startswith(allowed) for path in paths):
+    # The Pages verifier checks generated output. It changes neither the
+    # catalog schema nor the bytes installed by the release.
+    verifier = "installer/verify_site.py"
+    if any(
+        path != verifier and path not in model_data and not path.startswith(allowed)
+        for path in paths
+    ):
         raise ValueError("production inputs changed since the immutable release tag")
 
 

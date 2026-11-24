@@ -16,12 +16,14 @@ class Links(HTMLParser):
         super().__init__()
         self.hrefs: list[str] = []
         self.native: list[dict[str, str]] = []
-        self.options: list[str] = []
+        self.options: list[tuple[str, str]] = []
         self._current: dict[str, str] | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag == "option" and dict(attrs).get("value"):
-            self.options.append(dict(attrs)["value"] or "")
+        if tag == "option":
+            values = dict(attrs)
+            if value := values.get("value"):
+                self.options.append((value, values.get("data-download-url") or ""))
         if tag == "a":
             values = dict(attrs)
             href = values.get("href")
@@ -46,7 +48,39 @@ class Links(HTMLParser):
             self._current = None
 
 
-def verify(site: Path) -> str:  # noqa: C901
+def verify_download_links(page_links: Links, catalog: dict, version: str) -> None:
+    downloads = select_native_downloads(catalog)
+    local = [{**row, "url": download_path(row)} for row in downloads]
+    # The optional universal disk image is verified by site.macos_installer.
+    # It is served by GitHub Releases and is absent from the v1 catalog.
+    if page_links.native and page_links.native[0]["flavor"] == "installer":
+        installer = page_links.native[0]
+        filename = f"clud-{version}-macos.dmg"
+        base = "https://github.com/talos-hq/clud/releases/download"
+        urls = {f"{base}/{tag}/{filename}" for tag in (version, f"v{version}")}
+        if installer["url"] not in urls or installer != {
+            "os": "darwin",
+            "arch": "universal",
+            "flavor": "installer",
+            "filename": filename,
+            "url": installer["url"],
+        }:
+            raise ValueError(f"invalid macOS installer download link: {installer}")
+        local.insert(0, installer)
+        downloads.insert(0, installer)
+    if page_links.native != local:
+        raise ValueError(f"native download links differ from catalog: {page_links.native}")
+    options = [(row["url"], link["url"]) for row, link in zip(downloads, local, strict=True)]
+    if page_links.options != options:
+        raise ValueError(f"platform dropdown differs from catalog: {page_links.options}")
+    allowed_links = {row["url"] for row in local}
+    allowed_links.update((CATALOG_HREF, "https://support.apple.com/en-us/102445"))
+    for href in page_links.hrefs:
+        if href not in allowed_links:
+            raise ValueError(f"page link is absent from catalog or site guidance: {href}")
+
+
+def verify(site: Path) -> str:
     root = (site / "index.html").read_text(encoding="utf-8")
     page = (site / "install" / "index.html").read_text(encoding="utf-8")
     catalog = json.loads((site / "install" / "manifest.json").read_text(encoding="utf-8"))
@@ -86,19 +120,9 @@ def verify(site: Path) -> str:  # noqa: C901
         raise ValueError("landing page does not show catalog latest")
     page_links = Links()
     page_links.feed(page)
-    expected_downloads = select_native_downloads(catalog)
-    local_downloads = [{**row, "url": download_path(row)} for row in expected_downloads]
-    if page_links.native != local_downloads:
-        raise ValueError(f"native download links differ from catalog: {page_links.native}")
-    if expected_downloads and page_links.options != [row["url"] for row in expected_downloads]:
-        raise ValueError(f"platform dropdown differs from catalog: {page_links.options}")
-    if expected_downloads and DETECT_SCRIPT not in page:
+    verify_download_links(page_links, catalog, expected)
+    if page_links.native and DETECT_SCRIPT not in page:
         raise ValueError("download page lacks the platform detection script")
-    allowed_links = {download_path(row) for row in expected_downloads}
-    allowed_links.update((CATALOG_HREF, "https://support.apple.com/en-us/102445"))
-    for href in page_links.hrefs:
-        if href not in allowed_links:
-            raise ValueError(f"page link is absent from catalog or site guidance: {href}")
     return expected
 
 

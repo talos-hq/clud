@@ -6,13 +6,12 @@ import pytest
 
 from installer import verify_site
 from installer.catalog import TARGETS
+from installer.site import render_page
 
 
 def write_site(destination, targets: set[tuple[str, str]]) -> None:
     (destination / "install").mkdir(parents=True)
-    (destination / "index.html").write_text(
-        "Latest stable release: 2.10.0", encoding="utf-8"
-    )
+    (destination / "index.html").write_text("Latest stable release: 2.10.0", encoding="utf-8")
     (destination / "install" / "index.html").write_text(
         "Latest stable release: 2.10.0", encoding="utf-8"
     )
@@ -22,15 +21,12 @@ def write_site(destination, targets: set[tuple[str, str]]) -> None:
             {
                 "version": "2.10.0",
                 "platforms": [
-                    {"platform": {"os": os_name, "arch": arch}}
-                    for os_name, arch in sorted(targets)
+                    {"platform": {"os": os_name, "arch": arch}} for os_name, arch in sorted(targets)
                 ],
             }
         ],
     }
-    (destination / "install" / "manifest.json").write_text(
-        json.dumps(catalog), encoding="utf-8"
-    )
+    (destination / "install" / "manifest.json").write_text(json.dumps(catalog), encoding="utf-8")
 
 
 def test_verify_site_accepts_six_targets(tmp_path) -> None:
@@ -47,10 +43,12 @@ def test_verify_site_accepts_both_linux_static_variants(tmp_path) -> None:
     catalog = json.loads(manifest.read_text(encoding="utf-8"))
     platforms = catalog["releases"][0]["platforms"]
     for arch in ("x86_64", "aarch64"):
-        platforms.append({
-            "platform": {"os": "linux", "arch": arch},
-            "variant": {"flavor": "static-musl"},
-        })
+        platforms.append(
+            {
+                "platform": {"os": "linux", "arch": arch},
+                "variant": {"flavor": "static-musl"},
+            }
+        )
     manifest.write_text(json.dumps(catalog), encoding="utf-8")
     assert verify_site.verify(tmp_path) == "2.10.0"
     platforms.pop()
@@ -99,4 +97,58 @@ def test_verify_site_rejects_download_url_not_in_catalog(tmp_path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match=r"download|link|catalog"):
+        verify_site.verify(tmp_path)
+
+
+@pytest.mark.parametrize("tag", ["2.10.0", "v2.10.0"])
+def test_verify_site_accepts_the_latest_macos_installer(tmp_path, tag) -> None:
+    targets = {(os_name, arch) for os_name, arch, _ in TARGETS.values()}
+    write_site(tmp_path, targets)
+    catalog = json.loads((tmp_path / "install" / "manifest.json").read_text(encoding="utf-8"))
+    filename = "clud-2.10.0-macos.dmg"
+    url = f"https://github.com/talos-hq/clud/releases/download/{tag}/{filename}"
+    installer = {
+        "os": "darwin",
+        "arch": "universal",
+        "flavor": "installer",
+        "filename": filename,
+        "url": url,
+    }
+    for path in (tmp_path / "index.html", tmp_path / "install" / "index.html"):
+        path.write_text(render_page(catalog, installer), encoding="utf-8")
+
+    assert verify_site.verify(tmp_path) == "2.10.0"
+
+
+@pytest.mark.parametrize(
+    "tamper", ["wrong-origin", "wrong-tag", "wrong-dropdown", "wrong-button-target"]
+)
+def test_verify_site_rejects_unverified_macos_installer_links(tmp_path, tamper) -> None:
+    targets = {(os_name, arch) for os_name, arch, _ in TARGETS.values()}
+    write_site(tmp_path, targets)
+    catalog = json.loads((tmp_path / "install" / "manifest.json").read_text(encoding="utf-8"))
+    filename = "clud-2.10.0-macos.dmg"
+    url = f"https://github.com/talos-hq/clud/releases/download/2.10.0/{filename}"
+    installer = {
+        "os": "darwin",
+        "arch": "universal",
+        "flavor": "installer",
+        "filename": filename,
+        "url": url,
+    }
+    if tamper == "wrong-origin":
+        installer["url"] = url.replace("github.com", "example.com")
+    elif tamper == "wrong-tag":
+        installer["url"] = url.replace("/2.10.0/", "/2.9.0/")
+    page = render_page(catalog, installer)
+    if tamper == "wrong-dropdown":
+        page = page.replace(f'value="{url}"', 'value="https://example.com/wrong.dmg"')
+    if tamper == "wrong-button-target":
+        page = page.replace(
+            f'data-download-url="{url}"', 'data-download-url="https://example.com/wrong.dmg"'
+        )
+    for path in (tmp_path / "index.html", tmp_path / "install" / "index.html"):
+        path.write_text(page, encoding="utf-8")
+
+    with pytest.raises(ValueError, match=r"installer download link|platform dropdown"):
         verify_site.verify(tmp_path)

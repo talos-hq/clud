@@ -175,7 +175,7 @@ jobs:
               # Only reviewed harness repairs may differ; application inputs
               # remain identical except independent model-data refreshes, and
               # full CI still executes SOURCE_REF with its original data anew.
-              git diff --quiet "$SOURCE_REF" "$EVENT_SHA" -- . ':(exclude)ci/**' ':(exclude).github/workflows/**' ':(exclude).github/actions/**' ':(exclude)tests/**' ':(exclude)docs/**' ':(exclude,glob)crates/clud-bin/assets/openrouter-catalog.json' ':(exclude,glob)crates/clud-bin/assets/server-settings.json' || { echo '::error::production inputs changed since release tag'; exit 1; }
+              git diff --quiet "$SOURCE_REF" "$EVENT_SHA" -- . ':(exclude)ci/**' ':(exclude).github/workflows/**' ':(exclude).github/actions/**' ':(exclude)tests/**' ':(exclude)docs/**' ':(exclude,glob)installer/verify_site.py' ':(exclude,glob)crates/clud-bin/assets/openrouter-catalog.json' ':(exclude,glob)crates/clud-bin/assets/server-settings.json' || { echo '::error::production inputs changed since release tag'; exit 1; }
             else
               git diff --quiet "$SOURCE_REF" "$EVENT_SHA" -- .github/workflows .github/actions ci || { echo '::error::workflow or CI helpers changed since candidate SHA'; exit 1; }
             fi

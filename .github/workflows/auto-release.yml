@@ -996,7 +996,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.preflight.outputs.candidate_sha }}
+          ref: ${{ inputs.resume_run_id && github.sha || needs.preflight.outputs.candidate_sha }}
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
