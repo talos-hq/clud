@@ -56,7 +56,11 @@ MAX_AGENTS = 600
 # async function with the hooks as parameters) and answers agents by label:
 #   work:<id>, fixup:<id>#k, cleanup:<n>, chaperone:<id>#n, feature-pr.
 HARNESS = r"""
+import { writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
+// Failure paths exit immediately. Write the whole result before exiting even
+// when stdout is a pipe and a long trace cannot fit in its buffer.
+const report = value => writeFileSync(1, JSON.stringify(value) + '\n');
 const source = await readFile(process.argv[2], 'utf8');
 const cfg = JSON.parse(await readFile(process.argv[3], 'utf8'));
 const META = 'export const meta =';
@@ -65,7 +69,7 @@ let execute;
 try {
   execute = new AsyncFunction('args', 'agent', 'log', 'phase', 'parallel', 'pipeline', 'workflow', 'budget',
     source.replace(META, 'const meta ='));
-} catch (e) { console.log(JSON.stringify({ error: 'syntax: ' + e.message, trace: [] })); process.exit(0); }
+} catch (e) { report({ error: 'syntax: ' + e.message, trace: [] }); process.exit(0); }
 let seq = 0;
 const trace = [];
 const logs = [];
@@ -132,13 +136,13 @@ const pipeline = (items, ...stages) => Promise.all(items.map(async (item, i) => 
 }));
 const budget = { total: null, spent: () => 0, remaining: () => Infinity };
 let done = false;
-const timer = setTimeout(() => { if (!done) { console.log(JSON.stringify({ error: 'timeout: the workflow did not finish', trace, logs })); process.exit(0); } }, __TIMEOUT_MS__);
+const timer = setTimeout(() => { if (!done) { report({ error: 'timeout: the workflow did not finish', trace, logs }); process.exit(0); } }, __TIMEOUT_MS__);
 // Deadlock detector: the workflow is still awaiting something, yet no agent
 // has been running for 300 ms, so nothing can ever wake it.
 const idle = setInterval(() => {
   tick += 1;
   if (!done && active === 0 && tick - idleSince > 6) {
-    console.log(JSON.stringify({ error: 'deadlock: the workflow is waiting with no agent running', deadlock: true, trace, logs }));
+    report({ error: 'deadlock: the workflow is waiting with no agent running', deadlock: true, trace, logs });
     process.exit(0);
   }
 }, 50);
@@ -146,10 +150,10 @@ try {
   const result = await execute(cfg.args, agent, l => logs.push(String(l)), () => {}, parallel, pipeline,
     async () => { throw new Error('nested workflow() is not allowed in a grind coordinator'); }, budget);
   done = true; clearTimeout(timer); clearInterval(idle);
-  console.log(JSON.stringify({ result, trace, logs }));
+  report({ result, trace, logs });
 } catch (e) {
   done = true; clearTimeout(timer); clearInterval(idle);
-  console.log(JSON.stringify({ error: String(e && e.message || e), trace, logs }));
+  report({ error: String(e && e.message || e), trace, logs });
 }
 """
 
