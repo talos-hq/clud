@@ -196,7 +196,11 @@ pub fn read_markers(git_root: &Path) -> MarkerState {
 }
 
 pub fn read_markers_at(paths: &MarkerPaths) -> MarkerState {
-    if paths.done.is_file() {
+    read_allowed_markers(paths, true)
+}
+
+fn read_allowed_markers(paths: &MarkerPaths, accept_done: bool) -> MarkerState {
+    if accept_done && paths.done.is_file() {
         let body = std::fs::read_to_string(&paths.done).unwrap_or_default();
         return MarkerState::Done(body.trim().to_string());
     }
@@ -606,6 +610,10 @@ pub enum TokenState {
 /// mode the child writes directly to the user's terminal and we never see
 /// the bytes — for now, only the marker-file path is supported there.
 pub fn scan_completion_token(captured: &str) -> TokenState {
+    scan_allowed_completion_token(captured, true)
+}
+
+fn scan_allowed_completion_token(captured: &str, accept_done: bool) -> TokenState {
     const DONE_PREFIX: &str = "<<<CLUD_LOOP_DONE:";
     const BLOCKED_PREFIX: &str = "<<<CLUD_LOOP_BLOCKED:";
     const SUFFIX: &str = ">>>";
@@ -614,6 +622,9 @@ pub fn scan_completion_token(captured: &str) -> TokenState {
     for raw_line in captured.lines() {
         let line = raw_line.trim();
         let (state, payload) = if let Some(rest) = line.strip_prefix(DONE_PREFIX) {
+            if !accept_done {
+                continue;
+            }
             let Some(inner) = rest.strip_suffix(SUFFIX) else {
                 continue;
             };
@@ -645,8 +656,16 @@ pub fn scan_completion_token(captured: &str) -> TokenState {
 /// the marker file taking precedence. This is the loop-runner entry point
 /// for subprocess mode where stdout is captured into a buffer.
 pub fn read_markers_or_token(paths: &MarkerPaths, captured: &str) -> MarkerState {
-    match read_markers_at(paths) {
-        MarkerState::None => match scan_completion_token(captured) {
+    read_allowed_markers_or_token(paths, captured, true)
+}
+
+pub(crate) fn read_allowed_markers_or_token(
+    paths: &MarkerPaths,
+    captured: &str,
+    accept_done: bool,
+) -> MarkerState {
+    match read_allowed_markers(paths, accept_done) {
+        MarkerState::None => match scan_allowed_completion_token(captured, accept_done) {
             TokenState::Done(s) => MarkerState::Done(s),
             TokenState::Blocked(s) => MarkerState::Blocked(s),
             TokenState::None => MarkerState::None,

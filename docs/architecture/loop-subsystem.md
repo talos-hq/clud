@@ -36,6 +36,12 @@ already had it would keep it forever. See [skill-system.md](skill-system.md).
 A plain `clud --codex` session with no cross-route still has the external
 `clud --codex loop` / `--repeat` process-runner path described above.
 
+Set `--min-iterations N` on a direct marker-based loop to require a fresh
+DONE signal at or after iteration N. Earlier DONE signals are discarded.
+BLOCKED, child failures, and user interrupts can still stop the loop
+immediately. The minimum must fit within `--loop-count`. To set it in
+`loop.json`, use `min_iterations`.
+
 ## Component map
 
 - `command/builder.rs` — `build_launch_plan_for_target` builds the production

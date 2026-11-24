@@ -16,17 +16,30 @@ pub fn check_loop_markers(plan: &command::LaunchPlan, iteration: u32) -> Option<
 
 /// Whether [`check_loop_markers_with_output`] would end the loop, without
 /// printing, for a caller that must leave the alternate screen first.
-pub fn markers_end_loop(plan: &command::LaunchPlan, captured_output: &str) -> bool {
-    plan.loop_markers.as_ref().is_some_and(|markers| {
-        let paths = loop_spec::MarkerPaths {
-            done: std::path::PathBuf::from(&markers.done_path),
-            blocked: std::path::PathBuf::from(&markers.blocked_path),
-        };
-        !matches!(
-            loop_spec::read_markers_or_token(&paths, captured_output),
-            loop_spec::MarkerState::None
-        )
-    })
+pub fn markers_end_loop(plan: &command::LaunchPlan, iteration: u32, captured_output: &str) -> bool {
+    !matches!(
+        marker_state(plan, iteration, captured_output),
+        loop_spec::MarkerState::None
+    )
+}
+
+fn marker_state(
+    plan: &command::LaunchPlan,
+    iteration: u32,
+    captured_output: &str,
+) -> loop_spec::MarkerState {
+    let Some(markers) = plan.loop_markers.as_ref() else {
+        return loop_spec::MarkerState::None;
+    };
+    let paths = loop_spec::MarkerPaths {
+        done: std::path::PathBuf::from(&markers.done_path),
+        blocked: std::path::PathBuf::from(&markers.blocked_path),
+    };
+    loop_spec::read_allowed_markers_or_token(
+        &paths,
+        captured_output,
+        iteration >= markers.min_iterations.unwrap_or(1),
+    )
 }
 
 /// Same as [`check_loop_markers`] but also scans `captured_output` for the
@@ -41,12 +54,7 @@ pub fn check_loop_markers_with_output(
     iteration: u32,
     captured_output: &str,
 ) -> Option<i32> {
-    let markers = plan.loop_markers.as_ref()?;
-    let paths = loop_spec::MarkerPaths {
-        done: std::path::PathBuf::from(&markers.done_path),
-        blocked: std::path::PathBuf::from(&markers.blocked_path),
-    };
-    match loop_spec::read_markers_or_token(&paths, captured_output) {
+    match marker_state(plan, iteration, captured_output) {
         loop_spec::MarkerState::Done(summary) => {
             if summary.is_empty() {
                 eprintln!(
@@ -65,7 +73,22 @@ pub fn check_loop_markers_with_output(
             }
             Some(3)
         }
-        loop_spec::MarkerState::None => None,
+        loop_spec::MarkerState::None => discard_early_done(plan, iteration),
+    }
+}
+
+fn discard_early_done(plan: &command::LaunchPlan, iteration: u32) -> Option<i32> {
+    let markers = plan.loop_markers.as_ref()?;
+    if iteration >= markers.min_iterations? {
+        return None;
+    }
+    match std::fs::remove_file(&markers.done_path) {
+        Ok(()) => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            eprintln!("[clud loop] could not clear early DONE: {error}");
+            Some(1)
+        }
     }
 }
 

@@ -274,6 +274,8 @@ mod tests {
 pub struct LoopMarkers {
     pub done_path: String,
     pub blocked_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_iterations: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -784,6 +784,9 @@ pub struct LoopArgs {
     /// Maximum number of iterations.
     #[arg(long = "loop-count", default_value = "50")]
     pub loop_count: u32,
+    /// Earliest iteration that can accept DONE. BLOCKED can still stop the loop.
+    #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
+    pub min_iterations: Option<u32>,
     /// Force re-fetch of a cached GH issue/PR body.
     #[arg(long = "refresh")]
     pub refresh: bool,
@@ -2765,6 +2768,7 @@ pub(crate) const SPLITTER_VALUE_FLAGS: &[&str] = &[
     "--graphics",
     "--graphics-image",
     "--loop-count",
+    "--min-iterations",
     "--done",
     "--repeat",
     // `clud workflow <script> --args JSON` (#2471).

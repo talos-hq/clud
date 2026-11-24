@@ -122,6 +122,43 @@ def test_loop_stops_on_blocked_marker(
     assert "missing credentials" in result.stderr
 
 
+@pytest.mark.parametrize(
+    ("marker", "exit_code", "last_iteration"),
+    [
+        ("done", 0, 3),
+        ("blocked", 3, 1),
+    ],
+)
+def test_codex_loop_minimum_ignores_early_done_only(
+    clud_binary: Path,
+    mock_env: dict[str, str],
+    tmp_path: Path,
+    marker: str,
+    exit_code: int,
+    last_iteration: int,
+) -> None:
+    result = _run(
+        clud_binary,
+        "--codex",
+        "loop",
+        "--loop-count",
+        "4",
+        "--min-iterations",
+        "3",
+        "soldr task",
+        "--",
+        f"--mock-write-{marker}",
+        str(_marker_dir(tmp_path) / marker.upper()),
+        "--mock-write-marker-on-iter",
+        "1",
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, exit_code)
+    assert f"iteration {last_iteration}/4" in result.stderr
+    assert f"iteration {last_iteration + 1}/4" not in result.stderr
+
+
 def test_loop_no_markers_exhausts_iterations(
     clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
 ) -> None:
@@ -380,7 +417,7 @@ def test_invalid_loop_json_fails_fast(
     _assert_rc(result, 2)
     assert "invalid" in result.stderr
     assert "loop.json" in result.stderr
-    assert "iteration" not in result.stderr
+    assert "[clud] iteration " not in result.stderr
 
 
 @pytest.mark.parametrize("backend", ["--claude", "--codex"])

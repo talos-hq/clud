@@ -124,6 +124,31 @@ fn test_codex_loop_default_count() {
 }
 
 #[test]
+fn codex_loop_requires_fresh_done_at_minimum() {
+    let temp = tempfile::tempdir().unwrap();
+    let done = temp.path().join("DONE");
+    let p = plan(&[
+        "clud",
+        "--codex",
+        "loop",
+        "--min-iterations",
+        "2",
+        "--done",
+        done.to_str().unwrap(),
+        "soldr task",
+    ]);
+    std::fs::write(&done, "premature").unwrap();
+
+    assert!(!crate::loop_check::markers_end_loop(&p, 1, ""));
+    assert_eq!(crate::loop_check::check_loop_markers(&p, 1), None);
+    assert!(!done.exists());
+    assert_eq!(crate::loop_check::check_loop_markers(&p, 2), None);
+
+    std::fs::write(&done, "verified").unwrap();
+    assert_eq!(crate::loop_check::check_loop_markers(&p, 2), Some(0));
+}
+
+#[test]
 fn test_codex_loop_no_done_omits_contract() {
     let p = plan(&["clud", "--codex", "loop", "--no-done", "task"]);
     let prompt = last_arg(&p);

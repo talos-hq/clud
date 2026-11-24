@@ -34,6 +34,9 @@ pub struct LoopConfig {
     /// Iteration budget.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub loop_count: Option<u32>,
+    /// Earliest iteration that can accept DONE.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_iterations: Option<u32>,
     /// Custom DONE marker path.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub done: Option<String>,
@@ -125,6 +128,7 @@ impl LoopConfig {
             schema_version: SCHEMA_VERSION,
             task: cli.task.clone().or_else(|| self.task.clone()),
             loop_count: cli.loop_count.or(self.loop_count),
+            min_iterations: cli.min_iterations.or(self.min_iterations),
             done: cli.done.clone().or_else(|| self.done.clone()),
             no_done: cli.no_done.or(self.no_done),
             repeat: cli.repeat.clone().or_else(|| self.repeat.clone()),
@@ -141,6 +145,7 @@ impl LoopConfig {
         argv: &[String],
         task: Option<&str>,
         loop_count: u32,
+        min_iterations: Option<u32>,
         done: Option<&str>,
         no_done: bool,
         repeat: Option<&str>,
@@ -155,6 +160,7 @@ impl LoopConfig {
             schema_version: SCHEMA_VERSION,
             task: task.map(str::to_string),
             loop_count: explicit_count.then_some(loop_count),
+            min_iterations,
             done: done.map(str::to_string),
             no_done: no_done.then_some(true),
             repeat: repeat.map(str::to_string),

@@ -1597,6 +1597,10 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
     apply_loop_config(args);
 
     if let Some(args::Command::Loop(options)) = &args.command {
+        if let Err(error) = validate_loop_minimum(args, options) {
+            eprintln!("error: {error}");
+            std::process::exit(2);
+        }
         let args::LoopArgs {
             repeat,
             done,
@@ -1615,6 +1619,19 @@ fn prepare_launch_inputs(args: &mut args::Args, launch_target: backend::Resolved
     preflight_provider_credentials(args, launch_target);
 }
 
+fn validate_loop_minimum(args: &args::Args, options: &args::LoopArgs) -> Result<(), &'static str> {
+    let Some(minimum) = options.min_iterations else {
+        return Ok(());
+    };
+    if minimum == 0 || minimum > options.loop_count {
+        return Err("--min-iterations must be between 1 and --loop-count");
+    }
+    if options.no_done || daemon::experimental_enabled(args) {
+        return Err("--min-iterations requires a direct loop with DONE/BLOCKED markers enabled");
+    }
+    Ok(())
+}
+
 /// Overlay `loop.json` (explicit `--config` or `<git-root>/loop.json`)
 /// under the CLI flags, queue a file-supplied message, and record the
 /// resolved config under `.clud/loop/loop.json` (#2471). Invalid configs
@@ -1627,6 +1644,7 @@ fn apply_loop_config(args: &mut args::Args) {
     let args::LoopArgs {
         task,
         loop_count,
+        min_iterations,
         refresh,
         no_done,
         done,
@@ -1657,6 +1675,7 @@ fn apply_loop_config(args: &mut args::Args) {
         &argv,
         task.as_deref(),
         *loop_count,
+        *min_iterations,
         done.as_deref(),
         *no_done,
         repeat.as_deref(),
@@ -1674,6 +1693,7 @@ fn apply_loop_config(args: &mut args::Args) {
     }
     *task = resolved.task.clone();
     *loop_count = resolved.loop_count.unwrap_or(*loop_count);
+    *min_iterations = resolved.min_iterations;
     *done = resolved.done.clone();
     *no_done = resolved.no_done.unwrap_or(false);
     *repeat = resolved.repeat.clone();
@@ -2331,10 +2351,7 @@ fn print_dry_run_and_exit(
             clud::foreground_runtime::launch_context_plan_facts(plan).preview(&ambient)
         }),
         "transcript": args.transcript.as_ref().map(|p| p.to_string_lossy().to_string()),
-        "loop_markers": plan.loop_markers.as_ref().map(|m| serde_json::json!({
-            "done_path": m.done_path,
-            "blocked_path": m.blocked_path,
-        })),
+        "loop_markers": plan.loop_markers,
     });
     println!("{}", serde_json::to_string_pretty(&json).unwrap());
     std::process::exit(0);

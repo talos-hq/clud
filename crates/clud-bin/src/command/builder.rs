@@ -6,10 +6,10 @@ use crate::backend::{
 };
 use crate::codex_model::ModelSpec;
 use crate::graphics::GraphicsConfig;
-use crate::loop_spec::{done_marker_contract, git_root_from};
+use crate::loop_spec::git_root_from;
 use crate::provider_catalog;
 
-use super::loop_task::{resolve_loop_task, resolve_marker_paths};
+use super::loop_task::{launch_markers, marker_contract, resolve_loop_task, resolve_marker_paths};
 use super::prompts::{
     build_claude_do_goal, build_do_prompt, build_fix_prompt, build_grind_prompt, build_up_prompt,
     do_procedure, push_prompt, push_prompt_interactive, REBASE_PROMPT,
@@ -1125,7 +1125,7 @@ fn build_launch_plan_for_target_at(
                 let prompt_text = resolve_loop_task(t, &git_root, options.refresh);
                 task_summary = Some(summarize_task_name(&prompt_text, 50));
                 let done_contract = marker_paths.as_ref().map_or_else(String::new, |markers| {
-                    done_marker_contract(&markers.done, &markers.blocked)
+                    marker_contract(markers, options.min_iterations)
                 });
                 let message_contract = if marker_paths.is_some() || repeat_schedule.is_none() {
                     crate::loop_spec::next_message_contract(
@@ -1138,12 +1138,7 @@ fn build_launch_plan_for_target_at(
                 let final_prompt = format!("{prompt_text}{done_contract}{message_contract}{pace}");
                 push_prompt(&mut cmd, backend, final_prompt);
             }
-            if let Some(markers) = marker_paths {
-                loop_markers = Some(LoopMarkers {
-                    done_path: markers.done.to_string_lossy().to_string(),
-                    blocked_path: markers.blocked.to_string_lossy().to_string(),
-                });
-            }
+            loop_markers = marker_paths.map(|paths| launch_markers(paths, options.min_iterations));
         }
         Some(Command::Up { message, publish }) => {
             if seed_interactive_builtin {
