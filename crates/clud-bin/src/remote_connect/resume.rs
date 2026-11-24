@@ -10,7 +10,8 @@
 use super::transport::{self, ConnectError, Socket};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use std::sync::mpsc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc};
 use std::time::{Duration, Instant};
 use tungstenite::protocol::frame::CloseFrame;
 use tungstenite::Message;
@@ -224,6 +225,7 @@ pub(super) struct Reconnector {
     deadline: Instant,
     next: Instant,
     pending: Option<mpsc::Receiver<Attempt>>,
+    cancelled: Arc<AtomicBool>,
 }
 
 /// What [`Reconnector::poll`] found.
@@ -234,6 +236,12 @@ pub(super) enum Poll {
     GaveUp,
     /// Final: the new socket would not be safely encrypted.
     Insecure(String),
+}
+
+impl Drop for Reconnector {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+    }
 }
 
 impl Reconnector {
@@ -252,6 +260,7 @@ impl Reconnector {
             deadline: now + window(),
             next: now + first,
             pending: None,
+            cancelled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -282,15 +291,23 @@ impl Reconnector {
         let (tx, rx) = mpsc::sync_channel(1);
         let session = self.session.clone();
         let base = self.base.clone();
-        // Detached: an abandoned attempt ends at its own handshake timeout.
+        let control = transport::DialControl {
+            deadline: self.deadline,
+            cancelled: Arc::clone(&self.cancelled),
+        };
+        // A blocked OS DNS lookup can outlive this worker, but it never
+        // upgrades a WebSocket after cancellation on its own.
         std::thread::spawn(move || {
             // A fresh exchange: every socket has its own ephemeral keys.
-            let outcome = match transport::connect_socket(&session) {
+            let outcome = match transport::reconnect_socket(&session, &control) {
                 Ok(socket) => Attempt::Connected(Box::new(socket)),
-                Err(ConnectError::Refused) => {
+                Err(ConnectError::Refused)
+                    if !control.cancelled.load(Ordering::Relaxed)
+                        && Instant::now() < control.deadline =>
+                {
                     ended(&base, &session).map_or(Attempt::Failed, Attempt::Ended)
                 }
-                Err(ConnectError::Unreachable(_)) => Attempt::Failed,
+                Err(ConnectError::Unreachable(_) | ConnectError::Refused) => Attempt::Failed,
                 Err(ConnectError::Insecure(message)) => Attempt::Insecure(message),
             };
             let _ = tx.send(outcome);

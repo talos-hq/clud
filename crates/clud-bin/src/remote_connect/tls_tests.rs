@@ -167,7 +167,7 @@ fn a_tls_session_reconnects_using_its_previous_peer_after_dns_fails() {
     });
     let tls = || Ok(client_config());
     let dns_down = |_: &str, _: u16, _: Duration| Err(io::ErrorKind::NotFound.into());
-    assert!(connect_socket_with(&session, dns_down, tls).is_err());
+    assert!(connect_socket_with(&session, dns_down, tls, None).is_err());
     drop(
         connect_socket_with(
             &session,
@@ -177,10 +177,11 @@ fn a_tls_session_reconnects_using_its_previous_peer_after_dns_fails() {
                 Ok(vec![address])
             },
             tls,
+            None,
         )
         .unwrap(),
     );
-    let mut resumed = connect_socket_with(&session.clone(), dns_down, tls).unwrap();
+    let mut resumed = connect_socket_with(&session.clone(), dns_down, tls, None).unwrap();
     assert!(matches!(
         resumed.read().unwrap(),
         tungstenite::Message::Text(_)
@@ -190,11 +191,30 @@ fn a_tls_session_reconnects_using_its_previous_peer_after_dns_fails() {
 
 #[test]
 fn a_stalled_tls_candidate_does_not_block_a_healthy_candidate() {
+    assert_stalled_candidate_falls_back(
+        TcpListener::bind("127.0.0.1:0").unwrap(),
+        TcpListener::bind("127.0.0.1:0").unwrap(),
+    );
+}
+
+#[test]
+fn either_address_family_can_rescue_a_stalled_peer() {
+    // Some supported test environments disable IPv6 at the OS level.
+    let Ok(ipv6) = TcpListener::bind("[::1]:0") else {
+        return;
+    };
+    let ipv4 = TcpListener::bind("127.0.0.1:0").unwrap();
+    assert_stalled_candidate_falls_back(ipv6, ipv4);
+
+    let ipv4 = TcpListener::bind("127.0.0.1:0").unwrap();
+    let ipv6 = TcpListener::bind("[::1]:0").unwrap();
+    assert_stalled_candidate_falls_back(ipv4, ipv6);
+}
+
+fn assert_stalled_candidate_falls_back(stalled: TcpListener, healthy: TcpListener) {
     use super::super::transport::{connect_socket_with, Session};
 
-    let stalled = TcpListener::bind("127.0.0.1:0").unwrap();
     let first = stalled.local_addr().unwrap();
-    let healthy = TcpListener::bind("127.0.0.1:0").unwrap();
     let second = healthy.local_addr().unwrap();
     let session: Session = serde_json::from_value(serde_json::json!({
         "keyword": "ABCDE-FGH23",
@@ -221,6 +241,7 @@ fn a_stalled_tls_candidate_does_not_block_a_healthy_candidate() {
         &session,
         |_, _, _| Ok(vec![first, second]),
         || Ok(client_config()),
+        None,
     )
     .unwrap();
     assert!(matches!(
