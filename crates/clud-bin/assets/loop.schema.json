@@ -10,6 +10,7 @@
     "schema_version": { "const": 1 },
     "task": { "type": "string", "description": "Prompt text, path to a local file, or a GitHub issue/PR URL." },
     "loop_count": { "type": "integer", "minimum": 1, "description": "Iteration budget." },
+    "min_iterations": { "type": "integer", "minimum": 1, "description": "Earliest iteration that can accept DONE." },
     "done": { "type": "string", "description": "Custom DONE marker path." },
     "no_done": { "type": "boolean", "description": "Disable the DONE/BLOCKED marker contract." },
     "repeat": { "type": "string", "description": "Re-run interval such as 30s, 5m, 1h." },

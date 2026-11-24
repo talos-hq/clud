@@ -665,7 +665,8 @@ pub(super) fn loop_continues(
     match outcome {
         ProcessOutcome::Restart => true,
         ProcessOutcome::Exited(0) => {
-            iteration < plan.iterations && !crate::loop_check::markers_end_loop(plan, captured)
+            iteration < plan.iterations
+                && !crate::loop_check::markers_end_loop(plan, iteration, captured)
         }
         _ => false,
     }

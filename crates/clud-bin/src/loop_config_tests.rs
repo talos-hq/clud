@@ -5,6 +5,7 @@ fn full() -> LoopConfig {
         schema_version: SCHEMA_VERSION,
         task: Some("t".into()),
         loop_count: Some(3),
+        min_iterations: Some(2),
         done: Some("D".into()),
         no_done: Some(false),
         repeat: Some("5m".into()),
@@ -17,7 +18,18 @@ fn full() -> LoopConfig {
 #[test]
 fn from_cli_only_sets_explicit_values() {
     let argv: Vec<String> = vec!["clud".into(), "loop".into(), "t".into()];
-    let cli = LoopConfig::from_cli(&argv, Some("t"), 50, None, false, None, None, false, None);
+    let cli = LoopConfig::from_cli(
+        &argv,
+        Some("t"),
+        50,
+        None,
+        None,
+        false,
+        None,
+        None,
+        false,
+        None,
+    );
     assert_eq!(
         cli.loop_count, None,
         "clap default must not override the file"
@@ -28,8 +40,20 @@ fn from_cli_only_sets_explicit_values() {
     let argv: Vec<String> = ["clud", "loop", "--loop-count=50"]
         .map(String::from)
         .to_vec();
-    let cli = LoopConfig::from_cli(&argv, None, 50, None, true, None, None, true, Some("m"));
+    let cli = LoopConfig::from_cli(
+        &argv,
+        None,
+        50,
+        Some(20),
+        None,
+        true,
+        None,
+        None,
+        true,
+        Some("m"),
+    );
     assert_eq!(cli.loop_count, Some(50));
+    assert_eq!(cli.min_iterations, Some(20));
     assert_eq!(cli.no_done, Some(true));
     assert_eq!(cli.refresh, Some(true));
     assert_eq!(cli.message.as_deref(), Some("m"));
@@ -152,7 +176,18 @@ fn cli_interval_overrides_the_file() {
     let argv: Vec<String> = ["clud", "loop", "--interval", "2h"]
         .map(String::from)
         .to_vec();
-    let cli = LoopConfig::from_cli(&argv, None, 50, None, false, None, Some("2h"), false, None);
+    let cli = LoopConfig::from_cli(
+        &argv,
+        None,
+        50,
+        None,
+        None,
+        false,
+        None,
+        Some("2h"),
+        false,
+        None,
+    );
     assert_eq!(cli.interval.as_deref(), Some("2h"));
     let merged = file.overridden_by(&cli);
     assert_eq!(merged.interval.as_deref(), Some("2h"));

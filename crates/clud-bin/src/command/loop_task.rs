@@ -1,9 +1,28 @@
 use std::path::Path;
 
+use super::types::LoopMarkers;
 use crate::loop_spec::{
     self, blocked_path_from_done, cache_path, classify, fetch_via_gh, render_cache,
     resolve_current_repo, GhKind, MarkerPaths, TaskSpec,
 };
+
+pub(super) fn marker_contract(paths: &MarkerPaths, minimum: Option<u32>) -> String {
+    let mut contract = loop_spec::done_marker_contract(&paths.done, &paths.blocked);
+    if let Some(minimum) = minimum {
+        contract.push_str(&format!(
+            "\nDo not signal DONE before iteration {minimum}. Check the current iteration in .clud/loop/info.json at the git root. Until then, record progress and return control for the next iteration.\n"
+        ));
+    }
+    contract
+}
+
+pub(super) fn launch_markers(paths: MarkerPaths, min_iterations: Option<u32>) -> LoopMarkers {
+    LoopMarkers {
+        done_path: paths.done.to_string_lossy().into_owned(),
+        blocked_path: paths.blocked.to_string_lossy().into_owned(),
+        min_iterations,
+    }
+}
 
 pub(super) fn resolve_marker_paths(
     cwd: &Path,
