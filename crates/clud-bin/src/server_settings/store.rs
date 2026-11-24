@@ -25,7 +25,7 @@ pub(crate) const REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// Longest a launch waits for a refresh before continuing on the cache.
 pub(crate) const REFRESH_WAIT: Duration = Duration::from_millis(750);
 /// The refresh thread's own limit; it may outlive the launch's wait.
-const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
+pub(super) const FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 /// Clock skew tolerated before a future file mtime stops counting as "now".
 const MTIME_SKEW: Duration = Duration::from_secs(60);
 

@@ -14,6 +14,7 @@
 
 mod json;
 mod sections;
+pub(crate) use sections::CodexCompatibility;
 mod store;
 
 use std::sync::{Arc, OnceLock};
@@ -260,6 +261,23 @@ pub fn built_in<T: Section>() -> T {
 pub fn snapshot() -> &'static Snapshot {
     static SNAPSHOT: OnceLock<Snapshot> = OnceLock::new();
     SNAPSHOT.get_or_init(load_for_process)
+}
+
+pub(crate) const REFRESH_SECTION_TIMEOUT: std::time::Duration = store::FETCH_TIMEOUT;
+
+/// Refresh one section without changing the process snapshot or falling back
+/// to an older value on an invalid response. No upstream credentials are sent.
+pub(crate) fn refresh_section<T: Section>() -> Option<T> {
+    if cfg!(test) || is_disabled(std::env::var(DISABLE_ENV).ok().as_deref()) {
+        return None;
+    }
+    let url = std::env::var(URL_ENV)
+        .ok()
+        .filter(|url| !url.trim().is_empty())
+        .unwrap_or_else(|| SERVER_URL.to_string());
+    let bytes = store::fetch_url(&url).ok()?;
+    let document = Document::parse(&bytes).ok()?;
+    decode_section(document.sections.get(T::KEY)?).ok()
 }
 
 fn load_for_process() -> Snapshot {

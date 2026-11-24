@@ -326,6 +326,9 @@ impl PipelineError {
                 // real exhaustion went unnoticed until the balance was gone.
                 let mut message = match failure.class() {
                     FailureClass::Exhausted => QUOTA_EXHAUSTED_MESSAGE.to_string(),
+                    _ if failure.is_model_not_found() => {
+                        "upstream rejected the selected Codex model. Update clud or choose a model available to this account".to_string()
+                    }
                     _ if failure.status() == 429 => {
                         "upstream rate limited this request".to_string()
                     }
