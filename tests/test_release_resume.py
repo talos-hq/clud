@@ -71,6 +71,25 @@ def test_complete_failed_original_run_is_accepted(event):
     release_resume.require_run(run, jobs, TAG, SHA)
 
 
+def test_nested_build_runner_selection_is_not_build_proof():
+    run, jobs = proof()
+    for job in list(jobs):
+        if job["name"].startswith(("Build wheels (", "Build static musl clud (")):
+            jobs.append(
+                {
+                    "name": job["name"] + " / Select runner (${{ inputs.target }})",
+                    "conclusion": "skipped",
+                }
+            )
+    release_resume.require_run(run, jobs, TAG, SHA)
+    for prefix in ("Build wheels (", "Build static musl clud ("):
+        build = next(job for job in jobs if job["name"].startswith(prefix))
+        jobs.remove(build)
+        with pytest.raises(ValueError, match="original release proof is incomplete"):
+            release_resume.require_run(run, jobs, TAG, SHA)
+        jobs.append(build)
+
+
 def test_paginated_original_proof_and_dispatch_origin(monkeypatch):
     run, jobs = proof()
     monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
@@ -142,6 +161,11 @@ def test_workflow_resume_still_runs_full_ci_and_public_acceptance():
     assert "mode: released" in text
     assert "needs.candidate-acceptance-gate.result == 'success'" in text
     assert "needs.verify-prior-public.result == 'success'" in text
+    build = text.split("  build-install-site:\n", 1)[1].split("\n  deploy-install-site:", 1)[0]
+    assert (
+        "ref: ${{ inputs.resume_run_id && github.sha || needs.preflight.outputs.candidate_sha }}"
+        in build
+    )
 
 
 @pytest.mark.parametrize(
@@ -153,6 +177,7 @@ def test_workflow_resume_still_runs_full_ci_and_public_acceptance():
         "src/clud/__init__.py",
         "pyproject.toml",
         "build.sh",
+        "installer/site.py",
     ],
 )
 def test_resume_refuses_changes_to_production_inputs(path):
@@ -164,6 +189,7 @@ def test_resume_allows_only_acceptance_harness_repairs():
     release_resume.require_recovery_changes(
         [
             "ci/installer_public_distro_guest.sh",
+            "installer/verify_site.py",
             ".github/workflows/auto-release.yml",
             "tests/test_release_resume.py",
             "docs/architecture/ci.md",
@@ -218,6 +244,8 @@ def provenance_repo(tmp_path):
     git("commit", "-m", "source")
     source = git("rev-parse", "HEAD")
     (tmp_path / "ci/helper.py").write_text("repaired harness")
+    (tmp_path / "installer").mkdir()
+    (tmp_path / "installer/verify_site.py").write_text("repaired Pages verifier")
     git("add", ".")
     git("commit", "-m", "harness repair")
     harness = git("rev-parse", "HEAD")

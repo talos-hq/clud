@@ -84,12 +84,13 @@ eight builds, native wheel smoke tests, signatures and anonymous byte proof
 all succeeded. Its saved release ID, asset IDs, sizes and digests must still
 match the public prerelease, and the prior stable release and Pages digest
 must be unchanged. Code and build configuration may not differ from the immutable tag;
-only reviewed CI, test and documentation repairs are allowed, plus independent
-refreshes of the two exact model-data files `openrouter-catalog.json` and
+only reviewed CI, test, documentation and installer Pages verifier repairs
+are allowed, plus independent refreshes of the two exact model-data files `openrouter-catalog.json` and
 `server-settings.json` under `crates/clud-bin/assets`. Those data differences
 are never built or shipped by recovery: fresh full CI and original artifacts
-retain the exact tag's original data. No other asset or neighboring path is
-exempt.
+retain the exact tag's original data. The Pages verifier exception applies
+only to `installer/verify_site.py`. The original tag still supplies the
+release bytes, catalog generator and page renderer.
 
 Recovery repeats full CI on the exact original tag inside the recovery run.
 The callable CI provenance guard permits the reviewed harness difference only
