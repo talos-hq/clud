@@ -70,7 +70,8 @@
     "issue": "Uploading the Linux test bundle took a median 153s on Dell and 3s on GitHub-hosted. The same-commit jobs uploaded nearly identical byte counts.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45279642406/job/138060633046",
-      "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594"
+      "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594",
+      "https://github.com/talos-hq/clud/actions/runs/45530872489/job/138925895989"
     ],
     "measurements": {
       "dell_jobs": 41,
@@ -80,9 +81,14 @@
       "dell_matched_bundle_bytes": 174198277,
       "hosted_matched_bundle_bytes": 174180114,
       "zstd_benchmark_bytes": 135922424,
-      "compression_seconds_on_workstation": 3.63
+      "compression_seconds_on_workstation": 3.63,
+      "dell_matched_bundle_reported_progress_seconds": 133.09,
+      "hosted_matched_bundle_reported_progress_seconds": 1.16,
+      "dell_matched_bundle_longest_progress_gap_seconds": 37.03,
+      "hosted_matched_bundle_longest_progress_gap_seconds": 0.2,
+      "later_dell_bundle_longest_progress_gap_seconds": 23.03
     },
     "status": "confirmed",
-    "resolution": "Prefer long-window zstd for Dell builds with zstd installed. A real archived bundle shrank 22% in a local benchmark. Measure the new upload on a reserved Dell runner and continue diagnosis of the remaining transfer latency."
+    "resolution": "Prefer long-window zstd for Dell builds with zstd installed. A real archived bundle shrank 22% in a local benchmark. Measure the new upload on a reserved Dell runner and continue diagnosis of the remaining transfer latency. The matched Dell upload paused up to 37.03 seconds between progress updates. Those gaps do not distinguish file I/O from transfer delays."
   }
 ]
