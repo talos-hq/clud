@@ -132,5 +132,19 @@
     },
     "status": "confirmed",
     "resolution": "Verified-reuse main CI passed on Dell with both artifact steps skipped. A Dell queue build published a zstd bundle 19.4% smaller than the hosted gzip bundle from the same tree, and all four hosted test jobs unpacked it and passed. The compressed upload still took 130 seconds. The Dell and workstation shared a public IPv4 address and each uploaded 16 MiB of synthetic data to Cloudflare at roughly 8 to 11 Mbit/s. The Dell reached 514 Mbit/s over the LAN. The measurements point to a shared internet upload constraint. Locating the limiting link requires gateway or provider telemetry."
+  },
+  {
+    "id": "CLUD-DELL-08",
+    "issue": "A reserved Dell build downloaded a GitHub virtual environment whose Python symlink pointed at another runner slot. uv discarded the environment and downloaded its packages again.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45557453838/job/139013548548"
+    ],
+    "measurements": {
+      "discarded_venv_archive_bytes": 65023791,
+      "reported_package_download_mib_at_least": 60.7,
+      "uncached_uv_sync_seconds": 38.4
+    },
+    "status": "confirmed",
+    "resolution": "Reserved Dell builds keep a repository-scoped uv package cache in the runner's persistent tool directory. uv creates a fresh virtual environment with the local interpreter and reuses cached packages across checkouts on that slot. Hosted builds keep the GitHub virtual environment cache. Compare consecutive reserved builds on the same slot to verify the avoided downloads."
   }
 ]

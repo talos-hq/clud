@@ -1214,6 +1214,9 @@ test runners can unpack either encoding, and other builders keep gzip.
 A main run that reuses the queue's unit-test results packs and uploads the
 bundle only in extended or full CI, where integration and harness tests
 still consume it. All modes compile the same inputs to warm the build cache.
+Reserved Dell builds build a fresh Python environment from a repository-scoped
+uv package cache under the persistent runner tool directory. A warm slot can
+reuse the packages even though every job starts with a clean checkout.
 To disable Dell routing, delete the repository variable
 `CLUD_LINUX_X64_BUILD_RUNNER`. To run the selector itself on GitHub-hosted
 runners, unset the organization variable `FORGE_QUICK_LABELS`.
