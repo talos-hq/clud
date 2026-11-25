@@ -18,10 +18,18 @@
       "https://github.com/forge-ci/ci.yml/pull/567",
       "https://github.com/talos-hq/clud/actions/runs/45546457002/job/138977366408",
       "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983412521",
-      "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530"
+      "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530",
+      "https://github.com/talos-hq/clud/actions/runs/45556951874/job/139011396813",
+      "https://github.com/forge-ci/gh-runner/pull/134"
     ],
+    "measurements_seconds": {
+      "runner_readiness_deadline": 90,
+      "docker_start_on_successful_reservation": 17.169,
+      "docker_start_on_expired_reservation": 100.672,
+      "github_runner_registration_on_expired_reservation": 1.213
+    },
     "status": "confirmed",
-    "resolution": "Use a broker reservation and fall back to hosted Ubuntu when the reservation is declined or the runner does not come online. The pull request and merge queue runs both used hosted fallback. The main push successfully reserved a Dell runner in 71 seconds, and the build job started on the reserved runner one second after job creation."
+    "resolution": "Clud now reserves a runner through the broker and falls back to hosted Ubuntu after a denial or missed readiness deadline. Both branches passed in live CI. One granted reservation expired while Docker spent 100.7 seconds starting the runner on FSX3MN2. The host reported high disk I/O pressure during that start. Its dispatcher polls the broker in a separate worker, and the underlying Docker startup latency remains a host-level limit."
   },
   {
     "id": "CLUD-DELL-03",
@@ -62,16 +70,24 @@
       "https://github.com/forge-ci/soldr/pull/4223",
       "https://github.com/forge-ci/setup-soldr/pull/696",
       "https://github.com/forge-ci/gh-runner/pull/85",
-      "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530"
+      "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530",
+      "https://github.com/talos-hq/clud/actions/runs/45557453838/job/139013548548",
+      "https://github.com/talos-hq/clud/actions/runs/45555628801/job/139007044967"
     ],
     "measurements_seconds": {
       "dell": 1240,
       "github_hosted": 758,
       "reserved_dell": 1526,
-      "reserved_dell_same_commit_hosted": 957
+      "reserved_dell_same_commit_hosted": 957,
+      "cold_dependency_cook": 321.2,
+      "warm_dependency_cook": 39.7,
+      "warm_reserved_dell": 709,
+      "warm_reserved_dell_selector": 96,
+      "warm_test_same_tree_hosted": 731,
+      "warm_test_same_tree_hosted_selector": 14
     },
     "status": "confirmed",
-    "resolution": "The cache audit identified upstream store eviction and stale lock ownership, plus absolute compile paths that prevent a hosted seed from serving Dell compiles. All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses. It separately missed the build and dependency archives, saved a new local dependency archive, and took 1,526 seconds. The same commit took 957 seconds on hosted CI with a different event and cache state. Verify dependency archive reuse on a subsequent reservation and measure the effect on total time."
+    "resolution": "All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses, then saved a new local dependency archive. A later reservation on the same slot restored 4,840 files and skipped the full dependency cook. The warm Dell build took 709 seconds after a 96-second selector job. The hosted build of the same tree took 731 seconds after a 14-second selector job. Workflow events and cache states differed. Hosted-to-Dell path parity remains tracked upstream."
   },
   {
     "id": "CLUD-DELL-07",
@@ -81,7 +97,10 @@
       "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594",
       "https://github.com/talos-hq/clud/actions/runs/45530872489/job/138925895989",
       "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530",
-      "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983490395"
+      "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983490395",
+      "https://github.com/talos-hq/clud/actions/runs/45557453838",
+      "https://github.com/talos-hq/clud/actions/runs/45559484528/job/139020246565",
+      "https://github.com/cloudflare/speedtest"
     ],
     "measurements": {
       "dell_jobs": 41,
@@ -102,9 +121,16 @@
       "reserved_dell_upload_sample_seconds": 144,
       "reserved_dell_upload_container_tx_bytes": 180424106,
       "reserved_dell_upload_container_block_reads_bytes": 4542464,
-      "reserved_dell_upload_container_tx_mbit_per_second": 10.02
+      "reserved_dell_upload_container_tx_mbit_per_second": 10.02,
+      "live_dell_zstd_artifact_bytes": 141098018,
+      "live_same_tree_hosted_gzip_artifact_bytes": 174981996,
+      "live_dell_zstd_upload_seconds": 130,
+      "live_same_tree_hosted_gzip_upload_seconds": 4,
+      "dell_to_workstation_lan_mbit_per_second": 514,
+      "dell_cloudflare_upload_mbit_per_second": 11.3,
+      "workstation_cloudflare_upload_mbit_per_second": 8.3
     },
     "status": "confirmed",
-    "resolution": "Omit the bundle when a verified-reuse build has no test consumers. Prefer long-window zstd when a Dell build needs to publish it. A real archived bundle shrank 22% in a local benchmark. In a reserved Dell run, the runner's network interface transmitted 180 MB while its block devices read 4.5 MB during the same 144-second upload sample. The same-commit hosted upload completed in 2 seconds. These measurements point to the network transfer for that run. The location of the bottleneck along the network path remains open."
+    "resolution": "Verified-reuse main CI passed on Dell with both artifact steps skipped. A Dell queue build published a zstd bundle 19.4% smaller than the hosted gzip bundle from the same tree, and all four hosted test jobs unpacked it and passed. The compressed upload still took 130 seconds. The Dell and workstation shared a public IPv4 address and each uploaded 16 MiB of synthetic data to Cloudflare at roughly 8 to 11 Mbit/s. The Dell reached 514 Mbit/s over the LAN. The measurements point to a shared internet upload constraint. Locating the limiting link requires gateway or provider telemetry."
   }
 ]
