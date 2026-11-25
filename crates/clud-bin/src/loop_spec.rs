@@ -551,6 +551,12 @@ equivalent. Writing the marker file is still strongly preferred.\n\
 Do not write DONE prematurely — only after you are confident the work is \
 complete. Otherwise, continue working — you will be re-invoked.\n\
 \n\
+DONE is a completion claim. Record each original criterion, its verified outcome, \
+remaining findings and justified exclusions. For an open-ended audit, record the \
+audit boundary and why remaining candidates need no further work. Evidence for the \
+latest change alone may cover only part of the task. A separate verifier checks \
+the claim against the original task. Rejections are included in the next iteration's prompt.\n\
+\n\
 DONE terminates the entire loop, not just the current iteration. The original \
 task's explicit completion conditions take precedence over this generic \
 contract. Completing one item or one iteration is progress, not permission \
@@ -614,63 +620,61 @@ pub fn scan_completion_token(captured: &str) -> TokenState {
 }
 
 fn scan_allowed_completion_token(captured: &str, accept_done: bool) -> TokenState {
+    captured.lines().fold(TokenState::None, |last, line| {
+        if line.starts_with('{') && line.contains("<<<CLUD_LOOP_") {
+            let event = serde_json::from_str::<serde_json::Value>(line).ok();
+            if let Some(event) =
+                event.filter(|event| event["type"] == "result" && event["is_error"] != true)
+            {
+                if let Some(text) = event["result"].as_str() {
+                    return text.lines().fold(last, |state, line| {
+                        scan_token_line(line, accept_done).unwrap_or(state)
+                    });
+                }
+            }
+        }
+        scan_token_line(line, accept_done).unwrap_or(last)
+    })
+}
+
+fn scan_token_line(line: &str, accept_done: bool) -> Option<TokenState> {
     const DONE_PREFIX: &str = "<<<CLUD_LOOP_DONE:";
     const BLOCKED_PREFIX: &str = "<<<CLUD_LOOP_BLOCKED:";
     const SUFFIX: &str = ">>>";
-
-    let mut last: TokenState = TokenState::None;
-    for raw_line in captured.lines() {
-        let line = raw_line.trim();
-        let (state, payload) = if let Some(rest) = line.strip_prefix(DONE_PREFIX) {
-            if !accept_done {
-                continue;
-            }
-            let Some(inner) = rest.strip_suffix(SUFFIX) else {
-                continue;
-            };
-            (
-                TokenState::Done(String::new()),
-                inner.trim().trim_end_matches('>').trim().to_string(),
-            )
-        } else if let Some(rest) = line.strip_prefix(BLOCKED_PREFIX) {
-            let Some(inner) = rest.strip_suffix(SUFFIX) else {
-                continue;
-            };
-            (
-                TokenState::Blocked(String::new()),
-                inner.trim().trim_end_matches('>').trim().to_string(),
-            )
-        } else {
-            continue;
-        };
-        last = match state {
-            TokenState::Done(_) => TokenState::Done(payload),
-            TokenState::Blocked(_) => TokenState::Blocked(payload),
-            TokenState::None => TokenState::None,
-        };
+    let line = line.trim();
+    let payload = |rest: &str| {
+        rest.strip_suffix(SUFFIX)
+            .map(|inner| inner.trim().trim_end_matches('>').trim().to_string())
+    };
+    if let Some(rest) = line.strip_prefix(DONE_PREFIX).filter(|_| accept_done) {
+        return payload(rest).map(TokenState::Done);
     }
-    last
+    payload(line.strip_prefix(BLOCKED_PREFIX)?).map(TokenState::Blocked)
 }
 
 /// Read marker state from disk OR from a token in `captured` output, with
 /// the marker file taking precedence. This is the loop-runner entry point
 /// for subprocess mode where stdout is captured into a buffer.
 pub fn read_markers_or_token(paths: &MarkerPaths, captured: &str) -> MarkerState {
-    read_allowed_markers_or_token(paths, captured, true)
+    read_allowed_markers_or_token(paths, captured, true).0
 }
 
+/// Return the marker and whether it came from a file.
 pub(crate) fn read_allowed_markers_or_token(
     paths: &MarkerPaths,
     captured: &str,
     accept_done: bool,
-) -> MarkerState {
+) -> (MarkerState, bool) {
     match read_allowed_markers(paths, accept_done) {
-        MarkerState::None => match scan_allowed_completion_token(captured, accept_done) {
-            TokenState::Done(s) => MarkerState::Done(s),
-            TokenState::Blocked(s) => MarkerState::Blocked(s),
-            TokenState::None => MarkerState::None,
-        },
-        state => state,
+        MarkerState::None => (
+            match scan_allowed_completion_token(captured, accept_done) {
+                TokenState::Done(s) => MarkerState::Done(s),
+                TokenState::Blocked(s) => MarkerState::Blocked(s),
+                TokenState::None => MarkerState::None,
+            },
+            false,
+        ),
+        state => (state, true),
     }
 }
 

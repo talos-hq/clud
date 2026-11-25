@@ -26,6 +26,7 @@ const CODEX_BRIDGE_PROBE_REQUEST: &str = include_str!("../assets/codex_bridge_pr
 
 mod board;
 mod codex_app_server;
+mod loop_verifier;
 mod platform;
 mod prompt_tools;
 mod serve;
@@ -59,6 +60,9 @@ fn main() {
             eprintln!("mock Codex app-server failed: {error}");
             std::process::exit(1);
         }
+        return;
+    }
+    if loop_verifier::run(&args) {
         return;
     }
 
@@ -426,7 +430,7 @@ fn main() {
         .map(|p| p.with_file_name("iter-count"));
     let iteration = bump_iter_counter(counter_path.as_deref());
 
-    if write_marker_on_iter > 0 && iteration >= write_marker_on_iter {
+    if loop_verifier::should_write_marker(write_marker_on_iter, iteration) {
         if let Some(path) = write_done_at.as_ref() {
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);

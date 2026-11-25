@@ -331,7 +331,62 @@ pub fn build_launch_plan_for_target(
     backend_path: &str,
 ) -> LaunchPlan {
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    build_launch_plan_for_target_at(args, target, backend_path, &cwd)
+    let mut plan = build_launch_plan_for_target_at(args, target, backend_path, &cwd);
+    if let Some(verification) = plan
+        .loop_markers
+        .as_mut()
+        .and_then(|markers| markers.verification.as_mut())
+    {
+        verification.command = build_loop_verifier_command(args, target, backend_path, &cwd);
+    }
+    plan
+}
+
+fn build_loop_verifier_command(
+    args: &Args,
+    target: ResolvedLaunchTarget,
+    backend_path: &str,
+    cwd: &Path,
+) -> Vec<String> {
+    let mut judge = args.clone();
+    judge.command = None;
+    judge.prompt = Some(String::new());
+    judge.message = None;
+    judge.continue_session = false;
+    judge.resume = None;
+    judge.pty = false;
+    judge.subprocess = true;
+    judge.passthrough.clear();
+    judge.no_land = true;
+    judge.safe = true;
+    judge.unattended = true;
+    judge.allow_secrets = false;
+    judge.computer_use = false;
+    judge.no_computer_use = true;
+    let mut plan = build_launch_plan_for_target_at(&judge, target, backend_path, cwd);
+    if !plan.prompt_summary {
+        crate::prompt_output::configure_command(&mut plan.command, plan.backend, &[]);
+    }
+    let extra: &[&str] = match plan.backend {
+        Backend::Codex => &["--sandbox", "read-only"],
+        Backend::DeepSeek => &["--json"],
+        Backend::Claude | Backend::OpenCode => &[],
+    };
+    let index = plan.command.len() - 1;
+    plan.command
+        .splice(index..index, extra.iter().map(|arg| (*arg).to_owned()));
+    plan.command
+}
+
+fn add_loop_stream_flags(cmd: &mut Vec<String>, markers: Option<&mut LoopMarkers>) {
+    let Some(index) = cmd.iter().position(|arg| arg == "-p") else {
+        return;
+    };
+    let flags = ["--output-format", "stream-json", "--verbose"];
+    if let Some(verification) = markers.and_then(|markers| markers.verification.as_mut()) {
+        verification.worker_prompt_index += flags.len();
+    }
+    cmd.splice(index..index, flags.map(str::to_owned));
 }
 
 /// Build one daemon-owned headless turn through the canonical launch builder.
@@ -1137,8 +1192,16 @@ fn build_launch_plan_for_target_at(
                 let pace = crate::loop_interval::contract_for(loop_interval_secs);
                 let final_prompt = format!("{prompt_text}{done_contract}{message_contract}{pace}");
                 push_prompt(&mut cmd, backend, final_prompt);
+                loop_markers = marker_paths.map(|paths| {
+                    launch_markers(
+                        paths,
+                        options.min_iterations,
+                        prompt_text,
+                        git_root,
+                        cmd.len() - 1,
+                    )
+                });
             }
-            loop_markers = marker_paths.map(|paths| launch_markers(paths, options.min_iterations));
         }
         Some(Command::Up { message, publish }) => {
             if seed_interactive_builtin {
@@ -1345,16 +1408,7 @@ fn build_launch_plan_for_target_at(
         // `-p` and slot the stream-json flags in just before it. This keeps
         // any earlier args (yolo, --model, etc.) and the prompt anchored at
         // the tail of the command.
-        if let Some(p_idx) = cmd.iter().position(|a| a == "-p") {
-            cmd.splice(
-                p_idx..p_idx,
-                [
-                    "--output-format".to_string(),
-                    "stream-json".to_string(),
-                    "--verbose".to_string(),
-                ],
-            );
-        }
+        add_loop_stream_flags(&mut cmd, loop_markers.as_mut());
     }
 
     let mut plan = LaunchPlan {

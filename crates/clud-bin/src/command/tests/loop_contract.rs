@@ -139,13 +139,25 @@ fn codex_loop_requires_fresh_done_at_minimum() {
     ]);
     std::fs::write(&done, "premature").unwrap();
 
-    assert!(!crate::loop_check::markers_end_loop(&p, 1, ""));
-    assert_eq!(crate::loop_check::check_loop_markers(&p, 1), None);
+    assert!(matches!(
+        crate::loop_check::marker_state(&p, 1, "").0,
+        crate::loop_spec::MarkerState::None
+    ));
+    assert_eq!(
+        crate::loop_check::check_loop_markers_with_output(&p, 1, "", |_| Some(0)),
+        None
+    );
     assert!(!done.exists());
-    assert_eq!(crate::loop_check::check_loop_markers(&p, 2), None);
+    assert_eq!(
+        crate::loop_check::check_loop_markers_with_output(&p, 2, "", |_| Some(0)),
+        None
+    );
 
     std::fs::write(&done, "verified").unwrap();
-    assert_eq!(crate::loop_check::check_loop_markers(&p, 2), Some(0));
+    assert_eq!(
+        crate::loop_check::check_loop_markers_with_output(&p, 2, "", |_| Some(0)),
+        Some(0)
+    );
 }
 
 #[test]

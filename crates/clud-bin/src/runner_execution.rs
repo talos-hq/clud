@@ -207,6 +207,8 @@ pub fn run_plan_pty(
         }
     };
     let mut last_exit = 0i32;
+    let mut verification_feedback =
+        super::runner_loop_verification::VerificationFeedback::default();
     let terminal_capabilities = (plan.graphics.mode != crate::graphics::GraphicsMode::Off)
         .then(crate::graphics::detect_current_terminal);
     let graphics_decision =
@@ -302,7 +304,11 @@ pub fn run_plan_pty(
             ));
         }
 
-        let process = match runtime.spawn_pty(plan.command.clone(), plan.cwd.clone(), rows, cols) {
+        let command = super::runner_loop_verification::worker_command(
+            plan,
+            verification_feedback.reason.as_deref(),
+        );
+        let process = match runtime.spawn_pty(command, plan.cwd.clone(), rows, cols) {
             Ok(p) => p,
             Err(e) => {
                 eprintln!("[clud] failed to create pty: {}", e);
@@ -449,7 +455,7 @@ pub fn run_plan_pty(
             s.on_iteration_end(iter_num, last_exit, err);
         }
 
-        if last_exit != 0 && plan.iterations > 1 {
+        if last_exit != 0 && (plan.iterations > 1 || plan.loop_markers.is_some()) {
             eprintln!(
                 "[clud] iteration {} failed with exit code {}",
                 iter_num, last_exit
@@ -458,8 +464,18 @@ pub fn run_plan_pty(
             return last_exit;
         }
 
-        if let Some(code) = check_loop_markers(plan, iter_num)
-            .or_else(|| pace_between_iterations(plan, iter_num, None, interrupted))
+        if let Some(code) = check_loop_markers_with_output(plan, iter_num, "", |claim| {
+            super::runner_loop_verification::verify(
+                plan,
+                &runtime,
+                iter_num,
+                claim,
+                interrupted,
+                &mut verification_feedback,
+                &mut None,
+            )
+        })
+        .or_else(|| pace_between_iterations(plan, iter_num, None, interrupted))
         {
             return code;
         }
@@ -545,6 +561,35 @@ pub(super) fn run_with_prompt_summary(
 /// notice (to the loop console when one is open) and sleep, honouring Ctrl+C.
 /// Returns `Some(130)` when the user interrupted the wait, so the caller stops
 /// instead of launching another child.
+pub(super) fn finish_subprocess_iteration(
+    plan: &command::LaunchPlan,
+    runtime: &ForegroundRuntime,
+    iteration: &mut u32,
+    captured_output: &str,
+    interrupted: &AtomicBool,
+    feedback: &mut super::runner_loop_verification::VerificationFeedback,
+    console: &mut Option<crate::loop_console::LoopConsole>,
+) -> Option<i32> {
+    let current = *iteration + 1;
+    let terminal = check_loop_markers_with_output(plan, current, captured_output, |claim| {
+        super::runner_loop_verification::verify(
+            plan,
+            runtime,
+            current,
+            claim,
+            interrupted,
+            feedback,
+            console,
+        )
+    });
+    if !std::mem::take(&mut feedback.restart) {
+        *iteration = current;
+        return terminal
+            .or_else(|| pace_between_iterations(plan, current, console.as_mut(), interrupted));
+    }
+    terminal
+}
+
 pub(super) fn pace_between_iterations(
     plan: &command::LaunchPlan,
     completed_iteration: u32,
@@ -665,8 +710,11 @@ pub(super) fn loop_continues(
     match outcome {
         ProcessOutcome::Restart => true,
         ProcessOutcome::Exited(0) => {
-            iteration < plan.iterations
-                && !crate::loop_check::markers_end_loop(plan, iteration, captured)
+            match crate::loop_check::marker_state(plan, iteration, captured).0 {
+                crate::loop_spec::MarkerState::Done(_) => true,
+                crate::loop_spec::MarkerState::None => iteration < plan.iterations,
+                crate::loop_spec::MarkerState::Blocked(_) => false,
+            }
         }
         _ => false,
     }
