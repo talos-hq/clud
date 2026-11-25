@@ -416,8 +416,7 @@ fn facts_for<'p>(
     let path_exists = path.try_exists().unwrap_or(true);
     let canon = canonical(path);
     let in_table = process_inside(procs, &canon);
-    let process_inside =
-        live_cwds.iter().any(|cwd| cwd.starts_with(&canon)) || in_table == Some(true);
+    let process_inside = live_cwd_inside(live_cwds, &canon) || in_table == Some(true);
     let mut facts = RepoWorktreeFacts {
         evaluated: true,
         path_exists,
@@ -486,6 +485,13 @@ fn facts_for<'p>(
         update_idle_facts(path, &admin, &tip, &mut facts);
     }
     (facts, Some(tip))
+}
+
+fn live_cwd_inside(live_cwds: &[PathBuf], worktree: &Path) -> bool {
+    let key = crate::path_norm::normalize_for_key(worktree);
+    live_cwds
+        .iter()
+        .any(|cwd| Path::new(&crate::path_norm::normalize_for_key(cwd)).starts_with(&key))
 }
 
 fn verified_managed_contents(path: &Path, facts: &mut RepoWorktreeFacts) -> bool {
@@ -787,7 +793,7 @@ pub(crate) fn probe_reservation(
             .map(|mut entries| entries.next().is_none()),
         process_inside: live_cwds
             .iter()
-            .any(|cwd| canonical(cwd).starts_with(&canon))
+            .any(|cwd| live_cwd_inside(&[canonical(cwd)], &canon))
             || in_table == Some(true),
         processes_unverifiable: in_table.is_none(),
         age_secs: (mtime > 0 && now >= mtime).then(|| (now - mtime) as u64),

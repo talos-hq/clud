@@ -62,7 +62,7 @@ fn candidates(
     for r in rows {
         let idle_secs = now.saturating_sub(r.mtime_unix);
         if idle_secs < worktree_schedule::MAX_AGE_SECS
-            || Path::new(&r.path).parent() != Some(wt_root)
+            || !direct_child(Path::new(&r.path), wt_root)
             || out.iter().any(|c| c.path == r.path)
         {
             continue;
@@ -133,13 +133,13 @@ fn recover_remnant(
     tx: &mpsc::Sender<RegistryMsg>,
 ) {
     let path = Path::new(&row.path);
-    if path.parent() != Some(root) {
+    if !direct_child(path, root) {
         return;
     }
     let repo = match super::worktree_remnants::verify(root, path) {
         Ok(repo) => repo,
         Err(reason) => {
-            if row.reservation {
+            if row.reservation || reason != super::worktree_remnants::UNKNOWN_PROVENANCE {
                 row.verdict.reason = reason.to_owned();
             }
             return;
@@ -178,6 +178,11 @@ fn recover_remnant(
         Ok(()) => row.verdict.reason = "remnant quarantine failed".to_owned(),
         Err(error) => row.verdict.reason = format!("audit unavailable: {error}"),
     }
+}
+
+fn direct_child(path: &Path, root: &Path) -> bool {
+    path.parent()
+        .is_some_and(|parent| crate::path_norm::same_path(parent, root))
 }
 
 /// #2487: move stray top-level `*.log` files out of the worktrees root into

@@ -123,6 +123,7 @@ pub(super) fn private_refs_published(path: &Path) -> bool {
 }
 
 pub(super) fn admin_private_refs_published(repo: &Path, admin: &Path) -> bool {
+    let admin = crate::path_norm::strip_verbatim(admin);
     let Some(admin) = admin.to_str() else {
         return false;
     };

@@ -696,7 +696,10 @@ fn reverify_before_delete_with(
 ) -> Option<&'static str> {
     if entry.kind == WORKTREE_KIND {
         let path = Path::new(&entry.path);
-        if production_worktree_root().is_some_and(|root| path.parent() == Some(root.as_path())) {
+        if production_worktree_root().is_some_and(|root| {
+            path.parent()
+                .is_some_and(|parent| crate::path_norm::same_path(parent, &root))
+        }) {
             return Some("managed by the repo-worktree janitor");
         }
         if let Some(reason) = source_probe(path) {

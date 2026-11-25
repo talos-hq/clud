@@ -157,6 +157,7 @@ fn published_idle_worktree_is_removed_and_recent_edit_is_spared() {
     assert_eq!(state_for(&reasons, &published).1, "idle-published");
     assert_eq!(state_for(&reasons, &recent).0, RepoWorktreeState::Pinned);
     assert_eq!(state_for(&reasons, &unpushed).0, RepoWorktreeState::Pinned);
+    assert_eq!(state_for(&reasons, &active).1, "process inside");
     assert_eq!(
         dispatch_repo_worktree_reclaims(&pool, &tx, &mut reasons, live, &config),
         1

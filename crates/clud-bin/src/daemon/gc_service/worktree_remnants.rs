@@ -8,6 +8,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::repo_worktree_probe::git;
+use crate::path_norm::{canonicalize_lenient, normalize_for_key, same_path};
+
+pub(super) const UNKNOWN_PROVENANCE: &str = "unknown remnant provenance";
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct RemovalReceipt {
@@ -65,7 +68,8 @@ impl RemovalReceipt {
 }
 
 fn receipt_path(root: &Path, path: &Path) -> PathBuf {
-    let key = Sha256::digest(path.as_os_str().as_encoded_bytes());
+    let normalized = normalize_for_key(&canonicalize_lenient(path));
+    let key = Sha256::digest(normalized.as_bytes());
     root.with_file_name("worktree-removal-receipts")
         .join(format!("{key:x}.json"))
 }
@@ -80,10 +84,10 @@ pub(super) fn verify(root: &Path, path: &Path) -> Result<PathBuf, &'static str> 
     let receipt: RemovalReceipt = fs::read(receipt_path(root, path))
         .ok()
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-        .ok_or("unknown remnant provenance")?;
+        .ok_or(UNKNOWN_PROVENANCE)?;
     let meta = fs::symlink_metadata(path).map_err(|_| "remnant unreadable")?;
-    if receipt.path != path
-        || path.parent() != Some(root)
+    if !same_path(&receipt.path, path)
+        || !path.parent().is_some_and(|parent| same_path(parent, root))
         || !meta.is_dir()
         || meta.created().ok() != Some(receipt.created)
     {

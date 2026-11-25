@@ -40,11 +40,23 @@ impl KeepList {
         match self {
             Self::Unreadable => true,
             Self::Paths(paths) => {
+                if paths.is_empty() {
+                    return false;
+                }
                 let entry = Path::new(entry);
-                paths.iter().any(|kept| entry.starts_with(kept))
+                let entry_key = keep_key(entry);
+                paths.iter().any(|kept| {
+                    entry.starts_with(kept)
+                        || Path::new(&entry_key).starts_with(keep_key(Path::new(kept)))
+                })
             }
         }
     }
+}
+
+fn keep_key(path: &Path) -> String {
+    use crate::path_norm::{canonicalize_lenient, normalize_for_key};
+    normalize_for_key(&canonicalize_lenient(path))
 }
 
 /// `<wt_root>/../gc-keep.json`.
@@ -171,5 +183,17 @@ mod tests {
         assert!(!list.keeps("/wt/repo-ab"), "component match, not prefix");
         assert!(update(&file, "/wt/repo-a", false).unwrap());
         assert!(!load(&file).keeps("/wt/repo-a"));
+    }
+
+    #[test]
+    fn a_pin_matches_the_canonical_filesystem_spelling() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("worktree");
+        fs::create_dir(&root).unwrap();
+        let stored = root.to_string_lossy().into_owned();
+        let canonical = fs::canonicalize(&root).unwrap();
+        let pins = KeepList::Paths(BTreeSet::from([stored]));
+        assert!(pins.keeps(&canonical.join("src").to_string_lossy()));
+        assert!(!pins.keeps(&canonical.with_file_name("worktree-other").to_string_lossy()));
     }
 }
