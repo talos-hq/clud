@@ -54,6 +54,14 @@ pub fn audit_log_path() -> Option<PathBuf> {
 /// - `path` — the exact directory about to be removed.
 /// - `rule` — why it was selected (e.g. `target-sweep stale>14d`).
 pub fn record(site: &str, path: &Path, rule: &str) {
+    record_best_effort("delete", site, path, rule);
+}
+
+pub(crate) fn record_outcome(site: &str, path: &Path, outcome: &str) {
+    record_best_effort("outcome", site, path, outcome);
+}
+
+fn record_best_effort(event: &str, site: &str, path: &Path, rule: &str) {
     // Under `cfg(test)` a write goes only to the log of the `StateDirGuard`
     // held by *this* thread (#1450). An unguarded test's deletion is dropped
     // instead of landing in a sibling test's log (the env var is
@@ -66,7 +74,7 @@ pub fn record(site: &str, path: &Path, rule: &str) {
     let Some(log_path) = audit_log_path() else {
         return;
     };
-    record_at(&log_path, site, path, rule);
+    append_event(&log_path, event, site, path, rule);
 }
 
 /// Required audit for source-tree reclamation (#1790). Refuse the action
@@ -105,13 +113,17 @@ fn record_required_at(log_path: &Path, site: &str, path: &Path, rule: &str) -> s
 
 /// Testable core of [`record`] — appends one JSONL line synchronously.
 pub fn record_at(log_path: &Path, site: &str, path: &Path, rule: &str) {
+    append_event(log_path, "delete", site, path, rule);
+}
+
+fn append_event(log_path: &Path, event: &str, site: &str, path: &Path, rule: &str) {
     let rule = crate::secret_redaction::redact_for_log(rule);
     let line = serde_json::json!({
         "ts_ms": SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0),
-        "event": "delete",
+        "event": event,
         "site": site,
         "path": path.display().to_string(),
         "rule": rule,

@@ -1,7 +1,4 @@
-//! Issue #2101 item 1: the probe-thread half of warn-then-clean. Gathers the
-//! facts for `gc::worktree_schedule::plan`, persists the schedule, and moves
-//! due worktrees to `clud trash` (registering the trash row with the
-//! registry worker so the normal trash sweep reclaims it after 72 h).
+//! Build-output pruning and recovery of verified remnants in the managed root.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -10,7 +7,7 @@ use std::time::Duration;
 use crate::gc::keep_list;
 use crate::gc::target_prune;
 use crate::gc::worktree_root::SizeCheck;
-use crate::gc::worktree_schedule::{self, Action, Candidate};
+use crate::gc::worktree_schedule::{self, Candidate};
 use crate::gc::worktree_size_cache::{cache_path_for, now_unix, read_cache};
 
 use super::repo_worktree::RepoWorktreeState;
@@ -81,62 +78,105 @@ fn candidates(
     out
 }
 
-/// One tick of warn-then-clean. Production only; without a process snapshot
-/// nothing shows which worktrees are in use, so nothing is scheduled.
+/// Keep budget-driven build-output pruning. Whole checkouts go through
+/// the repo-worktree janitor so all removals use the same safety checks.
 pub(super) fn run(
     wt_root: Option<&Path>,
     rows: &[RepoWorktreeRow],
     live_cwds: &[PathBuf],
     procs: &ProcessCwdSnapshot,
     mode: ReclaimMode,
-    tx: &mpsc::Sender<RegistryMsg>,
 ) {
     let Some(wt_root) = wt_root else { return };
-    if cfg!(test) || !procs.available || mode == ReclaimMode::Off {
+    if cfg!(test) || !procs.available || mode != ReclaimMode::Delete {
         return;
     }
+    let _ = worktree_schedule::save(wt_root, &worktree_schedule::Schedule::default());
     let now = now_unix();
     let cached = read_cache(&cache_path_for(wt_root));
-    let mut over = matches!(cached.map(|c| c.check), Some(SizeCheck::Over(_)));
-    let mut schedule = worktree_schedule::load(wt_root);
+    let over = matches!(cached.map(|c| c.check), Some(SizeCheck::Over(_)));
     let mut cands = candidates(wt_root, rows, live_cwds, procs, now);
-    // Probe git only for candidates that can be scheduled this tick (over
-    // budget, or aged per #2487), so an idle, young root pays no git cost.
-    let any_aged = cands.iter().any(worktree_schedule::aged);
-    if over || any_aged {
-        worktree_schedule::mark_dirty(&mut cands, over, &|p| {
-            worktree_schedule::dirty_reason(&worktree_schedule::probe_dirty(Path::new(p)))
-        });
-    }
-    if (over || any_aged) && mode == ReclaimMode::Delete {
+    if over || cands.iter().any(worktree_schedule::aged) {
         let warn_bytes = cached.map_or(0, |c| c.warn_bytes);
-        let still_over =
-            prune_build_output(wt_root, rows, live_cwds, &mut cands, over, warn_bytes, now);
-        over = over && still_over;
+        prune_build_output(wt_root, rows, live_cwds, &mut cands, over, warn_bytes, now);
     }
-    let actions = worktree_schedule::plan(&mut schedule, over, &cands, now);
-    let _ = worktree_schedule::save(wt_root, &schedule);
-    for action in actions {
-        match action {
-            Action::Warn {
-                path,
-                bytes,
-                remove_after,
-            } => eprintln!(
-                "[clud] gc: {path} ({bytes} bytes) is idle and unused (over worktrees.warn_bytes \
-                 or idle 14+ days); it moves to clud trash after unix {remove_after} unless \
-                 `clud gc keep` pins it"
-            ),
-            Action::KeptDirty { path, reason } => {
-                eprintln!("[clud] gc: kept: dirty {path} ({reason}); not scheduled for trash");
-            }
-            Action::Trash { path } if mode == ReclaimMode::Observe => {
-                eprintln!(
-                    "[clud] gc tick: observe mode, would trash idle or oversized worktree {path}"
-                );
-            }
-            Action::Trash { path } => trash(&path, tx, now),
+}
+
+/// An unclaimed, nonempty directory can be moved only when the janitor's
+/// receipt and the original commit independently verify what survived.
+pub(super) fn recover_remnants(
+    wt_root: Option<&Path>,
+    rows: &mut [RepoWorktreeRow],
+    live_cwds: &[PathBuf],
+    mode: ReclaimMode,
+    tx: &mpsc::Sender<RegistryMsg>,
+) {
+    let Some(root) = wt_root else { return };
+    let keep = keep_list::load(&keep_list::keep_path_for(root));
+    for row in rows {
+        if !matches!(
+            row.verdict.reason.as_str(),
+            "not empty" | "unverifiable" | "dirty"
+        ) || keep.keeps(&row.path)
+        {
+            continue;
         }
+        recover_remnant(root, row, live_cwds, mode, tx);
+    }
+}
+
+fn recover_remnant(
+    root: &Path,
+    row: &mut RepoWorktreeRow,
+    live_cwds: &[PathBuf],
+    mode: ReclaimMode,
+    tx: &mpsc::Sender<RegistryMsg>,
+) {
+    let path = Path::new(&row.path);
+    if path.parent() != Some(root) {
+        return;
+    }
+    let repo = match super::worktree_remnants::verify(root, path) {
+        Ok(repo) => repo,
+        Err(reason) => {
+            if row.reservation {
+                row.verdict.reason = reason.to_owned();
+            }
+            return;
+        }
+    };
+    let procs = super::repo_worktree_cli::live_process_cwds();
+    let current_keep = keep_list::load(&keep_list::keep_path_for(root));
+    if !procs.available
+        || current_keep.keeps(&row.path)
+        || super::entry_path_contains_live_cwd_path(&row.path, live_cwds)
+        || super::source_guard::source_in_use_with_processes(path, &procs).is_some()
+    {
+        row.verdict.reason = "verified remnant still in use or pinned".to_owned();
+        return;
+    }
+    row.verdict.reason = "verified partial worktree removal".to_owned();
+    if mode != ReclaimMode::Delete {
+        return;
+    }
+    if let Err(reason) = super::worktree_remnants::verify(root, path) {
+        row.verdict.reason = reason.to_owned();
+        return;
+    }
+    match crate::gc::delete_audit::record_required("gc.worktree-remnant", path, &row.verdict.reason)
+    {
+        Ok(()) if trash(path, &root.with_file_name("trash"), tx, now_unix()) => {
+            super::worktree_remnants::forget(root, path);
+            // A whole-repo prune could discard a different remnant's
+            // registration and private refs.
+            let reason =
+                super::repo_worktree_reclaim_exec::forget_quarantined_registration(&repo, path);
+            row.verdict.state = RepoWorktreeState::Dangling;
+            row.verdict.reason = reason;
+            row.reservation = true;
+        }
+        Ok(()) => row.verdict.reason = "remnant quarantine failed".to_owned(),
+        Err(error) => row.verdict.reason = format!("audit unavailable: {error}"),
     }
 }
 
@@ -237,17 +277,17 @@ fn prune_build_output(
     )
 }
 
-fn trash(path: &str, tx: &mpsc::Sender<RegistryMsg>, now: i64) {
-    let trash_root = match crate::daemon::default_trash_dir() {
-        Ok(p) => p,
-        Err(e) => return eprintln!("[clud] gc: trash dir unavailable, kept {path}: {e}"),
-    };
-    let record = match crate::trash::trash_one_path(Path::new(path), &trash_root, false) {
+fn trash(path: &Path, trash_root: &Path, tx: &mpsc::Sender<RegistryMsg>, now: i64) -> bool {
+    let display = path.display();
+    let record = match crate::trash::trash_one_path(path, trash_root, false) {
         Ok(r) => r,
-        Err(e) => return eprintln!("[clud] gc: could not trash {path}: {e}"),
+        Err(e) => {
+            eprintln!("[clud] gc: could not trash {display}: {e}");
+            return false;
+        }
     };
     eprintln!(
-        "[clud] gc: moved oversized unmerged worktree {path} to {} (recoverable for 72 h)",
+        "[clud] gc: moved verified worktree remnant {display} to {} (recoverable for 72 h)",
         record.quarantined_path.display()
     );
     let input = crate::trash::insert_input_for_record(&record, now);
@@ -270,4 +310,5 @@ fn trash(path: &str, tx: &mpsc::Sender<RegistryMsg>, now: i64) {
             record.quarantine_dir.display()
         );
     }
+    true
 }

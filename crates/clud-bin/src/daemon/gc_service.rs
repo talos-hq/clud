@@ -40,6 +40,8 @@ mod repo_worktree_reclaim_exec;
 mod scan_queue;
 mod shim_hints;
 mod source_guard;
+pub(super) mod worktree_activity;
+mod worktree_remnants;
 mod worktree_schedule_exec;
 
 use super::watch_service as gc_watch_service;
@@ -210,6 +212,11 @@ fn purge_pool_worker(rx: Arc<Mutex<mpsc::Receiver<PurgeJob>>>) {
                 let outcome = repo_worktree_reclaim_exec::run_reclaim_serialized(
                     &reclaim,
                     &repo_worktree_probe::lookup_prs,
+                );
+                crate::gc::delete_audit::record_outcome(
+                    "gc.repo-worktree-reclaim",
+                    Path::new(&reclaim.row.path),
+                    &format!("{outcome:?}"),
                 );
                 let _ = job.completion_tx.send(RegistryMsg::RepoWorktreeReclaimed {
                     path: reclaim.row.path.clone(),
@@ -641,6 +648,15 @@ fn handle_registry_msg(
         }
         RegistryMsg::RepoWorktreeVerdicts(rows) => {
             spare_reasons.replace_repo_worktrees(rows, now_unix());
+            if !cfg!(test) {
+                dispatch_repo_worktree_reclaims(
+                    pool_tx,
+                    completion_tx,
+                    spare_reasons,
+                    live_cwds_provider(),
+                    &RepoWorktreeGcConfig::from_env_and_settings(),
+                );
+            }
         }
         RegistryMsg::RepoWorktreeReclaimed { path, outcome } => {
             apply_repo_worktree_reclaimed(spare_reasons, &path, &outcome);
@@ -679,7 +695,11 @@ fn reverify_before_delete_with(
     source_probe: &dyn Fn(&Path) -> Option<&'static str>,
 ) -> Option<&'static str> {
     if entry.kind == WORKTREE_KIND {
-        if let Some(reason) = source_probe(Path::new(&entry.path)) {
+        let path = Path::new(&entry.path);
+        if production_worktree_root().is_some_and(|root| path.parent() == Some(root.as_path())) {
+            return Some("managed by the repo-worktree janitor");
+        }
+        if let Some(reason) = source_probe(path) {
             return Some(reason);
         }
         let decision = extern_repo::tracked_source_purge_verdict(entry, extern_repo_stale_after());
@@ -713,9 +733,11 @@ fn apply_repo_worktree_reclaimed(
             );
         }
         ReclaimOutcome::Spared(reason) => {
+            spare_reasons.repo_reclaim_spared(path, format!("removal deferred: {reason}"));
             eprintln!("[clud] gc: spared repo worktree {path} at delete time: {reason}");
         }
         ReclaimOutcome::Failed(err) => {
+            spare_reasons.repo_reclaim_spared(path, format!("removal failed: {err}"));
             eprintln!("[clud] gc: failed to remove repo worktree {path}: {err}");
         }
     }
@@ -1080,6 +1102,32 @@ fn run_repo_worktree_phase(
     if spare_reasons.repo_probe_in_flight() {
         return 0;
     }
+    let dispatched = dispatch_repo_worktree_reclaims(
+        pool_tx,
+        completion_tx,
+        spare_reasons,
+        live_cwds.clone(),
+        &config,
+    );
+    spawn_repo_worktree_probe(
+        registry,
+        completion_tx,
+        activity,
+        spare_reasons,
+        live_cwds,
+        config.mode,
+        config.wt_root,
+    );
+    dispatched
+}
+
+fn dispatch_repo_worktree_reclaims(
+    pool_tx: &mpsc::Sender<PurgeJob>,
+    completion_tx: &mpsc::Sender<RegistryMsg>,
+    spare_reasons: &mut SpareReasons,
+    live_cwds: Vec<PathBuf>,
+    config: &RepoWorktreeGcConfig,
+) -> usize {
     let live = canonicalize_live_cwds(live_cwds.clone());
     // A completed batch must refresh even when failed/spared rows remain.
     let rows: Vec<RepoWorktreeRow> = if spare_reasons.repo_snapshot_needs_refresh() {
@@ -1120,15 +1168,6 @@ fn run_repo_worktree_phase(
             }
         }
     }
-    spawn_repo_worktree_probe(
-        registry,
-        completion_tx,
-        activity,
-        spare_reasons,
-        live_cwds,
-        config.mode,
-        config.wt_root,
-    );
     dispatched
 }
 
@@ -1180,7 +1219,7 @@ fn spawn_repo_worktree_probe(
             let procs = repo_worktree_probe::collect_process_cwds();
             migrate_legacy_worktree_root(&live_cwds, &procs);
             // #2103: resumable, per-item persisted, time-budgeted.
-            let rows = scan_queue::probe_all(
+            let mut rows = scan_queue::probe_all(
                 queue_file.as_deref(),
                 &previous,
                 &repo_roots,
@@ -1188,13 +1227,6 @@ fn spawn_repo_worktree_probe(
                 &procs,
                 wt_root.as_deref(),
             );
-            // #1961: dangling admin entries never got pruned, since prune
-            // only ran after a reclaim. Delete mode only; metadata only.
-            if mode == ReclaimMode::Delete {
-                repo_worktree_reclaim_exec::prune_dangling_admin(
-                    &repo_worktree_reclaim::repos_with_dangling_admin(&rows),
-                );
-            }
             // #1878: act job containers whose clud worktree is gone.
             if mode == ReclaimMode::Delete {
                 act_containers::sweep(&act_sweep_roots(wt_root.as_deref()));
@@ -1211,8 +1243,21 @@ fn spawn_repo_worktree_probe(
             // Issue #1610: size worktrees here, off the launch path, so the
             // launch banner only reads the cached result.
             refresh_worktree_size_cache(wt_root.as_deref());
-            // #2101: warn about, then trash, oversized unmerged worktrees.
-            worktree_schedule_exec::run(wt_root.as_deref(), &rows, &live_cwds, &procs, mode, &tx);
+            worktree_schedule_exec::run(wt_root.as_deref(), &rows, &live_cwds, &procs, mode);
+            worktree_schedule_exec::recover_remnants(
+                wt_root.as_deref(),
+                &mut rows,
+                &live_cwds,
+                mode,
+                &tx,
+            );
+            // #1961: dangling admin entries never got pruned, since prune
+            // only ran after a reclaim. Delete mode only; metadata only.
+            if mode == ReclaimMode::Delete {
+                repo_worktree_reclaim_exec::prune_dangling_admin(
+                    &repo_worktree_reclaim::repos_with_dangling_admin(&rows),
+                );
+            }
             worktree_schedule_exec::tidy_root_logs(wt_root.as_deref(), mode);
             // Release the probe slot only after all filesystem work is done.
             let _ = tx.send(RegistryMsg::RepoWorktreeVerdicts(rows));
@@ -1677,6 +1722,12 @@ fn process_op(
                 // derive it rather than rely on a cached marker the next
                 // probe snapshot would wipe.
                 let live_cwds = canonicalize_live_cwds(live_cwds);
+                let keep = keep_list_for(production_worktree_root().as_deref());
+                let (repo_rows, repo_evaluated) = spare_reasons.repo_worktrees();
+                let repo_by_path: std::collections::HashMap<_, _> = repo_rows
+                    .iter()
+                    .map(|row| (row.path.as_str(), row))
+                    .collect();
                 let mut out: Vec<ListRow> = rows
                     .into_iter()
                     .map(|r| {
@@ -1705,7 +1756,7 @@ fn process_op(
                                 spare_reasons.delete_spare(&r.path),
                                 display_verdict,
                             );
-                        ListRow {
+                        let mut row = ListRow {
                             live_locked,
                             state: state.as_str().to_string(),
                             reason: reason.map(str::to_string),
@@ -1718,7 +1769,22 @@ fn process_op(
                             branch: r.branch,
                             agent_id: r.agent_id,
                             created_unix: r.created_unix,
+                        };
+                        if row.kind == WORKTREE_KIND && !row.live_locked {
+                            if let Some(repo_row) = repo_by_path.get(row.path.as_str()) {
+                                row.evaluated_unix = repo_evaluated;
+                                row.state = repo_row.verdict.state.as_str().to_owned();
+                                row.reason = Some(repo_row.verdict.reason.clone());
+                                row.reclaimable = repo_row.verdict.state
+                                    == repo_worktree::RepoWorktreeState::Reclaimable;
+                            }
+                            if keep.keeps(&row.path) {
+                                row.state = "pinned".to_owned();
+                                row.reason = Some(crate::gc::keep_list::KEPT_REASON.to_owned());
+                                row.reclaimable = false;
+                            }
                         }
+                        row
                     })
                     .collect();
                 // Issue #1591: append the cached repo-worktree verdicts. No
@@ -1726,16 +1792,13 @@ fn process_op(
                 if kind.as_deref().is_none_or(|k| k == REPO_WORKTREE_KIND) {
                     let tracked: HashSet<String> = match kind {
                         None => out.iter().map(|r| r.path.clone()).collect(),
-                        Some(_) => registry
-                            .list(None)
-                            .map(|rows| rows.into_iter().map(|r| r.path).collect())
-                            .unwrap_or_default(),
+                        Some(_) => HashSet::new(),
                     };
                     out.extend(repo_worktree_list_rows(
                         spare_reasons,
                         &tracked,
                         &live_cwds,
-                        &keep_list_for(production_worktree_root().as_deref()),
+                        &keep,
                     ));
                 }
                 GcReply::ListOk { rows: out }

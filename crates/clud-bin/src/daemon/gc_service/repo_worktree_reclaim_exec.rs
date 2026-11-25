@@ -240,6 +240,12 @@ fn run_reclaim_with_guard(
     }
     let repo_root = PathBuf::from(&job.row.repo_root);
     let worktree = PathBuf::from(&job.row.path);
+    let managed_root = job
+        .wt_root
+        .as_deref()
+        .filter(|root| crate::gc::worktree_root::is_under_worktree_root(&worktree, root));
+    let registration =
+        managed_root.and_then(|root| super::worktree_activity::registration(&worktree, root));
 
     // 1. Fresh facts, then the pure re-check.
     let procs = collect_procs();
@@ -263,10 +269,6 @@ fn run_reclaim_with_guard(
     let Some(fresh) = fresh else {
         return ReclaimOutcome::Spared("gone from git worktree list".to_string());
     };
-    let (Some(branch), Some(tip)) = (fresh.branch.clone(), fresh.tip.clone()) else {
-        return ReclaimOutcome::Spared("tip unknown".to_string());
-    };
-
     // PR lookup can take seconds: re-sample immediately before mutation.
     if let Some(reason) = source_probe(&worktree, &collect_procs()) {
         return ReclaimOutcome::Spared(reason.to_string());
@@ -274,31 +276,75 @@ fn run_reclaim_with_guard(
     if job_is_kept(job) {
         return ReclaimOutcome::Spared(crate::gc::keep_list::KEPT_REASON.to_string());
     }
+    if let Some(root) = managed_root {
+        if registration.is_none()
+            || super::worktree_activity::registration(&worktree, root) != registration
+        {
+            return ReclaimOutcome::Spared("worktree registration changed".into());
+        }
+    }
+
+    remove_verified_worktree(job, &repo_root, &worktree, fresh)
+}
+
+fn remove_verified_worktree(
+    job: &ReclaimJob,
+    repo_root: &Path,
+    worktree: &Path,
+    fresh: RepoWorktreeRow,
+) -> ReclaimOutcome {
+    let (Some(branch), Some(tip)) = (fresh.branch.as_deref(), fresh.tip.as_deref()) else {
+        return ReclaimOutcome::Spared("tip unknown".to_string());
+    };
 
     // 2. Persist the evidence before touching source. Never --force.
+    let reason = fresh.verdict.reason;
+    let idle_published = reason == super::repo_worktree::IDLE_PUBLISHED;
     let rule = format!(
-        "verified merged branch={branch} tip={tip} repo={}",
-        job.row.repo_root
+        "verified {} branch={branch} tip={tip} repo={}",
+        reason, job.row.repo_root
     );
     if let Err(error) =
-        crate::gc::delete_audit::record_required("gc.repo-worktree-reclaim", &worktree, &rule)
+        crate::gc::delete_audit::record_required("gc.repo-worktree-reclaim", worktree, &rule)
     {
         return ReclaimOutcome::Spared(format!("audit unavailable: {error}"));
     }
-    clear_readonly(&worktree);
+    let receipt = job.wt_root.as_deref().and_then(|root| {
+        let receipt =
+            super::worktree_remnants::RemovalReceipt::prepare(root, worktree, repo_root, tip)?;
+        if let Err(error) = receipt.save(root) {
+            eprintln!("[clud] gc: could not record worktree removal receipt: {error}");
+        }
+        Some((root, receipt))
+    });
+    clear_readonly(worktree);
     let path_arg = worktree.to_string_lossy().to_string();
     if let Err(err) = git(
-        &repo_root,
+        repo_root,
         &["worktree", "remove", &path_arg],
         GIT_REMOVE_TIMEOUT,
     ) {
+        if let Some((root, mut receipt)) = receipt {
+            receipt.confirm_partial(root);
+        }
         return ReclaimOutcome::Failed(err);
     }
     if worktree.try_exists().unwrap_or(true) {
+        if let Some((root, mut receipt)) = receipt {
+            receipt.confirm_partial(root);
+        }
         return ReclaimOutcome::Failed("directory still present after git worktree remove".into());
     }
+    if let Some(root) = job.wt_root.as_deref() {
+        super::worktree_remnants::forget(root, worktree);
+    }
 
-    finish_reclaim_refs(job, &repo_root, &branch, &tip)
+    if idle_published {
+        return ReclaimOutcome::Removed {
+            notes: vec![reason],
+        };
+    }
+    finish_reclaim_refs(job, repo_root, branch, tip)
 }
 
 fn finish_reclaim_refs(
@@ -353,6 +399,28 @@ pub(crate) fn prune_dangling_admin(repos: &[String]) {
             Err(err) => eprintln!("[clud] gc: worktree prune failed in {repo}: {err}"),
         }
     }
+}
+
+pub(super) fn forget_quarantined_registration(repo: &Path, path: &Path) -> String {
+    let mut reason = "remnant quarantined".to_owned();
+    if !matches!(path.try_exists(), Ok(false)) {
+        return format!("{reason}, original path is occupied");
+    }
+    let Some(path_arg) = path.to_str() else {
+        return format!("{reason}, registration path is non-UTF-8");
+    };
+    if let Err(error) = git(repo, &["worktree", "remove", path_arg], GIT_QUERY_TIMEOUT) {
+        if super::repo_worktree_probe::git(repo, &["worktree", "list", "--porcelain"]).is_none_or(
+            |list| {
+                crate::worktrees::parse_worktree_porcelain(&list)
+                    .iter()
+                    .any(|entry| crate::path_norm::same_path(&entry.path, path))
+            },
+        ) {
+            reason.push_str(&format!(", registration retained: {error}"));
+        }
+    }
+    reason
 }
 
 /// Issue #1486: reclaim an unused `worktrees` reservation. Re-probes it from

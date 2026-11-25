@@ -534,41 +534,24 @@ the default branch, so ancestry-based checks call them live work forever
   entry budget) and writes the three largest to `~/.clud/worktrees-top.json`;
   the banner appends `; largest: <name> (<size>), …`, with `≥` for a child
   the budget cut short (#2101, `gc::worktree_top`).
-- **Warn, then clean (#2101).** While the root is over `worktrees.warn_bytes`,
-  each of those largest worktrees that is idle at least 24 h and not exempt
-  (kept, in use by a session or process, reclaimable by the verdict, a
-  reservation, or unknown to the probe) gets a removal date 7 days out in
-  `~/.clud/worktrees-schedule.json`; the banner names it
-  (`; moves to trash unless \`clud gc keep\`: <name> in <n>d`). The first
-  probe after the date moves it to `clud trash` and registers the trash row,
-  so it stays recoverable for 72 h. Becoming exempt, leaving the top list, or
-  the root dropping under the limit removes it from the schedule. Observe
-  mode only logs; no process snapshot means no scheduling
-  (`gc::worktree_schedule` decides, `gc_service::worktree_schedule_exec` acts).
-- **Age retention (#2487).** Size alone missed a root full of small, long-idle
-  worktrees. Any worktree directly under `~/.clud/worktrees` that has been idle
-  for `MAX_AGE_SECS` (14 days) is also a candidate, even when the root is under
-  budget and the worktree is not among the largest. It gets the same exemptions,
-  the same dirty/unpushed probe (fail closed, never trashes uncommitted work,
-  #2418), the same `target/` prune first and the same 7-day warn-then-trash
-  grace (`worktree_schedule::aged`, `due`).
+- **Managed worktree retention (#2959).** The repo worktree janitor reclaims
+  clean, unused managed checkouts after 24 hours of inactivity, regardless
+  of disk usage. The probe checks tracked-file, Git administration and
+  session activity. Already landed work still uses the existing squash-aware
+  rule. The idle rule can reclaim a checkout with a published tip while
+  retaining its refs. The janitor rechecks the registration, pin, Git status,
+  branch, tip and process state before asking Git to remove the worktree.
+- **Partial removal recovery.** Before removing a managed checkout, the janitor
+  records which directory and commit it verified. A subsequent pass can move
+  the remnant to clud trash when its identity still matches and the survivors
+  are committed files or previously identified tagged caches. Unknown remnants stay in place and receive
+  a reason in GC diagnostics. Budget pressure can still trigger build-output
+  pruning.
 - **Stray root logs (#2487).** Agents redirect `lint*.log`/`red*.log` into the
   worktrees root. Each Delete-mode probe moves every top-level `*.log` file
   idle for 1 h into `~/.clud/logs/worktrees`. That directory is capped at
   7 days and 256 MiB, and the oldest files go first. Directories and
   non-`.log` files are never touched (`gc::worktree_root_logs`).
-- **Dirty worktrees are never trashed (#2302 follow-up).** When the root is
-  over budget, a schedulable candidate (non-exempt, idle >= 24 h) is probed
-  once per tick with
-  `git status --porcelain --untracked-files=all --ignored=no` (untracked new
-  files count as dirty) and
-  `rev-list --count HEAD --not --remotes` (the predicate `safe-rm` uses for
-  clones, `rm_tool_clone::has_unpushed`). Uncommitted or untracked changes,
-  unpushed commits, or any git failure (fail closed) make it exempt: it is
-  logged as `kept: dirty <path> (<reason>)`, and a worktree already on the
-  schedule that turns dirty drops off it (`worktree_schedule::mark_dirty`,
-  `dirty_reason`, `Action::KeptDirty`). Exempt and recently used worktrees are
-  never probed, so a sweep costs at most one probe per large idle worktree.
 - **Size magnitude (#2302 follow-up).** The walk stops once past the limit, so
   `worktrees-size.json` `bytes` for `state: "over"` sits just above
   `warn_bytes`. Rather than spend a second crawl budget, the file now carries

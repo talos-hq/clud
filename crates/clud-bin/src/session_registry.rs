@@ -628,6 +628,7 @@ pub fn run_startup_under_lock(
     cfg: &CapConfig,
     info: SessionInfo,
 ) -> Result<StartupOutcome, RegistryError> {
+    let session_cwd = info.cwd.as_deref().map(PathBuf::from);
     let _lock = acquire_lock()?;
     let registry = SessionRegistry::open_default()?;
     let _ = registry.gc_dead_sessions()?;
@@ -651,6 +652,9 @@ pub fn run_startup_under_lock(
     // lock drops.
     drop(registry);
     drop(_lock);
+    if let (true, Some(cwd)) = (registered, session_cwd) {
+        crate::daemon::record_worktree_session(&cwd);
+    }
     Ok(StartupOutcome {
         decision,
         registered,
@@ -689,6 +693,7 @@ pub fn list_live_sessions_under_lock() -> Result<Vec<LiveSession>, RegistryError
 /// lock, then close the redb file. Best-effort: if anything fails we
 /// return the error but the next startup's GC pass will clean the row.
 pub fn run_shutdown_under_lock() -> Result<(), RegistryError> {
+    note_current_worktree_session();
     let (lock_path, db_path) = shutdown_paths()?;
     run_shutdown_under_lock_at(&lock_path, &db_path)
 }
@@ -714,6 +719,7 @@ pub fn run_shutdown_under_lock_bounded(budget: std::time::Duration) -> Result<()
     std::thread::Builder::new()
         .name("clud-session-unregister".into())
         .spawn(move || {
+            note_current_worktree_session();
             let _ = tx.send(run_shutdown_under_lock_at(&lock_path, &db_path));
         })
         .map_err(|e| RegistryError::Io(format!("spawn unregister thread: {e}")))?;
@@ -722,6 +728,12 @@ pub fn run_shutdown_under_lock_bounded(budget: std::time::Duration) -> Result<()
         Err(_) => Err(RegistryError::Io(format!(
             "session unregister exceeded {budget:?}; leaving the row for the next GC"
         ))),
+    }
+}
+
+fn note_current_worktree_session() {
+    if let Ok(cwd) = std::env::current_dir() {
+        crate::daemon::record_worktree_session(&cwd);
     }
 }
 
