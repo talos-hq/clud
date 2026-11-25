@@ -345,11 +345,15 @@ fn command_opts_out(command: &str) -> bool {
 /// Git-state gates on a shell call, as `(log tag, denial)`: a diff against a
 /// stale upstream (#1301), or a push before the repo's PR checks passed
 /// (#2720). A push allowed only by `CLUD_SKIP_PR_CHECKS=1` is logged here.
-fn push_gate_reason(command: &str, cwd: &Path) -> Option<(&'static str, String)> {
+fn push_gate_reason(
+    command: &str,
+    cwd: &Path,
+    dialect: ShellDialect,
+) -> Option<(&'static str, String)> {
     if let Some(reason) = block_bad_cmd_stale_upstream::reason(command, cwd) {
         return Some(("STALE-UPSTREAM-BLOCKED", reason));
     }
-    match block_bad_cmd_pr_checks::evaluate(command, cwd)? {
+    match block_bad_cmd_pr_checks::evaluate(command, cwd, dialect)? {
         block_bad_cmd_pr_checks::Decision::Deny(reason) => Some(("PR-CHECKS-BLOCKED", reason)),
         block_bad_cmd_pr_checks::Decision::Skipped => {
             append_log(&format!(
@@ -911,7 +915,11 @@ pub fn run_for_event(invocation: &HookInvocation) -> i32 {
     // reads the whole rebase delta. Any caller, not only grind roles: the
     // built-in `/code-review` hardcodes that range and clud does not own it.
     if event == PRE_TOOL_USE_EVENT && block_bad_cmd_gate::gates_tool(&payload.tool_name) {
-        if let Some((tag, reason)) = push_gate_reason(&payload.command, &payload.cwd) {
+        if let Some((tag, reason)) = push_gate_reason(
+            &payload.command,
+            &payload.cwd,
+            shell_dialect_for_payload(&payload),
+        ) {
             append_log(&format!("{tag}: {reason}"));
             println!("{}", deny_json(&reason));
             eprintln!("[clud] {reason}");
@@ -1361,7 +1369,7 @@ fn git_mutation_targets(
         if inherited_git_env {
             return Err("cannot verify Git checkout after changing Git environment; run Git in a separate tool call".to_string());
         }
-        if let Some(target) = git_invocation_target(invocation, &words)? {
+        if let Some(target) = git_invocation_target(invocation, &words, is_checkout_mutation)? {
             if !targets.contains(&target) {
                 targets.push(target);
             }
@@ -1370,11 +1378,19 @@ fn git_mutation_targets(
     Ok(targets)
 }
 
+fn is_checkout_mutation(verb: &str) -> bool {
+    matches!(
+        verb,
+        "switch" | "checkout" | "commit" | "reset" | "stash" | "rebase" | "merge"
+    )
+}
+
 /// Where one `git` invocation acts, read from its evaluated cwd, the
 /// `GIT_WORK_TREE` / `GIT_DIR` it is given, and its own options.
 fn git_invocation_target(
     invocation: &crate::shell_ast::Invocation,
     words: &[String],
+    accepts_verb: fn(&str) -> bool,
 ) -> Result<Option<PathBuf>, String> {
     let argv = invocation.argv();
     let git_index = argv
@@ -1418,6 +1434,7 @@ fn git_invocation_target(
         Path::new(cwd),
         env_work_tree.as_deref(),
         env_git_dir.as_deref(),
+        accepts_verb,
     )
 }
 
@@ -1426,6 +1443,7 @@ fn git_segment_target(
     cwd: &Path,
     env_work_tree: Option<&str>,
     env_git_dir: Option<&str>,
+    accepts_verb: fn(&str) -> bool,
 ) -> Result<Option<PathBuf>, String> {
     let mut target = cwd.to_path_buf();
     let mut git_dir = None;
@@ -1461,10 +1479,7 @@ fn git_segment_target(
             }
             value if value.starts_with('-') => index += 1,
             verb => {
-                if !matches!(
-                    verb,
-                    "switch" | "checkout" | "commit" | "reset" | "stash" | "rebase" | "merge"
-                ) {
+                if !accepts_verb(verb) {
                     return Ok(None);
                 }
                 if !work_tree_set {
