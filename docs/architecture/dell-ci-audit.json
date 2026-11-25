@@ -14,10 +14,12 @@
     "issue": "The capacity snapshot does not reserve a runner. Dell jobs waited up to 48 minutes 47 seconds after selection in the 50-run sample.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45290687593/job/138119898447",
-      "https://github.com/forge-ci/ci.yml/pull/567"
+      "https://github.com/forge-ci/ci.yml/pull/567",
+      "https://github.com/talos-hq/clud/actions/runs/45546457002/job/138977366408",
+      "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983412521"
     ],
     "status": "confirmed",
-    "resolution": "Use a broker reservation and fall back to hosted Ubuntu when the reservation is declined or the runner does not come online."
+    "resolution": "Use a broker reservation and fall back to hosted Ubuntu when the reservation is declined or the runner does not come online. The pull request and merge queue runs both used the hosted fallback. At queue selection the dispatcher counted 10 slots against its cap of 10, and the ledger showed zero available large-runner slots. A successful Dell reservation remains to be observed."
   },
   {
     "id": "CLUD-DELL-03",
@@ -39,9 +41,10 @@
   },
   {
     "id": "CLUD-DELL-05",
-    "issue": "The CI docs name a retired routing label and imply the runner group only serves clud. The live label is clud-linux-x64, and all 75 Dell build and Clippy jobs in the sample ran on FSX3MN2.",
+    "issue": "The CI docs name a retired routing label and imply the runner group only serves clud. The live label is clud-linux-x64. The 50-run sample had 76 Dell build and Clippy assignments, all on FSX3MN2, with 75 successful jobs.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45516985099",
+      "https://github.com/talos-hq/clud/actions/runs/45530872489/job/138925895989",
       "https://github.com/organizations/talos-hq/settings/actions/runner-groups/3"
     ],
     "status": "confirmed",
