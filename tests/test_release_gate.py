@@ -60,7 +60,15 @@ def test_ci_is_callable_with_a_candidate_that_resolves_the_full_tier() -> None:
     # dispatch for provenance and mode resolution, which selects full.
     mapping = "EVENT_NAME: ${{ inputs.candidate_sha && 'workflow_dispatch' || github.event_name }}"
     assert text.count(mapping) == 2
-    assert "github.event_name == 'workflow_dispatch'" not in text.split("\njobs:", 1)[1]
+    jobs = text.split("\njobs:", 1)[1]
+    before_reservation, reservation_and_build = jobs.split("\n  reserve-linux-x64:\n", 1)
+    reservation, after_reservation = reservation_and_build.split("\n  build-linux-x64:\n", 1)
+    direct_dispatch = "github.event_name == 'workflow_dispatch'"
+    # The reservation job may check the raw event for routing, but release
+    # candidates never enter it. Tier selection still uses the mapped event.
+    assert direct_dispatch in reservation
+    assert "!inputs.candidate_sha" in reservation
+    assert direct_dispatch not in before_reservation + after_reservation
 
 
 def test_a_release_run_consults_no_attestation_or_reuse() -> None:
