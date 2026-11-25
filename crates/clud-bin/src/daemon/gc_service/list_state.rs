@@ -97,6 +97,13 @@ impl SpareReasons {
         self.repo_reclaims_in_flight.remove(path);
     }
 
+    pub(super) fn repo_reclaim_spared(&mut self, path: &str, reason: String) {
+        if let Some(row) = self.repo_worktrees.iter_mut().find(|row| row.path == path) {
+            row.verdict.state = super::repo_worktree::RepoWorktreeState::Pinned;
+            row.verdict.reason = reason;
+        }
+    }
+
     /// Drop a removed worktree's row so `gc list` stops showing it before the
     /// next probe replaces the snapshot.
     pub(super) fn forget_repo_worktree(&mut self, path: &str) {

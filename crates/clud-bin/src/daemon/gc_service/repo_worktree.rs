@@ -79,7 +79,9 @@ pub(crate) struct RepoWorktreeFacts {
     /// Commits on the branch past its merge-base with the default branch;
     /// `None` when not computed or the query failed.
     pub(crate) commits_ahead: Option<u64>,
-    /// Seconds since the worktree directory's mtime; `None` when unknown.
+    /// A remote-tracking ref contains HEAD.
+    pub(crate) published: bool,
+    /// Seconds since the latest checkout activity, or `None` when unknown.
     pub(crate) age_secs: Option<u64>,
 }
 
@@ -137,7 +139,8 @@ impl RepoWorktreeVerdict {
 /// | dirty/untracked unknown                    | pinned      | `unverifiable`             |
 /// | dirty                                      | pinned      | `dirty`                    |
 /// | untracked files                            | pinned      | `untracked`                |
-/// | open PR #N                                 | pinned      | `open PR #N`               |
+/// | open PR, managed and published, idle      | reclaimable | `idle-published`           |
+/// | other open PR #N                          | pinned      | `open PR #N` or `grace`    |
 /// | merged PR #N, tip covered                  | reclaimable | `merged via PR #N`         |
 /// | merged PR #N, not covered, patch landed (#1961) | reclaimable | `merged via PR #N (patch match)` |
 /// | merged PR #N, tip not covered              | pinned      | `commits after merge`      |
@@ -150,8 +153,8 @@ impl RepoWorktreeVerdict {
 /// | lookup unavailable, no patch match         | pinned      | `unverifiable`             |
 ///
 /// The abandoned-empty rows apply only when no PR is open or merged for the
-/// branch and no patch match already decided; age never changes any other
-/// row (#1485 acceptance 4).
+/// branch and no patch match already decided. The idle-published rule can
+/// also remove an open PR's unused checkout while retaining every ref.
 pub(crate) fn repo_worktree_verdict(facts: &RepoWorktreeFacts) -> RepoWorktreeVerdict {
     if !facts.evaluated {
         return RepoWorktreeVerdict::pinned("no verdict yet");
@@ -188,6 +191,9 @@ pub(crate) fn repo_worktree_verdict(facts: &RepoWorktreeFacts) -> RepoWorktreeVe
     }
     let patch_landed = facts.patch_landed == Some(true);
     match facts.pr {
+        PrFact::Open { .. } if facts.under_worktree_root && facts.published => {
+            idle_verdict(facts.age_secs, IDLE_PUBLISHED)
+        }
         PrFact::Open { number } => RepoWorktreeVerdict::pinned(format!("open PR #{number}")),
         PrFact::Merged {
             number,
@@ -210,18 +216,26 @@ pub(crate) fn repo_worktree_verdict(facts: &RepoWorktreeFacts) -> RepoWorktreeVe
             RepoWorktreeVerdict::reclaimable("landed by patch match")
         }
         PrFact::NoPr | PrFact::Unavailable | PrFact::Closed { .. }
-            if facts.under_worktree_root && facts.commits_ahead == Some(0) =>
+            if facts.under_worktree_root && (facts.commits_ahead == Some(0) || facts.published) =>
         {
-            match facts.age_secs {
-                Some(age) if age >= ABANDONED_EMPTY_GRACE_SECS => {
-                    RepoWorktreeVerdict::reclaimable("abandoned-empty")
-                }
-                _ => RepoWorktreeVerdict::pinned("grace"),
-            }
+            let reason = if facts.commits_ahead == Some(0) {
+                ABANDONED_EMPTY
+            } else {
+                IDLE_PUBLISHED
+            };
+            idle_verdict(facts.age_secs, reason)
         }
         PrFact::NoPr => RepoWorktreeVerdict::pinned("no PR"),
         PrFact::Closed { number } => RepoWorktreeVerdict::pinned(format!("closed PR #{number}")),
         PrFact::Unavailable => RepoWorktreeVerdict::pinned("unverifiable"),
+    }
+}
+
+fn idle_verdict(age: Option<u64>, reason: &'static str) -> RepoWorktreeVerdict {
+    if age.is_some_and(|age| age >= ABANDONED_EMPTY_GRACE_SECS) {
+        RepoWorktreeVerdict::reclaimable(reason)
+    } else {
+        RepoWorktreeVerdict::pinned("grace")
     }
 }
 
@@ -287,6 +301,8 @@ pub(crate) fn reserved_dir_verdict(facts: &ReservedDirFacts) -> RepoWorktreeVerd
 
 /// The `gc list` reason for a reclaimable unused reservation (#1486).
 pub(crate) const RESERVED_UNUSED: &str = "reserved-unused";
+pub(crate) const IDLE_PUBLISHED: &str = "idle-published";
+pub(crate) const ABANDONED_EMPTY: &str = "abandoned-empty";
 
 #[cfg(test)]
 mod tests {
@@ -423,6 +439,7 @@ mod tests {
             patch_landed: Some(false),
             under_worktree_root: false,
             commits_ahead: None,
+            published: false,
             age_secs: Some(0),
         }
     }
@@ -454,6 +471,42 @@ mod tests {
     }
 
     use RepoWorktreeState::{Dangling, Pinned, Reclaimable};
+
+    #[test]
+    fn managed_published_worktree_is_due_at_one_day() {
+        for (age, state, reason) in [
+            (DAY - 1, Pinned, "grace"),
+            (DAY, Reclaimable, "idle-published"),
+        ] {
+            assert_verdict(
+                RepoWorktreeFacts {
+                    commits_ahead: Some(1),
+                    published: true,
+                    ..empty_in_root(age)
+                },
+                state,
+                reason,
+            );
+        }
+    }
+
+    #[test]
+    fn open_pr_allows_idle_checkout_reclaim_only_with_a_published_tip() {
+        let facts = RepoWorktreeFacts {
+            commits_ahead: Some(1),
+            pr: PrFact::Open { number: 42 },
+            ..empty_in_root(DAY)
+        };
+        assert_verdict(facts.clone(), Pinned, "open PR #42");
+        assert_verdict(
+            RepoWorktreeFacts {
+                published: true,
+                ..facts
+            },
+            Reclaimable,
+            IDLE_PUBLISHED,
+        );
+    }
 
     // ---- Spare cases first: every guard asserts spare + reason. ----
 

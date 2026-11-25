@@ -212,6 +212,7 @@ pub(super) fn work_tree_status(cwd: &Path) -> (Option<bool>, Option<bool>) {
             "status",
             "--porcelain=v1",
             "--untracked-files=normal",
+            "--ignore-submodules=none",
         ],
     ) else {
         return (None, None);
@@ -413,21 +414,15 @@ fn facts_for<'p>(
 ) -> (RepoWorktreeFacts, Option<String>) {
     let path = &entry.path;
     let path_exists = path.try_exists().unwrap_or(true);
-    let now = std::time::SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0);
-    let mtime = mtime_unix(path);
-    let age_secs = (mtime > 0 && now >= mtime).then(|| (now - mtime) as u64);
     let canon = canonical(path);
     let in_table = process_inside(procs, &canon);
-    let process_inside =
-        live_cwds.iter().any(|cwd| cwd.starts_with(&canon)) || in_table == Some(true);
+    let process_inside = live_cwd_inside(live_cwds, &canon) || in_table == Some(true);
     let mut facts = RepoWorktreeFacts {
         evaluated: true,
         path_exists,
         is_main_checkout: is_main,
-        locked_live_pid: locked_by_live_or_unknown_pid(entry),
+        locked_live_pid: locked_by_live_or_unknown_pid(entry)
+            || (entry.locked && wt_root.is_some_and(|root| is_under_worktree_root(path, root))),
         process_inside,
         processes_unverifiable: in_table.is_none(),
         detached: entry.detached || entry.branch.is_none(),
@@ -437,8 +432,13 @@ fn facts_for<'p>(
         patch_landed: None,
         under_worktree_root: wt_root.is_some_and(|root| is_under_worktree_root(path, root)),
         commits_ahead: None,
-        age_secs,
+        published: false,
+        age_secs: None,
     };
+    let admin = wt_root.and_then(|root| super::worktree_activity::registration(path, root));
+    if let Some(admin) = admin.as_deref().filter(|_| process_inside) {
+        super::worktree_activity::touch_session(admin);
+    }
     // Every cheaper guard that already spares makes the rest moot.
     if !path_exists
         || facts.is_main_checkout
@@ -446,6 +446,7 @@ fn facts_for<'p>(
         || facts.process_inside
         || facts.processes_unverifiable
         || facts.detached
+        || (facts.under_worktree_root && admin.is_none())
     {
         return (facts, None);
     }
@@ -453,6 +454,9 @@ fn facts_for<'p>(
     facts.dirty = dirty;
     facts.untracked = untracked;
     if dirty != Some(false) || untracked != Some(false) {
+        return (facts, None);
+    }
+    if facts.under_worktree_root && !verified_managed_contents(path, &mut facts) {
         return (facts, None);
     }
     let Some(tip) = git(path, &["rev-parse", "HEAD"]).map(|s| s.trim().to_string()) else {
@@ -477,13 +481,44 @@ fn facts_for<'p>(
     ) {
         facts.patch_landed = patch_landed(path, &tip);
     }
-    if matches!(
-        facts.pr,
-        PrFact::NoPr | PrFact::Unavailable | PrFact::Closed { .. }
-    ) {
-        facts.commits_ahead = ahead_of_default(path, &tip).map(|(_, _, n)| n);
+    if let Some(admin) = admin {
+        update_idle_facts(path, &admin, &tip, &mut facts);
     }
     (facts, Some(tip))
+}
+
+fn live_cwd_inside(live_cwds: &[PathBuf], worktree: &Path) -> bool {
+    let key = crate::path_norm::normalize_for_key(worktree);
+    live_cwds
+        .iter()
+        .any(|cwd| Path::new(&crate::path_norm::normalize_for_key(cwd)).starts_with(&key))
+}
+
+fn verified_managed_contents(path: &Path, facts: &mut RepoWorktreeFacts) -> bool {
+    facts.untracked = super::worktree_activity::safe_contents(path).map(|safe| !safe);
+    if facts.untracked != Some(false) {
+        return false;
+    }
+    if !super::worktree_activity::private_refs_published(path) {
+        facts.dirty = None;
+        return false;
+    }
+    true
+}
+
+fn update_idle_facts(path: &Path, admin: &Path, tip: &str, facts: &mut RepoWorktreeFacts) {
+    if !matches!(
+        facts.pr,
+        PrFact::NoPr | PrFact::Unavailable | PrFact::Closed { .. } | PrFact::Open { .. }
+    ) {
+        return;
+    }
+    facts.commits_ahead = ahead_of_default(path, tip).map(|(_, _, n)| n);
+    facts.age_secs = super::worktree_activity::last_activity(path, admin)
+        .and_then(|last| u64::try_from(crate::gc::worktree_size_cache::now_unix() - last).ok());
+    facts.published = (facts.commits_ahead != Some(0) || matches!(facts.pr, PrFact::Open { .. }))
+        && git(path, &["rev-list", "--count", tip, "--not", "--remotes"])
+            .is_some_and(|out| out.trim() == "0");
 }
 
 /// Probe every worktree of `repo_root` with an all-clear process table.
@@ -595,6 +630,19 @@ fn probe_entries_each<'p>(
         .for_each(|entry| {
             let is_main = main_path.as_deref() == Some(canonical(&entry.path).as_path());
             let (facts, tip) = facts_for(entry, is_main, &live_cwds, procs, prs, wt_root);
+            let mut verdict = repo_worktree_verdict(&facts);
+            if verdict.reason == "grace" {
+                verdict.reason = match facts.age_secs {
+                    Some(age) => {
+                        let remaining = crate::gc::worktree_root::ABANDONED_EMPTY_GRACE_SECS
+                            .saturating_sub(age);
+                        let deadline =
+                            crate::gc::worktree_size_cache::now_unix() + remaining as i64;
+                        format!("grace until unix {deadline}")
+                    }
+                    None => "checkout activity unavailable".to_owned(),
+                };
+            }
             sink(RepoWorktreeRow {
                 path: entry.path.to_string_lossy().to_string(),
                 repo_root: main_path
@@ -608,7 +656,7 @@ fn probe_entries_each<'p>(
                     .map(|b| b.strip_prefix("refs/heads/").unwrap_or(b).to_string()),
                 tip,
                 mtime_unix: mtime_unix(&entry.path),
-                verdict: repo_worktree_verdict(&facts),
+                verdict,
                 reservation: false,
             });
         });
@@ -745,7 +793,7 @@ pub(crate) fn probe_reservation(
             .map(|mut entries| entries.next().is_none()),
         process_inside: live_cwds
             .iter()
-            .any(|cwd| canonical(cwd).starts_with(&canon))
+            .any(|cwd| live_cwd_inside(&[canonical(cwd)], &canon))
             || in_table == Some(true),
         processes_unverifiable: in_table.is_none(),
         age_secs: (mtime > 0 && now >= mtime).then(|| (now - mtime) as u64),

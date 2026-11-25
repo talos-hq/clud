@@ -31,6 +31,7 @@ fn identity(root: &Path) {
     run_git(root, &["config", "user.email", "t@example.com"]);
     run_git(root, &["config", "user.name", "t"]);
     run_git(root, &["config", "commit.gpgsign", "false"]);
+    run_git(root, &["config", "core.autocrlf", "false"]);
     run_git(root, &["config", "core.hooksPath", ""]);
     // A commit may start auto-maintenance as a detached process (git 2.46+)
     // that is still inside a worktree when the reclaim runs, so it is spared
@@ -57,10 +58,216 @@ fn has_branch(repo: &Path, branch: &str) -> bool {
     )
 }
 
+fn age_checkout(root: &Path, path: &Path) {
+    let admin = super::super::worktree_activity::registration(path, root).unwrap();
+    let old = filetime::FileTime::from_system_time(
+        std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 3600),
+    );
+    let tracked = run_git(path, &["ls-files", "-z"]);
+    for file in [
+        admin.join("HEAD"),
+        admin.join("index"),
+        admin.join("logs/HEAD"),
+        path.to_owned(),
+    ]
+    .into_iter()
+    .chain(
+        tracked
+            .trim_end_matches('\n')
+            .split_terminator('\0')
+            .map(|file| path.join(file)),
+    ) {
+        filetime::set_file_mtime(file, old).unwrap();
+    }
+}
+
+#[test]
+fn published_idle_worktree_is_removed_and_recent_edit_is_spared() {
+    let tmp = tempfile::tempdir().unwrap();
+    let origin = tmp.path().join("origin");
+    fs::create_dir(&origin).unwrap();
+    run_git(&origin, &["init", "--initial-branch=main"]);
+    identity(&origin);
+    commit_file(&origin, "base.txt", "base\n", "base");
+    commit_file(&origin, ".gitignore", "target/\n", "ignore build output");
+    let repo = tmp.path().join("repo");
+    run_git(
+        tmp.path(),
+        &["clone", origin.to_str().unwrap(), repo.to_str().unwrap()],
+    );
+    identity(&repo);
+    let wt_root = crate::gc::worktree_root::ensure_worktree_root_at(tmp.path()).unwrap();
+    let published = wt_root.join("repo-wt-published");
+    let recent = wt_root.join("repo-wt-recent");
+    let unpushed = wt_root.join("repo-wt-unpushed");
+    let pinned = wt_root.join("repo-wt-pinned");
+    let active = wt_root.join("repo-wt-active");
+    for (path, branch) in [
+        (&published, "published"),
+        (&recent, "recent"),
+        (&unpushed, "unpushed"),
+        (&pinned, "pinned"),
+        (&active, "active"),
+    ] {
+        run_git(
+            &repo,
+            &["worktree", "add", "-b", branch, path.to_str().unwrap()],
+        );
+    }
+    commit_file(&published, "new.txt", "published\n", "published");
+    commit_file(&unpushed, "new.txt", "only local\n", "only local");
+    run_git(&published, &["push", "origin", "HEAD:refs/heads/published"]);
+    let target = published.join("target");
+    fs::create_dir(&target).unwrap();
+    fs::write(
+        target.join("CACHEDIR.TAG"),
+        "Signature: 8a477f597d28d172789f06886806bc55\n",
+    )
+    .unwrap();
+    fs::write(target.join("build-output"), "reproducible output").unwrap();
+    for path in [&published, &recent, &unpushed, &pinned, &active] {
+        age_checkout(&wt_root, path);
+    }
+    fs::write(recent.join("base.txt"), "base\n").unwrap();
+    let keep_path = crate::gc::keep_list::keep_path_for(&wt_root);
+    crate::gc::keep_list::update(&keep_path, &pinned.to_string_lossy(), true).unwrap();
+    let registry = Registry::open_at(&tmp.path().join("gc.redb")).unwrap();
+    registry
+        .note_repo(&repo.to_string_lossy(), &repo.to_string_lossy(), now_unix())
+        .unwrap();
+    let pool = spawn_purge_pool(2);
+    let (tx, rx) = mpsc::channel();
+    let mut reasons = SpareReasons::new();
+    let config = RepoWorktreeGcConfig {
+        mode: ReclaimMode::Delete,
+        delete_remote: false,
+        wt_root: Some(wt_root),
+    };
+    let live = vec![active.clone()];
+    run_repo_worktree_phase(
+        &registry,
+        &pool,
+        &tx,
+        None,
+        &mut reasons,
+        live.clone(),
+        config.clone(),
+    );
+    apply_repo_snapshot(&rx, &mut reasons);
+    assert_eq!(state_for(&reasons, &published).1, "idle-published");
+    assert_eq!(state_for(&reasons, &recent).0, RepoWorktreeState::Pinned);
+    assert_eq!(state_for(&reasons, &unpushed).0, RepoWorktreeState::Pinned);
+    assert_eq!(state_for(&reasons, &active).1, "process inside");
+    assert_eq!(
+        dispatch_repo_worktree_reclaims(&pool, &tx, &mut reasons, live, &config),
+        1
+    );
+    let outcomes = expect_reclaims(&rx, &mut reasons, 1);
+    assert!(matches!(
+        outcome_for(&outcomes, &published),
+        ReclaimOutcome::Removed { .. }
+    ));
+    assert!(!published.exists());
+    assert!(has_branch(&repo, "published"));
+    assert!(!run_git(&repo, &["worktree", "list", "--porcelain"]).contains("repo-wt-published"));
+    assert!([recent, unpushed, pinned, active]
+        .iter()
+        .all(|path| path.exists()));
+}
+
 /// Outcomes name worktrees as git spells them and the worktree is gone by
 /// then, so compare leniently (8.3 short names, separators; #1628).
 fn same_path(a: &str, b: &Path) -> bool {
     crate::path_norm::same_path(Path::new(a), b)
+}
+
+#[test]
+fn janitor_quarantines_verified_partial_removal_and_keeps_unknown_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    fs::create_dir(&repo).unwrap();
+    run_git(&repo, &["init", "--initial-branch=main"]);
+    identity(&repo);
+    commit_file(&repo, "base.txt", "base\n", "base");
+    commit_file(&repo, ".gitignore", "target/\n", "ignore build output");
+    let wt_root = crate::gc::worktree_root::ensure_worktree_root_at(tmp.path()).unwrap();
+    let remnant = wt_root.join("repo-wt-remnant");
+    let unknown = wt_root.join("repo-wt-unknown");
+    let surviving_git = wt_root.join("repo-wt-surviving-git");
+    for (path, branch) in [
+        (&remnant, "remnant"),
+        (&unknown, "unknown"),
+        (&surviving_git, "surviving-git"),
+    ] {
+        run_git(
+            &repo,
+            &["worktree", "add", "-b", branch, path.to_str().unwrap()],
+        );
+        if path == &remnant {
+            let target = path.join("target");
+            fs::create_dir(&target).unwrap();
+            fs::write(
+                target.join("CACHEDIR.TAG"),
+                "Signature: 8a477f597d28d172789f06886806bc55\n",
+            )
+            .unwrap();
+            fs::write(target.join("build-output"), "reproducible output").unwrap();
+        }
+        let tip = run_git(path, &["rev-parse", "HEAD"]);
+        let mut receipt = super::super::worktree_remnants::RemovalReceipt::prepare(
+            &wt_root,
+            path,
+            &repo,
+            tip.trim(),
+        )
+        .unwrap();
+        receipt.save(&wt_root).unwrap();
+        let leftover = if path == &surviving_git {
+            "base.txt"
+        } else {
+            ".git"
+        };
+        fs::remove_file(path.join(leftover)).unwrap();
+        receipt.confirm_partial(&wt_root);
+    }
+    fs::write(unknown.join("untracked.txt"), "untracked work").unwrap();
+    let registry = Registry::open_at(&tmp.path().join("gc.redb")).unwrap();
+    registry
+        .note_repo(&repo.to_string_lossy(), &repo.to_string_lossy(), now_unix())
+        .unwrap();
+    let pool = spawn_purge_pool(2);
+    let (tx, rx) = mpsc::channel();
+    let mut reasons = SpareReasons::new();
+    run_repo_worktree_phase(
+        &registry,
+        &pool,
+        &tx,
+        None,
+        &mut reasons,
+        Vec::new(),
+        RepoWorktreeGcConfig {
+            mode: ReclaimMode::Delete,
+            delete_remote: false,
+            wt_root: Some(wt_root.clone()),
+        },
+    );
+    apply_repo_snapshot(&rx, &mut reasons);
+    assert_eq!(state_for(&reasons, &remnant).1, "remnant quarantined");
+    assert_eq!(state_for(&reasons, &surviving_git).1, "remnant quarantined");
+    assert!(!remnant.exists());
+    assert!(!surviving_git.exists());
+    assert!(unknown.join("untracked.txt").is_file());
+    let registrations = run_git(&repo, &["worktree", "list", "--porcelain"]);
+    assert!(!registrations.contains("repo-wt-remnant"));
+    assert!(!registrations.contains("repo-wt-surviving-git"));
+    assert!(registrations.contains("repo-wt-unknown"));
+    let trash = wt_root.with_file_name("trash");
+    assert!(walkdir::WalkDir::new(trash)
+        .into_iter()
+        .filter_map(Result::ok)
+        .any(|entry| {
+            entry.file_name() == "base.txt" && fs::read_to_string(entry.path()).unwrap() == "base\n"
+        }));
 }
 
 /// Wait for the off-worker probe's snapshot and install it, as the worker
@@ -70,9 +277,17 @@ fn apply_repo_snapshot(rx: &mpsc::Receiver<RegistryMsg>, spare_reasons: &mut Spa
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         assert!(!remaining.is_zero(), "repo-worktree probe never published");
-        if let Ok(RegistryMsg::RepoWorktreeVerdicts(rows)) = rx.recv_timeout(remaining) {
-            spare_reasons.replace_repo_worktrees(rows, now_unix());
-            return;
+        match rx.recv_timeout(remaining) {
+            Ok(RegistryMsg::RepoWorktreeVerdicts(rows)) => {
+                spare_reasons.replace_repo_worktrees(rows, now_unix());
+                return;
+            }
+            Ok(RegistryMsg::Op(req)) if matches!(req.op, GcOp::Insert { .. }) => {
+                req.reply_tx
+                    .send(GcReply::InsertOk { inserted: true })
+                    .unwrap();
+            }
+            _ => {}
         }
     }
 }
@@ -337,10 +552,6 @@ fn observe_mode_never_dispatches() {
 /// is spared as `grace`, a dirty sibling survives, and the root itself is
 /// never removed.
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
-)]
 fn a_real_tick_reclaims_tmp_wt_landed_and_abandoned_empty_worktrees() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -379,12 +590,7 @@ fn a_real_tick_reclaims_tmp_wt_landed_and_abandoned_empty_worktrees() {
     run_git(&repo, &["fetch", "origin"]);
     run_git(&repo, &["remote", "set-head", "origin", "main"]);
     fs::write(dirty.join("d.txt"), "d, edited\n").unwrap();
-    let two_days_ago = std::time::SystemTime::now() - Duration::from_secs(2 * 24 * 3600);
-    filetime::set_file_mtime(
-        &empty_old,
-        filetime::FileTime::from_system_time(two_days_ago),
-    )
-    .unwrap();
+    age_checkout(&wt_root, &empty_old);
 
     // No record_repo_visit: the worktrees children alone seed the probe.
     let registry = Registry::open_at(&root.join("gc.redb")).unwrap();
@@ -417,10 +623,9 @@ fn a_real_tick_reclaims_tmp_wt_landed_and_abandoned_empty_worktrees() {
         state_for(&spare_reasons, &empty_old),
         (Reclaimable, "abandoned-empty".to_string())
     );
-    assert_eq!(
-        state_for(&spare_reasons, &empty_new),
-        (Pinned, "grace".to_string())
-    );
+    let (state, reason) = state_for(&spare_reasons, &empty_new);
+    assert_eq!(state, Pinned);
+    assert!(reason.starts_with("grace until unix "), "{reason}");
     assert_eq!(
         state_for(&spare_reasons, &dirty),
         (Pinned, "dirty".to_string())
@@ -458,7 +663,7 @@ fn a_real_tick_reclaims_tmp_wt_landed_and_abandoned_empty_worktrees() {
 /// Issue #1486: an `alloc_wt_path` reservation nobody used is an empty,
 /// non-git `worktrees` child. Past the 24 h grace a real tick removes it as
 /// `reserved-unused`; a fresh one is spared as `grace`; an old one that holds
-/// a file is spared as `not empty` and never deleted; and one that gains a
+/// a file and no receipt is spared as unknown and never deleted; one that gains a
 /// file between the probe and the delete is spared by the pool's re-check.
 #[test]
 fn a_real_tick_reclaims_only_old_empty_reservations() {
@@ -514,7 +719,7 @@ fn a_real_tick_reclaims_only_old_empty_reservations() {
     );
     assert_eq!(
         state_for(&spare_reasons, &old_full),
-        (Pinned, "not empty".to_string())
+        (Pinned, "unknown remnant provenance".to_string())
     );
 
     // A probe may hold a Git child cwd open; do not dispatch deletion yet.
