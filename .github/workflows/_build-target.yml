@@ -283,7 +283,8 @@ jobs:
           if ! grep -Fq 'lost the connection to the soldr daemon' "$log"; then
             exit 1
           fi
-          echo "::warning::Soldr disconnected on the reserved runner. Retrying compilation once."
+          echo "::warning::Soldr disconnected on the reserved runner. Retrying compilation once with its compiler cache disabled."
+          export ZCCACHE_DISABLE=1
           exec "$VENV_PY" "${args[@]}"
 
       - name: Build static musl clud

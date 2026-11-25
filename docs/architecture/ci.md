@@ -1205,7 +1205,8 @@ and test execution use GitHub-hosted runners. Keeping the selector outside
 the reusable build workflow leaves Clippy with one job for the main push reuse
 gate to verify.
 
-The build retries compilation once if Soldr disconnects on a reserved runner.
+The build retries compilation once with the compiler cache disabled if Soldr
+disconnects on a reserved runner. The retry still uses Soldr's toolchain.
 If the build still fails, Linux unit tests skip because they have no bundle.
 The Dell build prefers long-window zstd for its test bundle when the tool is
 available. It reduced a sample bundle from 174.2 MB to 135.9 MB. Hosted Linux

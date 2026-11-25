@@ -35,7 +35,7 @@
       "https://github.com/talos-hq/clud/actions/runs/45306406119/job/138151399343"
     ],
     "status": "confirmed",
-    "resolution": "Retry compilation once on the reserved runner after the specific Soldr disconnect. The original daemon exit has no confirmed host-side cause."
+    "resolution": "Retry compilation once through Soldr with its compiler cache disabled after the known disconnect. This avoids the failing connection on the retry. The original daemon exit has no confirmed host-side cause."
   },
   {
     "id": "CLUD-DELL-05",
@@ -53,14 +53,17 @@
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45279642406/job/138060633046",
       "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594",
-      "https://github.com/forge-ci/gh-runner/issues/75"
+      "https://github.com/forge-ci/gh-runner/issues/75",
+      "https://github.com/forge-ci/soldr/pull/4223",
+      "https://github.com/forge-ci/setup-soldr/pull/696",
+      "https://github.com/forge-ci/gh-runner/pull/85"
     ],
     "measurements_seconds": {
       "dell": 1240,
       "github_hosted": 758
     },
     "status": "confirmed",
-    "resolution": "Open. Compare compilation and upload on the reserved runner to a hosted build of the same commit. The original comparison covers different events and cache states."
+    "resolution": "Open. The cache audit identified upstream store eviction and stale lock ownership, plus absolute compile paths that prevent a hosted cache seed from serving Dell compiles. The Dell's four clud slot locks are now runner-owned. Verify warm, same-path cache reuse and total time with a live reservation before calling the performance issue resolved."
   },
   {
     "id": "CLUD-DELL-07",
