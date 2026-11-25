@@ -10,9 +10,9 @@
 //! parser cannot read, a missing repo root or HEAD, or unreadable settings
 //! allow the call. Not a security boundary.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use super::block_bad_cmd_gate::statement_words;
+use super::{git_invocation_target, parse_command, rule_words, ShellDialect};
 use crate::pr_checks::{self, PrChecksConfig, SKIP_ENV};
 
 /// Everything [`decide`] needs, gathered by [`evaluate`].
@@ -65,12 +65,22 @@ fn deny_reason(commands: &[String]) -> String {
 
 /// The decision for `command` run in `cwd`, or `None` when the command does
 /// not push, or any fact cannot be gathered (fail open).
-pub(super) fn evaluate(command: &str, cwd: &Path) -> Option<Decision> {
-    if !triggers(command) {
-        return None;
-    }
+pub(super) fn evaluate(command: &str, cwd: &Path, dialect: ShellDialect) -> Option<Decision> {
     let skip = word_set(command, SKIP_ENV)
         || std::env::var(SKIP_ENV).ok().as_deref().map(str::trim) == Some("1");
+    let mut result = None;
+    for target in push_targets(command, cwd, dialect) {
+        match evaluate_checkout(&target, skip) {
+            deny @ Some(Decision::Deny(_)) => return deny,
+            skipped @ Some(Decision::Skipped) => result = skipped,
+            allow @ Some(Decision::Allow) if result.is_none() => result = allow,
+            _ => {}
+        }
+    }
+    result
+}
+
+fn evaluate_checkout(cwd: &Path, skip: bool) -> Option<Decision> {
     let (root, tree) = pr_checks::git_facts(cwd)?;
     let config = pr_checks::load_config(&root).ok()??;
     let receipt_present = crate::daemon::default_state_dir()
@@ -94,15 +104,43 @@ fn word_set(command: &str, name: &str) -> bool {
     })
 }
 
-/// Whether any statement runs `git push` (not `--dry-run`) or `gh pr create`.
-pub(super) fn triggers(command: &str) -> bool {
+/// Effective checkouts for all pushes and PR creations in shell execution order.
+fn push_targets(command: &str, cwd: &Path, dialect: ShellDialect) -> Vec<PathBuf> {
     if !command.contains("push") && !command.contains("create") {
-        return false;
+        return Vec::new();
     }
-    let Ok(statements) = statement_words(command) else {
-        return false;
-    };
-    statements.iter().any(|words| statement_triggers(words))
+    parse_command(command, dialect, Some(cwd))
+        .invocations
+        .iter()
+        .filter_map(|invocation| {
+            let words = rule_words(invocation);
+            if !statement_triggers(&words) {
+                return None;
+            }
+            if words
+                .first()
+                .is_some_and(|word| program_name(word) == "git")
+            {
+                return Some(
+                    git_invocation_target(invocation, &words, |verb| verb == "push")
+                        .ok()
+                        .flatten()
+                        .unwrap_or_else(|| cwd.to_path_buf()),
+                );
+            }
+            Some(
+                invocation
+                    .cwd
+                    .as_literal()
+                    .map_or_else(|| cwd.to_path_buf(), PathBuf::from),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+fn triggers(command: &str) -> bool {
+    !push_targets(command, Path::new("."), ShellDialect::Posix).is_empty()
 }
 
 fn program_name(word: &str) -> &str {

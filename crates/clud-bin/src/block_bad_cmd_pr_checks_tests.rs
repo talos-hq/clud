@@ -105,3 +105,18 @@ fn trigger_recognizes_push_and_pr_create() {
         assert!(!triggers(command), "{command}");
     }
 }
+
+#[test]
+fn checks_each_push_from_its_effective_checkout() {
+    let base = tempfile::tempdir().unwrap();
+    for dir in ["one", "two", "three", "four"] {
+        std::fs::create_dir(base.path().join(dir)).unwrap();
+    }
+    let command = "(cd one && git push); git -Ctwo push; \
+                   git --work-tree=three push; git -C four push --dry-run";
+    let targets = push_targets(command, base.path(), ShellDialect::Posix);
+    assert_eq!(
+        targets,
+        ["one", "two", "three"].map(|dir| base.path().join(dir))
+    );
+}
