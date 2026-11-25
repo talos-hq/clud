@@ -68,7 +68,8 @@ attempted. The result is always `{accepted, state, seq}`:
 
 * Session `terminated` (sealed): rejected, `409 session_sealed`, not recorded.
 * Unsupported harness: rejected, `422 harness_not_supported`, with the harness named.
-* Idempotent on `client_msg_id`. A repeat with the same id and message
+* Idempotent on `(from, client_msg_id)` within the target session. A repeat
+  with the same sender, id and message
   returns the original `seq`/`state` with `duplicate: true`, and is never
   delivered twice. The same id with a different message or kind is `409
   injection_conflict`. Delivery itself submits the turn under the
@@ -88,16 +89,19 @@ entry has `seq`, `client_msg_id`, `message`, `from` (who injected:
 `submitted_at_ms`, `delivered_at_ms`, `turn_id` and `error`. The event log
 also gets `injection_queued` / `injection_delivered` / `injection_failed`
 / `injection_superseded` events, so a later reader can see exactly when and how the run was steered.
+MCP `session_status` and `session_result` report pending and replaced
+entries under `directives`, with the sender and sequence numbers but not
+message text. The daemon also posts a best-effort board notice to the
+sender when an addressed directive is replaced or fails before delivery.
 
 Since #2523 each entry also has `kind` (`directive`, the default, or
 `note`), `message_sha256` (hex sha256 of `message`, so a reader can prove
-the text was not edited) and `superseded_by_seq`. The **current directive
-set** is a single entry: the newest `directive` without `superseded_by_seq`.
-Recording a new directive marks every earlier un-superseded directive with
-the new seq; they stay in `injections[]` as history. A `note` never
-supersedes. There is no second store. Entries written before #2523 have no
-`kind`/hash and read as un-superseded directives, so the newest one is
-current until the next directive marks them. A directive superseded while
+the text was not edited) and `superseded_by_seq`. Recording a new directive
+marks earlier un-superseded directives **from the same sender** with the new
+seq. Directives from other senders keep their place in the queue. Entries
+without `from` share one anonymous sender slot. Replaced entries stay in
+`injections[]` as history. Entries written before #2523 have no `kind`/hash
+and read as un-superseded directives. A directive superseded while
 still `queued` moves to the terminal `superseded` state in the same record
 mutation that adds its replacement, so the drain (which only picks `queued`
 entries) can never hand the agent a directive the operator already

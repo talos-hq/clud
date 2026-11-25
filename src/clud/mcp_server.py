@@ -744,6 +744,15 @@ async def _snapshot(base: str, token: str, session_id: str, turn_id: str = "") -
         "elapsed_s": round(_elapsed_s(record), 1),
         "turn": _turn_summary(record, turn_id),
         "last_error": record.get("last_error"),
+        "directives": [
+            {key: entry.get(key) for key in ("seq", "from", "state", "superseded_by_seq")}
+            for entry in record.get("injections", [])
+            if entry.get("kind", "directive") == "directive"
+            and (
+                entry.get("state") in ("queued", "delivering", "superseded")
+                or entry.get("superseded_by_seq") is not None
+            )
+        ],
         "_record": record,
     }
 
@@ -772,6 +781,7 @@ async def _result_payload(
         "next_cursor": collected["next_cursor"],
         "retention_gap": collected["retention_gap"],
         "last_error": snapshot["last_error"],
+        "directives": snapshot["directives"],
     }
     if waited_s is not None:
         payload["waited_s"] = round(waited_s, 1)
@@ -1167,10 +1177,11 @@ async def session_inject(
     injection is recorded on the session (`injections[]` in its record) with
     who sent it and when.
 
-    `kind="directive"` (the default) supersedes earlier directives: the
-    session keeps one current directive, and older ones stay in
-    `injections[]` marked `superseded_by_seq`. `kind="note"` is
-    informational and never supersedes. Each entry records
+    `kind="directive"` (the default) replaces earlier directives only from
+    the same sender. Pending directives from other senders remain queued
+    in submission order. Replaced directives stay in `injections[]` marked
+    `superseded_by_seq`. `kind="note"` is informational and never supersedes.
+    Each entry records
     `message_sha256` as provenance.
 
     Works for daemon sessions (`session_start`) on the claude and codex
@@ -1183,10 +1194,10 @@ async def session_inject(
         session_id: The id returned by `session_start` (`sess-...`).
         message: The text the agent receives as its next user turn.
         interrupt: Interrupt the running turn instead of waiting for it.
-        client_msg_id: Idempotency key. A repeat with the same key is never
-            delivered twice. Defaults to a hash of session_id + message.
+        client_msg_id: Per-sender idempotency key. A repeat with the same key
+            is never delivered twice. Defaults to a hash of session_id + message.
         ticket: Optional ticket/issue reference recorded with the injection.
-        kind: `directive` (supersedes earlier directives) or `note`.
+        kind: `directive` (replaces earlier directives from this sender) or `note`.
     """
     if kind not in ("directive", "note"):
         return _dump(
