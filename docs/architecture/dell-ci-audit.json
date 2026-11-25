@@ -20,13 +20,16 @@
       "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983412521",
       "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530",
       "https://github.com/talos-hq/clud/actions/runs/45556951874/job/139011396813",
-      "https://github.com/forge-ci/gh-runner/pull/134"
+      "https://github.com/forge-ci/gh-runner/pull/134",
+      "https://github.com/talos-hq/clud/actions/runs/45597276043/job/139147483169",
+      "https://github.com/forge-ci/setup-soldr/pull/707"
     ],
     "measurements_seconds": {
       "runner_readiness_deadline": 90,
       "docker_start_on_successful_reservation": 17.169,
       "docker_start_on_expired_reservation": 100.672,
-      "github_runner_registration_on_expired_reservation": 1.213
+      "github_runner_registration_on_expired_reservation": 1.213,
+      "cache_save_log_to_completed_filesystem_sync": 103.581
     },
     "dispatcher_sample": {
       "window_start_utc": "2026-11-24T09:00:00Z",
@@ -54,8 +57,14 @@
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45306406119/job/138151399343"
     ],
+    "daemon_lifecycle": {
+      "shutdown_requested_utc": "2026-11-24T01:42:53.551Z",
+      "shutdown_reason": "explicit-stop",
+      "requester_pid": 1070,
+      "first_broken_pipe_utc": "2026-11-24T01:43:08.245Z"
+    },
     "status": "confirmed",
-    "resolution": "Retry compilation once through Soldr with its compiler cache disabled after the known disconnect. This avoids the failing connection on the retry. The original daemon exit has no confirmed host-side cause."
+    "resolution": "Retry compilation once through Soldr with its compiler cache disabled after the known disconnect. The slot 1 lifecycle journal records a shutdown request about 15 seconds before the first broken pipe. The journal identifies the requesting PID. The command that initiated the request is unconfirmed."
   },
   {
     "id": "CLUD-DELL-05",
