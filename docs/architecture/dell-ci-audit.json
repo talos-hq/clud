@@ -176,7 +176,8 @@
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45557453838/job/139013548548",
       "https://github.com/talos-hq/clud/actions/runs/45582459779/job/139096759747",
-      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203"
+      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203",
+      "https://github.com/talos-hq/clud/actions/runs/45624655924/job/139242369504"
     ],
     "measurements": {
       "discarded_venv_archive_bytes": 65023791,
@@ -186,23 +187,29 @@
       "wheelhouse_packages": 50,
       "wheelhouse_archive_bytes": 69969920,
       "wheelhouse_offline_hit_seconds": 1.702,
-      "wheelhouse_offline_disk_backed_hit_seconds": 12.635
+      "wheelhouse_offline_disk_backed_hit_seconds": 12.635,
+      "wheelhouse_offline_disk_backed_forced_color_seconds": 9.073,
+      "live_slot_local_uv_install_seconds": 0.245
     },
     "status": "confirmed",
-    "resolution": "A reserved main build populated the slot-local uv cache and skipped the 65 MB virtual environment archive. Two fresh offline environments on FSX3MN2 reused a shared wheel archive. The second installed all 50 packages in 1.702 seconds with a tmpfs workspace. A disk-backed test installed all 50 in 12.635 seconds with networking disabled. A live slot 2 build fell back to PyPI because ANSI color in the uv export broke its requirements file. The wheelhouse now requests plain output so GitHub Actions can use the same archive key as the offline probe. Each install verifies wheel hashes against the lock and rejects tampering. Hosted builds keep the GitHub virtual environment cache."
+    "resolution": "A reserved main build populated the slot-local uv cache and skipped the 65 MB virtual environment archive. Two fresh offline environments on FSX3MN2 reused a shared wheel archive. The second installed all 50 packages in 1.702 seconds with a tmpfs workspace. A disk-backed test installed all 50 in 12.635 seconds with networking disabled. A live slot 2 build fell back to PyPI because ANSI color in the uv export broke its requirements file. The wheelhouse now requests plain output. A fresh disk-backed slot 2 environment with color forced and networking disabled restored and installed all 50 packages in 9.073 seconds. A later main job on slot 1 installed all 50 packages from the slot-local uv cache in 245 milliseconds before Soldr setup. Each wheelhouse install verifies wheel hashes against the lock and rejects tampering. Hosted builds keep the GitHub virtual environment cache."
   },
   {
     "id": "CLUD-DELL-09",
     "issue": "A live Dell job loaded a Rust dependency archive from its peer slot, then Soldr could not acquire the build activity lease before the root-maintenance lock deadline.",
     "evidence": [
-      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203"
+      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203",
+      "https://github.com/talos-hq/clud/actions/runs/45624655924/job/139242369504",
+      "https://github.com/forge-ci/soldr/pull/4272",
+      "https://github.com/forge-ci/soldr/actions/runs/45626000759"
     ],
     "measurements_seconds": {
       "metadata_probe_output_timeout": 60,
       "build_activity_lease_timeout": 30,
-      "dependency_cook_elapsed_before_failure": 95.5
+      "dependency_cook_elapsed_before_failure": 95.5,
+      "later_live_slot_local_warm_cook": 8.2
     },
     "status": "confirmed",
-    "resolution": "The build continued and passed after the failed dependency cook. The peer archive loaded successfully. The process holding the exclusive maintenance lease during the timeout remains unconfirmed."
+    "resolution": "The build continued and passed after the failed dependency cook. The peer archive loaded successfully. The process holding the exclusive maintenance lease during the timeout remains unconfirmed. A later main job completed a same-slot warm cook in 8.2 seconds. An upstream regression test reproduced scheduled embedded compiler cache maintenance holding the lease during the store scan. The merged Soldr fix keeps the lease available during that scan. Clud needs a Soldr release containing the fix to validate that behavior on Dell."
   }
 ]
