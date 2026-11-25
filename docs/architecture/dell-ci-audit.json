@@ -4,10 +4,11 @@
     "issue": "Main pushes fail CI OK when Clippy is skipped under verified reuse because the nested selector is missing from the proof.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45520559615",
-      "https://github.com/talos-hq/clud/actions/runs/45516985099"
+      "https://github.com/talos-hq/clud/actions/runs/45516985099",
+      "https://github.com/talos-hq/clud/actions/runs/45550480730/job/139000438412"
     ],
     "status": "confirmed",
-    "resolution": "Moved runner selection out of the reusable workflow so the gate can match the Clippy job in the merge-queue proof."
+    "resolution": "Moved runner selection out of the reusable workflow so the gate can match the Clippy job in the merge-queue proof. The first main push after the fix verified reuse and passed CI OK."
   },
   {
     "id": "CLUD-DELL-02",
@@ -16,10 +17,11 @@
       "https://github.com/talos-hq/clud/actions/runs/45290687593/job/138119898447",
       "https://github.com/forge-ci/ci.yml/pull/567",
       "https://github.com/talos-hq/clud/actions/runs/45546457002/job/138977366408",
-      "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983412521"
+      "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983412521",
+      "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530"
     ],
     "status": "confirmed",
-    "resolution": "Use a broker reservation and fall back to hosted Ubuntu when the reservation is declined or the runner does not come online. The pull request and merge queue runs both used the hosted fallback. At queue selection the dispatcher counted 10 slots against its cap of 10, and the ledger showed zero available large-runner slots. A successful Dell reservation remains to be observed."
+    "resolution": "Use a broker reservation and fall back to hosted Ubuntu when the reservation is declined or the runner does not come online. The pull request and merge queue runs both used hosted fallback. The main push successfully reserved a Dell runner in 71 seconds, and the build job started on the reserved runner one second after job creation."
   },
   {
     "id": "CLUD-DELL-03",
@@ -59,14 +61,17 @@
       "https://github.com/forge-ci/gh-runner/issues/75",
       "https://github.com/forge-ci/soldr/pull/4223",
       "https://github.com/forge-ci/setup-soldr/pull/696",
-      "https://github.com/forge-ci/gh-runner/pull/85"
+      "https://github.com/forge-ci/gh-runner/pull/85",
+      "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530"
     ],
     "measurements_seconds": {
       "dell": 1240,
-      "github_hosted": 758
+      "github_hosted": 758,
+      "reserved_dell": 1526,
+      "reserved_dell_same_commit_hosted": 957
     },
     "status": "confirmed",
-    "resolution": "Open. The cache audit identified upstream store eviction and stale lock ownership, plus absolute compile paths that prevent a hosted cache seed from serving Dell compiles. The Dell's four clud slot locks are now runner-owned. Verify warm, same-path cache reuse and total time with a live reservation before calling the performance issue resolved."
+    "resolution": "The cache audit identified upstream store eviction and stale lock ownership, plus absolute compile paths that prevent a hosted seed from serving Dell compiles. All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses. It separately missed the build and dependency archives, saved a new local dependency archive, and took 1,526 seconds. The same commit took 957 seconds on hosted CI with a different event and cache state. Verify dependency archive reuse on a subsequent reservation and measure the effect on total time."
   },
   {
     "id": "CLUD-DELL-07",
@@ -74,7 +79,9 @@
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45279642406/job/138060633046",
       "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594",
-      "https://github.com/talos-hq/clud/actions/runs/45530872489/job/138925895989"
+      "https://github.com/talos-hq/clud/actions/runs/45530872489/job/138925895989",
+      "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530",
+      "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983490395"
     ],
     "measurements": {
       "dell_jobs": 41,
@@ -89,9 +96,15 @@
       "hosted_matched_bundle_reported_progress_seconds": 1.16,
       "dell_matched_bundle_longest_progress_gap_seconds": 37.03,
       "hosted_matched_bundle_longest_progress_gap_seconds": 0.2,
-      "later_dell_bundle_longest_progress_gap_seconds": 23.03
+      "later_dell_bundle_longest_progress_gap_seconds": 23.03,
+      "reserved_dell_upload_seconds": 146,
+      "same_commit_hosted_upload_seconds": 2,
+      "reserved_dell_upload_sample_seconds": 144,
+      "reserved_dell_upload_container_tx_bytes": 180424106,
+      "reserved_dell_upload_container_block_reads_bytes": 4542464,
+      "reserved_dell_upload_container_tx_mbit_per_second": 10.02
     },
     "status": "confirmed",
-    "resolution": "Prefer long-window zstd for Dell builds with zstd installed. A real archived bundle shrank 22% in a local benchmark. Measure the new upload on a reserved Dell runner and continue diagnosis of the remaining transfer latency. The matched Dell upload paused up to 37.03 seconds between progress updates. Those gaps do not distinguish file I/O from transfer delays."
+    "resolution": "Omit the bundle when a verified-reuse build has no test consumers. Prefer long-window zstd when a Dell build needs to publish it. A real archived bundle shrank 22% in a local benchmark. In a reserved Dell run, the runner's network interface transmitted 180 MB while its block devices read 4.5 MB during the same 144-second upload sample. The same-commit hosted upload completed in 2 seconds. These measurements point to the network transfer for that run. The location of the bottleneck along the network path remains open."
   }
 ]

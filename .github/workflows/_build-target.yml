@@ -66,7 +66,12 @@ on:
         type: string
         default: auto
       bundle:
-        description: Produce and upload a test bundle (bins + test harness binaries + dev wheel).
+        description: Build the contents of a test bundle (bins + test harness binaries + dev wheel).
+        required: false
+        type: boolean
+        default: true
+      publish-bundle:
+        description: Pack and upload the test bundle for downstream test jobs.
         required: false
         type: boolean
         default: true
@@ -442,7 +447,7 @@ jobs:
           ${{ inputs.profile == 'release' && '--no-debug-symbols' || '' }}
 
       - name: Pack bundle
-        if: ${{ inputs.bundle }}
+        if: ${{ inputs.bundle && inputs.publish-bundle }}
         run: >
           "$VENV_PY" -m ci.bundle pack
           --target ${{ inputs.target }}
@@ -451,7 +456,7 @@ jobs:
           ${{ runner.environment == 'self-hosted' && inputs.target == 'x86_64-unknown-linux-gnu' && '--prefer-zstd' || '' }}
 
       - name: Upload bundle
-        if: ${{ inputs.bundle }}
+        if: ${{ inputs.bundle && inputs.publish-bundle }}
         uses: actions/upload-artifact@v4
         with:
           name: bundle-${{ inputs.target }}

@@ -1211,6 +1211,9 @@ If the build still fails, Linux unit tests skip because they have no bundle.
 The Dell build prefers long-window zstd for its test bundle when the tool is
 available. It reduced a sample bundle from 174.2 MB to 135.9 MB. Hosted Linux
 test runners can unpack either encoding, and other builders keep gzip.
+A main run that reuses the queue's unit-test results packs and uploads the
+bundle only in extended or full CI, where integration and harness tests
+still consume it. All modes compile the same inputs to warm the build cache.
 To disable Dell routing, delete the repository variable
 `CLUD_LINUX_X64_BUILD_RUNNER`. To run the selector itself on GitHub-hosted
 runners, unset the organization variable `FORGE_QUICK_LABELS`.
