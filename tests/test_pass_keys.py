@@ -80,6 +80,7 @@ NO_SHELL = shutil.which("awk") is None or shutil.which("bash") is None
                 "ci/xbuild.py",
                 "ci/cargo_messages.py",
                 "ci/process.py",
+                "ci/sync_build_python.sh",
             ],
             [".github/workflows/_dylint.yml"],
         ),

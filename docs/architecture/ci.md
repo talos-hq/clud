@@ -1217,6 +1217,13 @@ still consume it. All modes compile the same inputs to warm the build cache.
 Reserved Dell builds build a fresh Python environment from a repository-scoped
 uv package cache under the persistent runner tool directory. A warm slot can
 reuse the packages even though every job starts with a clean checkout.
+On a cold slot, Linux builds can use a shared wheelhouse archive on the Dell's
+existing assets mount. The repository ID, exported locked requirements and
+Python platform identify the archive. One slot downloads and publishes a
+verified archive. Other slots install from it offline and verify the wheel
+hashes against the lock. Verified reads refresh the archive's age for the
+existing assets collector. A cold slot rebuilds an invalid archive under the
+publication lock. If the mirror is unavailable, the build uses regular uv sync.
 To disable Dell routing, delete the repository variable
 `CLUD_LINUX_X64_BUILD_RUNNER`. To run the selector itself on GitHub-hosted
 runners, unset the organization variable `FORGE_QUICK_LABELS`.
