@@ -459,6 +459,18 @@ def test_a_human_gated_goal_and_its_dependents_are_reported_never_scheduled(
     assert _goal(out, "E")["merged"] is True
 
 
+def test_human_gate_blocks_a_selected_goal_through_unselected_blockers(tmp_path: Path) -> None:
+    graph = [
+        {"id": "leaf", "blockers": [{"goal": "middle", "when": "merged"}]},
+        {"id": "middle", "blockers": [{"goal": "human", "when": "merged"}]},
+        {"id": "human", "gate": "human", "gate_reason": "needs hardware"},
+    ]
+    out = _ok(probe(tmp_path, {}, goals=("leaf",), graph=graph))
+    assert not out["prompts"]
+    assert _goal(out, "leaf")["status"] == "waiting"
+    assert "blocked by human-gated goal middle" in _goal(out, "leaf")["note"]
+
+
 def test_a_run_of_only_human_gated_goals_starts_no_agent(tmp_path: Path) -> None:
     out = _ok(probe(tmp_path, {}, goals=("H",), graph=[{"id": "H", "gate": "human"}]))
     assert not out["prompts"]

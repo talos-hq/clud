@@ -225,10 +225,16 @@ if (!args.planOnly) {
   for (const g of args.goals) {
     const id = String(g.id)
     const reason = humanGate(g)
-    if (reason) { waiting.set(id, `waiting: human gate (${reason}); not planned or scheduled`); continue }
-    const approved = RUN_GOALS.get(id)
-    const up = approved && approved.blockers.find(b => waiting.has(b.goal) || (RUN_GOALS.get(b.goal) || {}).gate === 'human')
-    if (up) waiting.set(id, `waiting: blocked by human-gated goal ${up.goal}; not scheduled`)
+    if (reason) waiting.set(id, `waiting: human gate (${reason}); not planned or scheduled`)
+  }
+  // The approved graph is topologically ordered. Propagate through all its
+  // goals, including unselected intermediates, before filtering the run.
+  for (const g of RUN_GOALS.values()) {
+    if (waiting.has(g.id)) continue
+    const reason = humanGate(g)
+    if (reason) { waiting.set(g.id, `waiting: human gate (${reason}); not planned or scheduled`); continue }
+    const up = g.blockers.find(b => waiting.has(b.goal))
+    if (up) waiting.set(g.id, `waiting: blocked by human-gated goal ${up.goal}; not scheduled`)
   }
   args.goals = args.goals.filter(g => {
     const note = waiting.get(String(g.id))
