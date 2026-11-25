@@ -251,6 +251,10 @@ jobs:
           local-uv-cache: >-
             ${{ inputs.reserved-runner != '' && runner.environment == 'self-hosted'
                 && runner.os == 'Linux' && inputs.profile == 'dev' }}
+          local-cook-peer: >-
+            ${{ inputs.reserved-runner != '' && runner.environment == 'self-hosted'
+                && runner.os == 'Linux' && inputs.profile == 'dev' && inputs.compile
+                && inputs.target == 'x86_64-unknown-linux-gnu' }}
 
       # Every cargo/maturin invocation goes through ci/xbuild.py so the
       # per-strategy environment (zig wrappers, the SDKROOT/CMake plumbing on

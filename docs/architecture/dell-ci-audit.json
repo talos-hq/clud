@@ -28,6 +28,14 @@
       "docker_start_on_expired_reservation": 100.672,
       "github_runner_registration_on_expired_reservation": 1.213
     },
+    "dispatcher_sample": {
+      "window_start_utc": "2026-11-24T09:00:00Z",
+      "completed_docker_launches": 13,
+      "timed_out_docker_launches": 1,
+      "median_docker_launch_seconds": 50.263,
+      "median_before_container_create_seconds": 45.228,
+      "docker_launch_timeout_seconds": 120.103
+    },
     "status": "confirmed",
     "resolution": "Clud now reserves a runner through the broker and falls back to hosted Ubuntu after a denial or missed readiness deadline. Both branches passed in live CI. One granted reservation expired while Docker spent 100.7 seconds starting the runner on FSX3MN2. The host reported high disk I/O pressure during that start. Its dispatcher polls the broker in a separate worker, and the underlying Docker startup latency remains a host-level limit."
   },
@@ -72,7 +80,9 @@
       "https://github.com/forge-ci/gh-runner/pull/85",
       "https://github.com/talos-hq/clud/actions/runs/45550480730/job/138990917530",
       "https://github.com/talos-hq/clud/actions/runs/45557453838/job/139013548548",
-      "https://github.com/talos-hq/clud/actions/runs/45555628801/job/139007044967"
+      "https://github.com/talos-hq/clud/actions/runs/45555628801/job/139007044967",
+      "https://github.com/talos-hq/clud/actions/runs/45597276043/job/139147483169",
+      "https://github.com/forge-ci/setup-soldr/pull/709"
     ],
     "measurements_seconds": {
       "dell": 1240,
@@ -84,10 +94,17 @@
       "warm_reserved_dell": 709,
       "warm_reserved_dell_selector": 96,
       "warm_test_same_tree_hosted": 731,
-      "warm_test_same_tree_hosted_selector": 14
+      "warm_test_same_tree_hosted_selector": 14,
+      "cross_slot_dependency_archive_restore": 15.985
+    },
+    "cross_slot_probe": {
+      "archive_bytes": 563381562,
+      "restored_files": 4840,
+      "network_disabled": true,
+      "dependency_recompile_skipped": true
     },
     "status": "confirmed",
-    "resolution": "All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses, then saved a new local dependency archive. A later reservation on the same slot restored 4,840 files and skipped the full dependency cook. The warm Dell build took 709 seconds after a 96-second selector job. The hosted build of the same tree took 731 seconds after a 14-second selector job. Workflow events and cache states differed. Hosted-to-Dell path parity remains tracked upstream."
+    "resolution": "All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses, then saved a new local dependency archive. A later reservation on the same slot restored 4,840 files and skipped the full dependency cook. The warm Dell build took 709 seconds after a 96-second selector job. The hosted build of the same tree took 731 seconds after a 14-second selector job. Workflow events and cache states differed. An isolated FSX3MN2 runner restored the real slot 1 archive into the slot 2 checkout using slot 2's toolchain paths and skipped the dependency compile with networking and compiler caching disabled. Hosted-to-Dell workspace path parity and cross-slot compiler cache parity remain tracked upstream."
   },
   {
     "id": "CLUD-DELL-07",
@@ -147,9 +164,10 @@
       "wheelhouse_bytes": 69873147,
       "wheelhouse_packages": 50,
       "wheelhouse_archive_bytes": 69969920,
-      "wheelhouse_offline_hit_seconds": 1.702
+      "wheelhouse_offline_hit_seconds": 1.702,
+      "wheelhouse_offline_disk_backed_hit_seconds": 12.635
     },
     "status": "confirmed",
-    "resolution": "A reserved main build populated the slot-local uv cache and skipped the 65 MB virtual environment archive. The retained cache installed all 50 locked packages offline on FSX3MN2 after the job exited. Two fresh environments in a network-disabled container on FSX3MN2 used independent slot caches and the production runner assets mount. The first published 50 wheels supplied over the LAN. The second installed them from that archive in 1.702 seconds. The installer verifies the wheel hashes against the lock on every install and rejected a wheel with modified bytes in a separate check. Hosted builds keep the GitHub virtual environment cache."
+    "resolution": "A reserved main build populated the slot-local uv cache and skipped the 65 MB virtual environment archive. The retained cache installed all 50 locked packages offline on FSX3MN2 after the job exited. Two fresh environments in a network-disabled container on FSX3MN2 used independent slot caches and the production runner assets mount. The first published 50 wheels supplied over the LAN. The second installed them from that archive in 1.702 seconds with a tmpfs workspace. A later disk-backed test installed all 50 in 12.635 seconds with networking disabled. The installer verifies the wheel hashes against the lock on every install and rejected a wheel with modified bytes in a separate check. Hosted builds keep the GitHub virtual environment cache."
   }
 ]

@@ -1214,6 +1214,12 @@ test runners can unpack either encoding, and other builders keep gzip.
 A main run that reuses the queue's unit-test results packs and uploads the
 bundle only in extended or full CI, where integration and harness tests
 still consume it. All modes compile the same inputs to warm the build cache.
+When a reserved Linux x64 build misses its local Rust dependency archive,
+setup-soldr tries the exact key in the other Talos slot on the same Dell.
+The existing runner cache mount gives both slots access to this archive.
+Soldr loads the peer copy into the build's own workspace. If the peer has no
+usable archive, setup-soldr tries the Actions cache. Each slot keeps its own
+compiler cache.
 Reserved Dell builds build a fresh Python environment from a repository-scoped
 uv package cache under the persistent runner tool directory. A warm slot can
 reuse the packages even though every job starts with a clean checkout.

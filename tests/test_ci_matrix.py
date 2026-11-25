@@ -9,11 +9,15 @@ redesign exists to eliminate -- so it is tested here instead.
 from __future__ import annotations
 
 import json
+import os
 import re
+import sys
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
+from ci import process
 from ci.ci_matrix import (
     SDIST_TARGET,
     SUITES,
@@ -808,3 +812,63 @@ def test_reserved_linux_build_uses_local_packages_instead_of_a_remote_venv() -> 
     for step in ("Restore venv", "Save venv"):
         block = setup.split(f"- name: {step}\n", 1)[1].split("\n    - name:", 1)[0]
         assert "steps.local-uv-cache.outputs.enabled != 'true'" in block
+
+
+def test_only_reserved_linux_compiles_opt_in_to_a_local_cook_peer() -> None:
+    build = " ".join(BUILD_YML.read_text(encoding="utf-8").split())
+    assert (
+        "local-cook-peer: >- ${{ inputs.reserved-runner != '' "
+        "&& runner.environment == 'self-hosted' && runner.os == 'Linux' "
+        "&& inputs.profile == 'dev' && inputs.compile "
+        "&& inputs.target == 'x86_64-unknown-linux-gnu' }}" in build
+    )
+    setup = (CI_YML.parent.parent / "actions" / "setup-build" / "action.yml").read_text(
+        encoding="utf-8"
+    )
+    assert "persistent-cook-peer-root: ${{ steps.local-cook-peer.outputs.root }}" in setup
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Dell runner shell contract")
+@pytest.mark.parametrize(
+    ("runner", "physical_runner", "peer"),
+    [
+        ("dell-fsx3mn2-dyn-talos-hq-1", "dell-fsx3mn2-dyn-talos-hq-1", 2),
+        ("dell-fsx3mn2-dyn-talos-hq-2", "dell-fsx3mn2-dyn-talos-hq-2", 1),
+        ("dell-fsx3mn2-dyn-talos-hq-1", "dell-fsx3mn2-dyn-talos-hq-2", None),
+        ("dell-fsx3mn2-dyn-other-1", "dell-fsx3mn2-dyn-other-1", None),
+    ],
+)
+def test_local_cook_peer_stays_on_the_same_host_and_lane(
+    tmp_path: Path, runner: str, physical_runner: str, peer: int | None
+) -> None:
+    setup = (CI_YML.parent.parent / "actions" / "setup-build" / "action.yml").read_text(
+        encoding="utf-8"
+    )
+    step = setup.split("- name: Select local Rust cook peer\n", 1)[1]
+    shell = dedent(step.split("run: |\n", 1)[1].split("\n\n", 1)[0])
+    output = tmp_path / "output"
+    output.touch()
+    for slot in (1, 2):
+        slot_root = tmp_path / "slots" / f"dell-fsx3mn2-dyn-talos-hq-{slot}"
+        (slot_root / "setup-soldr" / f"linux-x64-u{os.getuid()}" / "cook-store").mkdir(
+            parents=True
+        )
+    process.run(
+        ["bash", "-c", shell],
+        check=True,
+        env=os.environ
+        | {
+            "RUNNER_NAME": runner,
+            "OBS_RUNNER_NAME": physical_runner,
+            "OBS_RUNNER_CACHE": str(tmp_path),
+            "GITHUB_OUTPUT": str(output),
+        },
+    )
+    selected = output.read_text(encoding="utf-8")
+    if peer is None:
+        assert selected == ""
+    else:
+        assert selected == (
+            f"root={tmp_path}/slots/dell-fsx3mn2-dyn-talos-hq-{peer}"
+            f"/setup-soldr/linux-x64-u{os.getuid()}\n"
+        )
