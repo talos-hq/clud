@@ -572,6 +572,12 @@ jobs:
       runs-on: ubuntu-24.04
       reserved-runner: ${{ needs.reserve-linux-x64.outputs.runs-on }}
       strategy: soldr
+      # Keep warming the build cache when unit tests reuse the queue proof.
+      # Extended and full CI also need the bundle for integration and harness tests.
+      publish-bundle: >-
+        ${{ needs.static.outputs.skip_test-linux-x64-unit != 'true'
+            || needs.static.outputs.mode == 'extended'
+            || needs.static.outputs.mode == 'full' }}
       # Linux x64 clippy runs in lint-linux-x64, off this job's critical path.
       clippy: false
 

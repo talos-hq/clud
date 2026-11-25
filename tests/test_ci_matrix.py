@@ -773,3 +773,21 @@ def test_linux_x64_unit_shards_require_the_bundle_producer_to_pass() -> None:
         "\n  test-linux-x64-integration:", 1
     )[0]
     assert "needs.build-linux-x64.result == 'success'" in unit
+
+
+def test_linux_x64_publishes_the_bundle_when_any_tests_need_it() -> None:
+    text = CI_YML.read_text(encoding="utf-8")
+    build = text.split("\n  build-linux-x64:\n", 1)[1].split("\n  test-linux-x64-unit:", 1)[0]
+    assert (
+        "publish-bundle: >- ${{ needs.static.outputs.skip_test-linux-x64-unit != 'true' "
+        "|| needs.static.outputs.mode == 'extended' || needs.static.outputs.mode == 'full' }}"
+        in " ".join(build.split())
+    )
+    reusable = BUILD_YML.read_text(encoding="utf-8")
+    publish_input = reusable.split("\n      publish-bundle:\n", 1)[1].split(
+        "\n      wheel-artifact:", 1
+    )[0]
+    assert "default: true" in publish_input
+    publish_condition = "if: ${{ inputs.bundle && inputs.publish-bundle }}"
+    for step in ("Pack bundle", "Upload bundle"):
+        assert f"- name: {step}\n        {publish_condition}" in reusable
