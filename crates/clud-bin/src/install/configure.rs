@@ -111,18 +111,19 @@ pub fn offer() -> Offer {
         }
     }
     if codex_available() {
-        found
-            .providers
-            .push(format!("{CODEX_GATEWAY_ID} (clud serve --codex)"));
+        found.providers.push(CODEX_GATEWAY_ID.to_string());
     }
     found
 }
 
-/// Read the credentials to migrate. A provider whose key cannot be read is
-/// skipped rather than failing the step.
-pub fn stored() -> Vec<Credential> {
+/// Read only selected credentials. Providers that became unreadable are skipped;
+/// the caller requires complete reading for explicit or interactive selections.
+pub fn stored(selected: &[String]) -> Vec<Credential> {
     let mut found = Vec::new();
     for descriptor in crate::provider_registry::ANTHROPIC_COMPAT_PROVIDERS {
+        if !selected.iter().any(|id| id == descriptor.settings_id) {
+            continue;
+        }
         let Ok(store) = crate::provider_auth::NativeSecretStore::new_for(
             descriptor.vault_service,
             descriptor.vault_account,
@@ -143,7 +144,7 @@ pub fn stored() -> Vec<Credential> {
             api_mode: None,
         });
     }
-    if codex_available() {
+    if selected.iter().any(|id| id == CODEX_GATEWAY_ID) && codex_available() {
         match crate::serve_client_token::stored_or_create() {
             Ok(token) => found.push(codex_gateway(token)),
             Err(error) => eprintln!("configure: skipping {CODEX_GATEWAY_ID}: {error}"),
@@ -310,49 +311,49 @@ pub fn run(
     product: &Product,
     product_home: &Path,
     migrate: bool,
+    providers: &[String],
     yes: bool,
     interactive: bool,
     out: &mut dyn Write,
 ) -> i32 {
     let found = offer();
     let _ = writeln!(out, "{}", found.summary());
-    if found.providers.is_empty() {
+    let selected =
+        match super::migration::choose(&found.providers, providers, migrate, yes, interactive, out)
+        {
+            Ok(selected) => selected,
+            Err(error) => {
+                eprintln!("configure: {error}");
+                return 1;
+            }
+        };
+    if selected.is_empty() {
+        let _ = writeln!(out, "configure: leaving providers alone; rerun with --migrate-credentials or --migrate-provider ID to copy them");
         return 0;
     }
-    let wanted = if migrate {
-        true
-    } else if yes || !interactive {
-        let _ = writeln!(
-            out,
-            "configure: leaving {} alone; rerun with --migrate-credentials to copy them",
-            product.display
-        );
-        return 0;
-    } else {
-        let _ = write!(
-            out,
-            "{}",
-            crate::yes_no::question(
-                &format!(
-                    "Would you like to migrate clud credentials for providers into {}?",
-                    product.display
-                ),
-                crate::yes_no::Default::No,
-            )
-        );
-        let _ = out.flush();
-        let mut answer = String::new();
-        if std::io::stdin().read_line(&mut answer).is_err() {
-            return 0;
-        }
-        crate::yes_no::answer(&answer, crate::yes_no::Default::No)
-    };
-    if !wanted {
-        let _ = writeln!(out, "configure: left {} unchanged", product.display);
-        return 0;
+    let credentials = stored(&selected);
+    // Preserve migrate-all's existing skip-on-read-failure behavior.
+    if (!migrate || !providers.is_empty())
+        && selected
+            .iter()
+            .any(|id| !credentials.iter().any(|credential| credential.id == id))
+    {
+        eprintln!("configure: a selected credential could not be read; nothing migrated");
+        return 1;
     }
-    match apply(product, product_home, &stored(), out) {
+    match apply(product, product_home, &credentials, out) {
         Outcome::Migrated { path, providers } => {
+            if let Err(error) = ensure_gateway(
+                &providers,
+                out,
+                &mut crate::platform::managed_codex::install,
+            ) {
+                eprintln!(
+                    "configure: providers written to {}; Codex gateway startup failed: {error}",
+                    path.display()
+                );
+                return 1;
+            }
             let _ = writeln!(
                 out,
                 "configure: wrote {} provider(s) to {}",
@@ -368,6 +369,23 @@ pub fn run(
         }
         Outcome::Declined | Outcome::NoTerminal => 0,
     }
+}
+
+/// Only a migrated Codex provider opts into a persistent gateway. Ordinary
+/// serve invocations and migrations of other providers keep their lifecycle.
+fn ensure_gateway(
+    providers: &[String],
+    out: &mut dyn Write,
+    install: &mut dyn FnMut() -> Result<&'static str, String>,
+) -> Result<(), String> {
+    if providers
+        .iter()
+        .any(|provider| provider == CODEX_GATEWAY_ID)
+    {
+        let notice = install()?;
+        let _ = writeln!(out, "configure: {notice}");
+    }
+    Ok(())
 }
 
 /// Write `credentials` into the product's config, atomically.
@@ -445,6 +463,52 @@ mod tests {
         assert_eq!(second.matches("api_mode:").count(), 1, "{second}");
         assert!(second.contains("api_mode: chat_completions"), "{second}");
         assert!(second.contains("\"new\""), "{second}");
+    }
+
+    #[test]
+    fn managed_codex_gateway_is_enabled_only_when_codex_was_migrated() {
+        let mut calls = 0;
+        let mut install = || {
+            calls += 1;
+            Ok("gateway enabled")
+        };
+        let mut out = Vec::new();
+        ensure_gateway(&[], &mut out, &mut install).unwrap();
+        ensure_gateway(&["openrouter".into()], &mut out, &mut install).unwrap();
+        assert!(out.is_empty());
+        ensure_gateway(&[CODEX_GATEWAY_ID.into()], &mut out, &mut install).unwrap();
+        assert_eq!(calls, 1);
+        assert!(
+            ensure_gateway(&[CODEX_GATEWAY_ID.into()], &mut out, &mut || Err(
+                "no manager".into()
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn unsupported_gateway_keeps_migration_successful_with_a_manual_startup_notice() {
+        let home = tempfile::tempdir().unwrap();
+        let product = super::super::products::find("hermes").unwrap();
+        let mut out = Vec::new();
+        let Outcome::Migrated { path, providers } = apply(
+            product,
+            home.path(),
+            &[codex_gateway("test-token".into())],
+            &mut out,
+        ) else {
+            panic!("migration must succeed");
+        };
+        ensure_gateway(&providers, &mut out, &mut || {
+            Ok("automatic startup unavailable; run `clud serve --codex` manually")
+        })
+        .unwrap();
+        let notice = String::from_utf8(out).unwrap();
+        assert!(notice.contains("run `clud serve --codex` manually"));
+        assert!(!notice.contains("test-token"));
+        assert!(std::fs::read_to_string(path)
+            .unwrap()
+            .contains("clud-codex:"));
     }
 
     fn openrouter() -> Credential {

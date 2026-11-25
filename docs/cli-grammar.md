@@ -731,6 +731,7 @@ clud install [OPTIONS] <PRODUCT>
 | `--no-configure` | switch |  | Install and stop without the configure step. |
 | `--configure-only` | switch |  | Skip the install and only configure an existing product. |
 | `--migrate-credentials` | switch |  | Migrate clud's stored provider credentials without asking. |
+| `--migrate-provider` | `<ID>` (repeatable) |  | Copy only this provider (repeatable); implies credential migration. |
 
 ### `clud pr-check`
 

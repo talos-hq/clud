@@ -1062,6 +1062,7 @@ mod tests {
             ("harness_picker.rs", include_str!("harness_picker.rs")),
             ("launch_setup.rs", include_str!("launch_setup.rs")),
             ("loop_restart.rs", include_str!("loop_restart.rs")),
+            ("install/migration.rs", include_str!("install/migration.rs")),
             (
                 "remote_connect/connect.rs",
                 include_str!("remote_connect/connect.rs"),

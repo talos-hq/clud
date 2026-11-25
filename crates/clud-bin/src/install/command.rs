@@ -40,6 +40,8 @@ pub struct Options {
     pub configure_only: bool,
     /// Migrate credentials without asking; `--yes` alone never does this.
     pub migrate_credentials: bool,
+    /// Only these providers; an explicit opt-in even without migrate_credentials.
+    pub migrate_providers: Vec<String>,
     /// Arguments after `--`, forwarded to the product's installer.
     pub passthrough: Vec<String>,
 }
@@ -57,6 +59,7 @@ impl Default for Options {
             configure: true,
             configure_only: false,
             migrate_credentials: false,
+            migrate_providers: Vec::new(),
             passthrough: Vec::new(),
         }
     }
@@ -88,6 +91,12 @@ fn run_at(home: &Path, options: &Options, interactive: bool, out: &mut dyn Write
         eprintln!("clud install: --dir and --target are mutually exclusive");
         return EXIT_USAGE;
     }
+    for id in &options.migrate_providers {
+        if let Err(error) = super::migration::provider(id) {
+            eprintln!("clud install: {error}");
+            return EXIT_USAGE;
+        }
+    }
     let branch = options
         .reference
         .clone()
@@ -112,6 +121,18 @@ fn run_at(home: &Path, options: &Options, interactive: bool, out: &mut dyn Write
         "install: directory {} (via {})",
         dir.display(),
         product.dir_env
+    );
+
+    let config_home = configuration_home(
+        home,
+        product,
+        options,
+        std::env::var_os(product.home_env).map(PathBuf::from),
+    );
+    let _ = writeln!(
+        out,
+        "install: config {}",
+        super::configure::config_path(&config_home, product).display()
     );
 
     if options.dry_run {
@@ -159,20 +180,41 @@ fn run_at(home: &Path, options: &Options, interactive: bool, out: &mut dyn Write
         );
         return 0;
     }
-    configure(home, product, options, out)
+    configure(&config_home, product, options, out)
+}
+
+/// An explicit configure-only target is the Hermes home, independent of the
+/// bootstrap directory. Normal installs keep the product's existing home rules.
+fn configuration_home(
+    home: &Path,
+    product: &Product,
+    options: &Options,
+    environment_home: Option<PathBuf>,
+) -> PathBuf {
+    if options.configure_only {
+        if let Some(target) = &options.product_dir {
+            return target.clone();
+        }
+    }
+    environment_home
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| home.join(product.default_home))
 }
 
 /// The credential-migration step (#2609). A secret goes from the vault straight
 /// into the product's config; only the file and the providers are named.
-fn configure(home: &Path, product: &Product, options: &Options, out: &mut dyn Write) -> i32 {
+fn configure(
+    product_home: &Path,
+    product: &Product,
+    options: &Options,
+    out: &mut dyn Write,
+) -> i32 {
     let interactive = std::io::stdin().is_terminal() && std::io::stdout().is_terminal();
-    let product_home = std::env::var_os(product.home_env)
-        .map(PathBuf::from)
-        .unwrap_or_else(|| home.join(product.default_home));
     let code = super::configure::run(
         product,
-        &product_home,
+        product_home,
         options.migrate_credentials,
+        &options.migrate_providers,
         options.yes,
         interactive,
         out,
@@ -318,6 +360,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(&base).expect("tempdir");
         base
+    }
+
+    #[test]
+    fn configure_only_target_has_precedence_over_the_environment_and_default() {
+        let product = products::find("hermes").unwrap();
+        let mut opts = options("hermes");
+        opts.configure_only = true;
+        opts.product_dir = Some(PathBuf::from("desktop-hermes"));
+        for environment in [None, Some(PathBuf::from("other-home"))] {
+            assert_eq!(
+                configuration_home(Path::new("user"), product, &opts, environment),
+                PathBuf::from("desktop-hermes")
+            );
+        }
+    }
+
+    #[test]
+    fn normal_install_directory_does_not_relocate_the_configuration_home() {
+        let product = products::find("hermes").unwrap();
+        let mut opts = options("hermes");
+        opts.dir = Some(PathBuf::from("install-bin"));
+        assert_eq!(
+            configuration_home(Path::new("user"), product, &opts, None),
+            PathBuf::from("user/.hermes")
+        );
+        opts.dir = None;
+        opts.product_dir = Some(PathBuf::from("install-bin"));
+        assert_eq!(
+            configuration_home(
+                Path::new("user"),
+                product,
+                &opts,
+                Some(PathBuf::from("env-home"))
+            ),
+            PathBuf::from("env-home")
+        );
+        opts.configure_only = true;
+        opts.product_dir = None;
+        assert_eq!(
+            configuration_home(Path::new("user"), product, &opts, Some(PathBuf::new())),
+            PathBuf::from("user/.hermes")
+        );
+        assert_eq!(
+            configuration_home(
+                Path::new("user"),
+                product,
+                &opts,
+                Some(PathBuf::from("env-home"))
+            ),
+            PathBuf::from("env-home")
+        );
     }
 
     #[test]

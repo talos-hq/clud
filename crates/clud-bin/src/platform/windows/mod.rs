@@ -32,6 +32,7 @@ pub mod job_orphan_reaper;
 pub mod large_file_guard;
 pub mod log_event;
 pub mod login_env;
+pub mod managed_codex;
 pub mod optimize;
 pub mod path_norm;
 pub mod process_identity;

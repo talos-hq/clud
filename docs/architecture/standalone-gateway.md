@@ -104,6 +104,52 @@ which `clud install hermes --configure-only` creates on first use and writes
 into the product's provider entry. That makes a restart of the server, or of
 the product, keep working without re-pairing (`serve_client_token.rs`).
 
+## Managed Codex gateway for Hermes
+
+Migrating `clud-codex` with `clud install hermes --configure-only` installs
+`$XDG_CONFIG_HOME/systemd/user/clud-serve-codex.service` on Linux (default
+`~/.config/systemd/user/`). It runs the configuring clud executable with
+`serve --codex --port 8317`, enables it for the user manager's `default.target`
+and starts it with `systemctl --user enable --now`. The installed clud path
+must remain available across logins. No root access or linger is required for
+restart at login; this does not promise availability before login.
+
+The existing clud daemon starts lazily (`daemon/client.rs::ensure_daemon`),
+may retire when idle, and has no login registration. Its idle setting cannot
+make it start after reboot. Until that lifecycle supports login startup, the
+Linux user unit is the persistent alternative; implementation stays inside
+`platform/managed_codex`. Other hosts keep migration successful and print an explicit manual startup
+notice: run `clud serve --codex` before using the provider. Automatic startup
+being unsupported does not turn a successful credential migration into failure.
+This also applies to Linux hosts without `systemctl`. For manual startup, leave
+`CLUD_SERVE_CLIENT_TOKEN` unset so the saved token matches the migrated entry.
+
+The unit reuses the ordinary server's loopback binding and authentication.
+It reads clud's stored Codex login and durable client token, so run
+`clud auth login codex --acknowledge-experimental` first. Session-only
+`OPENAI_API_KEY` values are not copied into a unit. The unit explicitly removes
+`CLUD_SERVE_CLIENT_TOKEN` from its environment so an old user-manager override
+cannot disagree with the durable token written into Hermes. No secrets appear
+in the unit. Manual `clud serve` keeps its existing environment precedence.
+The unit uses systemd's `:` command prefix to disable environment substitution,
+doubles percent signs to prevent specifier expansion, and quotes the executable
+to preserve spaces. Executable paths containing quotes or backslashes are
+rejected before the installer writes a unit.
+
+Rerunning configuration updates only clud-managed unit files and re-enables
+without restarting an active service. Unit writes use a same-directory
+`NamedTempFile` and atomic persist; predictable staging files are never followed.
+Unmanaged files and service-manager
+failures are reported, including when configuration was already written.
+If port 8317 is occupied, the managed server retries every five seconds with
+start-rate limiting disabled, recovering automatically when the port is released.
+Reconfiguration leaves active services running.
+`systemctl --user status clud-serve-codex.service` reports startup
+errors; no other port owner is stopped. An existing transient unit with this
+name must be retired by the operator before deployment. The installer never stops it. To opt out later, use
+`systemctl --user disable --now clud-serve-codex.service` and remove the
+provider in Hermes. Changing Hermes alone does not disable the unit.
+
 ## OpenAI Responses client bodies
 
 `crates/clud-bin/src/responses_ingress.rs` translates one OpenAI Responses

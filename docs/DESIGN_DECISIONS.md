@@ -8988,3 +8988,32 @@ The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also rep
 - Tasks run one at a time, so independent goals no longer build in parallel. Parallel mode stays `grind-run` with worktrees.
 - A PR whose watch budget runs out while it is still queued is reported `left_in_queue`. Its dependents are blocked, not restarted.
 - An inline `Workflow` script containing chaperone wording is refused by the command hook. The router launches tailored scripts by `scriptPath`.
+
+
+## DD-238: a configured Hermes Codex gateway uses a Linux user service until the daemon can start at login
+
+**Context:** Hermes stores the loopback gateway URL and a durable client token.
+A gateway launched in a terminal or a transient unit disappears after reboot.
+The existing clud daemon starts lazily through `daemon/client.rs::ensure_daemon`,
+can retire when idle, and has no registration to start at login. Changing its
+idle timeout would not provide reboot recovery.
+
+**Decision:** When credential migration selects `clud-codex`, Linux installs a
+managed systemd user unit inside `platform/` and enables it at login. It runs
+the ordinary `clud serve --codex --port 8317` entrypoint, preserving loopback
+binding, authentication and the saved client token. The unit retries failures
+every five seconds without a start limit, including a temporarily occupied port.
+Installation atomically updates managed files and only reloads and enables the
+unit; it never stops or restarts an existing transient service. Unsupported
+hosts keep the migrated provider and receive an explicit manual startup notice.
+
+**Rationale:** Reusing the daemon would be preferable once its lifecycle owns
+login startup. Adding that cross-platform lifecycle now would expand this
+installer fix substantially. A user service provides login recovery without
+root or linger, while retaining the existing gateway implementation and secret
+store. Per-provider consent avoids installing a service for unrelated providers.
+
+**Consequences:** Availability starts at user login, not before login. The
+supervisor must replace this machine's pre-existing transient unit separately.
+A future daemon login lifecycle can replace the Linux adapter. See the
+[managed gateway contract](architecture/standalone-gateway.md#managed-codex-gateway-for-hermes).

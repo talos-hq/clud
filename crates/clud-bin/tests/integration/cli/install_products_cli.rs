@@ -42,7 +42,17 @@ fn run(fx: &Fixture, extra_env: &[(&str, &str)], args: &[&str]) -> (i32, String)
             let upper = key.to_ascii_uppercase();
             upper != "HOME"
                 && upper != "USERPROFILE"
-                && upper != "OPENROUTER_API_KEY"
+                && !matches!(
+                    upper.as_str(),
+                    "OPENROUTER_API_KEY"
+                        | "OPENAI_API_KEY"
+                        | "DEEPSEEK_API_KEY"
+                        | "KIMI_API_KEY"
+                        | "CODEX_HOME"
+                        | "XDG_CONFIG_HOME"
+                        | "XDG_RUNTIME_DIR"
+                        | "DBUS_SESSION_BUS_ADDRESS"
+                )
                 && !upper.starts_with("CLUD_")
                 && !upper.starts_with("HERMES_")
         })
@@ -50,6 +60,14 @@ fn run(fx: &Fixture, extra_env: &[(&str, &str)], args: &[&str]) -> (i32, String)
     let home = fx.home.to_string_lossy().into_owned();
     env.push(("HOME".into(), home.clone()));
     env.push(("USERPROFILE".into(), home));
+    env.push((
+        "XDG_CONFIG_HOME".into(),
+        fx.home.join(".config").to_string_lossy().into_owned(),
+    ));
+    env.push((
+        "DBUS_SESSION_BUS_ADDRESS".into(),
+        "unix:path=/clud-test-no-user-manager".into(),
+    ));
     env.push(("CLUD_SERVER_SETTINGS".into(), "0".into()));
     env.push(("CLUD_INTEGRATION_TESTS".into(), "1".into()));
     env.push((
@@ -121,6 +139,7 @@ fn install_help_names_both_products_and_the_configure_flags() {
         "--dry-run",
         "--configure-only",
         "--migrate-credentials",
+        "--migrate-provider",
     ] {
         assert!(output.contains(needle), "missing {needle}:\n{output}");
     }
@@ -268,4 +287,131 @@ fn dir_and_target_are_refused_together() {
         ],
     );
     assert_eq!(exit, 2, "{output}");
+}
+
+#[test]
+fn explicit_migration_provider_copies_only_that_provider() {
+    let fx = fixture();
+    seed_config(&fx);
+    let key = fake_key();
+    let (exit, output) = run(
+        &fx,
+        &[
+            ("OPENROUTER_API_KEY", &key),
+            ("OPENAI_API_KEY", "fake-openai-key"),
+            ("CLUD_ALLOW_METERED", "1"),
+            ("CLUD_METERED_PROVIDER", "codex"),
+        ],
+        &[
+            "install",
+            "hermes",
+            "--configure-only",
+            "--yes",
+            "--migrate-credentials",
+            "--migrate-provider",
+            "openrouter",
+        ],
+    );
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        output.contains("clud-codex"),
+        "Codex must be offered: {output}"
+    );
+    let text = fs::read_to_string(config_path(&fx)).unwrap();
+    assert!(text.contains("openrouter:"));
+    assert!(!text.contains("clud-codex:"));
+    assert!(!output.contains(&key));
+    assert!(!fx
+        .home
+        .join(".config/systemd/user/clud-serve-codex.service")
+        .exists());
+}
+
+#[test]
+fn unavailable_migration_provider_does_not_copy_other_credentials() {
+    let fx = fixture();
+    seed_config(&fx);
+    let before = fs::read(config_path(&fx)).unwrap();
+    let key = fake_key();
+    let (exit, output) = run(
+        &fx,
+        &[("OPENROUTER_API_KEY", &key)],
+        &[
+            "install",
+            "hermes",
+            "--configure-only",
+            "--yes",
+            "--migrate-provider",
+            "clud-codex",
+        ],
+    );
+    assert_eq!(exit, 1, "{output}");
+    assert!(output.contains("no available credential"), "{output}");
+    assert_eq!(fs::read(config_path(&fx)).unwrap(), before);
+}
+
+#[test]
+fn configure_only_target_overrides_hermes_home_and_preserves_default_config() {
+    let fx = fixture();
+    seed_config(&fx);
+    let original = fs::read(config_path(&fx)).unwrap();
+    let env_home = fx.home.join("environment-hermes");
+    fs::create_dir_all(&env_home).unwrap();
+    fs::write(env_home.join("config.yaml"), "# environment home\n").unwrap();
+    let target = fx.home.join("desktop hermes");
+    let key = fake_key();
+    let (exit, output) = run(
+        &fx,
+        &[
+            ("OPENROUTER_API_KEY", &key),
+            ("HERMES_HOME", env_home.to_str().unwrap()),
+        ],
+        &[
+            "install",
+            "hermes",
+            "--configure-only",
+            "--target",
+            target.to_str().unwrap(),
+            "--yes",
+            "--migrate-provider",
+            "openrouter",
+        ],
+    );
+    assert_eq!(exit, 0, "{output}");
+    assert!(fs::read_to_string(target.join("config.yaml"))
+        .unwrap()
+        .contains("openrouter:"));
+    assert_eq!(fs::read(config_path(&fx)).unwrap(), original);
+    assert_eq!(
+        fs::read_to_string(env_home.join("config.yaml")).unwrap(),
+        "# environment home\n"
+    );
+    assert!(!target.join(".hermes/config.yaml").exists());
+}
+
+#[test]
+fn configure_only_target_dry_run_reports_config_without_writing() {
+    let fx = fixture();
+    let target = fx.home.join("desktop-hermes");
+    let (exit, output) = run(
+        &fx,
+        &[],
+        &[
+            "install",
+            "hermes",
+            "--configure-only",
+            "--target",
+            target.to_str().unwrap(),
+            "--dry-run",
+        ],
+    );
+    assert_eq!(exit, 0, "{output}");
+    assert!(
+        output.contains(&format!(
+            "install: config {}",
+            target.join("config.yaml").display()
+        )),
+        "{output}"
+    );
+    assert!(!target.exists());
 }

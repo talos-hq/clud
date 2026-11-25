@@ -4,6 +4,7 @@ The host-platform boundary. This is the only place in `clud-bin`'s sources
 where a host may be named. Rules and rationale:
 [`docs/architecture/platform-boundary.md`](../../../../docs/architecture/platform-boundary.md).
 
+- `managed_codex`: persistent Linux user service for the configured Hermes Codex gateway; see [standalone gateway](../../../../docs/architecture/standalone-gateway.md#managed-codex-gateway-for-hermes).
 - `stdio` (#2386): `redirect_stderr_to(&File)` points the process stderr at a file (`dup2` / `SetStdHandle`); used by the daemon entry.
 - `session_tmp_live`: verifies protected desktop-service identity and manager lineage for temp GC; unsupported hosts retain the unknown-process safeguard.
 - `mod.rs` is the selector. It declares `unix` or `windows` and re-exports
