@@ -116,6 +116,14 @@ runs:
         restore-keys: |
           venv-build-${{ runner.os }}-${{ runner.arch }}-py3.11-
 
+    # Finish Python package I/O before starting the Rust cache route. On a
+    # slow download, the broker can otherwise retire the route before build.
+    - name: Sync Python dependencies
+      shell: bash
+      env:
+        CLUD_LOCAL_UV_CACHE: ${{ steps.local-uv-cache.outputs.enabled }}
+      run: bash ci/sync_build_python.sh
+
     - name: Select local Rust cook peer
       id: local-cook-peer
       if: inputs.local-cook-peer == 'true'
@@ -260,12 +268,6 @@ runs:
           echo "::endgroup::"
           git restore --staged --worktree -- .
         fi
-
-    - name: Sync
-      shell: bash
-      env:
-        CLUD_LOCAL_UV_CACHE: ${{ steps.local-uv-cache.outputs.enabled }}
-      run: bash ci/sync_build_python.sh
 
     - name: Save venv
       if: >-

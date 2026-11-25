@@ -29,7 +29,11 @@ def runner(tmp_path: Path) -> tuple[dict[str, str], Path]:
         'printf "uv %s\\n" "$*" >> "$LOG"\n'
         'case "$1" in\n'
         '  sync) [[ " $* " != *" --offline "* ]] ;;\n'
-        '  export) echo locked-requirements ;;\n'
+        '  export)\n'
+        '    if [[ "${MOCK_UV_COLOR:-}" == always && " $* " != *" --color never "* ]]; then\n'
+        '      printf "\\033[32m"\n'
+        '    fi\n'
+        '    echo locked-requirements ;;\n'
         '  pip) [[ "${FAIL_MIRROR:-0}" == 0 ]] ;;\n'
         'esac\n',
         encoding="utf-8",
@@ -40,6 +44,7 @@ def runner(tmp_path: Path) -> tuple[dict[str, str], Path]:
         'if [[ "$1" != -m ]]; then exec "$REAL_PYTHON" "$@"; fi\n'
         'printf "pip %s\\n" "$*" >> "$LOG"\n'
         'if [[ "${FAIL_DOWNLOAD:-0}" != 0 ]]; then exit 1; fi\n'
+        'if [[ $(<"${@: -3:1}") != locked-requirements ]]; then exit 1; fi\n'
         'touch "${!#}/test-locked.whl"\n',
         encoding="utf-8",
     )
@@ -68,6 +73,20 @@ def test_reuse_wheelhouse_on_another_slot(runner, tmp_path: Path) -> None:
     mirror_syncs = [cmd for cmd in commands if cmd.startswith("uv pip sync ")]
     assert len(mirror_syncs) == 2
     assert all("--offline --no-index" in cmd and "--require-hashes" in cmd for cmd in mirror_syncs)
+
+
+def test_cold_slot_exports_plain_requirements_with_forced_color(runner, tmp_path: Path) -> None:
+    env, _ = runner
+    result = process.run(
+        ["bash", str(SCRIPT)],
+        cwd=tmp_path,
+        env=env | {"MOCK_UV_COLOR": "always"},
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert "Installed locked packages from the shared local wheelhouse" in result.stdout
+    assert "using regular uv sync" not in result.stdout
 
 
 def test_failed_download_keeps_regular_sync_available(runner, tmp_path: Path) -> None:

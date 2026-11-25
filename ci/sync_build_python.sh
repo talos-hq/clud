@@ -58,7 +58,7 @@ sync_from_wheelhouse() (
   printf -v cleanup '%q' "$work"
   trap "python -c 'import shutil, sys; shutil.rmtree(sys.argv[1], ignore_errors=True)' $cleanup" EXIT
   requirements="$work/requirements.txt"
-  uv export --frozen --group dev --no-emit-project --format requirements-txt --no-header \
+  uv export --color never --frozen --group dev --no-emit-project --format requirements-txt --no-header \
     > "$requirements" || return 1
   key=$(python -c '
 import hashlib, platform, sys
