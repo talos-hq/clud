@@ -45,6 +45,7 @@ class _DaemonState:
         self.base_url = ""
         #: client_msg_id -> seq, mirroring the daemon's idempotency.
         self.injections: dict[str, int] = {}
+        self.injection_history: list[dict] = []
 
 
 def _make_handler(state: _DaemonState):  # noqa: C901
@@ -103,6 +104,7 @@ def _make_handler(state: _DaemonState):  # noqa: C901
                 "updated_at_ms": int(time.time() * 1000),
                 "last_error": None,
                 "turns": turns,
+                "injections": state.injection_history,
                 "events": [],
                 "next_event_cursor": len(state.events) + 1,
             }
@@ -468,6 +470,21 @@ def test_a_dead_session_seals_an_unrecorded_turn(bridge, wired):
     payload = _result(_run(bridge.session_status("sess-x", _FakeCtx())))
     assert payload["state"] == "terminated"
     assert payload["done"] is True
+
+
+@pytest.mark.parametrize("tool", ["session_status", "session_result"])
+def test_session_probe_exposes_pending_and_replaced_directives(bridge, wired, tool):
+    expected = [
+        {"seq": 1, "from": "sender-a", "state": "superseded", "superseded_by_seq": 3},
+        {"seq": 2, "from": "sender-b", "state": "queued", "superseded_by_seq": None},
+    ]
+    wired.injection_history = [
+        *[dict(entry, message="private prompt") for entry in expected],
+        {"seq": 3, "kind": "directive", "state": "delivered"},
+        {"seq": 4, "kind": "note", "state": "queued"},
+    ]
+    payload = _result(_run(getattr(bridge, tool)("sess-x", _FakeCtx())))
+    assert payload["directives"] == expected
 
 
 def test_session_status_reports_a_missing_session(bridge, wired):

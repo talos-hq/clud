@@ -267,6 +267,16 @@ fn board() -> &'static Mutex<Board> {
     BOARD.get_or_init(|| Mutex::new(Board::default()))
 }
 
+/// Best-effort system notice to one board address, never a broadcast.
+pub(super) fn notify(to: &str, body: &str) {
+    if to.trim() != "all" {
+        let _ = board()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .post("clud", to, body, now_ms());
+    }
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
