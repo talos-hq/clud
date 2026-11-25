@@ -1061,6 +1061,11 @@ jobs:
           done
           echo '::error::Public installer Pages never matched the staged artifact' >&2
           exit 1
+      - name: Let cached installer catalogs expire across regions
+        # Pages serves the catalog with max-age=600. The deployment runner can
+        # see the new bytes while a native acceptance runner still sees the old
+        # catalog. Give those caches one lifetime before testing the public URL.
+        run: sleep 600
 
   verify-promoted-public:
     name: Prove promoted release is canonical latest stable
