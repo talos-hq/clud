@@ -791,3 +791,20 @@ def test_linux_x64_publishes_the_bundle_when_any_tests_need_it() -> None:
     publish_condition = "if: ${{ inputs.bundle && inputs.publish-bundle }}"
     for step in ("Pack bundle", "Upload bundle"):
         assert f"- name: {step}\n        {publish_condition}" in reusable
+
+
+def test_reserved_linux_build_uses_local_packages_instead_of_a_remote_venv() -> None:
+    build = " ".join(BUILD_YML.read_text(encoding="utf-8").split())
+    assert (
+        "local-uv-cache: >- ${{ inputs.reserved-runner != '' "
+        "&& runner.environment == 'self-hosted' && runner.os == 'Linux' "
+        "&& inputs.profile == 'dev' }}" in build
+    )
+    setup = (CI_YML.parent.parent / "actions" / "setup-build" / "action.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'cache_dir="$tool_cache/clud-uv/$GITHUB_REPOSITORY_ID"' in setup
+    assert 'printf \'UV_CACHE_DIR=%s\\n\' "$cache_dir" >> "$GITHUB_ENV"' in setup
+    for step in ("Restore venv", "Save venv"):
+        block = setup.split(f"- name: {step}\n", 1)[1].split("\n    - name:", 1)[0]
+        assert "steps.local-uv-cache.outputs.enabled != 'true'" in block

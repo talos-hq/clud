@@ -42,6 +42,10 @@ inputs:
       the immutable key.
     required: false
     default: auto
+  local-uv-cache:
+    description: Use the reserved runner's persistent uv package cache when available.
+    required: false
+    default: "false"
   s3-access-key:
     description: >
       secrets.SOLDR_S3_CACHE_ACCESS_KEY. A composite action cannot read
@@ -73,6 +77,25 @@ runs:
         version: "0.12.19"
         enable-cache: false
 
+    # The Dell tool cache survives workspace cleanup. Keep packages there
+    # and let uv create a fresh venv with this slot's Python interpreter.
+    - name: Select local uv package cache
+      id: local-uv-cache
+      if: inputs.local-uv-cache == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        tool_cache="${RUNNER_TOOL_CACHE:-}"
+        if [[ ! -d "$tool_cache" || ! "${GITHUB_REPOSITORY_ID:-}" =~ ^[0-9]+$ ]]; then
+          exit 0
+        fi
+        cache_dir="$tool_cache/clud-uv/$GITHUB_REPOSITORY_ID"
+        if mkdir -p "$cache_dir" && [[ -w "$cache_dir" ]]; then
+          printf 'UV_CACHE_DIR=%s\n' "$cache_dir" >> "$GITHUB_ENV"
+          printf 'enabled=true\n' >> "$GITHUB_OUTPUT"
+          echo "Using the reserved runner's local uv package cache"
+        fi
+
     # Keyed on OS+arch even though every build job now runs on the same Linux
     # image: a venv holds platform-specific wheels, so a shared key would hand a
     # Linux venv to any future non-Linux builder.
@@ -81,6 +104,7 @@ runs:
     # counts against the 10 GB budget and pushes live entries into LRU.
     - name: Restore venv
       id: venv-cache
+      if: steps.local-uv-cache.outputs.enabled != 'true'
       uses: actions/cache/restore@v4
       with:
         path: .venv
@@ -218,7 +242,10 @@ runs:
       run: uv sync --frozen --group dev --no-install-project --python 3.11
 
     - name: Save venv
-      if: steps.venv-cache.outputs.cache-hit != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+      if: >-
+        steps.local-uv-cache.outputs.enabled != 'true' &&
+        steps.venv-cache.outputs.cache-hit != 'true' &&
+        github.event_name == 'push' && github.ref == 'refs/heads/main'
       uses: actions/cache/save@v4
       with:
         path: .venv
