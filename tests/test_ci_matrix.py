@@ -734,54 +734,42 @@ def test_preprune_is_ordered_before_writers_and_only_deletes_on_main_pushes() ->
     assert "--lockfile-changed --max-deletes 50" in maintenance
     for job in ("dylint", "build-linux-x64"):
         block = text.split(f"\n  {job}:\n", 1)[1].split("\n  #", 1)[0]
-        assert "needs: [static, cache-maint]" in block
+        assert re.search(r"needs: \[static, cache-maint(?:, reserve-linux-x64)?\]", block)
         assert "always() && !cancelled()" in block
         assert "needs.static.result == 'success'" in block
         assert "needs.cache-maint.result == 'success'" in block
         assert "needs.cache-maint.result == 'skipped'" in block
 
 
-def test_self_hosted_linux_build_routing_stays_guarded():
-    """The Dell build pool takes only CI's own same-repo Linux x64 dev builds.
+def test_self_hosted_linux_build_routing_stays_guarded() -> None:
+    """Only CI's trusted Linux x64 build can request a Dell reservation."""
+    text = CI_YML.read_text(encoding="utf-8")
+    selector = text.split("\n  reserve-linux-x64:\n", 1)[1].split("\n  build-linux-x64:", 1)[0]
+    assert "vars.CLUD_LINUX_X64_BUILD_RUNNER != ''" in selector
+    assert "!inputs.candidate_sha" in selector
+    assert "format('{0}/.github/workflows/ci.yml@', github.repository)" in selector
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in selector
+    assert "id-token: write" in selector
+    assert "source: lease" in selector
+    assert "lease-class: linux-x64-large" in selector
+    assert "timeout-minutes: 2" in selector
+    assert "fallback: ubuntu-24.04" in selector
+    reservation = "reserved-runner: ${{ needs.reserve-linux-x64.outputs.runs-on }}"
+    assert text.count(reservation) == 1
+    build = text.split("\n  build-linux-x64:\n", 1)[1].split("\n  test-linux-x64-unit:", 1)[0]
+    assert reservation in build
+    assert "needs: [static, cache-maint, reserve-linux-x64]" in build
+    assert "always() && !cancelled()" in build
+    assert "needs.reserve-linux-x64.result == 'success'" not in build
+    reusable = BUILD_YML.read_text(encoding="utf-8")
+    assert "runs-on: ${{ fromJSON(inputs.reserved-runner || toJSON(inputs.runs-on)) }}" in reusable
+    # The reuse gate must resolve the Clippy caller to just the compiler job.
+    assert re.findall(r"^  (\w[\w-]*):$", reusable.split("\njobs:\n", 1)[1], re.M) == ["build"]
 
-    `_build-target.yml` asks forge-ci pool-select (job `pool`, tokenless, on
-    forge-quick behind FORGE_QUICK_LABELS) whether a runner carrying the repo
-    variable CLUD_LINUX_X64_BUILD_RUNNER's label is idle. Every guard below
-    keeps untrusted or release work from even asking, so it never reaches a
-    persistent self-hosted runner; the hosted label stays the fallback.
-    """
-    text = BUILD_YML.read_text(encoding="utf-8")
-    pool = re.search(r"^  pool:\n((?:    .*\n|\n)+?)(?=^  \S)", text, re.MULTILINE)
-    assert pool, "_build-target.yml must have a pool-select job `pool`"
-    body = pool.group(1)
-    cond = re.search(r"^    if: >-\n((?:      .*\n)+)", body, re.MULTILINE)
-    assert cond, "the pool job must be guarded by an if:"
-    expr = " ".join(cond.group(1).split())
-    for guard in (
-        "vars.CLUD_LINUX_X64_BUILD_RUNNER != ''",
-        "inputs.target == 'x86_64-unknown-linux-gnu'",
-        "inputs.profile != 'release'",
-        "startsWith(github.workflow_ref, "
-        "format('{0}/.github/workflows/ci.yml@', github.repository))",
-        "github.event.pull_request.head.repo.full_name == github.repository",
-    ):
-        assert guard in expr, f"self-hosted routing lost its guard: {guard}"
-    # RUN-004: forge-quick only through the kill switch, 2 minutes, a pinned action.
-    quick = (
-        "runs-on: ${{ vars.FORGE_QUICK_LABELS != '' "
-        "&& fromJSON(vars.FORGE_QUICK_LABELS) || 'ubuntu-latest' }}"
-    )
-    assert quick in body
-    assert "timeout-minutes: 2" in body
-    assert "permissions: {}" in body
-    assert re.search(r"uses: forge-ci/ci\.yml/actions/pool-select@[0-9a-f]{40}\n", body)
-    assert "continue-on-error: true" in body
-    assert "fallback: ${{ inputs.runs-on }}" in body
-    assert "runs-on: ${{ steps.select.outputs.runs-on || toJSON(inputs.runs-on) }}" in body
-    build = re.search(r"^  build:\n((?:    .*\n|\n)+?)(?=^  \S|\Z)", text, re.MULTILINE)
-    assert build, "_build-target.yml must have a build job"
-    head = build.group(1).split("    timeout-minutes:", 1)[0]
-    assert "needs: pool" in head
-    # A skipped selector (fork PR, release, other targets) must not skip the build.
-    assert "if: ${{ !cancelled() }}" in head
-    assert "runs-on: ${{ fromJSON(needs.pool.outputs.runs-on || toJSON(inputs.runs-on)) }}" in head
+
+def test_linux_x64_unit_shards_require_the_bundle_producer_to_pass() -> None:
+    text = CI_YML.read_text(encoding="utf-8")
+    unit = text.split("\n  test-linux-x64-unit:\n", 1)[1].split(
+        "\n  test-linux-x64-integration:", 1
+    )[0]
+    assert "needs.build-linux-x64.result == 'success'" in unit

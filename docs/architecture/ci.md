@@ -1188,21 +1188,28 @@ redesign requires; everything else is CI plumbing.
 
 ## Self-hosted Linux x64 build pool
 
-The Linux x64 dev build (`build-linux-x64`, `lint-linux-x64`) can run on
-the self-hosted Dell pool instead of `ubuntu-24.04`. The pool is
-forge-ci/gh-runner host `dell-jw22zc3` (VxRail E640, 64 threads, RAM-backed
-caches), registered to the talos-hq runner group `Dell-NixOS`, which admits
-only this repository. `_build-target.yml` routes there when the repository
-variable `CLUD_LINUX_X64_BUILD_RUNNER` holds the pool's label
-(`dell-jw22zc3`), and only for `ci.yml` dev builds of same-repo code:
-release builds, other callers and fork PRs keep the hosted label, as
-`test_self_hosted_linux_build_routing_stays_guarded` asserts. `ci.yml`
-keeps literal hosted labels, so the target registry tests are unchanged.
-Exec suites stay hosted: `setup-exec` removes the Rust toolchain, which on a
-persistent runner would cost the next build its toolchain.
+CI can reserve a self-hosted Dell runner for the Linux x64 dev build when
+the repository variable `CLUD_LINUX_X64_BUILD_RUNNER` is set. Its existing
+value, `clud-linux-x64`, enables routing. The selector requests an
+Ubuntu 26.04 runner in the `linux-x64-large` class from the Forge broker.
+The dispatcher reports capacity for the class, so CI does not pin a physical
+Dell. In the November 24 audit, the Dell jobs all ran on `dell-fsx3mn2`.
+See the [JSON audit](dell-ci-audit.json) for the run evidence.
 
-Rollback: `gh variable delete CLUD_LINUX_X64_BUILD_RUNNER -R talos-hq/clud`;
-the next run is hosted again with no code change.
+The selector uses GitHub OIDC and runs before the build. It returns the unique
+label only after the reserved runner is online. A broker denial, failed
+selector, or runner that does not come online within 90 seconds selects
+`ubuntu-24.04`. The workflow excludes fork PRs and release candidate calls.
+The broker can further restrict PRs or decline when the fleet is busy. Clippy
+and test execution use GitHub-hosted runners. Keeping the selector outside
+the reusable build workflow leaves Clippy with one job for the main push reuse
+gate to verify.
+
+The build retries compilation once if Soldr disconnects on a reserved runner.
+If the build still fails, Linux unit tests skip because they have no bundle.
+To disable Dell routing, delete the repository variable
+`CLUD_LINUX_X64_BUILD_RUNNER`. To run the selector itself on GitHub-hosted
+runners, unset the organization variable `FORGE_QUICK_LABELS`.
 
 ## Release profile containment
 

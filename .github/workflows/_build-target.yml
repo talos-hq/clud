@@ -19,6 +19,10 @@ on:
         required: false
         type: string
         default: ubuntu-24.04
+      reserved-runner:
+        description: JSON labels for a runner reserved by the CI caller.
+        required: false
+        type: string
       strategy:
         description: 'native | soldr'
         required: false
@@ -96,46 +100,9 @@ on:
         default: false
 
 jobs:
-  # The self-hosted Dell build pool (forge-ci/gh-runner, talos-hq runner group
-  # Dell-NixOS, clud only) may take the Linux x64 dev build when the repo
-  # variable CLUD_LINUX_X64_BUILD_RUNNER names its label. Only CI's own dev
-  # builds of same-repo code qualify: release builds, other callers and fork
-  # PRs never run the selector and keep the hosted label. For those that do,
-  # pool-select asks https://signal.forge-ci.com/v1/pool (no token) right
-  # before the build whether a runner with that label is idle, and the build
-  # runs there only if so; otherwise, or on any error, it runs hosted. Unset
-  # CLUD_LINUX_X64_BUILD_RUNNER to stop routing at once; unset the org
-  # variable FORGE_QUICK_LABELS to run the selector itself hosted (RUN-004).
-  pool:
-    name: Select runner (${{ inputs.target }})
-    if: >-
-      vars.CLUD_LINUX_X64_BUILD_RUNNER != ''
-      && inputs.target == 'x86_64-unknown-linux-gnu'
-      && inputs.profile != 'release'
-      && startsWith(github.workflow_ref, format('{0}/.github/workflows/ci.yml@', github.repository))
-      && (github.event_name != 'pull_request'
-          || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ${{ vars.FORGE_QUICK_LABELS != '' && fromJSON(vars.FORGE_QUICK_LABELS) || 'ubuntu-latest' }}
-    timeout-minutes: 2
-    permissions: {}
-    outputs:
-      runs-on: ${{ steps.select.outputs.runs-on || toJSON(inputs.runs-on) }}
-    steps:
-      - name: Select pool or hosted
-        id: select
-        continue-on-error: true
-        uses: forge-ci/ci.yml/actions/pool-select@a36bc81ad6ada5fb17398e3e7ba38435cc67a951
-        with:
-          labels: ${{ format('["{0}"]', vars.CLUD_LINUX_X64_BUILD_RUNNER) }}
-          fallback: ${{ inputs.runs-on }}
-
   build:
     name: ${{ inputs.target }}
-    needs: pool
-    # Runs when the selector was skipped (fork PRs, release, other targets,
-    # routing off) or failed, too: the hosted inputs.runs-on is then the runner.
-    if: ${{ !cancelled() }}
-    runs-on: ${{ fromJSON(needs.pool.outputs.runs-on || toJSON(inputs.runs-on)) }}
+    runs-on: ${{ fromJSON(inputs.reserved-runner || toJSON(inputs.runs-on)) }}
     timeout-minutes: 60
     env:
       RUST_BACKTRACE: "1"
@@ -293,12 +260,31 @@ jobs:
 
       - name: Build binaries and test harnesses
         if: ${{ inputs.compile && inputs.standalone-artifact == '' && inputs.candidate-artifact == '' }}
-        run: >
-          "$VENV_PY" -m ci.xbuild compile
-          --target ${{ inputs.target }}
-          --strategy ${{ inputs.strategy }}
-          --profile ${{ inputs.profile }}
-          ${{ inputs.bundle && '--with-tests' || '' }}
+        shell: bash
+        env:
+          BUILD_TARGET: ${{ inputs.target }}
+          BUILD_STRATEGY: ${{ inputs.strategy }}
+          BUILD_PROFILE: ${{ inputs.profile }}
+          WITH_TESTS: ${{ inputs.bundle }}
+          ON_RESERVED_RUNNER: ${{ runner.environment == 'self-hosted' && inputs.reserved-runner != '' }}
+        run: |
+          args=(-m ci.xbuild compile --target "$BUILD_TARGET" --strategy "$BUILD_STRATEGY" --profile "$BUILD_PROFILE")
+          if [[ "$WITH_TESTS" == true ]]; then
+            args+=(--with-tests)
+          fi
+          if [[ "$ON_RESERVED_RUNNER" != true ]]; then
+            exec "$VENV_PY" "${args[@]}"
+          fi
+
+          log="$RUNNER_TEMP/clud-xbuild.log"
+          if "$VENV_PY" "${args[@]}" 2>&1 | tee "$log"; then
+            exit 0
+          fi
+          if ! grep -Fq 'lost the connection to the soldr daemon' "$log"; then
+            exit 1
+          fi
+          echo "::warning::Soldr disconnected on the reserved runner. Retrying compilation once."
+          exec "$VENV_PY" "${args[@]}"
 
       - name: Build static musl clud
         if: ${{ inputs.standalone-artifact != '' }}
