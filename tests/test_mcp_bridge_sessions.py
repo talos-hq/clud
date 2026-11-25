@@ -14,6 +14,8 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -23,6 +25,10 @@ from tests.test_mcp_server import _fake_clud, _FakeCtx
 def _run(coro):
     """Run one bridge coroutine to completion."""
     return asyncio.run(coro)
+
+
+def _seal_context() -> SimpleNamespace:
+    return SimpleNamespace(session=SimpleNamespace(send_log_message=AsyncMock()))
 
 
 class _DaemonState:
@@ -254,7 +260,7 @@ def _event(cursor: int, turn_id: str, text: str) -> dict:
 
 def test_session_start_returns_handle_immediately_without_waiting(bridge, wired, tmp_path):
     payload = _result(
-        _run(bridge.session_start("hello", _FakeCtx(), cwd=str(tmp_path), wait_seconds=0))
+        _run(bridge.session_start("hello", _seal_context(), cwd=str(tmp_path), wait_seconds=0))
     )
     assert payload["session_id"] == "sess-created-1"
     assert payload["turn_id"] == "turn-1"
@@ -268,7 +274,7 @@ def test_session_start_returns_handle_immediately_without_waiting(bridge, wired,
 
 
 def test_session_start_declares_mcp_origin_at_creation(bridge, wired, tmp_path):
-    _run(bridge.session_start("hello", _FakeCtx(), cwd=str(tmp_path), wait_seconds=0))
+    _run(bridge.session_start("hello", _seal_context(), cwd=str(tmp_path), wait_seconds=0))
     creates = [r for r in wired.requests if r[0] == "POST" and r[1] == "/v1/sessions"]
     assert len(creates) == 1
     assert creates[0][3]["origin"] == "mcp"
@@ -276,12 +282,130 @@ def test_session_start_declares_mcp_origin_at_creation(bridge, wired, tmp_path):
 
 def test_session_start_with_wait_returns_the_sealed_answer(bridge, wired, tmp_path):
     wired.events = [_event(1, "turn-1", "the answer")]
-    payload = _result(
-        _run(bridge.session_start("hello", _FakeCtx(), cwd=str(tmp_path), wait_seconds=30))
-    )
+    ctx = _seal_context()
+
+    async def start():
+        result = await bridge.session_start("hello", ctx, cwd=str(tmp_path), wait_seconds=30)
+        assert not bridge._seal_watchers
+        return _result(result)
+
+    payload = _run(start())
     assert payload["done"] is True
     assert payload["text"] == "the answer"
     assert payload["turn"]["disposition"] == "exit_0"
+    ctx.session.send_log_message.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("turn_state", "disposition", "state", "exit_code", "first_line"),
+    [
+        ("completed", "exit_0", "idle", 0, "é" * 401),
+        ("failed", "exit_-9", "failed", -9, "failed first line"),
+        ("killed", "terminal_kill_pending", "failed", None, "interrupted first line"),
+    ],
+)
+def test_session_start_announces_seal_once(
+    bridge, monkeypatch, turn_state, disposition, state, exit_code, first_line
+):
+    sealed = {
+        "state": "running",  # A newer turn started before the watcher saw the seal.
+        "turns": [
+            {
+                "id": "turn-1",
+                "state": turn_state,
+                "disposition": disposition,
+                "created_at_ms": 1000,
+                "completed_at_ms": 2250,
+            },
+            {"id": "turn-2", "state": "running"},
+        ],
+        "events": [
+            _event(1, "turn-2", "unrelated output"),
+            _event(2, "turn-1", first_line + "\nsecond line"),
+        ],
+    }
+    waiting = {"state": "running", "turns": [{"id": "turn-1", "state": "running"}]}
+    poller = AsyncMock(side_effect=[waiting, sealed])
+    monkeypatch.setattr(bridge, "_session_record", poller)
+    monkeypatch.setattr(bridge, "_WAIT_TICK_SECONDS", 0)
+    monkeypatch.setattr(
+        bridge, "_resolve_and_start", AsyncMock(return_value=("base", "tok", "sess-1", "turn-1"))
+    )
+    ctx = _seal_context()
+
+    async def start_and_wait_for_notification():
+        payload = _result(await bridge.session_start("hello", ctx, wait_seconds=0))
+        assert payload["done"] is False
+        ctx.session.send_log_message.assert_not_awaited()
+        (watcher,) = bridge._seal_watchers
+        await watcher
+        assert not bridge._seal_watchers
+
+    _run(start_and_wait_for_notification())
+    assert poller.await_count == 2
+    poller.assert_awaited_with("base", "tok", "sess-1")
+    ctx.session.send_log_message.assert_awaited_once()
+    notification = ctx.session.send_log_message.await_args.kwargs
+    assert isinstance(notification["data"], str)
+    assert notification | {"data": json.loads(notification["data"])} == {
+        "level": "info",
+        "logger": "clud.session",
+        "data": {
+            "kind": "clud.session.sealed",
+            "schema": 1,
+            "session_id": "sess-1",
+            "turn_id": "turn-1",
+            "state": state,
+            "exit_code": exit_code,
+            "summary": first_line[:400],
+            "elapsed_ms": 1250,
+        },
+    }
+
+
+def test_seal_watcher_swallows_send_failure(bridge, monkeypatch, caplog):
+    sealed = {"state": "failed", "turns": [{"id": "turn-1", "state": "failed"}]}
+    monkeypatch.setattr(bridge, "_wait_for_turn", AsyncMock(return_value=(sealed, 0)))
+    session = _seal_context().session
+    session.send_log_message.side_effect = BrokenPipeError("stdio closed")
+
+    with caplog.at_level("DEBUG", logger=bridge.__name__):
+        _run(bridge._announce_seal(session, "base", "tok", "sess-1", "turn-1"))
+
+    session.send_log_message.assert_awaited_once()
+    assert "Seal watcher stopped for sess-1/turn-1" in caplog.text
+
+
+@pytest.mark.parametrize("error", [OSError("daemon closed"), asyncio.CancelledError()])
+def test_seal_watcher_swallows_poll_failure(bridge, monkeypatch, caplog, error):
+    monkeypatch.setattr(bridge, "_wait_for_turn", AsyncMock(side_effect=error))
+    session = _seal_context().session
+
+    with caplog.at_level("DEBUG", logger=bridge.__name__):
+        _run(bridge._announce_seal(session, "base", "tok", "sess-1", "turn-1"))
+
+    session.send_log_message.assert_not_awaited()
+    assert "Seal watcher stopped for sess-1/turn-1" in caplog.text
+
+
+def test_seal_watcher_stops_at_deadline(bridge, monkeypatch, caplog):
+    monkeypatch.setattr(bridge, "_SEAL_WATCH_SECONDS", 0.01)
+    session = _seal_context().session
+
+    async def check_deadline():
+        async def stalled_poll(*args):
+            await asyncio.Event().wait()
+
+        poller = AsyncMock(side_effect=stalled_poll)
+        monkeypatch.setattr(bridge, "_wait_for_turn", poller)
+        await asyncio.wait_for(bridge._announce_seal(session, "base", "tok", "sess-1", "turn-1"), 1)
+        poller.assert_awaited_once_with("base", "tok", "sess-1", "turn-1", 0.01)
+
+    with caplog.at_level("DEBUG", logger=bridge.__name__):
+        _run(check_deadline())
+
+    session.send_log_message.assert_not_awaited()
+    assert "Seal watcher stopped for sess-1/turn-1" not in caplog.text
 
 
 def test_session_start_rejects_unknown_backend_and_empty_prompt(bridge, wired):
@@ -300,7 +424,7 @@ def test_session_start_resumes_an_existing_session_without_creating_one(bridge, 
     payload = _result(
         _run(
             bridge.session_start(
-                "more", _FakeCtx(), cwd=str(tmp_path), resume_session_id="sess-old"
+                "more", _seal_context(), cwd=str(tmp_path), resume_session_id="sess-old"
             )
         )
     )
