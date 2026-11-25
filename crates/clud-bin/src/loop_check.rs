@@ -5,31 +5,18 @@
 use crate::command;
 use crate::loop_spec;
 
-/// Check for DONE/BLOCKED markers after an iteration finishes. Returns a
-/// terminal exit code to return from the runner, or `None` to continue.
-///
-/// File-only variant — used by the PTY launch path, where the child writes
-/// directly to the user's terminal and stdout never flows through clud.
-pub fn check_loop_markers(plan: &command::LaunchPlan, iteration: u32) -> Option<i32> {
-    check_loop_markers_with_output(plan, iteration, "")
+pub struct CompletionClaim<'a> {
+    pub summary: &'a str,
+    pub from_file: bool,
 }
 
-/// Whether [`check_loop_markers_with_output`] would end the loop, without
-/// printing, for a caller that must leave the alternate screen first.
-pub fn markers_end_loop(plan: &command::LaunchPlan, iteration: u32, captured_output: &str) -> bool {
-    !matches!(
-        marker_state(plan, iteration, captured_output),
-        loop_spec::MarkerState::None
-    )
-}
-
-fn marker_state(
+pub(crate) fn marker_state(
     plan: &command::LaunchPlan,
     iteration: u32,
     captured_output: &str,
-) -> loop_spec::MarkerState {
+) -> (loop_spec::MarkerState, bool) {
     let Some(markers) = plan.loop_markers.as_ref() else {
-        return loop_spec::MarkerState::None;
+        return (loop_spec::MarkerState::None, false);
     };
     let paths = loop_spec::MarkerPaths {
         done: std::path::PathBuf::from(&markers.done_path),
@@ -42,9 +29,8 @@ fn marker_state(
     )
 }
 
-/// Same as [`check_loop_markers`] but also scans `captured_output` for the
-/// `<<<CLUD_LOOP_DONE: ...>>>` / `<<<CLUD_LOOP_BLOCKED: ...>>>` token
-/// fallback (issue #95).
+/// Check for markers and invoke the verifier for a completion claim.
+/// Captured worker output can also supply a candidate token (#95).
 ///
 /// Marker files take precedence over tokens — if both are present, the
 /// file wins. Pass an empty `captured_output` to opt out of token scanning
@@ -53,9 +39,18 @@ pub fn check_loop_markers_with_output(
     plan: &command::LaunchPlan,
     iteration: u32,
     captured_output: &str,
+    verify: impl FnOnce(CompletionClaim<'_>) -> Option<i32>,
 ) -> Option<i32> {
-    match marker_state(plan, iteration, captured_output) {
+    let (state, from_file) = marker_state(plan, iteration, captured_output);
+    match state {
         loop_spec::MarkerState::Done(summary) => {
+            let code = verify(CompletionClaim {
+                summary: &summary,
+                from_file,
+            })?;
+            if code != 0 {
+                return Some(code);
+            }
             if summary.is_empty() {
                 eprintln!(
                     "[clud loop] DONE marker detected at iteration {iteration}; task resolved."
@@ -82,13 +77,19 @@ fn discard_early_done(plan: &command::LaunchPlan, iteration: u32) -> Option<i32>
     if iteration >= markers.min_iterations? {
         return None;
     }
-    match std::fs::remove_file(&markers.done_path) {
+    match discard_done(markers) {
         Ok(()) => None,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(error) => {
             eprintln!("[clud loop] could not clear early DONE: {error}");
             Some(1)
         }
+    }
+}
+
+fn discard_done(markers: &command::LoopMarkers) -> std::io::Result<()> {
+    match std::fs::remove_file(&markers.done_path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
     }
 }
 

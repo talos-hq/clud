@@ -16,9 +16,7 @@ use crate::console_setup::enable_console_vt_input;
 use crate::cpu_banner;
 use crate::launch_log;
 use crate::loop_artifacts;
-use crate::loop_check::{
-    check_loop_markers, check_loop_markers_with_output, loop_unconverged_exit,
-};
+use crate::loop_check::{check_loop_markers_with_output, loop_unconverged_exit};
 use crate::process_tree;
 use crate::session;
 use crate::stage_trace;
@@ -781,6 +779,7 @@ pub fn run_plan_subprocess(
             }
         };
     let mut last_exit = 0i32;
+    let mut verification_feedback = runner_loop_verification::VerificationFeedback::default();
     let trace_enabled = stage_trace::stderr_enabled(verbose);
 
     let mut iteration = 0;
@@ -840,7 +839,7 @@ pub fn run_plan_subprocess(
         // Console-attached launches and every non-Windows launch retain the
         // existing NativeProcess path and its Ctrl-C process-group behavior.
         let process = match runtime.spawn_subprocess(
-            plan.command.clone(),
+            runner_loop_verification::worker_command(plan, verification_feedback.reason.as_deref()),
             plan.cwd.as_ref().map(PathBuf::from),
             plan.stream_json_progress || plan.prompt_summary || console.is_some(),
             win_creation_flags::user_facing_backend_creationflags(),
@@ -917,7 +916,7 @@ pub fn run_plan_subprocess(
                 if let Some(s) = loop_session.as_deref_mut() {
                     s.on_iteration_end(iter_num, code, None);
                 }
-                if last_exit != 0 && plan.iterations > 1 {
+                if last_exit != 0 && (plan.iterations > 1 || plan.loop_markers.is_some()) {
                     eprintln!(
                         "[clud] iteration {} failed with exit code {}",
                         iter_num, last_exit
@@ -957,17 +956,15 @@ pub fn run_plan_subprocess(
             }
         }
 
-        iteration += 1;
-        if let Some(code) = check_loop_markers_with_output(plan, iter_num, &captured_output)
-            .or_else(|| {
-                runner_execution::pace_between_iterations(
-                    plan,
-                    iteration,
-                    console.as_mut(),
-                    interrupted,
-                )
-            })
-        {
+        if let Some(code) = runner_execution::finish_subprocess_iteration(
+            plan,
+            &runtime,
+            &mut iteration,
+            &captured_output,
+            interrupted,
+            &mut verification_feedback,
+            &mut console,
+        ) {
             return code;
         }
     }
@@ -1085,3 +1082,6 @@ fn teardown_interrupted_child(process: &subprocess::ManagedSubprocess, batch_wra
 /// non-streaming control flow.
 #[path = "runner_execution.rs"]
 mod runner_execution;
+
+#[path = "runner_loop_verification.rs"]
+mod runner_loop_verification;

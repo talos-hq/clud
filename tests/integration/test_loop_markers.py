@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -159,6 +160,104 @@ def test_codex_loop_minimum_ignores_early_done_only(
     assert f"iteration {last_iteration + 1}/4" not in result.stderr
 
 
+def test_codex_loop_verifies_original_task_before_accepting_done(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    task = "Verify both dependency groups A and B."
+    loop_dir = _marker_dir(tmp_path)
+    evidence = tmp_path / "evidence.txt"
+    mock_env["CLUD_MOCK_LOOP_TASK_EVIDENCE"] = str(evidence)
+    mock_env["CLUD_MOCK_LOOP_VERDICTS"] = (
+        '[{"status":"incomplete","reason":"Group B remains open"},'
+        '{"status":"complete","reason":"Both groups verified"}]'
+    )
+    result = _run(
+        clud_binary,
+        "--codex",
+        "loop",
+        task,
+        "--",
+        "--mock-write-done",
+        str(loop_dir / "DONE"),
+        "--mock-write-marker-on-iter",
+        "1",
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, 0)
+    assert "iteration 2/50" in result.stderr
+    assert "iteration 3/50" not in result.stderr
+    assert "Group B remains open" in result.stderr
+    assert "Both groups verified" in result.stderr
+    requests = [
+        json.loads(line)
+        for line in (loop_dir / "mock-verifier.jsonl").read_text().splitlines()
+    ]
+    assert len(requests) == 2
+    assert all(task in request["prompt"] for request in requests)
+    assert [request["evidence"] for request in requests] == ["A", "A B"]
+    assert evidence.read_text() == "A B"
+
+
+def test_loop_rejected_done_token_exhausts_explicit_maximum(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    loop_dir = _marker_dir(tmp_path)
+    output = tmp_path / "mock-output.txt"
+    output.write_text(
+        json.dumps({"type": "result", "result": "<<<CLUD_LOOP_DONE: candidate token>>>"}) + "\n"
+    )
+    mock_env["CLUD_MOCK_LOOP_VERDICTS"] = (
+        '[{"status":"incomplete","reason":"Still missing evidence"},'
+        '{"status":"incomplete","reason":"Still missing evidence"}]'
+    )
+    result = _run(
+        clud_binary,
+        "--claude",
+        "loop",
+        "--loop-count",
+        "2",
+        "Verify both groups",
+        "--",
+        "--mock-stream-json",
+        str(output),
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, 2)
+    requests = (loop_dir / "mock-verifier.jsonl").read_text().splitlines()
+    assert len(requests) == 2
+    assert all("candidate token" in request for request in requests)
+    assert not (loop_dir / "DONE").exists()
+
+
+def test_codex_loop_consumes_rejected_done(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    loop_dir = _marker_dir(tmp_path)
+    mock_env["CLUD_MOCK_LOOP_CLAIM_ONCE"] = "1"
+    mock_env["CLUD_MOCK_LOOP_VERDICTS"] = '[{"status":"incomplete","reason":"Missing B"}]'
+    result = _run(
+        clud_binary,
+        "--codex",
+        "loop",
+        "--loop-count",
+        "2",
+        "Verify both groups",
+        "--",
+        "--mock-write-done",
+        str(loop_dir / "DONE"),
+        "--mock-write-marker-on-iter",
+        "1",
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, 2)
+    assert "iteration 2/2" in result.stderr
+    assert not (loop_dir / "DONE").exists()
+    assert len((loop_dir / "mock-verifier.jsonl").read_text().splitlines()) == 1
+
+
 def test_loop_no_markers_exhausts_iterations(
     clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
 ) -> None:
@@ -308,7 +407,7 @@ def test_loop_emits_clud_loop_artifacts(
 def test_codex_loop_stops_on_done_marker(
     clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
 ) -> None:
-    """Codex loop honors the DONE marker contract just like claude."""
+    """An approved claim may stop native Codex at iteration one."""
     loop_dir = _marker_dir(tmp_path)
     done = loop_dir / "DONE"
 
@@ -316,8 +415,6 @@ def test_codex_loop_stops_on_done_marker(
         clud_binary,
         "--codex",
         "loop",
-        "--loop-count",
-        "10",
         "resolve the task",
         "--",
         "--mock-write-done",
@@ -325,15 +422,39 @@ def test_codex_loop_stops_on_done_marker(
         "--mock-write-done-body",
         "codex task resolved",
         "--mock-write-marker-on-iter",
-        "2",
+        "1",
         env=mock_env,
         cwd=tmp_path,
     )
     _assert_rc(result, 0)
-    assert "iteration 2" in result.stderr
+    assert "verification approved at iteration 1" in result.stderr
+    assert "iteration 2/50" not in result.stderr
     assert "DONE" in result.stderr
     assert done.is_file()
     assert done.read_text().strip() == "codex task resolved"
+
+
+def test_codex_loop_does_not_accept_verdict_from_stderr(
+    clud_binary: Path, mock_env: dict[str, str], tmp_path: Path
+) -> None:
+    done = _marker_dir(tmp_path) / "DONE"
+    mock_env["CLUD_MOCK_LOOP_VERDICT_STDERR"] = "1"
+    result = _run(
+        clud_binary,
+        "--codex",
+        "loop",
+        "Verify the task",
+        "--",
+        "--mock-write-done",
+        str(done),
+        "--mock-write-marker-on-iter",
+        "1",
+        env=mock_env,
+        cwd=tmp_path,
+    )
+    _assert_rc(result, 1)
+    assert "verifier returned no verdict" in result.stderr
+    assert not done.exists()
 
 
 def test_loop_message_without_task_queues_and_exits(

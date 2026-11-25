@@ -446,6 +446,8 @@ Loop subsystem (`clud loop`):
   caches under `.clud/loop/`, locates DONE/BLOCKED marker files.
 - `loop_check.rs` - post-iteration DONE/BLOCKED marker check; file-only and
   stdout-scanning variants used by PTY and subprocess paths respectively.
+- `runner_loop_verification.rs` - reviews DONE claims in a fresh harness turn
+  and supplies rejected claims' unmet criteria to the next worker.
 - `loop_artifacts.rs` - durable `<git-root>/.clud/loop/` artifacts:
   `info.json` (`TaskInfo`), `log.txt`, `motivation.md`, and `.gitignore`
   auto-injection.

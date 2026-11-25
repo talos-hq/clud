@@ -276,6 +276,16 @@ pub struct LoopMarkers {
     pub blocked_path: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub min_iterations: Option<u32>,
+    #[serde(skip)]
+    pub(crate) verification: Option<LoopVerification>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct LoopVerification {
+    pub task: String,
+    pub git_root: std::path::PathBuf,
+    pub worker_prompt_index: usize,
+    pub command: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -131,7 +131,14 @@ similar). The default paths are `<git-root>/.clud/loop/DONE` and
 BLOCKED path is derived via `blocked_path_from_done` (`DONE.md` →
 `BLOCKED.md`).
 
-`DONE` terminates the entire loop; it never means just “this iteration is done”.
+`DONE` asks to terminate the entire loop. The worker records which original
+criteria it verified, remaining findings, and justified exclusions. The
+foreground runner starts a fresh verifier turn with the resolved task and
+worker's claim. It accepts success only when the verifier approves. A
+rejection consumes the marker and records its reason in the loop log and the
+next worker prompt. The verifier does not spend a worker iteration. Invalid
+verdicts, failed launches, and verification timeouts end the run with an
+explicit error. The same approval step applies to a supported DONE token.
 The original task's explicit completion conditions govern when to write it.
 Queue acceptance satisfies an individual item's criterion only when the task
 explicitly says so. A multi-item task records cumulative progress and evidence

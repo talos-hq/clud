@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use super::types::LoopMarkers;
+use super::types::{LoopMarkers, LoopVerification};
 use crate::loop_spec::{
     self, blocked_path_from_done, cache_path, classify, fetch_via_gh, render_cache,
     resolve_current_repo, GhKind, MarkerPaths, TaskSpec,
@@ -16,11 +16,23 @@ pub(super) fn marker_contract(paths: &MarkerPaths, minimum: Option<u32>) -> Stri
     contract
 }
 
-pub(super) fn launch_markers(paths: MarkerPaths, min_iterations: Option<u32>) -> LoopMarkers {
+pub(super) fn launch_markers(
+    paths: MarkerPaths,
+    min_iterations: Option<u32>,
+    task: String,
+    git_root: std::path::PathBuf,
+    worker_prompt_index: usize,
+) -> LoopMarkers {
     LoopMarkers {
         done_path: paths.done.to_string_lossy().into_owned(),
         blocked_path: paths.blocked.to_string_lossy().into_owned(),
         min_iterations,
+        verification: Some(LoopVerification {
+            task,
+            git_root,
+            worker_prompt_index,
+            command: Vec::new(),
+        }),
     }
 }
 
