@@ -669,6 +669,8 @@ def test_codex_builtins_seed_interactive_dry_run(
     assert data["launch_mode"] == "subprocess"  # no terminal under pytest (DD-086)
     assert "exec" not in data["command"]
     assert prompt_fragment in data["command"][-1]
+    if verb == "do":
+        assert "issue readiness was not checked in --dry-run" in data["command"][-1]
 
 
 def test_grind_seeds_the_native_loop_on_the_claude_harness() -> None:

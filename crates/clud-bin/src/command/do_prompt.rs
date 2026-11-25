@@ -332,7 +332,7 @@ pub fn verdict_name(v: Verdict) -> &'static str {
 
 /// Inspect the checkout once and give both explicit entry points the same
 /// procedure and installed-router context. Target text never enters a shell.
-pub fn render_current(target: &str, kind: &Result<DoKind, String>) -> String {
+pub fn render_current(target: &str, kind: &Result<DoKind, String>, dry_run: bool) -> String {
     let facts = std::env::current_dir()
         .map_err(|error| format!("could not resolve the current directory: {error}"))
         .and_then(|cwd| gather(&cwd));
@@ -348,7 +348,11 @@ pub fn render_current(target: &str, kind: &Result<DoKind, String>) -> String {
         ),
         None => "Stop: the skill directory could not be resolved. Tell the user and do not start work.\n\n".to_string(),
     };
-    let issue_status = super::do_issue::gather(target);
+    let issue_status = if dry_run {
+        Err("issue readiness was not checked in --dry-run".into())
+    } else {
+        super::do_issue::gather(target)
+    };
     format!(
         "{context}{}",
         render_with_issue(target, kind, &facts, &issue_status)
@@ -493,7 +497,7 @@ pub fn run(words: &[String]) -> i32 {
             do_kind::query_sub_issues,
         )
     };
-    print!("{}", render_current(&target, &kind));
+    print!("{}", render_current(&target, &kind, false));
     0
 }
 
