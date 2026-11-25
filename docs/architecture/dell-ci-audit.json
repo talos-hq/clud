@@ -219,13 +219,30 @@
     "issue": "A live Dell job with a warm Rust toolchain spent 22.94 seconds setting Rustup's default profile before reusing the installed toolchain and components.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45639207000/job/139293483123",
-      "https://github.com/forge-ci/setup-soldr/pull/710"
+      "https://github.com/forge-ci/setup-soldr/pull/710",
+      "https://github.com/forge-ci/setup-soldr/actions/runs/45654178300",
+      "https://github.com/talos-hq/clud/actions/runs/45656250186/job/139354421532"
     ],
     "measurements_seconds": {
       "live_slot_2_settings_write": 22.94,
       "live_slot_1_read_only_profile_probe_upper_bound": 0.01
     },
     "status": "confirmed",
-    "resolution": "On persistent runners, setup-soldr checks the existing profile first and skips the settings write when the profile exactly matches. Three read-only probes on slot 1 returned the requested profile in under 0.01 seconds each. A mismatch or an unsupported read command follows the existing write path."
+    "resolution": "On persistent runners, setup-soldr checks the existing profile first and skips the settings write when the profile exactly matches. Three read-only probes on slot 1 returned the requested profile in under 0.01 seconds each. After the v0 promotion, a successful Clud main build on slot 1 downloaded the exact promoted commit and logged that it reused the existing minimal profile. A mismatch or an unsupported read command follows the existing write path."
+  },
+  {
+    "id": "CLUD-DELL-11",
+    "issue": "The GitHub-hosted fallback for a Clud Linux build aborted while resolving the latest Soldr release. The authenticated API lookup had no recovery path when it timed out.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45647408452/job/139322395795",
+      "https://github.com/talos-hq/clud/actions/runs/45647408452/attempts/2",
+      "https://github.com/forge-ci/setup-soldr/pull/711"
+    ],
+    "measurements_seconds": {
+      "release_lookup_timeout": 10,
+      "failed_setup_action_elapsed": 10.276
+    },
+    "status": "confirmed",
+    "resolution": "The unchanged Clud retry passed. The setup-soldr fix tries the public GitHub release page after the authenticated GitHub.com API lookup fails. The fallback follows the former Soldr repository's redirect to its current owner and resolves the live tag without sending the API token. A test that injected an API timeout and left the public requests live returned v0.9.57. Exact Soldr pins still avoid version lookup, and authenticated custom API endpoints stay on their configured server."
   }
 ]
