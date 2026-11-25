@@ -914,8 +914,11 @@ fn resolve_do_target(args: &mut args::Args) {
         match kind {
             Ok(kind) => {
                 args.do_meta = kind == command::do_kind::DoKind::Meta;
-                args.do_rendered_prompt =
-                    Some(command::do_prompt::render_current(target, &Ok(kind)));
+                args.do_rendered_prompt = Some(command::do_prompt::render_current(
+                    target,
+                    &Ok(kind),
+                    args.dry_run,
+                ));
             }
             Err(error) => {
                 eprintln!("[clud] error: {error}");
