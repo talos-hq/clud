@@ -58,13 +58,16 @@
       "https://github.com/talos-hq/clud/actions/runs/45306406119/job/138151399343"
     ],
     "daemon_lifecycle": {
+      "dependency_cook_finished_utc": "2026-11-24T01:40:57.962Z",
+      "python_sync_finished_utc": "2026-11-24T01:42:39.838Z",
       "shutdown_requested_utc": "2026-11-24T01:42:53.551Z",
       "shutdown_reason": "explicit-stop",
+      "requester": "soldr-broker",
       "requester_pid": 1070,
       "first_broken_pipe_utc": "2026-11-24T01:43:08.245Z"
     },
     "status": "confirmed",
-    "resolution": "Retry compilation once through Soldr with its compiler cache disabled after the known disconnect. The slot 1 lifecycle journal records a shutdown request about 15 seconds before the first broken pipe. The journal identifies the requesting PID. The command that initiated the request is unconfirmed."
+    "resolution": "The slot 1 lifecycle journal records a shutdown request about 15 seconds before the first broken pipe. The broker journal attributes it to the idle-route reaper during the gap between dependency cook and compilation. Sync Python packages before starting Soldr so network-bound Python setup cannot idle the route. Keep the existing single retry with the compiler cache disabled for an unexpected disconnect."
   },
   {
     "id": "CLUD-DELL-05",
@@ -91,7 +94,8 @@
       "https://github.com/talos-hq/clud/actions/runs/45557453838/job/139013548548",
       "https://github.com/talos-hq/clud/actions/runs/45555628801/job/139007044967",
       "https://github.com/talos-hq/clud/actions/runs/45597276043/job/139147483169",
-      "https://github.com/forge-ci/setup-soldr/pull/709"
+      "https://github.com/forge-ci/setup-soldr/pull/709",
+      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203"
     ],
     "measurements_seconds": {
       "dell": 1240,
@@ -112,8 +116,15 @@
       "network_disabled": true,
       "dependency_recompile_skipped": true
     },
+    "live_peer_archive": {
+      "reader_slot": 2,
+      "source_slot": 1,
+      "archive_bytes": 563381562,
+      "restored_files": 4840,
+      "applied_mtimes": 1723
+    },
     "status": "confirmed",
-    "resolution": "All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses, then saved a new local dependency archive. A later reservation on the same slot restored 4,840 files and skipped the full dependency cook. The warm Dell build took 709 seconds after a 96-second selector job. The hosted build of the same tree took 731 seconds after a 14-second selector job. Workflow events and cache states differed. An isolated FSX3MN2 runner restored the real slot 1 archive into the slot 2 checkout using slot 2's toolchain paths and skipped the dependency compile with networking and compiler caching disabled. Hosted-to-Dell workspace path parity and cross-slot compiler cache parity remain tracked upstream."
+    "resolution": "All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses, then saved a new local dependency archive. A later reservation on the same slot restored 4,840 files and skipped the full dependency cook. The warm Dell build took 709 seconds after a 96-second selector job. The hosted build of the same tree took 731 seconds after a 14-second selector job. Workflow events and cache states differed. An isolated FSX3MN2 runner restored the real slot 1 archive into the slot 2 checkout using slot 2's toolchain paths and skipped the dependency compile with networking and compiler caching disabled. A live queue job on slot 2 restored the same archive from its peer, then hit the maintenance lock timeout recorded in CLUD-DELL-09. Hosted-to-Dell workspace path parity and cross-slot compiler cache parity remain tracked upstream."
   },
   {
     "id": "CLUD-DELL-07",
@@ -164,7 +175,8 @@
     "issue": "A reserved Dell build downloaded a GitHub virtual environment whose Python symlink pointed at another runner slot. uv discarded the environment and downloaded its packages again.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45557453838/job/139013548548",
-      "https://github.com/talos-hq/clud/actions/runs/45582459779/job/139096759747"
+      "https://github.com/talos-hq/clud/actions/runs/45582459779/job/139096759747",
+      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203"
     ],
     "measurements": {
       "discarded_venv_archive_bytes": 65023791,
@@ -177,6 +189,20 @@
       "wheelhouse_offline_disk_backed_hit_seconds": 12.635
     },
     "status": "confirmed",
-    "resolution": "A reserved main build populated the slot-local uv cache and skipped the 65 MB virtual environment archive. The retained cache installed all 50 locked packages offline on FSX3MN2 after the job exited. Two fresh environments in a network-disabled container on FSX3MN2 used independent slot caches and the production runner assets mount. The first published 50 wheels supplied over the LAN. The second installed them from that archive in 1.702 seconds with a tmpfs workspace. A later disk-backed test installed all 50 in 12.635 seconds with networking disabled. The installer verifies the wheel hashes against the lock on every install and rejected a wheel with modified bytes in a separate check. Hosted builds keep the GitHub virtual environment cache."
+    "resolution": "A reserved main build populated the slot-local uv cache and skipped the 65 MB virtual environment archive. Two fresh offline environments on FSX3MN2 reused a shared wheel archive. The second installed all 50 packages in 1.702 seconds with a tmpfs workspace. A disk-backed test installed all 50 in 12.635 seconds with networking disabled. A live slot 2 build fell back to PyPI because ANSI color in the uv export broke its requirements file. The wheelhouse now requests plain output so GitHub Actions can use the same archive key as the offline probe. Each install verifies wheel hashes against the lock and rejects tampering. Hosted builds keep the GitHub virtual environment cache."
+  },
+  {
+    "id": "CLUD-DELL-09",
+    "issue": "A live Dell job loaded a Rust dependency archive from its peer slot, then Soldr could not acquire the build activity lease before the root-maintenance lock deadline.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203"
+    ],
+    "measurements_seconds": {
+      "metadata_probe_output_timeout": 60,
+      "build_activity_lease_timeout": 30,
+      "dependency_cook_elapsed_before_failure": 95.5
+    },
+    "status": "confirmed",
+    "resolution": "The build continued and passed after the failed dependency cook. The peer archive loaded successfully. The process holding the exclusive maintenance lease during the timeout remains unconfirmed."
   }
 ]

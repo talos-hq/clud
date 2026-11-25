@@ -828,6 +828,17 @@ def test_only_reserved_linux_compiles_opt_in_to_a_local_cook_peer() -> None:
     assert "persistent-cook-peer-root: ${{ steps.local-cook-peer.outputs.root }}" in setup
 
 
+def test_python_sync_finishes_before_starting_the_soldr_cache_daemon() -> None:
+    setup = (CI_YML.parent.parent / "actions" / "setup-build" / "action.yml").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        setup.index("- name: Restore venv")
+        < setup.index("run: bash ci/sync_build_python.sh")
+        < setup.index("- name: Setup soldr")
+    )
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="Dell runner shell contract")
 @pytest.mark.parametrize(
     ("runner", "physical_runner", "peer"),
