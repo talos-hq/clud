@@ -519,11 +519,42 @@ jobs:
       attested: ${{ needs.static.outputs.attested_clippy == 'true' }}
       save-cache: "false"
 
+  reserve-linux-x64:
+    name: Reserve Linux x64 build runner
+    needs: [static, cache-maint]
+    if: >-
+      ${{ always() && !cancelled()
+          && needs.static.result == 'success'
+          && (needs.cache-maint.result == 'success' || needs.cache-maint.result == 'skipped')
+          && needs.static.outputs.mode != ''
+          && vars.CLUD_LINUX_X64_BUILD_RUNNER != ''
+          && !inputs.candidate_sha
+          && startsWith(github.workflow_ref, format('{0}/.github/workflows/ci.yml@', github.repository))
+          && (github.event_name == 'push' || github.event_name == 'merge_group'
+              || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+              || (github.event_name == 'pull_request'
+                  && github.event.pull_request.head.repo.full_name == github.repository)) }}
+    runs-on: ${{ vars.FORGE_QUICK_LABELS != '' && fromJSON(vars.FORGE_QUICK_LABELS) || 'ubuntu-latest' }}
+    timeout-minutes: 2
+    permissions:
+      id-token: write
+    outputs:
+      runs-on: ${{ steps.reserve.outputs.runs-on }}
+    steps:
+      - name: Reserve Dell capacity or select hosted
+        id: reserve
+        uses: forge-ci/ci.yml/actions/pool-select@52f6ada3ed0cb8622e31f1a16d506fb853b731b0
+        with:
+          source: lease
+          lease-class: linux-x64-large
+          labels: '["ubuntu-2604"]'
+          fallback: ubuntu-24.04
+
   build-linux-x64:
     name: Build linux-x64
     # The second of the two default-branch cache writers; `cache-maint` must
     # precede it for the same reason it precedes `dylint` (see above).
-    needs: [static, cache-maint]
+    needs: [static, cache-maint, reserve-linux-x64]
     # windows mode keeps these routine lanes too (#1652): without a merge
     # queue, CI OK green must imply Linux passed on the same head SHA.
     # `always() && !cancelled()` for the same reason as `dylint` above: a
@@ -539,6 +570,7 @@ jobs:
       source_ref: ${{ needs.static.outputs.source_ref }}
       target: x86_64-unknown-linux-gnu
       runs-on: ubuntu-24.04
+      reserved-runner: ${{ needs.reserve-linux-x64.outputs.runs-on }}
       strategy: soldr
       # Linux x64 clippy runs in lint-linux-x64, off this job's critical path.
       clippy: false
@@ -552,11 +584,10 @@ jobs:
     name: Test linux-x64 (unit)
     needs: [static, build-linux-x64]
     # `always() && !cancelled()` for the same reason as dylint/build-linux-x64:
-    # build-linux-x64 is SKIPPED whenever its own inputs are unmet, and a
-    # skipped `needs:` cascades -- a bare `if:` here left the minimal lane with
-    # nothing green for `CI OK` to aggregate.
+    # Only a successful build can provide the bundle consumed by each shard.
     if: >-
       ${{ always() && !cancelled()
+          && needs.build-linux-x64.result == 'success'
           && needs.static.outputs.skip_test-linux-x64-unit != 'true' }}
     strategy:
       fail-fast: false
@@ -997,7 +1028,7 @@ jobs:
   # The non-cancelling `cache-janitor` group keeps one sweep at a time.
   queue-cache-janitor:
     name: End-of-queue cache janitor
-    needs: [cancel-superseded, static, static-checks, cache-maint, dylint, lint-linux-x64, build-linux-x64, test-linux-x64-unit, test-linux-x64-integration, test-linux-x64-harness, build-windows-x64, test-windows-x64, build-macos-arm, test-macos-arm, build-linux-arm, test-linux-arm, build-windows-arm, test-windows-arm, build-macos-x64, test-macos-x64, ci-ok, nightly-report]
+    needs: [cancel-superseded, static, static-checks, cache-maint, dylint, lint-linux-x64, reserve-linux-x64, build-linux-x64, test-linux-x64-unit, test-linux-x64-integration, test-linux-x64-harness, build-windows-x64, test-windows-x64, build-macos-arm, test-macos-arm, build-linux-arm, test-linux-arm, build-windows-arm, test-windows-arm, build-macos-x64, test-macos-x64, ci-ok, nightly-report]
     if: always() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main'))
     runs-on: ubuntu-24.04
     timeout-minutes: 10

@@ -221,11 +221,13 @@ jobs:
     # The union ci.yml's jobs request; a called workflow cannot exceed it.
     # GitHub validates even skipped jobs. Only ci.yml's main-push auto-tag job
     # requests contents:write; it cannot execute during this candidate call.
+    # The runner reservation job requests id-token:write and is also skipped.
     permissions:
       contents: write
       actions: write
       pull-requests: read
       issues: write
+      id-token: write
 
   snapshot-public:
     name: Snapshot prior public stable release and Pages pointer

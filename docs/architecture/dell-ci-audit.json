@@ -1,0 +1,83 @@
+[
+  {
+    "id": "CLUD-DELL-01",
+    "issue": "Main pushes fail CI OK when Clippy is skipped under verified reuse because the nested selector is missing from the proof.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45520559615",
+      "https://github.com/talos-hq/clud/actions/runs/45516985099"
+    ],
+    "status": "confirmed",
+    "resolution": "Moved runner selection out of the reusable workflow so the gate can match the Clippy job in the merge-queue proof."
+  },
+  {
+    "id": "CLUD-DELL-02",
+    "issue": "The capacity snapshot does not reserve a runner. Dell jobs waited up to 48 minutes 47 seconds after selection in the 50-run sample.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45290687593/job/138119898447",
+      "https://github.com/forge-ci/ci.yml/pull/567"
+    ],
+    "status": "confirmed",
+    "resolution": "Use a broker reservation and fall back to hosted Ubuntu when the reservation is declined or the runner does not come online."
+  },
+  {
+    "id": "CLUD-DELL-03",
+    "issue": "Four Linux unit test shards ran after the Dell build failed and tried to download its missing bundle.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45306406119"
+    ],
+    "status": "confirmed",
+    "resolution": "Require the Linux build to finish successfully before its unit test consumers start."
+  },
+  {
+    "id": "CLUD-DELL-04",
+    "issue": "A Dell build failed after losing the connection to its Soldr cache daemon.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45306406119/job/138151399343"
+    ],
+    "status": "confirmed",
+    "resolution": "Retry compilation once on the reserved runner after the specific Soldr disconnect. The original daemon exit has no confirmed host-side cause."
+  },
+  {
+    "id": "CLUD-DELL-05",
+    "issue": "The CI docs name a retired routing label and imply the runner group only serves clud. The live label is clud-linux-x64, and all 75 Dell build and Clippy jobs in the sample ran on FSX3MN2.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45516985099",
+      "https://github.com/organizations/talos-hq/settings/actions/runner-groups/3"
+    ],
+    "status": "confirmed",
+    "resolution": "Document the live fleet observation, the routing switch, and the reservation and rollback behavior."
+  },
+  {
+    "id": "CLUD-DELL-06",
+    "issue": "A same-commit Dell build ran 8m02s longer than its hosted counterpart. The Dell run missed the build cache and the hosted run restored a partial cache.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45279642406/job/138060633046",
+      "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594",
+      "https://github.com/forge-ci/gh-runner/issues/75"
+    ],
+    "measurements_seconds": {
+      "dell": 1240,
+      "github_hosted": 758
+    },
+    "status": "confirmed",
+    "resolution": "Open. Compare compilation and upload on the reserved runner to a hosted build of the same commit. The original comparison covers different events and cache states."
+  },
+  {
+    "id": "CLUD-DELL-07",
+    "issue": "Uploading the Linux test bundle took a median 153s on Dell and 3s on GitHub-hosted. The same-commit jobs uploaded nearly identical byte counts.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45279642406/job/138060633046",
+      "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594"
+    ],
+    "measurements": {
+      "dell_jobs": 41,
+      "hosted_jobs": 6,
+      "dell_median_seconds": 153,
+      "hosted_median_seconds": 3,
+      "dell_matched_bundle_bytes": 174198277,
+      "hosted_matched_bundle_bytes": 174180114
+    },
+    "status": "confirmed",
+    "resolution": "Open. Recheck upload on a reserved runner and isolate the transfer bottleneck. The bundle is already compressed and the artifact action uses compression level zero."
+  }
+]
