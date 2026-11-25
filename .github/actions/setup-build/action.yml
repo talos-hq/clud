@@ -46,6 +46,10 @@ inputs:
     description: Use the reserved runner's persistent uv package cache when available.
     required: false
     default: "false"
+  local-cook-peer:
+    description: Let a reserved Linux build read the exact Rust dependency archive from its peer slot.
+    required: false
+    default: "false"
   s3-access-key:
     description: >
       secrets.SOLDR_S3_CACHE_ACCESS_KEY. A composite action cannot read
@@ -112,6 +116,25 @@ runs:
         restore-keys: |
           venv-build-${{ runner.os }}-${{ runner.arch }}-py3.11-
 
+    - name: Select local Rust cook peer
+      id: local-cook-peer
+      if: inputs.local-cook-peer == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        runner_name="${OBS_RUNNER_NAME:-}"
+        cache="${OBS_RUNNER_CACHE:-}"
+        if [[ "$runner_name" != "${RUNNER_NAME:-}" || "$cache" != /* ]]; then
+          exit 0
+        fi
+        if [[ "$runner_name" =~ ^(dell-[[:alnum:]]+-dyn-talos-hq)-([12])$ ]]; then
+          peer="${BASH_REMATCH[1]}-$((3 - BASH_REMATCH[2]))"
+          peer_root="$cache/slots/$peer/setup-soldr/linux-x64-u$(id -u)"
+          if [[ -d "$peer_root/cook-store" ]]; then
+            printf 'root=%s\n' "$peer_root" >> "$GITHUB_OUTPUT"
+          fi
+        fi
+
     # setup-soldr owns Rust provisioning plus build/target caching (#68).
     # Shims keep every cargo entry point -- including maturin-spawned cargo and
     # the inner cargo of any cross wrapper -- routed through soldr/zccache.
@@ -136,6 +159,7 @@ runs:
       with:
         version: latest
         toolchain: ${{ inputs.toolchain }}
+        persistent-cook-peer-root: ${{ steps.local-cook-peer.outputs.root }}
         cache: true
         # Remote S3 build cache: bucket forge-ci-cache in DigitalOcean Spaces sfo3.
         s3-bucket: forge-ci-cache
