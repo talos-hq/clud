@@ -35,6 +35,9 @@ import shutil
 import sys
 import tarfile
 from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from ci import process
 
 ROOT = Path(__file__).resolve().parent.parent
 DIST = ROOT / "dist"
@@ -64,6 +67,7 @@ WORKSPACE_BINARIES = (
 HARNESS_MANIFEST = "test-harnesses.json"
 
 ARCHIVE_NAME = "bundle.tar.gz"
+ZSTD_ARCHIVE_NAME = "bundle.tar.zst"
 
 #: Harnesses whose entire file is `#![cfg(windows)]` / `#![cfg(unix)]`. They are
 #: still *built* for every target -- a fully cfg'd-out harness compiles to a
@@ -133,7 +137,7 @@ def _strip_debug(staging: Path, target: str) -> None:
         strip_elf_debug(path, target)
 
 
-def pack(target: str, profile: str, dest: Path) -> int:  # noqa: C901
+def pack(target: str, profile: str, dest: Path, *, prefer_zstd: bool = False) -> int:  # noqa: C901
     built = target_dir(target, profile)
     if not built.is_dir():
         print(f"no build output at {built}", file=sys.stderr)
@@ -194,29 +198,61 @@ def pack(target: str, profile: str, dest: Path) -> int:  # noqa: C901
     _strip_debug(staging, target)
 
     dest.mkdir(parents=True, exist_ok=True)
-    archive = dest / ARCHIVE_NAME
-    # compresslevel=1: these are debug binaries, so the archive is large and
-    # highly compressible. Level 1 gets most of the ratio at a fraction of the
-    # CPU, and this sits on the critical path between build and test.
-    with tarfile.open(archive, "w:gz", compresslevel=1) as tar:
-        tar.add(staging, arcname=".")
+    archive = _write_archive(staging, dest, prefer_zstd=prefer_zstd)
 
     size_mb = archive.stat().st_size / (1024 * 1024)
     print(f"packed {archive} ({size_mb:.1f} MiB, {len(harnesses)} harnesses)")
     return 0
 
 
+def _write_archive(staging: Path, dest: Path, *, prefer_zstd: bool) -> Path:
+    """Keep long-distance matches across related binaries on slow uplinks."""
+    if prefer_zstd and shutil.which("zstd"):
+        archive = dest / ZSTD_ARCHIVE_NAME
+        with TemporaryDirectory(dir=dest) as scratch:
+            raw = Path(scratch) / "bundle.tar"
+            with tarfile.open(raw, "w:") as tar:
+                tar.add(staging, arcname=".")
+            compressed = Path(scratch) / ZSTD_ARCHIVE_NAME
+            process.run(
+                ["zstd", "-q", "-8", "--long=27", "-T2", str(raw), "-o", str(compressed)],
+                check=True,
+            )
+            compressed.replace(archive)
+        (dest / ARCHIVE_NAME).unlink(missing_ok=True)
+        return archive
+    archive = dest / ARCHIVE_NAME
+    # Level 1 keeps compression cheap on runners with a fast uplink.
+    with tarfile.open(archive, "w:gz", compresslevel=1) as tar:
+        tar.add(staging, arcname=".")
+    (dest / ZSTD_ARCHIVE_NAME).unlink(missing_ok=True)
+    return archive
+
+
+def _extract_archive(archive: Path, dest: Path) -> None:
+    with tarfile.open(archive, "r:*") as tar:
+        # Keep the same safe extraction filter for both encodings.
+        tar.extractall(dest, filter="data")  # wheel-write-lint: allow (tar bundle, not a wheel)
+
+
 def unpack(archive_dir: Path, dest: Path) -> int:
-    archive = archive_dir / ARCHIVE_NAME
+    archive = archive_dir / ZSTD_ARCHIVE_NAME
+    if not archive.is_file():
+        archive = archive_dir / ARCHIVE_NAME
     if not archive.is_file():
         print(f"no bundle archive at {archive}", file=sys.stderr)
         return 1
     dest.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(archive, "r:gz") as tar:
-        # `filter="data"` is the Python 3.12+ safe-extraction default; passing it
-        # explicitly keeps 3.11 from emitting a DeprecationWarning and keeps the
-        # behaviour identical across interpreter versions.
-        tar.extractall(dest, filter="data")  # wheel-write-lint: allow (tar bundle, not a wheel)
+    if archive.name == ZSTD_ARCHIVE_NAME:
+        if not shutil.which("zstd"):
+            print(f"cannot unpack {archive}: zstd is required on the test runner", file=sys.stderr)
+            return 1
+        with TemporaryDirectory(dir=dest.parent) as scratch:
+            raw = Path(scratch) / "bundle.tar"
+            process.run(["zstd", "-dq", str(archive), "-o", str(raw)], check=True)
+            _extract_archive(raw, dest)
+    else:
+        _extract_archive(archive, dest)
     manifest = json.loads((dest / "manifest.json").read_text(encoding="utf-8"))
     print(f"unpacked bundle for {manifest['target']} ({len(manifest['harnesses'])} harnesses)")
     return 0
@@ -230,6 +266,7 @@ def main(argv: list[str] | None = None) -> int:
     pack_parser.add_argument("--target", required=True)
     pack_parser.add_argument("--profile", default="dev")
     pack_parser.add_argument("--dest", type=Path, required=True)
+    pack_parser.add_argument("--prefer-zstd", action="store_true")
 
     unpack_parser = sub.add_parser("unpack")
     unpack_parser.add_argument("--archive-dir", type=Path, required=True)
@@ -237,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     if args.command == "pack":
-        return pack(args.target, args.profile, args.dest)
+        return pack(args.target, args.profile, args.dest, prefer_zstd=args.prefer_zstd)
     return unpack(args.archive_dir, args.dest)
 
 

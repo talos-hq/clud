@@ -75,9 +75,11 @@
       "dell_median_seconds": 153,
       "hosted_median_seconds": 3,
       "dell_matched_bundle_bytes": 174198277,
-      "hosted_matched_bundle_bytes": 174180114
+      "hosted_matched_bundle_bytes": 174180114,
+      "zstd_benchmark_bytes": 135922424,
+      "compression_seconds_on_workstation": 3.63
     },
     "status": "confirmed",
-    "resolution": "Open. Recheck upload on a reserved runner and isolate the transfer bottleneck. The bundle is already compressed and the artifact action uses compression level zero."
+    "resolution": "Prefer long-window zstd for Dell builds with zstd installed. A real archived bundle shrank 22% in a local benchmark. Measure the new upload on a reserved Dell runner and continue diagnosis of the remaining transfer latency."
   }
 ]

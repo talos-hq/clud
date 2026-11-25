@@ -447,6 +447,7 @@ jobs:
           --target ${{ inputs.target }}
           --profile ${{ inputs.profile }}
           --dest bundle-archive
+          ${{ runner.environment == 'self-hosted' && inputs.target == 'x86_64-unknown-linux-gnu' && '--prefer-zstd' || '' }}
 
       - name: Upload bundle
         if: ${{ inputs.bundle }}
@@ -456,7 +457,7 @@ jobs:
           path: bundle-archive/*
           if-no-files-found: error
           retention-days: 3
-          compression-level: 0 # already zstd-compressed by ci.bundle
+          compression-level: 0 # already compressed by ci.bundle
 
       - name: Upload dist artifacts
         if: ${{ inputs.wheel-artifact != '' }}
