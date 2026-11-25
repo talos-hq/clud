@@ -52,7 +52,8 @@ these holds, else refused with a message telling the agent to have the user
 type "use worktrees" (a yes to the agent's question does not count):
 
 1. the daemon flag `worktrees` is `true` for the session (the prompt said yes:
-   "use worktrees", "you can use a git worktree", "worktrees ok"; a no such as
+   "use worktrees", "you can use a git worktree", "worktrees ok", or an
+   explicit direction such as "do this in a worktree"; a no such as
    "no worktrees" or "don't use the work tree" never counts, and "branch"
    alone says nothing);
 2. `CLUD_ALLOW_WORKTREES=1` in the launch environment, which `clud --worktree`

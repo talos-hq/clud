@@ -86,9 +86,31 @@ fn clause_decision(clause: &str) -> Option<bool> {
             .any(|word| ALLOW_BEFORE.contains(&word.as_str()))
             || after
                 .iter()
-                .any(|word| ALLOW_AFTER.contains(&word.as_str())))
+                .any(|word| ALLOW_AFTER.contains(&word.as_str()))
+            || (word == "worktree" && requests_worktree_location(&words[..index])))
         .then_some(true)
     })
+}
+
+/// Accept an explicit direction for where to do the work, not a suggestion
+/// such as "we could do this in a worktree" or a bare location mention.
+fn requests_worktree_location(before: &[String]) -> bool {
+    let words: Vec<&str> = before.iter().map(String::as_str).collect();
+    let words = words.strip_prefix(&["please"]).unwrap_or(&words);
+    let task = match words {
+        ["spawn" | "spawning", "a", "subagent", "to", task @ ..]
+        | ["spawn" | "spawning", "a", "sub", "agent", "to", task @ ..] => task,
+        _ => words,
+    };
+    matches!(
+        task,
+        [
+            "do" | "make" | "implement" | "fix",
+            "this" | "it",
+            "in",
+            "a"
+        ]
+    )
 }
 
 fn is_negation(word: &str) -> bool {
@@ -228,6 +250,9 @@ mod tests {
             "allow worktrees",
             "Create a git worktree for issue 1234",
             "go ahead and use a work-tree",
+            "Do this in a worktree",
+            "Please implement it in a work tree",
+            "spawning a sub agent to make this in a worktree",
         ] {
             assert!(says_yes(prompt), "{prompt:?}");
         }
@@ -247,6 +272,9 @@ mod tests {
             "put it on a branch and open a PR",
             "can you remove these worktrees",
             "make sure the worktrees are cleaned up",
+            "we could do this in a worktree",
+            "don’t spawn a sub agent to make this in a worktree",
+            "is it possible to do this in a worktree?",
             "deal with the stale worktrees",
             "stop using worktrees",
             "we can't use worktrees here",
