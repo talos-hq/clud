@@ -283,7 +283,8 @@ jobs:
           if ! grep -Fq 'lost the connection to the soldr daemon' "$log"; then
             exit 1
           fi
-          echo "::warning::Soldr disconnected on the reserved runner. Retrying compilation once."
+          echo "::warning::Soldr disconnected on the reserved runner. Retrying compilation once with its compiler cache disabled."
+          export ZCCACHE_DISABLE=1
           exec "$VENV_PY" "${args[@]}"
 
       - name: Build static musl clud
@@ -447,6 +448,7 @@ jobs:
           --target ${{ inputs.target }}
           --profile ${{ inputs.profile }}
           --dest bundle-archive
+          ${{ runner.environment == 'self-hosted' && inputs.target == 'x86_64-unknown-linux-gnu' && '--prefer-zstd' || '' }}
 
       - name: Upload bundle
         if: ${{ inputs.bundle }}
@@ -456,7 +458,7 @@ jobs:
           path: bundle-archive/*
           if-no-files-found: error
           retention-days: 3
-          compression-level: 0 # already zstd-compressed by ci.bundle
+          compression-level: 0 # already compressed by ci.bundle
 
       - name: Upload dist artifacts
         if: ${{ inputs.wheel-artifact != '' }}

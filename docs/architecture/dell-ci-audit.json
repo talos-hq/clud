@@ -14,10 +14,12 @@
     "issue": "The capacity snapshot does not reserve a runner. Dell jobs waited up to 48 minutes 47 seconds after selection in the 50-run sample.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45290687593/job/138119898447",
-      "https://github.com/forge-ci/ci.yml/pull/567"
+      "https://github.com/forge-ci/ci.yml/pull/567",
+      "https://github.com/talos-hq/clud/actions/runs/45546457002/job/138977366408",
+      "https://github.com/talos-hq/clud/actions/runs/45548362832/job/138983412521"
     ],
     "status": "confirmed",
-    "resolution": "Use a broker reservation and fall back to hosted Ubuntu when the reservation is declined or the runner does not come online."
+    "resolution": "Use a broker reservation and fall back to hosted Ubuntu when the reservation is declined or the runner does not come online. The pull request and merge queue runs both used the hosted fallback. At queue selection the dispatcher counted 10 slots against its cap of 10, and the ledger showed zero available large-runner slots. A successful Dell reservation remains to be observed."
   },
   {
     "id": "CLUD-DELL-03",
@@ -35,13 +37,14 @@
       "https://github.com/talos-hq/clud/actions/runs/45306406119/job/138151399343"
     ],
     "status": "confirmed",
-    "resolution": "Retry compilation once on the reserved runner after the specific Soldr disconnect. The original daemon exit has no confirmed host-side cause."
+    "resolution": "Retry compilation once through Soldr with its compiler cache disabled after the known disconnect. This avoids the failing connection on the retry. The original daemon exit has no confirmed host-side cause."
   },
   {
     "id": "CLUD-DELL-05",
-    "issue": "The CI docs name a retired routing label and imply the runner group only serves clud. The live label is clud-linux-x64, and all 75 Dell build and Clippy jobs in the sample ran on FSX3MN2.",
+    "issue": "The CI docs name a retired routing label and imply the runner group only serves clud. The live label is clud-linux-x64. The 50-run sample had 76 Dell build and Clippy assignments, all on FSX3MN2, with 75 successful jobs.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45516985099",
+      "https://github.com/talos-hq/clud/actions/runs/45530872489/job/138925895989",
       "https://github.com/organizations/talos-hq/settings/actions/runner-groups/3"
     ],
     "status": "confirmed",
@@ -53,21 +56,25 @@
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45279642406/job/138060633046",
       "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594",
-      "https://github.com/forge-ci/gh-runner/issues/75"
+      "https://github.com/forge-ci/gh-runner/issues/75",
+      "https://github.com/forge-ci/soldr/pull/4223",
+      "https://github.com/forge-ci/setup-soldr/pull/696",
+      "https://github.com/forge-ci/gh-runner/pull/85"
     ],
     "measurements_seconds": {
       "dell": 1240,
       "github_hosted": 758
     },
     "status": "confirmed",
-    "resolution": "Open. Compare compilation and upload on the reserved runner to a hosted build of the same commit. The original comparison covers different events and cache states."
+    "resolution": "Open. The cache audit identified upstream store eviction and stale lock ownership, plus absolute compile paths that prevent a hosted cache seed from serving Dell compiles. The Dell's four clud slot locks are now runner-owned. Verify warm, same-path cache reuse and total time with a live reservation before calling the performance issue resolved."
   },
   {
     "id": "CLUD-DELL-07",
     "issue": "Uploading the Linux test bundle took a median 153s on Dell and 3s on GitHub-hosted. The same-commit jobs uploaded nearly identical byte counts.",
     "evidence": [
       "https://github.com/talos-hq/clud/actions/runs/45279642406/job/138060633046",
-      "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594"
+      "https://github.com/talos-hq/clud/actions/runs/45283500511/job/138086656594",
+      "https://github.com/talos-hq/clud/actions/runs/45530872489/job/138925895989"
     ],
     "measurements": {
       "dell_jobs": 41,
@@ -75,9 +82,16 @@
       "dell_median_seconds": 153,
       "hosted_median_seconds": 3,
       "dell_matched_bundle_bytes": 174198277,
-      "hosted_matched_bundle_bytes": 174180114
+      "hosted_matched_bundle_bytes": 174180114,
+      "zstd_benchmark_bytes": 135922424,
+      "compression_seconds_on_workstation": 3.63,
+      "dell_matched_bundle_reported_progress_seconds": 133.09,
+      "hosted_matched_bundle_reported_progress_seconds": 1.16,
+      "dell_matched_bundle_longest_progress_gap_seconds": 37.03,
+      "hosted_matched_bundle_longest_progress_gap_seconds": 0.2,
+      "later_dell_bundle_longest_progress_gap_seconds": 23.03
     },
     "status": "confirmed",
-    "resolution": "Open. Recheck upload on a reserved runner and isolate the transfer bottleneck. The bundle is already compressed and the artifact action uses compression level zero."
+    "resolution": "Prefer long-window zstd for Dell builds with zstd installed. A real archived bundle shrank 22% in a local benchmark. Measure the new upload on a reserved Dell runner and continue diagnosis of the remaining transfer latency. The matched Dell upload paused up to 37.03 seconds between progress updates. Those gaps do not distinguish file I/O from transfer delays."
   }
 ]
