@@ -227,6 +227,15 @@ def test_a_yes_allows_that_session_only(world: dict[str, object]) -> None:
     _assert_denied(_tool(world, "EnterWorktree", {}, session="other-session"), "has not allowed")
 
 
+def test_a_worktree_direction_permits_agent_isolation(world: dict[str, object]) -> None:
+    tool_input = {"description": "x", "prompt": "x", "isolation": "worktree"}
+    assert _prompt(world, "We could do this in a worktree").returncode == 0
+    _assert_denied(_tool(world, "Agent", tool_input), "has not allowed")
+    assert _prompt(world, "spawning a sub agent to make this in a worktree").returncode == 0
+    allowed = _tool(world, "Agent", tool_input)
+    assert allowed.returncode == 0, allowed.stdout + allowed.stderr
+
+
 def test_a_later_no_revokes_previously_granted_consent(world: dict[str, object]) -> None:
     assert _prompt(world, "use worktrees").returncode == 0
     assert _tool(world, "EnterWorktree", {}).returncode == 0
