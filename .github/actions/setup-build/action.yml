@@ -239,7 +239,9 @@ runs:
 
     - name: Sync
       shell: bash
-      run: uv sync --frozen --group dev --no-install-project --python 3.11
+      env:
+        CLUD_LOCAL_UV_CACHE: ${{ steps.local-uv-cache.outputs.enabled }}
+      run: bash ci/sync_build_python.sh
 
     - name: Save venv
       if: >-

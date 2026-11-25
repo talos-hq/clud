@@ -137,14 +137,19 @@
     "id": "CLUD-DELL-08",
     "issue": "A reserved Dell build downloaded a GitHub virtual environment whose Python symlink pointed at another runner slot. uv discarded the environment and downloaded its packages again.",
     "evidence": [
-      "https://github.com/talos-hq/clud/actions/runs/45557453838/job/139013548548"
+      "https://github.com/talos-hq/clud/actions/runs/45557453838/job/139013548548",
+      "https://github.com/talos-hq/clud/actions/runs/45582459779/job/139096759747"
     ],
     "measurements": {
       "discarded_venv_archive_bytes": 65023791,
       "reported_package_download_mib_at_least": 60.7,
-      "uncached_uv_sync_seconds": 38.4
+      "uncached_uv_sync_seconds": 38.4,
+      "wheelhouse_bytes": 69873147,
+      "wheelhouse_packages": 50,
+      "wheelhouse_archive_bytes": 69969920,
+      "wheelhouse_offline_hit_seconds": 1.702
     },
     "status": "confirmed",
-    "resolution": "Reserved Dell builds keep a repository-scoped uv package cache in the runner's persistent tool directory. uv creates a fresh virtual environment with the local interpreter and reuses cached packages across checkouts on that slot. Hosted builds keep the GitHub virtual environment cache. Compare consecutive reserved builds on the same slot to verify the avoided downloads."
+    "resolution": "A reserved main build populated the slot-local uv cache and skipped the 65 MB virtual environment archive. The retained cache installed all 50 locked packages offline on FSX3MN2 after the job exited. Two fresh environments in a network-disabled container on FSX3MN2 used independent slot caches and the production runner assets mount. The first published 50 wheels supplied over the LAN. The second installed them from that archive in 1.702 seconds. The installer verifies the wheel hashes against the lock on every install and rejected a wheel with modified bytes in a separate check. Hosted builds keep the GitHub virtual environment cache."
   }
 ]

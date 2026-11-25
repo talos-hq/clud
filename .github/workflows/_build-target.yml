@@ -204,7 +204,7 @@ jobs:
             exit 0
           fi
           echo "eligible=true" >> "$GITHUB_OUTPUT"
-          digest=$(git ls-files -s | awk -F'\t' -v keep='.github/workflows/_build-target.yml .github/actions/setup-build/action.yml ci/__init__.py ci/xbuild.py ci/cargo_messages.py ci/process.py' 'BEGIN { n = split(keep, k, " "); for (i = 1; i <= n; i++) want[k[i]] = 1 } ($2 in want) || $2 ~ /^tests\/fixtures\// || ($2 !~ /^(docs|bench|tests|ci|\.github)\// && $2 !~ /^[^\/]*\.md$/ && $2 !~ /^(ci|local-gate|bosn)\.toml$/)' | sha256sum | cut -c1-16)
+          digest=$(git ls-files -s | awk -F'\t' -v keep='.github/workflows/_build-target.yml .github/actions/setup-build/action.yml ci/__init__.py ci/xbuild.py ci/cargo_messages.py ci/process.py ci/sync_build_python.sh' 'BEGIN { n = split(keep, k, " "); for (i = 1; i <= n; i++) want[k[i]] = 1 } ($2 in want) || $2 ~ /^tests\/fixtures\// || ($2 !~ /^(docs|bench|tests|ci|\.github)\// && $2 !~ /^[^\/]*\.md$/ && $2 !~ /^(ci|local-gate|bosn)\.toml$/)' | sha256sum | cut -c1-16)
           echo "key=pass-v1-clippy-${{ inputs.target }}-${{ inputs.strategy }}-${{ inputs.doctest && 'doc' || 'nodoc' }}-${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Look up pass marker
