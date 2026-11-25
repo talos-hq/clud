@@ -95,7 +95,9 @@
       "https://github.com/talos-hq/clud/actions/runs/45555628801/job/139007044967",
       "https://github.com/talos-hq/clud/actions/runs/45597276043/job/139147483169",
       "https://github.com/forge-ci/setup-soldr/pull/709",
-      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203"
+      "https://github.com/talos-hq/clud/actions/runs/45612443660/job/139199751203",
+      "https://github.com/talos-hq/clud/actions/runs/45639207000/job/139293483123",
+      "https://github.com/forge-ci/gh-runner/issues/80"
     ],
     "measurements_seconds": {
       "dell": 1240,
@@ -124,7 +126,7 @@
       "applied_mtimes": 1723
     },
     "status": "confirmed",
-    "resolution": "All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses, then saved a new local dependency archive. A later reservation on the same slot restored 4,840 files and skipped the full dependency cook. The warm Dell build took 709 seconds after a 96-second selector job. The hosted build of the same tree took 731 seconds after a 14-second selector job. Workflow events and cache states differed. An isolated FSX3MN2 runner restored the real slot 1 archive into the slot 2 checkout using slot 2's toolchain paths and skipped the dependency compile with networking and compiler caching disabled. A live queue job on slot 2 restored the same archive from its peer, then hit the maintenance lock timeout recorded in CLUD-DELL-09. Hosted-to-Dell workspace path parity and cross-slot compiler cache parity remain tracked upstream."
+    "resolution": "All four Clud slot locks are now runner-owned. A reserved Dell run logged 570 compiler cache hits and 8 misses, then saved a new local dependency archive. A later reservation on the same slot restored 4,840 files and skipped the full dependency cook. The warm Dell build took 709 seconds after a 96-second selector job. The hosted build of the same tree took 731 seconds after a 14-second selector job. Workflow events and cache states differed. An isolated FSX3MN2 runner restored the real slot 1 archive into the slot 2 checkout using slot 2's toolchain paths and skipped the dependency compile with networking and compiler caching disabled. The first live queue job on slot 2 to restore the peer archive hit the maintenance lock timeout recorded in CLUD-DELL-09. A later live queue job on slot 2 restored the same peer archive, detected the warm marker, skipped dependency compilation, and passed. Hosted-to-Dell workspace path parity and cross-slot compiler cache parity remain tracked upstream."
   },
   {
     "id": "CLUD-DELL-07",
@@ -211,5 +213,19 @@
     },
     "status": "confirmed",
     "resolution": "The build continued and passed after the failed dependency cook. The peer archive loaded successfully. The process holding the exclusive maintenance lease during the timeout remains unconfirmed. A later main job completed a same-slot warm cook in 8.2 seconds. An upstream regression test reproduced scheduled embedded compiler cache maintenance holding the lease during the store scan. The merged Soldr fix keeps the lease available during that scan. Clud needs a Soldr release containing the fix to validate that behavior on Dell."
+  },
+  {
+    "id": "CLUD-DELL-10",
+    "issue": "A live Dell job with a warm Rust toolchain spent 22.94 seconds setting Rustup's default profile before reusing the installed toolchain and components.",
+    "evidence": [
+      "https://github.com/talos-hq/clud/actions/runs/45639207000/job/139293483123",
+      "https://github.com/forge-ci/setup-soldr/pull/710"
+    ],
+    "measurements_seconds": {
+      "live_slot_2_settings_write": 22.94,
+      "live_slot_1_read_only_profile_probe_upper_bound": 0.01
+    },
+    "status": "confirmed",
+    "resolution": "On persistent runners, setup-soldr checks the existing profile first and skips the settings write when the profile exactly matches. Three read-only probes on slot 1 returned the requested profile in under 0.01 seconds each. A mismatch or an unsupported read command follows the existing write path."
   }
 ]
