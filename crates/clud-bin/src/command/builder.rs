@@ -572,9 +572,17 @@ fn land_instructions(args: &Args) -> &'static str {
         .unwrap_or_else(|_| Some(String::new()));
     let env =
         std::env::var_os("CLUD_LAND_BIAS").map(|value| value.into_string().unwrap_or_default());
-    match resolve_land_bias(args.no_land, env.as_deref(), setting.as_deref()) {
+    land_instructions_for(resolve_land_bias(
+        args.no_land,
+        env.as_deref(),
+        setting.as_deref(),
+    ))
+}
+
+fn land_instructions_for(bias: LandBias) -> &'static str {
+    match bias {
         LandBias::Merge => super::do_prompt::LAND_CONTRACT,
-        LandBias::Pr => "Land the work: when a requested code change belongs in a git repository with a remote, aim to deliver a validated and pushed PR and report its URL. When appropriate branch from the default branch, commit the changes, and run the repository validation. Reference the issue when applicable. Honor the user's explicit instructions, approval requirements, repository rules, branch protection and --safe. Do not merge unless the user requests it.",
+        LandBias::Pr => "Land the work: load the bundled clud-git skill and follow its PR publication and checkout handoff procedure. When a requested code change belongs in a git repository with a remote, aim to deliver a validated and pushed PR and report its URL. When appropriate branch from the default branch, commit the changes, and run the repository validation. Reference the issue when applicable. Honor the user's explicit instructions, approval requirements, repository rules, branch protection and --safe. Do not merge unless the user requests it.",
         LandBias::Off => "",
     }
 }
@@ -1772,7 +1780,15 @@ mod land_contract_tests {
 
 #[cfg(test)]
 mod land_bias_tests {
-    use super::{resolve_land_bias, LandBias};
+    use super::{land_instructions_for, resolve_land_bias, LandBias};
+
+    #[test]
+    fn pr_only_bias_loads_handoff_skill_without_authorizing_merge() {
+        let instructions = land_instructions_for(LandBias::Pr);
+        assert!(instructions.contains("load the bundled clud-git skill"));
+        assert!(instructions.contains("Do not merge unless the user requests it."));
+        assert!(land_instructions_for(LandBias::Off).is_empty());
+    }
 
     #[test]
     fn preference_precedence_and_invalid_values() {

@@ -1,7 +1,8 @@
 ---
 name: clud-git
-description: Worktree, branch, process-audit, and quarantine playbook. Single source of truth reusable by /clud-fix-quick, /clud-issue-triage, and /goal runs. Use this when the user asks for worktree cleanup, stale-branch teardown, retiring a merged (including squash-merged) branch, or a process audit on a leftover dir.
+description: Publish a pull request and return the checkout to its default branch. Also covers worktree, branch, process-audit, and quarantine playbook. Single source of truth reusable by /clud-fix-quick, /clud-issue-triage, and /goal runs. Use this when the user asks for worktree cleanup, stale-branch teardown, retiring a merged (including squash-merged) branch, or a process audit on a leftover dir.
 triggers:
+  - When publishing, handing off or returning to a pull request
   - When the user asks to clean up worktrees, leftover .claude/worktrees/ directories, or stale feature branches
   - When a PR merged and its branch is still checked out, or the session context says the checkout is parked on a landed branch
   - When the user reports "shells appear stuck" or worktree removal failing with file-lock errors on Windows
@@ -15,6 +16,14 @@ triggers:
 Single source of truth for the worktree / branch / process-audit / quarantine playbook. `/clud-fix-quick`, `/clud-issue-triage`, a `/goal` run, and any future skill delegate here instead of copying the procedure as prose.
 
 The launcher exports `CLUD_EXE` as its own absolute path. Examples below use Bash quoting; in PowerShell use `& $env:CLUD_EXE`, and in cmd use `"%CLUD_EXE%"`. Outside a clud-launched session, set `CLUD_EXE` to the intended binary first.
+
+## PR publication and checkout handoff
+
+Use the repository's validation and publication commands whenever the task calls for a PR. Record the repository, default branch, feature branch and intended commit SHA. Push the intended commit and open or update the PR. Verify the PR is open on the expected head repository and branch and compare its full head SHA with the intended local commit (on GitHub use `gh pr view <PR> --repo <owner/repo> --json state,headRefName,headRefOid,headRepository,headRepositoryOwner,url`). A local commit or a successful push alone leaves publication unfinished. If publication fails, retry recoverable failures while preserving the branch and report the specific blocker if it persists.
+
+Once the PR head matches, confirm the feature branch still points at that commit and `git status --porcelain` is empty. Switch to the repository's actual default branch (usually `main`) with `git switch <default>`. Keep the feature branch available locally and remotely for fixes. If the PR has already merged, use `"$CLUD_EXE" gc branches --retire` instead. If the checkout is dirty, the head changed, or Git refuses the switch, preserve the checkout and report why it could not be released. Never force a switch, reset, stash unrelated changes, or delete a live PR branch to release it.
+
+Pass the PR URL and verified head SHA to the repository's merge mechanism or authorized watcher. Queue admission, auto-merge and direct merges each follow repository policy and user authorization. Auto-merge enabled and queue admission are intermediate states. When the task requires a merge, observe the PR by explicit repository and number until it merges or a blocker requires intervention. Recheck the PR head before any merge or queue action. On fixup, confirm ownership and check out the feature branch again, fix and validate, then repeat publication and handoff for the new SHA. After merge, retire the branch from the checkout with `"$CLUD_EXE" gc branches --retire`. For PR-only work, return the verified URL once publication and checkout release have been handled.
 
 ## Do you need a worktree at all?
 

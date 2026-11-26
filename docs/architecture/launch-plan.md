@@ -190,7 +190,10 @@ does not currently expose an equivalent instruction channel.
 For implementation tasks in a repository with a remote, finish the delivery:
 branch from the default branch when appropriate, commit, run the repository's
 validation, push and open a PR referencing the issue (`Closes #N` for the
-final fix). Observe hosted checks with `github/pr_merge_watch.py`, fix failures,
+final fix). Both landing modes direct the agent to the bundled `clud-git`
+skill. It verifies that the open PR holds the intended commit and returns a
+clean checkout to the default branch before the wait, keeping the feature
+branch available for fixes. Observe hosted checks with `github/pr_merge_watch.py`, fix failures,
 and satisfy required review before submitting the PR through the repository's
 merge mechanism. For a required merge queue, submit with
 `github/pr_merge.py --match-head-commit <head-sha>` and see the PR through to

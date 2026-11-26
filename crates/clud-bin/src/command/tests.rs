@@ -1353,9 +1353,13 @@ fn landing_instructions_cover_both_backends_and_no_land() {
         assert!(default
             .command
             .iter()
-            .any(|arg| arg.contains("Land the work") && !arg.contains(['\r', '\n'])));
+            .any(|arg| arg.contains("load the bundled clud-git skill")
+                && !arg.contains(['\r', '\n'])));
         let off = plan(&["clud", backend, "--no-land", "-p", "hello"]);
-        assert!(off.command.iter().all(|arg| !arg.contains("Land the work")));
+        assert!(off
+            .command
+            .iter()
+            .all(|arg| !arg.contains("load the bundled clud-git skill")));
     }
 }
 
