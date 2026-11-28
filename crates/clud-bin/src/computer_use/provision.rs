@@ -186,9 +186,7 @@ pub fn install(
         std::fs::remove_dir_all(dir)
             .map_err(|error| format!("remove unverified {}: {error}", dir.display()))?;
     }
-    let stage = tempfile::Builder::new()
-        .prefix(".cua-driver-")
-        .tempdir_in(parent)
+    let stage = kernal_api::platform::fs::TemporaryDirectory::in_directory(&parent, ".cua-driver-")
         .map_err(|error| format!("create staging dir: {error}"))?;
     unpack(&bytes, artifact.kind, stage.path())?;
     let root = unpacked_root(stage.path(), artifact)?;
@@ -319,7 +317,7 @@ mod embedded_tests {
         if ARCHIVE.is_empty() {
             return;
         }
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let artifact = pin::for_host().expect("embedded archive requires a supported host");
         let driver = ensure(&Inputs {
             home: home.path(),

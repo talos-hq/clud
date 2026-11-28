@@ -199,7 +199,8 @@ fn publish_verified_done(path: &Path, body: &[u8]) -> std::io::Result<()> {
 
 fn take_file_claim(path: &Path, summary: &str) -> Result<Vec<u8>, String> {
     let dir =
-        tempfile::tempdir_in(marker_parent(path)).map_err(|e| format!("cannot stage DONE: {e}"))?;
+        kernal_api::platform::fs::TemporaryDirectory::in_directory(marker_parent(path), ".tmp")
+            .map_err(|e| format!("cannot stage DONE: {e}"))?;
     let staged = dir.path().join("claim");
     match std::fs::rename(path, &staged) {
         Ok(()) => {
