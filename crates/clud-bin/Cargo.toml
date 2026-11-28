@@ -15,12 +15,10 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.29"
 # #1708: masked native credential window; no persistence or browser surface.
 eframe = { version = "=0.37.0", default-features = false, features = ["default_fonts", "clipboard", "wayland", "x11"] }
-# Native crash handler for SIGSEGV / SIGBUS / SIGILL / SIGFPE / SIGABRT
-# on Unix and structured exceptions on Windows. By default it does NOT
-# attach a SIGINT / CTRL_C_EVENT handler, so the existing `ctrlc`-based
-# Ctrl-C path (#372 / `ctrl_c_track`) remains the authoritative handler
-# for Ctrl-C / Ctrl-Break.
-crash-handler = "0.7"
+# Native crash capture lives in kernal-api `crash` (DD-239, below). Like the
+# direct crash-handler it replaced, it does NOT attach a SIGINT /
+# CTRL_C_EVENT handler, so `ctrlc` (#372 / `ctrl_c_track`) remains the
+# authoritative handler for Ctrl-C / Ctrl-Break.
 ctrlc = "3"
 # Issue #13: voice-mode stack. Linux capture shells out to `arecord` on
 # F3 press so libasound is loaded only by that on-demand helper process,
@@ -61,7 +59,9 @@ sha2 = "0.10"
 # source of truth.
 # Advisory file locks (issue #138; session registry, gc-daemon bringup and
 # friends) go through kernal-api `fs`, wrapped in `crate::file_lock`.
-kernal-api = { workspace = true, features = ["hash-sha256", "fs-watch", "fs"] }
+# kernal-api `crash` (DD-239): SIGSEGV / SIGBUS / SIGILL / SIGFPE / SIGABRT on
+# Unix and structured exceptions on Windows, spooled as `.rpcrash` records.
+kernal-api = { workspace = true, features = ["hash-sha256", "fs-watch", "fs", "crash"] }
 hmac = "0.12.1"
 # End-to-end encryption of the clud.bot session socket (remote_connect/e2e.rs,
 # DD-219): ephemeral X25519, HKDF-SHA256 and ChaCha20-Poly1305. All three

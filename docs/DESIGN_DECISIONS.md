@@ -9002,3 +9002,21 @@ The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also rep
 **Trust rules (unchanged):** the ledger is local and unshared. No hosted job reads it: `prooft plan` in `CI mode` takes no `--ledger`. Hosted PR runs still read the policy from the PR base and refuse untrusted heads, stale proofs and edited trailers. **The merge queue never consumes client attestations or ledgers.** It still runs every gate. Changing the globs edits `ci-attestations.yml`, so that PR runs in full.
 
 **Consequences:** a rebase or another worktree that leaves a lane's inputs alone costs a key computation instead of a lane run. A file that a lane reads but no glob matches would give a false PR-level skip, which the merge queue would still catch. That is why the globs are generous and the include check exists.
+
+## DD-239: native crashes spool through kernal-api and become JSON reports on the next start
+
+**Status:** Accepted. Replaces the direct `crash-handler` dependency in `crates/clud-bin/src/crash_report.rs`.
+
+**Context:** clud attached `crash_handler::CrashHandler` itself and, from inside the signal / structured-exception handler, forced a `Backtrace`, formatted JSON and wrote `~/.clud/state/crashes/<unix_ms>-<role>-<pid>.json`. That allocates and does file I/O in a compromised context, which is not async-signal-safe and can deadlock on the allocator lock a crash interrupted. kernal-api (`=0.1.41`, `crash` feature) owns the one native handler for the forge-ci stack and takes no client callback.
+
+**Decision:**
+- `crash_report::install_native(role)` calls `kernal_api::crash::install` at the same three points as before (foreground `main`, daemon server, worker), with the role in `CrashMetadata::instance_name`, spooling into `<state>/crash-spool/`. 0.1.41 takes the spool path only from `KERNAL_API_CRASH_SPOOL_DIR` and reads it only while `install` creates the sink, so clud sets it for that call and restores the previous value immediately. Leaving it set would let every child clud spawns (soldr, other kernal-api apps) inherit clud's spool and have their crashes reported as clud's. A role change re-registers, new guard first, so a later crash carries the new role.
+- `crash_report::install` (every clud start) calls `collect_spooled_crashes`: each full-size `.rpcrash` record is claimed by rename to `.draining`, parsed with `kernal_api::crash::spool::parse`, written as a `"kind": "native"` report in the existing schema and location, then deleted. Short files are live sinks and are left alone; unparseable records are renamed `.invalid`. The existing "previous crash report at ..." notice then sees the converted report.
+- Coverage is unchanged: SIGSEGV / SIGBUS / SIGILL / SIGFPE / SIGABRT on Unix and SEH on Windows. Neither handler attaches SIGINT / CTRL_C_EVENT, so `ctrlc` (#372 / `ctrl_c_track`) stays authoritative for Ctrl-C. The panic hook is unchanged and still writes its report synchronously.
+
+**Trade-offs:**
+- **No in-handler backtrace.** The report's `backtrace` is the last pre-crash all-thread sample kernal-api took (at most 16 frames per thread, sampled every 100 ms to 1 s), rendered as unsymbolized `module+0xoffset`, faulting thread first. It can be up to one sample period stale, and is not symbolized in clud: kernal-api's `symbolize` resolves through the separate `kernal-symbolize` worker binary, which clud does not ship. The offsets are ASLR-stable, so the matching sidecar can resolve them offline.
+- **The report appears on the next clud start**, not at crash time. A crash on a machine that never runs clud again leaves only the binary record in `crash-spool/`.
+- The sampler signals every thread to take its sample. Handlers use `SA_RESTART`, but timed socket reads and other timeout-bounded calls still return `EINTR`, so clud's blocking reads must retry `ErrorKind::Interrupted` (the daemon client's deadline read does).
+- The record has no argv, so `args` is empty for native reports. `target` and `build_id` are those of the binary that converts the record, which is the same build unless clud was upgraded in between; `version` comes from the record.
+- On macOS, fault code `6` means both `EXC_BREAKPOINT` and `SIGABRT` in the record, so it is labelled `EXC_BREAKPOINT_OR_SIGABRT`.

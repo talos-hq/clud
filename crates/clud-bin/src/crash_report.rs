@@ -30,7 +30,7 @@ use std::backtrace::Backtrace;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::{OnceLock, RwLock};
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -61,7 +61,7 @@ static NATIVE_INSTALLED: OnceLock<()> = OnceLock::new();
 /// reports populate different subsets of the schema.
 #[derive(Serialize)]
 struct CrashReport {
-    version: &'static str,
+    version: String,
     /// Which build this is. Version alone does not identify a sidecar: the
     /// same version is released for every triple.
     target: &'static str,
@@ -116,6 +116,11 @@ pub fn install(role: &str) {
 
     HOOK_INSTALLED.get_or_init(|| {
         if let Ok(dir) = crashes_dir() {
+            // Convert records a crashed previous run left in the spool
+            // before looking for the newest report to surface.
+            if let Ok(spool) = crash_spool_dir() {
+                collect_spooled_crashes(&spool, &dir);
+            }
             if let Some((_, path)) = surface_previous_report(&dir) {
                 eprintln!("clud: previous crash report at {}", path.display());
                 // Opportunistic symbol-status hint: if the report's
@@ -189,7 +194,7 @@ fn write_panic_report(
     let args = sanitize_args(std::env::args().collect());
 
     let report = CrashReport {
-        version: env!("CARGO_PKG_VERSION"),
+        version: env!("CARGO_PKG_VERSION").to_string(),
         target: BUILD_TARGET,
         build_id: crate::build_id::own_build_id(),
         role: role.to_string(),
@@ -213,7 +218,7 @@ fn write_panic_report(
     Ok(path)
 }
 
-/// Per-platform metadata extracted from `crash_handler::CrashContext`.
+/// Per-platform labels decoded from a spool record's fault code/address.
 #[derive(Default)]
 pub(crate) struct NativeCrashMeta {
     pub signal_or_exception: Option<String>,
@@ -222,91 +227,225 @@ pub(crate) struct NativeCrashMeta {
     pub faulting_address: Option<String>,
 }
 
-fn write_native_report(role: &str, meta: NativeCrashMeta) -> std::io::Result<PathBuf> {
-    let dir = crashes_dir()?;
-    let pid = std::process::id();
-    let ts = now_unix_ms();
-    let path = dir.join(format!("{ts}-{role}-{pid}.json"));
+/// Spool directory kernal-api's native crash capture writes `.rpcrash`
+/// records into: `<state>/crash-spool/`. Owner-private; kernal-api creates
+/// and verifies it at install time.
+pub(crate) fn crash_spool_dir() -> std::io::Result<PathBuf> {
+    Ok(crate::daemon::default_state_dir()?.join("crash-spool"))
+}
 
-    // `Backtrace::force_capture()` allocates and is not async-signal-safe
-    // by POSIX rules. We accept the risk here because the process is
-    // already crashing and a useful backtrace beats strict signal
-    // safety — the alternative is no diagnostic at all. This matches the
-    // tradeoff `re_crash_handler` and similar production handlers make.
-    let backtrace = Backtrace::force_capture().to_string();
-    let cwd = std::env::current_dir()
-        .ok()
-        .map(|p| p.to_string_lossy().into_owned());
-    let args = sanitize_args(std::env::args().collect());
+/// The live crash registration. Replaced (new first, then old dropped) when
+/// the role changes, so the record a later crash writes carries the new role.
+static NATIVE_GUARD: Mutex<Option<(String, kernal_api::crash::CrashGuard)>> = Mutex::new(None);
 
-    let report = CrashReport {
-        version: env!("CARGO_PKG_VERSION"),
+fn crash_metadata(role: &str) -> kernal_api::crash::CrashMetadata {
+    kernal_api::crash::CrashMetadata {
+        app_class: "cli".to_string(),
+        app_name: "clud".to_string(),
+        app_version: env!("CARGO_PKG_VERSION").to_string(),
+        instance_name: role.to_string(),
+        creation_time_ms: u64::try_from(now_unix_ms()).unwrap_or(u64::MAX),
+        cwd: std::env::current_dir()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+    }
+}
+
+/// Arm native crash capture via `kernal_api::crash`.
+///
+/// Calls [`install`] first, so the role, reports dir and panic hook are
+/// wired and any record a previous crashed run left in the spool has already
+/// been turned into a JSON report. A repeat call with a new role re-registers
+/// the metadata so a later crash is tagged with it; a repeat call with the
+/// same role is a no-op.
+///
+/// **Does not attach a SIGINT / CTRL_C_EVENT handler.** kernal-api hooks
+/// SIGSEGV / SIGBUS / SIGILL / SIGFPE / SIGABRT on Unix and structured
+/// exceptions on Windows, so the `ctrlc` handler installed by
+/// `startup::install_ctrl_c_flag` (#372 / `ctrl_c_track`) stays authoritative
+/// for Ctrl-C / Ctrl-Break.
+///
+/// No clud code runs in the crash context: kernal-api writes one fixed-size
+/// binary record, and [`collect_spooled_crashes`] converts it into the usual
+/// JSON report on the next clud start (docs/DESIGN_DECISIONS.md, DD-239).
+pub fn install_native(role: &str) {
+    install(role);
+    let mut slot = match NATIVE_GUARD.lock() {
+        Ok(slot) => slot,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let first = NATIVE_INSTALLED.set(()).is_ok();
+    match slot.as_ref() {
+        Some((current, _)) if current == role => return,
+        // A previous attach failed; do not retry on every retag.
+        None if !first => return,
+        _ => {}
+    }
+    let Ok(spool) = crash_spool_dir() else {
+        return;
+    };
+    // kernal-api 0.1.41 takes the spool location only from this variable,
+    // and reads it only while `install` creates the sink. Set it for the
+    // call and restore it at once, so children clud spawns (soldr, other
+    // kernal-api apps) never inherit clud's spool and file their crashes
+    // as clud's.
+    let env = kernal_api::crash::spool::SPOOL_DIR_ENV;
+    let previous = std::env::var_os(env);
+    std::env::set_var(env, &spool);
+    let installed =
+        kernal_api::crash::install(kernal_api::crash::CrashPolicy::On, crash_metadata(role));
+    match previous {
+        Some(value) => std::env::set_var(env, value),
+        None => std::env::remove_var(env),
+    }
+    match installed {
+        Ok(guard) => {
+            // Drop the old registration only after the new one exists, so
+            // there is never a window without an armed handler.
+            let old = slot.replace((role.to_string(), guard));
+            drop(old);
+        }
+        Err(err) => {
+            if slot.is_none() {
+                eprintln!("clud: failed to attach native crash handler: {err}");
+            }
+        }
+    }
+}
+
+/// Turn every finished `.rpcrash` record in `spool` into a JSON report in
+/// `crashes`, then delete the record. Returns the reports written.
+///
+/// A record is finished when it is a whole `RECORD_SIZE` bytes: kernal-api
+/// pre-opens an empty sink per process and only the fatal path fills it, so
+/// a short file belongs to a live (or cleanly exited, later reaped) process
+/// and is left alone. The record is claimed by renaming it to `.draining`
+/// first, so two clud processes starting at once never convert it twice.
+/// Records that fail to parse are renamed `.invalid` instead of retried.
+pub fn collect_spooled_crashes(spool: &Path, crashes: &Path) -> Vec<PathBuf> {
+    use kernal_api::crash::spool::{parse, RECORD_SIZE};
+    let mut written = Vec::new();
+    let Ok(entries) = fs::read_dir(spool) else {
+        return written;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("rpcrash") {
+            continue;
+        }
+        let Ok(meta) = fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !meta.is_file() || meta.len() != RECORD_SIZE as u64 {
+            continue;
+        }
+        let claimed = path.with_extension("rpcrash.draining");
+        if fs::rename(&path, &claimed).is_err() {
+            // Another process claimed it, or (Windows) the dying owner still
+            // holds it open; the next start picks it up.
+            continue;
+        }
+        match fs::read(&claimed).and_then(|bytes| parse(&bytes)) {
+            Ok(raw) => match write_report(crashes, &report_from_record(&raw)) {
+                Ok(out) => {
+                    let _ = fs::remove_file(&claimed);
+                    written.push(out);
+                }
+                // Keep the evidence; put it back for the next start.
+                Err(_) => {
+                    let _ = fs::rename(&claimed, &path);
+                }
+            },
+            Err(_) => {
+                let _ = fs::rename(&claimed, path.with_extension("rpcrash.invalid"));
+            }
+        }
+    }
+    if !written.is_empty() {
+        let _ = prune_old_reports(crashes, MAX_REPORTS);
+    }
+    written
+}
+
+/// Map a parsed spool record onto clud's JSON report schema.
+fn report_from_record(raw: &kernal_api::crash::spool::RawCrashReport) -> CrashReport {
+    let meta = crate::platform::crash_report::decode_fault(raw.fault_code, raw.fault_address);
+    let role = if raw.metadata.instance_name.is_empty() {
+        "unknown".to_string()
+    } else {
+        raw.metadata.instance_name.clone()
+    };
+    let version = if raw.metadata.app_version.is_empty() {
+        env!("CARGO_PKG_VERSION").to_string()
+    } else {
+        raw.metadata.app_version.clone()
+    };
+    CrashReport {
+        version,
         target: BUILD_TARGET,
         build_id: crate::build_id::own_build_id(),
-        role: role.to_string(),
+        role,
         kind: "native",
-        pid,
-        cwd,
-        args,
-        timestamp_unix_ms: ts,
+        pid: raw.pid,
+        cwd: (!raw.metadata.cwd.is_empty()).then(|| raw.metadata.cwd.clone()),
+        // The record carries no argv: nothing variable-length is copied in
+        // the crash context.
+        args: Vec::new(),
+        timestamp_unix_ms: u128::from(raw.crash_unix_ms),
         panic_location: None,
         panic_message: None,
         signal_or_exception: meta.signal_or_exception,
         signal_number: meta.signal_number,
         exception_code: meta.exception_code,
         faulting_address: meta.faulting_address,
-        backtrace,
-    };
-
-    let json = serde_json::to_string_pretty(&report).unwrap_or_else(|_| "{}".to_string());
-    fs::write(&path, json)?;
-    let _ = prune_old_reports(&dir, MAX_REPORTS);
-    Ok(path)
+        backtrace: render_record_backtrace(raw),
+    }
 }
 
-/// Attach the native crash handler from the `crash-handler` crate.
-///
-/// Must be called *after* [`install`] (so the role + reports dir + panic
-/// hook are already wired). Idempotent: subsequent calls are no-ops.
-///
-/// **Does not attach a SIGINT / CTRL_C_EVENT handler.** The `crash-handler`
-/// crate hooks SIGSEGV / SIGBUS / SIGILL / SIGFPE / SIGABRT on Unix and
-/// `SetUnhandledExceptionFilter` for structured exceptions on Windows.
-/// Neither path overlaps with the existing `ctrlc` handler installed by
-/// `startup::install_ctrl_c_flag`, so Ctrl-C / Ctrl-Break behavior
-/// (#372 / `ctrl_c_track`) continues unchanged.
-///
-/// The attached handler is intentionally leaked with `mem::forget` so it
-/// remains in place for the lifetime of the process — dropping the handle
-/// would un-register the handler.
-pub fn install_native(role: &str) {
-    install(role);
-    NATIVE_INSTALLED.get_or_init(|| {
-        let attach_result = unsafe {
-            crash_handler::CrashHandler::attach(crash_handler::make_crash_event(
-                |cc: &crash_handler::CrashContext| {
-                    let role = current_role();
-                    let meta = crate::platform::crash_report::extract_native_meta(cc);
-                    let _ = write_native_report(&role, meta);
-                    // `Handled(false)` -> continue to default OS behavior
-                    // (terminate the process with the original signal /
-                    // exception). We only want to record evidence, not
-                    // pretend the crash didn't happen.
-                    crash_handler::CrashEventResult::Handled(false)
-                },
-            ))
+/// Render the record's pre-captured, unsymbolized frames as
+/// `module+0xoffset`, faulting thread first. The offsets are ASLR-stable, so
+/// they resolve offline against the matching sidecar.
+fn render_record_backtrace(raw: &kernal_api::crash::spool::RawCrashReport) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    let mut threads: Vec<_> = raw.threads.iter().collect();
+    threads.sort_by_key(|t| t.os_tid != raw.tid);
+    for thread in threads {
+        let marker = if thread.os_tid == raw.tid {
+            " (crashed)"
+        } else {
+            ""
         };
-        match attach_result {
-            Ok(handler) => {
-                // Keep the handler alive for the process lifetime; dropping
-                // it would unregister our crash hook.
-                std::mem::forget(handler);
-            }
-            Err(err) => {
-                eprintln!("clud: failed to attach native crash handler: {err}");
-            }
+        let _ = writeln!(out, "thread {}{marker}:", thread.os_tid);
+        for (i, frame) in thread.frames.iter().enumerate() {
+            let module = frame
+                .module_index
+                .and_then(|idx| raw.modules.get(idx as usize))
+                .map(|m| m.identity.as_str());
+            let _ = match module {
+                Some(module) => writeln!(out, "  {i:>2}: {module}+0x{:x}", frame.relative_address),
+                None => writeln!(out, "  {i:>2}: 0x{:x}", frame.relative_address),
+            };
         }
-    });
+    }
+    if out.is_empty() {
+        out.push_str("<no pre-crash thread sample in record>\n");
+    }
+    if raw.truncated {
+        out.push_str("<record truncated>\n");
+    }
+    out
+}
+
+fn write_report(dir: &Path, report: &CrashReport) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(dir)?;
+    let path = dir.join(format!(
+        "{}-{}-{}.json",
+        report.timestamp_unix_ms, report.role, report.pid
+    ));
+    let json = serde_json::to_string_pretty(report).unwrap_or_else(|_| "{}".to_string());
+    fs::write(&path, json)?;
+    Ok(path)
 }
 
 pub fn hex_addr(addr: usize) -> Option<String> {
@@ -680,18 +819,142 @@ mod tests {
     // `install_native()` itself. Calling it would attach a real signal /
     // SEH handler that persists for the lifetime of the test binary and
     // would intercept any subsequent test panic on Unix (since SIGABRT is
-    // hooked). The handler-attach path is exercised end-to-end by the
-    // production `install_native` call from main.rs and the daemon
-    // entries, and the underlying `crash-handler` crate has its own
-    // upstream tests proving the attach works. For manual reproduction:
+    // hooked). kernal-api's own tests prove the attach and the record
+    // write; the tests below prove the record -> report conversion clud
+    // owns. For manual reproduction:
     //
-    //   - Linux/macOS: build clud, run `clud --version &` in the
-    //     background, then `kill -SEGV <pid>` and confirm a JSON file
+    //   - Linux/macOS: build clud, run a long-lived clud in the background,
+    //     `kill -SEGV <pid>`, then start clud again and confirm a JSON file
     //     with `"kind":"native"` and `"signal_or_exception":"SIGSEGV"`
-    //     appears in `~/.clud/state/crashes/`.
-    //   - Windows: build clud and from a debugger trigger an access
-    //     violation in the foreground process; confirm a JSON file with
-    //     `"signal_or_exception":"EXCEPTION_ACCESS_VIOLATION"` appears.
+    //     appears in `~/.clud/state/crashes/` and `crash-spool/` is empty.
+    //   - Windows: trigger an access violation from a debugger, restart
+    //     clud, and confirm `"EXCEPTION_ACCESS_VIOLATION"` appears.
+
+    fn sample_record(fault_code: i64) -> kernal_api::crash::spool::RawCrashReport {
+        use kernal_api::crash::spool::{
+            CrashFrame, CrashMetadata, CrashModule, CrashThread, RawCrashReport,
+        };
+        RawCrashReport {
+            pid: 4242,
+            tid: 7,
+            fault_code,
+            fault_address: 0xdead_beef,
+            crash_unix_ms: 1_700_000_000_123,
+            metadata: CrashMetadata {
+                app_class: "cli".to_string(),
+                app_name: "clud".to_string(),
+                app_version: "9.9.9".to_string(),
+                instance_name: "daemon".to_string(),
+                creation_time_ms: 1,
+                cwd: "/work/repo".to_string(),
+            },
+            modules: vec![CrashModule {
+                identity: "/opt/clud/bin/clud".to_string(),
+            }],
+            threads: vec![
+                CrashThread {
+                    os_tid: 3,
+                    frames: vec![CrashFrame {
+                        module_index: None,
+                        relative_address: 0x1000,
+                    }],
+                },
+                CrashThread {
+                    os_tid: 7,
+                    frames: vec![CrashFrame {
+                        module_index: Some(0),
+                        relative_address: 0x1234,
+                    }],
+                },
+            ],
+            raw_context: Vec::new(),
+            truncated: false,
+        }
+    }
+
+    fn native_segv_code() -> i64 {
+        crate::platform::crash_report::SEGV_FAULT.0
+    }
+
+    fn native_segv_label() -> &'static str {
+        crate::platform::crash_report::SEGV_FAULT.1
+    }
+
+    #[test]
+    fn a_spool_record_converts_into_the_native_report_schema() {
+        let report = report_from_record(&sample_record(native_segv_code()));
+        let json = serde_json::to_value(&report).expect("serialize");
+        assert_eq!(json["kind"], "native");
+        assert_eq!(json["role"], "daemon");
+        assert_eq!(json["pid"], 4242);
+        assert_eq!(json["version"], "9.9.9");
+        assert_eq!(json["target"], BUILD_TARGET);
+        assert_eq!(json["cwd"], "/work/repo");
+        assert_eq!(json["timestamp_unix_ms"], 1_700_000_000_123_u64);
+        assert_eq!(json["signal_or_exception"], native_segv_label());
+        assert_eq!(json["faulting_address"], "0xdeadbeef");
+        assert!(json.get("panic_message").is_none());
+        let bt = json["backtrace"].as_str().expect("backtrace string");
+        assert!(
+            bt.starts_with("thread 7 (crashed):\n"),
+            "faulting thread first: {bt}"
+        );
+        assert!(bt.contains("/opt/clud/bin/clud+0x1234"), "{bt}");
+        assert!(bt.contains("thread 3:\n"), "{bt}");
+        assert!(bt.contains("0x1000"), "{bt}");
+    }
+
+    #[test]
+    fn collect_converts_finished_records_and_deletes_them() -> std::io::Result<()> {
+        let tmp = TempDir::new()?;
+        let spool = tmp.path().join("crash-spool");
+        let crashes = tmp.path().join("crashes");
+        fs::create_dir_all(&spool)?;
+        let record = spool.join("pending-4242-1-0000000000000001.rpcrash");
+        fs::write(
+            &record,
+            kernal_api::crash::spool::encode(&sample_record(native_segv_code())),
+        )?;
+        // A live process's sink: short, must be left untouched.
+        let live = spool.join("pending-1-1-0000000000000002.rpcrash");
+        fs::write(&live, [0u8; 16])?;
+
+        let written = collect_spooled_crashes(&spool, &crashes);
+        assert_eq!(written.len(), 1, "{written:?}");
+        assert_eq!(
+            written[0].file_name().and_then(|n| n.to_str()),
+            Some("1700000000123-daemon-4242.json")
+        );
+        let json: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&written[0])?).expect("report is valid JSON");
+        assert_eq!(json["kind"], "native");
+        assert_eq!(json["signal_or_exception"], native_segv_label());
+        assert!(!record.exists(), "processed record must be deleted");
+        assert!(live.exists(), "a short sink is not a crash record");
+
+        // Idempotent: a second start finds nothing new.
+        assert!(collect_spooled_crashes(&spool, &crashes).is_empty());
+        // The surfacing path sees the converted report.
+        assert!(surface_previous_report(&crashes).is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn collect_quarantines_a_corrupt_record() -> std::io::Result<()> {
+        let tmp = TempDir::new()?;
+        let spool = tmp.path().join("crash-spool");
+        let crashes = tmp.path().join("crashes");
+        fs::create_dir_all(&spool)?;
+        let record = spool.join("pending-9-1-0000000000000003.rpcrash");
+        fs::write(&record, vec![0xffu8; kernal_api::crash::spool::RECORD_SIZE])?;
+
+        assert!(collect_spooled_crashes(&spool, &crashes).is_empty());
+        assert!(!record.exists());
+        assert!(spool
+            .join("pending-9-1-0000000000000003.rpcrash.invalid")
+            .exists());
+        Ok(())
+    }
 
     /// Issue #1016: the triple has to actually be baked, not defaulted.
     ///
@@ -746,7 +1009,7 @@ mod tests {
     fn both_report_kinds_record_the_target() {
         for kind in ["panic", "native"] {
             let report = CrashReport {
-                version: env!("CARGO_PKG_VERSION"),
+                version: env!("CARGO_PKG_VERSION").to_string(),
                 target: BUILD_TARGET,
                 build_id: crate::build_id::own_build_id(),
                 role: "test".to_string(),
@@ -782,7 +1045,7 @@ mod tests {
         // Only Linux (ELF) builds carry a build id.
         if crate::platform::host::LINUX {
             let report = CrashReport {
-                version: env!("CARGO_PKG_VERSION"),
+                version: env!("CARGO_PKG_VERSION").to_string(),
                 target: BUILD_TARGET,
                 build_id: crate::build_id::own_build_id(),
                 role: "test".to_string(),
