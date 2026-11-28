@@ -1,9 +1,9 @@
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 #[test]
 fn arms_nounset_by_default() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let overrides = env_overrides_at(tmp.path(), false, None);
 
     let bash_env = overrides
@@ -23,7 +23,7 @@ fn arms_nounset_by_default() {
 
 #[test]
 fn identifies_only_a_clud_generated_nounset_script() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let generated = env_overrides_at(tmp.path(), false, None)
         .into_iter()
         .find(|(key, _)| key == BASH_ENV_KEY)
@@ -44,7 +44,7 @@ fn identifies_only_a_clud_generated_nounset_script() {
 
 #[test]
 fn opting_out_leaves_the_shell_alone() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     assert!(
         env_overrides_at(tmp.path(), true, None).is_empty(),
         "{OPT_OUT_KEY} must restore stock shell behaviour"
@@ -58,7 +58,7 @@ fn an_inherited_bash_env_is_chained_not_clobbered() {
     // Skipping when the user has their own would be a silent coverage gap;
     // overwriting it would break their setup. The file sources theirs after
     // arming nounset.
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let overrides = env_overrides_at(tmp.path(), false, Some("/home/u/mine.sh".to_string()));
 
     assert_eq!(
@@ -77,7 +77,7 @@ fn an_inherited_bash_env_is_chained_not_clobbered() {
 fn our_own_path_is_never_chained_to_itself() {
     // A clud session launched from inside a clud session would otherwise stash
     // our path as "previous" and the file would source itself forever.
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let first = env_overrides_at(tmp.path(), false, None);
     let ours = first
         .iter()
@@ -99,7 +99,7 @@ fn a_differently_spelled_path_to_our_own_shim_is_not_chained() {
     // our shim but is spelled differently (a `..` segment, a symlink, a
     // trailing slash) is treated as "not ours" and chained back to itself.
     // bash then sources the shim, which sources itself, recursively (#1201).
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     // Write the shim, then address it through a `..` segment so the guard's
     // string comparison would fail but canonicalization must succeed.
     env_overrides_at(tmp.path(), false, None);
@@ -118,7 +118,7 @@ fn a_differently_spelled_path_to_our_own_shim_is_not_chained() {
 
 #[test]
 fn an_empty_inherited_value_is_not_chained() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let overrides = env_overrides_at(tmp.path(), false, Some(String::new()));
     assert!(!overrides.iter().any(|(key, _)| key == PREV_KEY));
 }

@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn purge_keeps_logs_under_the_cap() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         write(&root.path().join("a/one.log"), 40);
         assert_eq!(purge(root.path(), 100), 0);
         assert!(root.path().join("a/one.log").exists());
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn purge_deletes_the_oldest_files_down_to_half_the_cap() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let old = root.path().join("a/old.log");
         let mid = root.path().join("b/mid.log");
         let new = root.path().join("a/new.log");
@@ -212,8 +212,8 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return;
         }
-        let home = tempfile::tempdir().unwrap();
-        let temp = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let from = home.path().join(".claude/debug");
         let to = temp.path().join("claude-debug");
         assert!(redirect(&from, &to).unwrap());
@@ -229,8 +229,8 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return;
         }
-        let home = tempfile::tempdir().unwrap();
-        let temp = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let empty = home.path().join("empty");
         std::fs::create_dir(&empty).unwrap();
         assert!(redirect(&empty, &temp.path().join("e")).unwrap());
@@ -246,8 +246,8 @@ mod tests {
 
     #[test]
     fn redirect_leaves_existing_logs_in_place() {
-        let home = tempfile::tempdir().unwrap();
-        let temp = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let from = home.path().join("logs");
         write(&from.join("keep.log"), 3);
         assert!(redirect(&from, &temp.path().join("l")).is_err());

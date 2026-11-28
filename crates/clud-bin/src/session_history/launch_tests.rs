@@ -8,12 +8,12 @@ fn parse(raw: &[&str]) -> Args {
 
 /// A cwd, an empty Claude config dir and a state dir, all temporary.
 struct Fixture {
-    _root: tempfile::TempDir,
+    _root: kernal_api::platform::fs::TemporaryDirectory,
     env: Environment,
 }
 
 fn fixture(interactive: bool) -> Fixture {
-    let root = tempfile::tempdir().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let cwd = root.path().join("proj");
     std::fs::create_dir_all(&cwd).unwrap();
     let env = Environment {

@@ -264,8 +264,8 @@ mod tests {
     #[test]
     fn a_missing_bridge_explains_how_to_connect_it() {
         // #2521: an absent `mcp__clud__*` tool used to fail with no hint.
-        let dir = tempfile::tempdir().unwrap();
-        let state = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let notice = notice_for(dir.path(), "", state.path()).expect("notice when absent");
         assert!(
             notice.contains("clud MCP server is not connected"),
@@ -277,8 +277,8 @@ mod tests {
 
     #[test]
     fn no_sibling_python_and_no_uv_registers_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert_eq!(config_arg_for(dir.path(), "", state.path()), None);
     }
 
@@ -306,9 +306,9 @@ mod tests {
     fn a_native_install_runs_the_embedded_bridge_through_uv() {
         // A native `install.sh` binary has no sibling interpreter, and used to
         // lose every `mcp__clud__*` tool for that reason.
-        let exe_dir = tempfile::tempdir().unwrap();
-        let uv_dir = tempfile::tempdir().unwrap();
-        let state = tempfile::tempdir().unwrap();
+        let exe_dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let uv_dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = path_with_fake_uv(uv_dir.path());
 
         let arg = config_arg_for(exe_dir.path(), &path, state.path()).expect("native bridge");
@@ -377,9 +377,9 @@ mod tests {
 
     #[test]
     fn a_sibling_python_still_wins_over_uv() {
-        let exe_dir = tempfile::tempdir().unwrap();
-        let uv_dir = tempfile::tempdir().unwrap();
-        let state = tempfile::tempdir().unwrap();
+        let exe_dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let uv_dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = if crate::platform::host::WINDOWS {
             "python.exe"
         } else {
@@ -396,9 +396,9 @@ mod tests {
 
     #[test]
     fn a_rerun_rewrites_a_corrupted_embedded_file() {
-        let exe_dir = tempfile::tempdir().unwrap();
-        let uv_dir = tempfile::tempdir().unwrap();
-        let state = tempfile::tempdir().unwrap();
+        let exe_dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let uv_dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = path_with_fake_uv(uv_dir.path());
         let first = config_arg_for(exe_dir.path(), &path, state.path()).unwrap();
         let root =
@@ -411,14 +411,14 @@ mod tests {
 
     #[test]
     fn sibling_python_registers_the_bridge_as_one_token() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = if crate::platform::host::WINDOWS {
             "python.exe"
         } else {
             "python"
         };
         std::fs::write(dir.path().join(name), b"").unwrap();
-        let state = tempfile::tempdir().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let arg = config_arg_for(dir.path(), "", state.path()).unwrap();
         let json = arg.strip_prefix("--mcp-config=").unwrap();
         let value: serde_json::Value = serde_json::from_str(json).unwrap();

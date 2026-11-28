@@ -34,7 +34,7 @@ fn extra_rx_forwards_native_terminal_adapter_bytes_to_pty() {
     use running_process::pty::terminal_input::{TerminalInputCore, TerminalInputEventRecord};
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
     let ready = tmp.path().join("ready");
 
@@ -132,7 +132,7 @@ fn extra_rx_mouse_reports_split_per_character_reach_the_child_whole() {
     use running_process::pty::terminal_input::{TerminalInputCore, TerminalInputEventRecord};
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
     let ready = tmp.path().join("ready");
 

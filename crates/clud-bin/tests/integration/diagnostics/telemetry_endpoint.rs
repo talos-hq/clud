@@ -43,7 +43,7 @@ fn clud_exe() -> PathBuf {
     reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
 )]
 fn telemetry_round_trip_via_clud_log_subprocess() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let telemetry = TelemetryStore::new();
     let port = spawn_dashboard_telemetry_only(
         dir.path().to_path_buf(),
@@ -276,7 +276,7 @@ fn clud_log_unreachable_server_with_fail_flag_exits_nonzero() {
 /// distinct PIDs from two POSTs both appear, sorted last-seen-desc.
 #[test]
 fn telemetry_summary_endpoint_returns_independent_list() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let telemetry = TelemetryStore::new();
     let port = spawn_dashboard_telemetry_only(
         dir.path().to_path_buf(),

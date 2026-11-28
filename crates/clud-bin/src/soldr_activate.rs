@@ -860,7 +860,8 @@ mod tests {
     #[test]
     fn rolling_refresh_claim_is_freshness_bounded() {
         let _g = isolate_path_env();
-        let temp = tempfile::tempdir().expect("temporary stamp directory");
+        let temp =
+            kernal_api::platform::fs::TemporaryDirectory::new().expect("temporary stamp directory");
         let stamp = temp.path().join("latest-check");
         unsafe {
             std::env::set_var("CLUD_SOLDR_LATEST_STAMP", &stamp);

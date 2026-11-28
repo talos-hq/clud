@@ -600,9 +600,9 @@ pub(super) fn handle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
-    fn record(temp: &TempDir, backend: ApiSessionBackend) -> ApiSessionRecord {
+    fn record(temp: &TemporaryDirectory, backend: ApiSessionBackend) -> ApiSessionRecord {
         ApiSessionStore::new(temp.path())
             .create(CreateApiSession {
                 backend,
@@ -652,7 +652,7 @@ mod tests {
 
     #[test]
     fn stored_cwd_is_the_only_plan_cwd_and_initial_backends_are_typed() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let claude = record(&temp, ApiSessionBackend::Claude);
         let claude_plan = turn_plan(&claude, "hello".to_string()).unwrap();
         assert_eq!(
@@ -673,7 +673,7 @@ mod tests {
 
     #[test]
     fn provider_identity_is_required_only_after_initial_generation() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = record(&temp, ApiSessionBackend::Claude);
         let turn = store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
@@ -698,7 +698,7 @@ mod tests {
 
     #[test]
     fn event_page_reports_a_gap_and_never_exceeds_the_contract_limit() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = record(&temp, ApiSessionBackend::Claude);
         for cursor in 0..3 {

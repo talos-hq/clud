@@ -62,7 +62,7 @@ exit 2
 "#;
 
 struct Fixture {
-    dir: tempfile::TempDir,
+    dir: kernal_api::platform::fs::TemporaryDirectory,
     sudo: PathBuf,
     password: String,
     stub: bool,
@@ -70,7 +70,7 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         if let Ok(password) = std::env::var(REAL_PASSWORD_ENV) {
             let sudo = verified_sudo().expect("a setuid root sudo for the real-sudo run");
             return Self {

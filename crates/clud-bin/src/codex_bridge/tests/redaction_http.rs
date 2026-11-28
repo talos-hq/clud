@@ -72,7 +72,7 @@ fn free_model_redaction_routes_exactly_and_restores_nonstream_tool_input() {
     ]));
     let upstream = FakeResponses::start_with_response(Some(raw_response(200, "OK", &reply)));
     let claude = FakeResponses::start();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let log = dir.path().join("bridge.jsonl");
     let config = gateway
         .with_upstreams(claude.base_url.clone(), String::new())

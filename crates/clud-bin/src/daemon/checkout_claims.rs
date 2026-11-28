@@ -1050,7 +1050,7 @@ mod tests {
     /// and disables presence after a single attempt.
     #[test]
     fn reconnect_against_newer_daemon_is_permanent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let info = newer_daemon_info(listener.local_addr().unwrap().port());
         super::super::io_helpers::write_json_file(&daemon_info_path(tmp.path()), &info).unwrap();
@@ -1075,7 +1075,7 @@ mod tests {
     /// probe of the new daemon instead of probing it twice a second forever.
     #[test]
     fn presence_thread_disables_itself_when_a_newer_daemon_replaces_its_own() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let old_daemon = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let client = TcpStream::connect(old_daemon.local_addr().unwrap()).unwrap();
         let (old_connection, _) = old_daemon.accept().unwrap();

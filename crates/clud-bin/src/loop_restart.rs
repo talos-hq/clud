@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn archive_moves_results_keeps_inputs_and_clears_markers() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let dir = loop_dir(root);
         std::fs::create_dir_all(dir.join("inbox")).unwrap();

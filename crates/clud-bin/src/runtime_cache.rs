@@ -236,7 +236,7 @@ pub fn exe_is_under_clud_runtime(exe: &Path) -> bool {
 
 /// Test seam for [`exe_is_under_clud_runtime`]: same predicate but
 /// the runtime root is supplied explicitly so unit tests can point
-/// at a `tempfile::TempDir` instead of the user's real `~/.clud/`.
+/// at a `kernal_api::platform::fs::TemporaryDirectory` instead of the user's real `~/.clud/`.
 pub fn exe_is_under_runtime_root(exe: &Path, runtime_root: &Path) -> bool {
     let Ok(runtime_canon) = fs::canonicalize(runtime_root) else {
         return false;
@@ -274,7 +274,7 @@ pub fn prepare_cached_clud(source: &Path) -> io::Result<PathBuf> {
 
 /// Test seam for [`prepare_cached_clud`]: same double-checked
 /// locking + copy logic but the cache `dir` and `binary_name` are
-/// supplied so unit tests can point at a `tempfile::TempDir`.
+/// supplied so unit tests can point at a `kernal_api::platform::fs::TemporaryDirectory`.
 pub fn prepare_cached_clud_in(source: &Path, dir: &Path, binary_name: &str) -> io::Result<PathBuf> {
     let cached = dir.join(binary_name);
 
@@ -317,7 +317,7 @@ pub fn prepare_cached_clud_in(source: &Path, dir: &Path, binary_name: &str) -> i
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn runtime_cache_dir_format_contains_version_and_clud_prefix() {
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn exe_under_runtime_root_true_when_exe_lives_inside_root() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let runtime_root = tmp.path().join("runtime");
         let version_dir = runtime_root.join("clud-test");
         fs::create_dir_all(&version_dir).expect("mkdir");
@@ -428,7 +428,7 @@ mod tests {
 
     #[test]
     fn exe_under_runtime_root_false_when_exe_lives_elsewhere() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let runtime_root = tmp.path().join("runtime");
         fs::create_dir_all(&runtime_root).expect("mkdir runtime");
         let unrelated = tmp.path().join("other");
@@ -441,7 +441,7 @@ mod tests {
 
     #[test]
     fn exe_under_runtime_root_false_when_runtime_root_missing() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let runtime_root = tmp.path().join("does-not-exist");
         let exe = tmp.path().join("clud");
         fs::write(&exe, b"fake").expect("write");
@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn prepare_cached_clud_in_first_call_copies_source_into_cache() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let source = tmp.path().join("source-clud");
         fs::write(&source, b"binary-content-v1").expect("write source");
         let cache_dir = tmp.path().join("cache");
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn prepare_cached_clud_in_second_call_is_zero_copy_cache_hit() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let source = tmp.path().join("source-clud");
         fs::write(&source, b"binary-content-v1").expect("write source");
         let cache_dir = tmp.path().join("cache");
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn prepare_cached_clud_in_creates_missing_parent_dir() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let source = tmp.path().join("source-clud");
         fs::write(&source, b"x").expect("write source");
         // cache_dir explicitly does not exist yet.
@@ -508,7 +508,7 @@ mod tests {
 
     #[test]
     fn prepare_cached_clud_in_leaves_no_temp_file_on_success() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let source = tmp.path().join("source-clud");
         fs::write(&source, b"x").expect("write source");
         let cache_dir = tmp.path().join("cache");

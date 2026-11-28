@@ -21,12 +21,12 @@ fn fake_key() -> String {
 }
 
 struct Fixture {
-    _root: tempfile::TempDir,
+    _root: kernal_api::platform::fs::TemporaryDirectory,
     home: PathBuf,
 }
 
 fn fixture() -> Fixture {
-    let root = tempfile::tempdir().expect("tempdir");
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let home = root.path().join("home");
     fs::create_dir_all(&home).expect("home");
     Fixture { _root: root, home }

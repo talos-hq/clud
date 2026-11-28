@@ -76,7 +76,7 @@ fn a_root_owned_path_gets_the_native_gc_remediation_hint() {
 
 #[test]
 fn collecting_remover_clears_trees_files_and_missing_paths_without_failures() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let tree = tmp.path().join("tree");
     std::fs::create_dir_all(tree.join("a/b")).unwrap();
     std::fs::write(tree.join("a/b/f"), b"x").unwrap();

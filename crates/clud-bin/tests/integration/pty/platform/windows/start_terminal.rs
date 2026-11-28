@@ -58,7 +58,7 @@ fn wait_for_terminal(process: &NativePtyProcess) -> ProcessIdentity {
 }
 
 fn check_started_terminal(request: &str) {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut env: Vec<(String, String)> = std::env::vars()
         .filter(|(key, _)| {
             !key.eq_ignore_ascii_case(running_process::DAEMON_MARKER_ENV_VAR)
@@ -232,7 +232,7 @@ fn start_intercepts_only_a_bare_cmd_request() {
         CommandSpec, NativeProcess, ProcessConfig, ReadStatus, StderrMode, StdinMode,
     };
 
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut env: Vec<(String, String)> = std::env::vars().collect();
     for (key, value) in clud::shell::nounset::env_overrides_at(temp.path(), false, None)
         .into_iter()

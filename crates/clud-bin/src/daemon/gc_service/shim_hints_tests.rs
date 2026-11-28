@@ -48,7 +48,7 @@ fn line(cwd: &Path, argv: &[&str]) -> String {
 
 #[test]
 fn a_subdirectory_resolves_to_its_checkout() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (main, _) = repo_with_linked_worktree(dir.path());
     std::fs::create_dir_all(main.join("src").join("deep")).unwrap();
     assert_eq!(repo_root_for(&main.join("src").join("deep")), Some(main));
@@ -56,14 +56,14 @@ fn a_subdirectory_resolves_to_its_checkout() {
 
 #[test]
 fn a_linked_worktree_resolves_to_the_main_checkout() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (main, wt) = repo_with_linked_worktree(dir.path());
     assert_eq!(repo_root_for(&wt), Some(main));
 }
 
 #[test]
 fn a_submodule_is_its_own_root() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let parent = dir.path().join("super");
     std::fs::create_dir_all(parent.join(".git").join("modules").join("sub")).unwrap();
     let sub = parent.join("sub");
@@ -74,7 +74,7 @@ fn a_submodule_is_its_own_root() {
 
 #[test]
 fn a_directory_outside_any_repository_has_no_root() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let plain = dir.path().join("plain");
     std::fs::create_dir_all(&plain).unwrap();
     // A tempdir may sit inside a checkout on a developer box; only assert
@@ -86,7 +86,7 @@ fn a_directory_outside_any_repository_has_no_root() {
 
 #[test]
 fn ingest_names_the_repo_of_the_cwd_and_of_a_directory_argument() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (main, wt) = repo_with_linked_worktree(dir.path());
     let other = dir.path().join("other");
     std::fs::create_dir_all(other.join(".git")).unwrap();
@@ -110,7 +110,7 @@ fn ingest_names_the_repo_of_the_cwd_and_of_a_directory_argument() {
 
 #[test]
 fn ingest_resumes_from_its_offset_and_leaves_a_partial_line() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (main, _) = repo_with_linked_worktree(dir.path());
     let source = source(dir.path());
     let first = line(&main, &["status"]);
@@ -130,7 +130,7 @@ fn ingest_resumes_from_its_offset_and_leaves_a_partial_line() {
 
 #[test]
 fn ingest_restarts_after_the_log_rotates() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (main, _) = repo_with_linked_worktree(dir.path());
     let source = source(dir.path());
     write(&source.cursor, "999999");
@@ -140,7 +140,7 @@ fn ingest_restarts_after_the_log_rotates() {
 
 #[test]
 fn ingest_without_a_log_is_empty_and_writes_nothing() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let source = source(dir.path());
     assert!(ingest(&source).is_empty());
     assert!(!source.cursor.exists());
@@ -151,7 +151,7 @@ fn ingest_without_a_log_is_empty_and_writes_nothing() {
 /// skipped.
 #[test]
 fn submodule_checkouts_are_found_from_module_configs() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let main = tmp.path().join("main");
     let modules = main.join(".git").join("modules");
     for sub in ["libs/a", "b", "b/inner", "gone"] {

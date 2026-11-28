@@ -1841,7 +1841,7 @@ mod record_redaction_tests {
 
     #[test]
     fn record_redaction_preserves_rm_behavior() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let secret = format!("ghp_{}", "A".repeat(36));
         let record = serde_json::json!({"ts_unix":0, "command":"rm", "cwd":secret,
             "operands":[secret], "handoff":["safe-rm", secret], "exit":2,

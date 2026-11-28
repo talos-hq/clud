@@ -334,11 +334,11 @@ fn write_sentinel(path: &std::path::Path, now: SystemTime) -> std::io::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn first_run_writes_sentinel() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let root = tmp.path().join("tmp");
         let result =
@@ -349,7 +349,7 @@ mod tests {
 
     #[test]
     fn second_run_within_interval_skips() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let root = tmp.path().join("tmp");
         let now = SystemTime::now();
@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn run_after_interval_executes_again() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let root = tmp.path().join("tmp");
         let now = SystemTime::now();
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn pending_work_bypasses_start_cadence() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("tmp");
         let candidate = root.join("candidate");
         fs::create_dir_all(&candidate).unwrap();
@@ -406,7 +406,7 @@ mod tests {
 
     #[test]
     fn background_worker_continues_without_waiting_for_another_hourly_tick() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let candidate = root.join("stale-candidate");
         fs::create_dir_all(&candidate).unwrap();
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn second_daemon_does_not_overwrite_an_active_sweep() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let sentinel = temp.path().join("state").join(SENTINEL_FILE);

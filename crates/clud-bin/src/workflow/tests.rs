@@ -266,7 +266,7 @@ mod cache_tests {
 
     #[test]
     fn resume_reloads_and_fresh_run_truncates() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = ResultCache::path_for(tmp.path(), std::path::Path::new("review.js"));
         assert!(path.ends_with(".clud/workflow/cache/review.jsonl"));
         let mut cache = ResultCache::open(path.clone(), false);

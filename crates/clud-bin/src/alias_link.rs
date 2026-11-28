@@ -150,8 +150,8 @@ pub fn is_alias_of(source: &Path, candidate: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs;
-    use tempfile::TempDir;
 
     fn source_in(dir: &Path, body: &[u8]) -> PathBuf {
         let path = dir.join("clud");
@@ -162,7 +162,7 @@ mod tests {
 
     #[test]
     fn trust_recognizes_hardlinks_and_rejects_copies_with_matching_metadata() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let source = source_in(tmp.path(), b"trusted");
         let hardlink = tmp.path().join("hardlink");
         install_alias_with(&source, &hardlink, &[Method::Hardlink]).unwrap();
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn prefers_a_hardlink_and_is_then_unchanged() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let source = source_in(tmp.path(), b"clud v1");
         let target = tmp.path().join("bin").join("clud-cmd-scan");
         assert_eq!(
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_a_symlink_when_hardlinks_are_refused() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let source = source_in(tmp.path(), b"clud v1");
         let target = tmp.path().join("rm");
         let placed = install_alias_with(&source, &target, &[Method::Symlink, Method::Copy]);
@@ -210,7 +210,7 @@ mod tests {
 
     #[test]
     fn copy_is_the_last_resort_and_carries_source_mtime() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let source = source_in(tmp.path(), b"clud v1");
         let target = tmp.path().join("gh");
         assert_eq!(
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn failing_every_method_is_the_only_error() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let missing = tmp.path().join("nope");
         assert!(install_alias(&missing, &tmp.path().join("rm")).is_err());
         let source = source_in(tmp.path(), b"clud");
@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn an_upgrade_refreshes_every_kind_of_alias() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let source = source_in(tmp.path(), b"clud v1");
         let bin = tmp.path().join("bin");
         let kinds = [
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn a_replaced_alias_is_repaired() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let source = source_in(tmp.path(), b"trusted");
         let target = tmp.path().join("rm");
         install_alias(&source, &target).unwrap();

@@ -592,7 +592,7 @@ mod tests {
     use super::*;
     use crate::daemon::io_helpers::write_json_file;
     use crate::daemon::types::SessionKind;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     fn write_snapshot(state_dir: &Path, id: &str, created_at: u64, exit_code: Option<i32>) {
         let snap = SessionSnapshot {
@@ -627,7 +627,7 @@ mod tests {
 
     #[test]
     fn session_exit_code_reads_snapshot() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         write_snapshot(tmp.path(), "sess-live", 1, None);
         write_snapshot(tmp.path(), "sess-dead", 2, Some(42));
         assert_eq!(session_exit_code(tmp.path(), "sess-live"), None);
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn follow_read_returns_new_bytes_since_offset() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("x.log");
         fs::write(&path, b"hello").unwrap();
         let (off, new) = follow_read(&path, 0).unwrap();
@@ -658,7 +658,7 @@ mod tests {
 
     #[test]
     fn follow_read_detects_truncation_and_rereads_from_zero() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("t.log");
         fs::write(&path, b"longlong").unwrap();
         let (off, _) = follow_read(&path, 0).unwrap();

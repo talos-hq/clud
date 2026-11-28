@@ -885,7 +885,7 @@ mod tests {
     /// reads (`load_gc_delete_remote_branches_at`) and nothing else.
     #[test]
     fn gc_delete_remote_branches_toggle_persists_only_that_key() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let clud_dir = home.path().join(".clud");
         std::fs::create_dir_all(&clud_dir).unwrap();
         let settings = clud_dir.join("settings.json");

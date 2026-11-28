@@ -4405,7 +4405,7 @@ use block_bad_cmd_io::*;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     // Every test that mutates the process-global override env var must serialize
     // on this single lock. Two independent locks (one here, one in `temp_env`)
@@ -4494,7 +4494,7 @@ mod tests {
     /// one question round happens there, before prework.
     #[test]
     fn grind_caps_deny_ask_user_question_only_for_grind_subagents() {
-        let dir = tempdir().unwrap();
+        let dir = TemporaryDirectory::new().unwrap();
         let payload = |extra: &str| {
             let raw = format!(
                 r#"{{"tool_name":"AskUserQuestion","tool_input":{{"questions":[]}}{extra}}}"#
@@ -5416,7 +5416,7 @@ mod tests {
 
     #[test]
     fn rotate_log_rolls_over_at_threshold_and_keeps_single_backup() {
-        let dir = tempdir().unwrap();
+        let dir = TemporaryDirectory::new().unwrap();
         let log = dir.path().join("block-bad-cmd.log");
         let backup = dir.path().join("block-bad-cmd.log.1");
 
@@ -5457,7 +5457,7 @@ mod tests {
 
     #[test]
     fn rotate_log_is_noop_for_missing_file() {
-        let dir = tempdir().unwrap();
+        let dir = TemporaryDirectory::new().unwrap();
         // Must not panic or create anything when the log does not yet exist.
         rotate_log_if_needed(&dir.path().join("block-bad-cmd.log"));
         assert!(!dir.path().join("block-bad-cmd.log.1").exists());
@@ -5479,7 +5479,7 @@ mod tests {
 
     #[test]
     fn hybrid_uv_run_blocks_only_polyglot_roots_without_safe_flags() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         std::fs::write(root.join("pyproject.toml"), "[project]\nname='x'\n").unwrap();
         std::fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
@@ -5510,7 +5510,7 @@ mod tests {
 
     #[test]
     fn hybrid_uv_run_allow_all_bypasses_only_hybrid_auto_sync_case() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         std::fs::write(root.join("pyproject.toml"), "[project]\nname='x'\n").unwrap();
         std::fs::write(root.join("Cargo.toml"), "[workspace]\n").unwrap();
@@ -5533,7 +5533,7 @@ mod tests {
 
     #[test]
     fn pure_python_or_pure_rust_roots_do_not_trigger_hybrid_block() {
-        let py = tempdir().unwrap();
+        let py = TemporaryDirectory::new().unwrap();
         std::fs::write(py.path().join("pyproject.toml"), "[project]\nname='x'\n").unwrap();
         assert!(
             evaluate_command("uv run python -V", Some(py.path()), false, &[])
@@ -5541,7 +5541,7 @@ mod tests {
                 .is_none()
         );
 
-        let rs = tempdir().unwrap();
+        let rs = TemporaryDirectory::new().unwrap();
         std::fs::write(rs.path().join("Cargo.toml"), "[workspace]\n").unwrap();
         assert!(
             evaluate_command("uv run python -V", Some(rs.path()), false, &[])
@@ -5553,13 +5553,13 @@ mod tests {
     #[test]
     fn soldr_rule_applies_only_inside_a_rust_tree() {
         // #2065: outside a Rust tree there is no workspace for soldr to pin.
-        let plain = tempdir().unwrap();
+        let plain = TemporaryDirectory::new().unwrap();
         let nested = plain.path().join("sdist").join("src");
         std::fs::create_dir_all(&nested).unwrap();
         assert!(!in_rust_tree(&nested));
 
         for marker in ["Cargo.toml", "rust-toolchain.toml", "rust-toolchain"] {
-            let root = tempdir().unwrap();
+            let root = TemporaryDirectory::new().unwrap();
             let sub = root.path().join("crates").join("x");
             std::fs::create_dir_all(&sub).unwrap();
             std::fs::write(root.path().join(marker), "").unwrap();
@@ -7241,8 +7241,8 @@ mod tests {
 
     /// A temp layout: `base/repo` (the parent), `base/repo-extern/<name>`
     /// (GC-tracked extern checkouts), and a declared child `base/repo/sub`.
-    fn tier_layout() -> (tempfile::TempDir, PathBuf) {
-        let base = tempdir().unwrap();
+    fn tier_layout() -> (kernal_api::platform::fs::TemporaryDirectory, PathBuf) {
+        let base = TemporaryDirectory::new().unwrap();
         let repo = base.path().join("repo");
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         let extern_root = base.path().join("repo-extern");

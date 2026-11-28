@@ -47,8 +47,8 @@ mod tests {
 
     #[test]
     fn reference_is_disabled_by_default_and_requires_a_boolean() {
-        let home = tempfile::tempdir().unwrap();
-        let cwd = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let cwd = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert!(!enabled_at(home.path(), cwd.path()).unwrap());
         std::fs::create_dir(home.path().join(".clud")).unwrap();
         let path = clud_settings::settings_path_at(home.path());
@@ -60,8 +60,8 @@ mod tests {
 
     #[test]
     fn repository_setting_can_disable_the_global_reference() {
-        let home = tempfile::tempdir().unwrap();
-        let repo = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir(home.path().join(".clud")).unwrap();
         std::fs::write(
             clud_settings::settings_path_at(home.path()),

@@ -1618,12 +1618,12 @@ impl ScanCursor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::time::Duration;
-    use tempfile::tempdir;
 
     #[test]
     fn scan_cursor_survives_reload_and_finishes_after_multiple_quanta() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("candidate");
         fs::create_dir(&root).unwrap();
         let old = SystemTime::now() - STALE_THRESHOLD - Duration::from_secs(3_600);
@@ -1657,7 +1657,7 @@ mod tests {
             return;
         }
 
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join(
             crate::platform::gc_test_fs::os_string_from_bytes(b"candidate-\xff".to_vec()).unwrap(),
         );
@@ -1670,7 +1670,7 @@ mod tests {
 
     #[test]
     fn partial_scan_never_proves_idle_and_later_recent_file_keeps_tree() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("candidate");
         fs::create_dir(&root).unwrap();
         let now = SystemTime::now();
@@ -1690,7 +1690,7 @@ mod tests {
 
     #[test]
     fn insertion_before_saved_scan_offset_cannot_prove_idle() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("candidate");
         fs::create_dir(&root).unwrap();
         let now = SystemTime::now();
@@ -1710,7 +1710,7 @@ mod tests {
 
     #[test]
     fn changed_file_before_saved_scan_offset_cannot_prove_idle() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("candidate");
         fs::create_dir(&root).unwrap();
         let now = SystemTime::now();
@@ -1732,7 +1732,7 @@ mod tests {
 
     #[test]
     fn fresh_direct_child_is_sized_and_reported_without_deletion() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let candidate = root.join("large-active-session");
         fs::create_dir_all(&candidate).unwrap();
@@ -1759,7 +1759,7 @@ mod tests {
 
     #[test]
     fn work_queue_survives_reload_including_candidate_phases() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let now = SystemTime::now();
@@ -1790,7 +1790,7 @@ mod tests {
 
     #[test]
     fn tick_continues_large_candidate_and_visits_later_sibling() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let wide = root.join("a-wide");
         let later = root.join("z-later");
@@ -1827,7 +1827,7 @@ mod tests {
         if !crate::platform::host::UNIX {
             return;
         }
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let wide = root.join("a-wide");
         let live = root.join("m-live");
@@ -1882,7 +1882,7 @@ mod tests {
 
     #[test]
     fn deletion_obeys_each_ticks_operation_allowance() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let candidate = root.join("candidate");
         fs::create_dir_all(&candidate).unwrap();
@@ -1921,7 +1921,7 @@ mod tests {
 
     #[test]
     fn new_activity_before_deletion_keeps_the_remaining_candidate() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let candidate = root.join("candidate");
         fs::create_dir_all(&candidate).unwrap();
@@ -1949,7 +1949,7 @@ mod tests {
 
     #[test]
     fn refreshed_existing_file_before_delete_survives_small_batches() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let candidate = root.join("candidate");
         fs::create_dir_all(&candidate).unwrap();
@@ -1995,7 +1995,7 @@ mod tests {
             return;
         }
 
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let outside = temp.path().join("outside");
         fs::create_dir(&root).unwrap();
@@ -2026,7 +2026,7 @@ mod tests {
 
     #[test]
     fn altered_work_queue_cannot_delete_outside_sweep_root() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let outside = temp.path().join("outside.txt");
@@ -2054,7 +2054,7 @@ mod tests {
 
     #[test]
     fn deferred_work_does_not_spin_continuous_worker() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let now = SystemTime::now();
@@ -2078,7 +2078,7 @@ mod tests {
 
     #[test]
     fn failed_candidate_retries_while_other_candidate_finishes() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let failing = root.join("failing");
@@ -2124,7 +2124,7 @@ mod tests {
 
     #[test]
     fn flat_file_deletion_does_not_shift_explore_cursor_past_siblings() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let now = SystemTime::now();
@@ -2149,7 +2149,7 @@ mod tests {
 
     #[test]
     fn flat_file_is_queued_then_rechecked_before_deletion() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let file = root.join("old.txt");
@@ -2180,7 +2180,7 @@ mod tests {
 
     #[test]
     fn malformed_work_state_is_preserved_and_does_not_block_future_ticks() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let work_path = temp.path().join("state/work.json");
@@ -2194,7 +2194,7 @@ mod tests {
 
     #[test]
     fn recent_write_to_already_scanned_file_stops_deletion_before_first_batch() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let candidate = root.join("candidate");
         fs::create_dir_all(&candidate).unwrap();
@@ -2235,7 +2235,7 @@ mod tests {
 
     #[test]
     fn persistent_failure_is_reported_without_abandoning_retryable_work() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let failing = root.join("failing");
@@ -2273,7 +2273,7 @@ mod tests {
             return;
         }
 
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let file = root.join("old.txt");
@@ -2308,7 +2308,7 @@ mod tests {
             return;
         }
 
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let candidate = root.join("candidate");
         fs::create_dir_all(&candidate).unwrap();
@@ -2350,7 +2350,7 @@ mod tests {
 
     #[test]
     fn failed_exploration_backs_off_and_recovers() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         fs::create_dir(&root).unwrap();
         let candidate = root.join("candidate");
@@ -2392,7 +2392,7 @@ mod tests {
 
     #[test]
     fn vanished_scan_candidate_completes_instead_of_stalling_the_pass() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let gone = root.join("cache").join("staging");
         fs::create_dir_all(&gone).unwrap();
@@ -2422,7 +2422,7 @@ mod tests {
             return;
         }
 
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let failing = root.join("failing");
         let sealed = failing.join("sealed");
@@ -2481,7 +2481,7 @@ mod tests {
             return;
         }
 
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let candidate = root.join("session");
         let sealed = candidate.join("pkg").join("mod@v1");
@@ -2523,7 +2523,7 @@ mod tests {
         if !crate::platform::host::UNIX || crate::platform::rm_tool::effective_uid() == Some(0) {
             return; // root ignores mode bits, so nothing can be denied
         }
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let root = temp.path().join("tmp");
         let removable = root.join("a-removable");
         let mixed = root.join("b-mixed");

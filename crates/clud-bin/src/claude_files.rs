@@ -362,7 +362,7 @@ mod tests {
 
     #[test]
     fn install_is_idempotent_and_respects_user_ownership() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = dir.path();
         let first = install_to(root, BUNDLED_CLAUDE_FILES).unwrap();
         assert_eq!(first.installed.len(), BUNDLED_CLAUDE_FILES.len());
@@ -402,7 +402,7 @@ mod tests {
 
     #[test]
     fn retired_grind_workflow_is_purged_but_user_copies_survive() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = dir.path().join(".claude");
         std::fs::create_dir_all(root.join("workflows")).unwrap();
         let old = root.join("workflows/grind.js");
@@ -479,7 +479,7 @@ mod tests {
 
     #[test]
     fn missing_claude_home_installs_nothing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert!(ensure_installed_at(dir.path()).unwrap().is_none());
     }
 }

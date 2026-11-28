@@ -396,8 +396,8 @@ pub fn run_setup_at(
 mod tests {
     use super::*;
     use crate::args::Args;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs;
-    use tempfile::tempdir;
 
     fn parse(argv: &[&str]) -> Args {
         Args::parse_from_raw(argv.iter().map(|s| s.to_string()).collect())
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn session_only_setup_does_not_write_agent_home_files() {
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         fs::create_dir_all(home.path().join(".claude")).unwrap();
         fs::create_dir_all(home.path().join(".codex")).unwrap();
 
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn codex_global_setup_is_selected_backend_only() {
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         fs::create_dir_all(home.path().join(".claude")).unwrap();
         fs::create_dir_all(home.path().join(".codex")).unwrap();
         fs::write(
@@ -720,7 +720,7 @@ mod tests {
 
     #[test]
     fn claude_global_setup_is_selected_backend_only() {
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         fs::create_dir_all(home.path().join(".claude")).unwrap();
         fs::create_dir_all(home.path().join(".codex")).unwrap();
         fs::write(

@@ -567,10 +567,10 @@ fn remove_entry(path: &Path, is_dir: bool, dry_run: bool, rule: &str, report: &m
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs::File;
     use std::io::Write;
     use std::time::Duration as StdDuration;
-    use tempfile::tempdir;
 
     fn make_file(root: &Path, name: &str) -> PathBuf {
         let path = root.join(name);
@@ -624,7 +624,7 @@ mod tests {
     /// time a new project is used and its mtime is therefore always recent.
     #[test]
     fn stale_session_under_a_fresh_parent_is_swept() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let stale = nested_session(
             root,
@@ -647,7 +647,7 @@ mod tests {
     /// files — including, on this machine, the sweep's own session.
     #[test]
     fn a_session_still_being_written_to_is_never_swept() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let old = STALE_THRESHOLD + StdDuration::from_secs(7_200);
         let session = nested_session(root, "-home-user-live", "sess-live", old);
@@ -670,7 +670,7 @@ mod tests {
     /// hazard: this shape was deleted before this commit.
     #[test]
     fn a_top_level_dir_with_fresh_contents_is_never_swept() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let dir = make_subdir(root, "soldr-x-home-123");
         let fresh = dir.join("still-in-use.txt");
@@ -688,7 +688,7 @@ mod tests {
     /// A wholly idle tree still goes, at the top level, as it always did.
     #[test]
     fn a_fully_idle_top_level_dir_is_still_swept() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let dir = make_subdir(root, "soldr-y-home-456");
         let old = STALE_THRESHOLD + StdDuration::from_secs(3_600);
@@ -704,7 +704,7 @@ mod tests {
     /// and the project directory survives because it still has a tenant.
     #[test]
     fn a_stale_session_goes_without_taking_its_live_sibling() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let old = STALE_THRESHOLD + StdDuration::from_secs(3_600);
         let stale = nested_session(root, "-proj", "sess-stale", old);
@@ -725,7 +725,7 @@ mod tests {
     /// the box without someone deciding to.
     #[test]
     fn the_sweep_does_not_descend_past_max_nested_depth() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let old = STALE_THRESHOLD + StdDuration::from_secs(3_600);
         // Entries are *evaluated* at depths 0, 1 and 2 — three levels, which
@@ -753,7 +753,7 @@ mod tests {
     /// `remove_dir_all` over live data; a wrong "busy" costs one sweep cycle.
     #[test]
     fn an_exhausted_scan_budget_keeps_the_tree() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let dir = tmp.path().join("wide");
         fs::create_dir_all(&dir).unwrap();
         make_file(&dir, "a.txt");
@@ -773,7 +773,7 @@ mod tests {
     /// otherwise-idle candidate to survive every future tick.
     #[test]
     fn stale_tree_larger_than_one_scan_budget_eventually_goes() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let old = STALE_THRESHOLD + StdDuration::from_secs(3_600);
         let wide = root.join("wide-stale");
@@ -798,7 +798,7 @@ mod tests {
     /// idleness must not consume the budget needed by a stale child.
     #[test]
     fn fresh_parent_does_not_starve_stale_child() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let parent = root.join("fresh-parent");
         let stale = parent.join("stale-child");
@@ -817,7 +817,7 @@ mod tests {
     /// is not evidence of idleness.
     #[test]
     fn a_future_mtime_keeps_the_tree() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let dir = tmp.path().join("skewed");
         fs::create_dir_all(&dir).unwrap();
         make_file(&dir, "a.txt");
@@ -840,7 +840,7 @@ mod tests {
     /// `dry_run` counts without touching anything — the nested path included.
     #[test]
     fn dry_run_reports_nested_removals_without_performing_them() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let stale = nested_session(
             root,
@@ -862,7 +862,7 @@ mod tests {
     /// have mentioned it.
     #[test]
     fn an_oversized_live_session_is_reported_and_kept() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         let session = root.join("claude-1000").join("-proj").join("sess-fat");
         let scratch = session.join("scratchpad");
@@ -900,7 +900,7 @@ mod tests {
     /// reported at what was written rather than what the filesystem allocated.
     #[test]
     fn subtree_size_sums_the_tree() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let dir = tmp.path().join("sized");
         fs::create_dir_all(dir.join("inner")).unwrap();
         fs::write(dir.join("a.bin"), vec![0u8; 1024]).unwrap();
@@ -912,7 +912,7 @@ mod tests {
 
     #[test]
     fn foreign_owned_list_round_trips_and_clears() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let paths = vec![PathBuf::from("/home/u/.clud/tmp/s/zc")];
         write_foreign_owned(temp.path(), &paths).unwrap();
         assert_eq!(read_foreign_owned(temp.path()), paths);
@@ -941,7 +941,7 @@ mod tests {
 
     #[test]
     fn sweep_on_missing_dir_is_noop() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let report = sweep_stale_at(&tmp.path().join("nope"), SystemTime::now(), false).unwrap();
         assert_eq!(report.removed, 0);
         assert_eq!(report.skipped, 0);
@@ -949,7 +949,7 @@ mod tests {
 
     #[test]
     fn sweep_leaves_fresh_entries() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let f = make_file(tmp.path(), "fresh.txt");
         let d = make_subdir(tmp.path(), "fresh-dir");
         let report = sweep_stale_at(tmp.path(), SystemTime::now(), false).unwrap();
@@ -960,7 +960,7 @@ mod tests {
 
     #[test]
     fn sweep_removes_stale_files_and_dirs() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let f = make_file(tmp.path(), "old.txt");
         let d = make_subdir(tmp.path(), "old-dir");
         // Pretend "now" is past the threshold so the just-created entries
@@ -974,7 +974,7 @@ mod tests {
 
     #[test]
     fn sweep_dry_run_reports_without_deleting() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let f = make_file(tmp.path(), "old.txt");
         let future_now = SystemTime::now() + STALE_THRESHOLD + StdDuration::from_secs(3_600);
         let report = sweep_stale_at(tmp.path(), future_now, true).unwrap();
@@ -984,7 +984,7 @@ mod tests {
 
     #[test]
     fn sweep_ignores_future_mtimes() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let f = make_file(tmp.path(), "future.txt");
         // "now" far in the past → entry mtime is in the future → skipped.
         let past_now = SystemTime::UNIX_EPOCH + StdDuration::from_secs(1_000_000);
@@ -1006,7 +1006,7 @@ mod tests {
 
     #[test]
     fn ensure_dir_creates_under_home() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let _guard = HomeGuard::set(tmp.path());
         let dir = ensure_dir().expect("ensure_dir should succeed with a valid HOME");
         assert!(dir.exists());

@@ -264,7 +264,7 @@ mod tests {
 
     #[test]
     fn session_start_records_the_launch_route_authoritatively() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cwd = root.path().join("proj");
         std::fs::create_dir_all(&cwd).unwrap();
         let transcript = root.path().join("s-9.jsonl");
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn a_recovery_file_becomes_additional_context_and_is_deleted() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cwd = root.path().join("proj");
         std::fs::create_dir_all(&cwd).unwrap();
         let state = root.path().join("state");
@@ -416,7 +416,7 @@ mod tests {
 
     #[test]
     fn a_malformed_payload_is_ignored_without_output() {
-        let state = tempfile::tempdir().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert!(handle(
             &args(state.path(), "SessionEnd", "claude", None),
             &Value::Null

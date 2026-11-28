@@ -30,7 +30,7 @@ use running_process::{NativeProcess, ProcessConfig, ReadStatus, StderrMode, Stdi
 /// bytes that survive the round trip back through clud's capture.
 #[test]
 fn cmd_wrapper_round_trips_utf8_bytes() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
 
     // Mix of CJK, accented Latin, emoji — bytes that would mojibake under
     // every common non-UTF-8 Windows codepage.

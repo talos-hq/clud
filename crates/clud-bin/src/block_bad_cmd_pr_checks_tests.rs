@@ -35,7 +35,7 @@ fn denied_without_receipt_and_names_command_and_opt_outs() {
 
 #[test]
 fn allowed_with_receipt_for_same_tree_and_denied_after_tree_changes() {
-    let state = tempfile::tempdir().unwrap();
+    let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let commands = config(true).unwrap().commands;
     let code =
         pr_checks::check_and_record(state.path(), Path::new("/repo"), "tree1", &commands, |_| 0);
@@ -108,7 +108,7 @@ fn trigger_recognizes_push_and_pr_create() {
 
 #[test]
 fn checks_each_push_from_its_effective_checkout() {
-    let base = tempfile::tempdir().unwrap();
+    let base = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for dir in ["one", "two", "three", "four"] {
         std::fs::create_dir(base.path().join(dir)).unwrap();
     }

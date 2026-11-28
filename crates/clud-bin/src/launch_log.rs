@@ -388,7 +388,7 @@ mod tests {
 
     #[test]
     fn record_redaction_preserves_launch_behavior() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let secret = format!("ghp_{}", "A".repeat(36));
         let original = serde_json::json!({
             "id": secret, "source": "direct", "clud_pid": 42, "backend": "codex",
@@ -539,7 +539,7 @@ mod tests {
     /// `sanitize_failure_reason` directly so nothing races the global slot.
     #[test]
     fn finish_launch_stores_a_bounded_redacted_failure_reason() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let record = LaunchRecord {
             id: "1700000000000-2".to_string(),
             source: "direct".to_string(),

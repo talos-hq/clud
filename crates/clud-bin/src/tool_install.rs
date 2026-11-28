@@ -223,8 +223,8 @@ pub struct PurgeReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs;
-    use tempfile::TempDir;
 
     /// A throwaway tool used to exercise the install state machine without
     /// depending on the production [`BUNDLED_TOOLS`] (which is empty at
@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn missing_file_triggers_install() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let tool = fake_tool();
         let target = target_path_at(tmp.path(), tool.rel_path);
         assert!(matches!(classify(&target, tool.body), Existing::Missing));
@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn second_install_is_a_noop() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let tool = fake_tool();
         ensure_tool_installed_at(tmp.path(), &tool);
         let target = target_path_at(tmp.path(), tool.rel_path);
@@ -299,7 +299,7 @@ mod tests {
 
     #[test]
     fn user_edited_file_is_preserved() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let tool = fake_tool();
         let target = target_path_at(tmp.path(), tool.rel_path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
@@ -316,7 +316,7 @@ mod tests {
 
     #[test]
     fn semantic_diff_overwrites_managed_copy() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let old = fake_tool();
         let new = fake_tool_v2();
 
@@ -332,7 +332,7 @@ mod tests {
 
     #[test]
     fn whitespace_only_diff_is_noop() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let tool = fake_tool();
         let target = target_path_at(tmp.path(), tool.rel_path);
         fs::create_dir_all(target.parent().unwrap()).unwrap();
@@ -347,7 +347,7 @@ mod tests {
 
     #[test]
     fn creates_missing_parent_dirs() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let tool = BundledTool {
             rel_path: "a/b/c/deep.py",
             body: "# managed-by: clud\n",
@@ -363,7 +363,7 @@ mod tests {
 
     #[test]
     fn tools_root_resolves_to_dot_clud_tools() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         // The helper takes an explicit home in tests so we don't depend on
         // $HOME / %USERPROFILE% pointing where we want.
         let resolved = tmp.path().join(TOOLS_ROOT);
@@ -375,7 +375,7 @@ mod tests {
 
     #[test]
     fn retired_managed_tool_is_removed() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let retired = PurgedTool {
             rel_path: "hooks/block-bad-cmd.py",
             reason: "native helper rollout complete",
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn retired_user_authored_tool_is_preserved() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let retired = PurgedTool {
             rel_path: "hooks/block-bad-cmd.py",
             reason: "native helper rollout complete",
@@ -410,7 +410,7 @@ mod tests {
 
     #[test]
     fn retired_missing_tool_is_noop() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let retired = PurgedTool {
             rel_path: "hooks/block-bad-cmd.py",
             reason: "native helper rollout complete",

@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn kitty_image_payload_writes_distinct_complete_png_files() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let rgba = [255, 0, 0, 255];
         let first = kitty_image_payload_in(dir.path(), 1, 1, &rgba).unwrap();
         let second = kitty_image_payload_in(dir.path(), 1, 1, &rgba).unwrap();
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn kitty_image_payload_rejects_bad_dimensions_without_leaving_files() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let error = kitty_image_payload_in(dir.path(), usize::MAX, 2, &[]).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);

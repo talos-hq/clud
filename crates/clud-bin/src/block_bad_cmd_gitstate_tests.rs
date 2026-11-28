@@ -1,13 +1,13 @@
 //! Decision table and command parsing for the raw `git status` guard (#2233).
 
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 const LIMIT: u32 = DEFAULT_LIMIT;
 
 /// A checkout-shaped directory: a tempdir with an empty `.git`.
-fn checkout() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempdir().expect("tempdir");
+fn checkout() -> (kernal_api::platform::fs::TemporaryDirectory, PathBuf) {
+    let dir = TemporaryDirectory::new().expect("tempdir");
     std::fs::create_dir_all(dir.path().join(".git")).expect("git dir");
     let root = dir.path().to_path_buf();
     (dir, root)
@@ -156,7 +156,7 @@ fn chains_scripts_and_targeted_forms_pass_untouched() {
 
 #[test]
 fn a_directory_outside_a_checkout_fails_open() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     assert!(detect("git status", dir.path()).is_none());
 }
 
@@ -169,7 +169,7 @@ fn the_allow_token_is_matched_as_a_whole_word() {
 
 #[test]
 fn check_at_persists_and_refuses_once() {
-    let state_dir = tempdir().expect("state");
+    let state_dir = TemporaryDirectory::new().expect("state");
     let (_dir, root) = checkout();
     let bare = Bare { root: root.clone() };
     for index in 0..LIMIT {

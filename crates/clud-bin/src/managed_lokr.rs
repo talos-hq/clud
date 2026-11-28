@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn tampered_bundle_never_installs_or_executes() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let bundle = Bundle {
             version: "0.1.0",
             digest: &"0".repeat(64),
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn concurrent_first_use_reuses_the_verified_winner() {
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home = temporary.path().canonicalize().unwrap();
         let bytes = fake_native();
         let digest = format!("{:x}", Sha256::digest(&bytes));
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn wheel_download_is_verified_once_and_reused_offline() {
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home = temporary.path().canonicalize().unwrap();
         let bytes = fake_native();
         let digest = format!("{:x}", Sha256::digest(&bytes));
@@ -386,7 +386,7 @@ mod tests {
 
     #[test]
     fn wheel_download_rejects_wrong_size_or_digest_before_publication() {
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let bytes = fake_native();
         let digest = format!("{:x}", Sha256::digest(&bytes));
         let bundle = Bundle {
@@ -423,7 +423,7 @@ mod tests {
 
     #[test]
     fn offline_install_is_verified_idempotent_and_detects_tampering() {
-        let temporary = tempfile::tempdir().unwrap();
+        let temporary = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home = temporary.path().canonicalize().unwrap();
         let bytes = fake_native();
         let digest = format!("{:x}", Sha256::digest(&bytes));

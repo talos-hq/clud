@@ -219,7 +219,7 @@ mod tests {
 
     #[test]
     fn readonly_leaf_retry_rejects_a_symlinked_parent_without_changing_its_target() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("managed");
         let outside = tmp.path().join("outside");
         std::fs::create_dir_all(&root).unwrap();
@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn readonly_leaf_retry_unlinks_a_final_symlink_without_chmodding_the_target() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("managed");
         std::fs::create_dir_all(&root).unwrap();
         let outside = tmp.path().join("protected");

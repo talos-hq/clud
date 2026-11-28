@@ -4,7 +4,7 @@
 use std::fs;
 use std::path::Path;
 
-use tempfile::TempDir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 use super::api_sessions::{
     ApiSessionBackend, ApiSessionState, ApiSessionStore, CreateApiSession,
@@ -40,7 +40,7 @@ fn force_state(store: &ApiSessionStore, id: &str, state: ApiSessionState) {
 
 #[test]
 fn every_origin_is_stored_on_the_record_and_read_back() {
-    let temp = TempDir::new().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let store = ApiSessionStore::new(temp.path());
     for origin in SessionOrigin::ALL {
         let created = store.create(request(temp.path(), origin)).unwrap();
@@ -56,7 +56,7 @@ fn every_origin_is_stored_on_the_record_and_read_back() {
 
 #[test]
 fn legacy_record_without_origin_loads_as_unknown_and_lists() {
-    let temp = TempDir::new().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let store = ApiSessionStore::new(temp.path());
     let created = store
         .create(request(temp.path(), SessionOrigin::Cli))
@@ -86,7 +86,7 @@ fn gc_reaps_only_terminated_and_failed_states() {
 
 #[test]
 fn idle_cli_session_survives_gc_and_terminated_one_is_reaped() {
-    let temp = TempDir::new().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let store = ApiSessionStore::new(temp.path());
     let idle = store
         .create(request(temp.path(), SessionOrigin::Cli))
@@ -109,7 +109,7 @@ fn idle_cli_session_survives_gc_and_terminated_one_is_reaped() {
 
 #[test]
 fn origin_filter_selects_only_matching_sessions() {
-    let temp = TempDir::new().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let store = ApiSessionStore::new(temp.path());
     for origin in SessionOrigin::ALL {
         store.create(request(temp.path(), origin)).unwrap();

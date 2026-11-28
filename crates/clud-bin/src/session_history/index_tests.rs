@@ -52,7 +52,7 @@ fn authoritative_routes_are_never_overwritten_by_inferred_ones() {
 
 #[test]
 fn update_round_trips_under_the_lock_and_isolates_cwds() {
-    let state = tempfile::tempdir().unwrap();
+    let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     update(state.path(), "/work/a", |index| {
         index.upsert(entry("s1", "2026-01-01T00:00:00Z", Route::Claude, false));
     })
@@ -69,7 +69,7 @@ fn update_round_trips_under_the_lock_and_isolates_cwds() {
 
 #[test]
 fn a_corrupt_index_reads_as_empty_and_is_rebuilt() {
-    let state = tempfile::tempdir().unwrap();
+    let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = index_path(state.path(), "/work/a");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, b"{not json").unwrap();
@@ -83,7 +83,7 @@ fn a_corrupt_index_reads_as_empty_and_is_rebuilt() {
 
 #[test]
 fn concurrent_updates_do_not_lose_writes() {
-    let state = tempfile::tempdir().unwrap();
+    let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let dir = state.path().to_path_buf();
     let handles: Vec<_> = (0..8)
         .map(|i| {

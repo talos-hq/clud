@@ -558,7 +558,7 @@ fn worktree_process_ref_matches_executable_or_command_line() {
 
 #[test]
 fn remove_worktree_path_refuses_when_live_process_references_worktree() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let repo = tmp.path().join("repo");
     let wt = tmp.path().join("wt");
     std::fs::create_dir_all(&repo).expect("repo dir");
@@ -589,7 +589,7 @@ fn remove_worktree_path_refuses_when_live_process_references_worktree() {
 
 #[test]
 fn unforced_worktree_removal_never_deletes_source_left_after_git_success() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let repo = tmp.path().join("repo");
     let wt = tmp.path().join("wt");
     std::fs::create_dir_all(&repo).expect("repo dir");
@@ -618,7 +618,7 @@ fn unforced_worktree_removal_never_deletes_source_left_after_git_success() {
 
 #[test]
 fn remove_worktree_path_falls_back_when_git_remove_fails_and_dir_remains() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let repo = tmp.path().join("repo");
     let wt = tmp.path().join("wt");
     std::fs::create_dir_all(&repo).expect("repo dir");
@@ -678,7 +678,7 @@ fn fmt_age_picks_largest_unit() {
 
 #[test]
 fn ancestry_cleanup_checks_container_binds_before_attempting_git() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let source = tmp.path().join("source");
     std::fs::create_dir(&source).unwrap();
     std::fs::write(source.join("work"), "active").unwrap();
@@ -694,7 +694,7 @@ fn ancestry_cleanup_checks_container_binds_before_attempting_git() {
 
 #[test]
 fn unforced_worktree_removal_preserves_source_after_git_refusal() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let source = tmp.path().join("source");
     std::fs::create_dir(&source).unwrap();
     std::fs::write(source.join("uncommitted"), "new work").unwrap();

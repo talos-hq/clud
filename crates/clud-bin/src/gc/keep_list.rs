@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn missing_file_keeps_nothing_and_corrupt_file_keeps_everything() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let file = dir.path().join(KEEP_FILE_NAME);
         assert!(!load(&file).keeps("/a/b"));
         fs::write(&file, "{not json").unwrap();
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn a_kept_path_covers_itself_and_its_children_only() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let file = dir.path().join(KEEP_FILE_NAME);
         assert!(update(&file, "/wt/repo-a", true).unwrap());
         assert!(!update(&file, "/wt/repo-a", true).unwrap(), "idempotent");
@@ -187,7 +187,7 @@ mod tests {
 
     #[test]
     fn a_pin_matches_the_canonical_filesystem_spelling() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = temp.path().join("worktree");
         fs::create_dir(&root).unwrap();
         let stored = root.to_string_lossy().into_owned();

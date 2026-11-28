@@ -399,12 +399,12 @@ fn human_kb(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs;
-    use tempfile::TempDir;
 
     /// Helper: make a fixture dir with a `.git` marker so `run()` won't bail.
-    fn fixture() -> TempDir {
-        let dir = TempDir::new().unwrap();
+    fn fixture() -> TemporaryDirectory {
+        let dir = TemporaryDirectory::new().unwrap();
         fs::create_dir_all(dir.path().join(".git")).unwrap();
         dir
     }

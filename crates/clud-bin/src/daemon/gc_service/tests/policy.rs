@@ -59,7 +59,7 @@ pub(super) fn restore_env_var(key: &str, prior: Option<std::ffi::OsString>) {
 
 #[test]
 fn watch_registration_acks_before_initial_scan_and_discovers_matching_child() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let worktrees = temp.path().join(".claude").join("worktrees");
     fs::create_dir_all(worktrees.join("agent-zz")).unwrap();
     let db = temp.path().join("registry.redb");

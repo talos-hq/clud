@@ -35,7 +35,7 @@ mod tests {
 
     #[test]
     fn redirect_fd_sends_writes_to_the_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("out.log");
         let file = std::fs::OpenOptions::new()
             .create(true)

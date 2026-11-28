@@ -1,6 +1,6 @@
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use serde::Deserialize;
-use tempfile::tempdir;
 
 #[derive(Debug, Deserialize)]
 struct SkillFrontmatter {
@@ -43,7 +43,7 @@ fn fake_skills() -> Vec<BundledSkill> {
 
 #[test]
 fn do_and_grind_skills_install_with_explicit_only_invocation() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let base = dir.path();
     install_to(base, BUNDLED_SKILLS).unwrap();
     install_explicit_invocation_policies(base).unwrap();
@@ -91,7 +91,7 @@ fn do_and_grind_skills_install_with_explicit_only_invocation() {
 
 #[test]
 fn credential_prompt_skill_remains_automatically_discoverable_after_install() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     install_to(dir.path(), BUNDLED_SKILLS).unwrap();
     install_explicit_invocation_policies(dir.path()).unwrap();
     let body = std::fs::read_to_string(dir.path().join("clud-secret/SKILL.md")).unwrap();
@@ -103,7 +103,7 @@ fn credential_prompt_skill_remains_automatically_discoverable_after_install() {
 fn computer_use_skill_is_automatically_invocable_after_install() {
     // DD-233: computer use is baked in, so the model must reach the skill on
     // its own, under both Claude and Codex policy files.
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     install_to(dir.path(), BUNDLED_SKILLS).unwrap();
     install_explicit_invocation_policies(dir.path()).unwrap();
     let body = std::fs::read_to_string(dir.path().join("clud-computer-use/SKILL.md")).unwrap();
@@ -148,7 +148,7 @@ fn computer_use_skill_names_the_server_the_recovery_commands_and_the_limits() {
 
 #[test]
 fn installs_when_missing() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let report = install_to(dir.path(), &fake_skills()).unwrap();
     assert_eq!(report.installed, vec!["alpha", "beta"]);
     assert!(report.skipped_existing.is_empty());
@@ -164,7 +164,7 @@ fn installs_when_missing() {
 
 #[test]
 fn skips_existing_and_preserves_user_edits() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let alpha_dir = dir.path().join("alpha");
     std::fs::create_dir_all(&alpha_dir).unwrap();
     std::fs::write(alpha_dir.join("SKILL.md"), "USER EDIT").unwrap();
@@ -182,7 +182,7 @@ fn skips_existing_and_preserves_user_edits() {
 
 #[test]
 fn user_owned_copy_matching_bundle_is_not_reported_diverged() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let alpha_dir = dir.path().join("alpha");
     std::fs::create_dir_all(&alpha_dir).unwrap();
     std::fs::write(alpha_dir.join("SKILL.md"), "alpha body\n").unwrap();
@@ -197,7 +197,7 @@ fn refreshes_a_stale_clud_managed_copy() {
     // The bug this closes: a user who installed clud-issue months ago
     // kept the interview-era body forever, because install skipped any
     // existing file. Editing the bundled skill reached nobody.
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let managed = [BundledSkill {
         name: "alpha",
         skill_md: "<!-- managed-by: clud -->\nnew body\n",
@@ -228,7 +228,7 @@ fn refreshes_a_stale_clud_managed_copy() {
 
 #[test]
 fn refresh_never_touches_a_copy_whose_marker_the_user_removed() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let managed = [BundledSkill {
         name: "alpha",
         skill_md: "<!-- managed-by: clud -->\nnew body\n",
@@ -250,7 +250,7 @@ fn refresh_never_touches_a_copy_whose_marker_the_user_removed() {
 
 #[test]
 fn install_never_overwrites_a_non_utf8_user_skill() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let managed = [BundledSkill {
         name: "alpha",
         skill_md: "<!-- managed-by: clud -->\nnew body\n",
@@ -284,7 +284,7 @@ fn bundled_skills_all_carry_the_ownership_marker() {
 
 #[test]
 fn idempotent_second_pass_is_a_noop() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let first = install_to(dir.path(), &fake_skills()).unwrap();
     assert_eq!(first.installed.len(), 2);
     let second = install_to(dir.path(), &fake_skills()).unwrap();
@@ -301,7 +301,7 @@ fn idempotent_second_pass_is_a_noop() {
 /// nothing. That ran for months against real users.
 #[test]
 fn real_bundle_install_is_idempotent() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
 
     let first = install_to(dir.path(), BUNDLED_SKILLS).unwrap();
     assert_eq!(first.installed.len(), BUNDLED_SKILLS.len());
@@ -327,7 +327,7 @@ fn real_bundle_install_is_idempotent() {
 /// user-visible symptom as #844, from a different cause.
 #[test]
 fn line_ending_drift_is_not_a_refresh() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let skills = fake_skills();
     install_to(dir.path(), &skills).unwrap();
 
@@ -352,7 +352,7 @@ fn line_ending_drift_is_not_a_refresh() {
 
 #[test]
 fn creates_missing_parent_dirs() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let nested = dir.path().join("a/b/c");
     let report = install_to(&nested, &fake_skills()).unwrap();
     assert_eq!(report.installed, vec!["alpha", "beta"]);
@@ -572,7 +572,7 @@ fn clud_loop_is_retired() {
 
 #[test]
 fn purge_removes_retired_skill_from_every_backend() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let mut dirs = Vec::new();
     for backend in SKILL_BACKENDS {
         let dir = backend.skills_dir(home.path()).join("clud-loop");
@@ -596,7 +596,7 @@ fn purge_removes_retired_skill_from_every_backend() {
 
 #[test]
 fn purge_preserves_a_skill_the_user_owns() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let dir = SKILL_BACKENDS[0].skills_dir(home.path()).join("clud-loop");
     std::fs::create_dir_all(&dir).unwrap();
     // No `managed-by: clud` marker: the user hand-wrote or edited this.
@@ -611,7 +611,7 @@ fn purge_preserves_a_skill_the_user_owns() {
 
 #[test]
 fn purge_is_idempotent_and_quiet_when_nothing_is_installed() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let report = purge_retired_bundled_skills(home.path(), PURGED_BUNDLED_SKILLS);
     assert!(report.removed.is_empty());
     assert!(report.preserved.is_empty());
@@ -666,7 +666,7 @@ fn skill_backends_include_claude_and_codex() {
 
 #[test]
 fn active_backends_returns_all_when_all_roots_exist() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     for b in SKILL_BACKENDS {
         std::fs::create_dir_all(home.path().join(b.home_subdir)).unwrap();
     }
@@ -676,7 +676,7 @@ fn active_backends_returns_all_when_all_roots_exist() {
 
 #[test]
 fn active_backends_filters_to_existing_roots() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     // Only the first backend is installed.
     std::fs::create_dir_all(home.path().join(SKILL_BACKENDS[0].home_subdir)).unwrap();
     let active = active_backends(home.path());
@@ -686,7 +686,7 @@ fn active_backends_filters_to_existing_roots() {
 
 #[test]
 fn active_backends_empty_when_nothing_installed() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert!(active_backends(home.path()).is_empty());
 }
 
@@ -694,7 +694,7 @@ fn active_backends_empty_when_nothing_installed() {
 /// as installed — `is_dir()` filters it out.
 #[test]
 fn active_backends_ignores_non_directory_at_root() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     std::fs::write(
         home.path().join(SKILL_BACKENDS[0].home_subdir),
         b"not a dir",
@@ -705,7 +705,7 @@ fn active_backends_ignores_non_directory_at_root() {
 
 #[test]
 fn skills_dir_resolves_under_backend_root() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let backend = SkillBackend {
         backend: Backend::Claude,
         name: "Test",
@@ -721,7 +721,7 @@ fn skills_dir_resolves_under_backend_root() {
 
 #[test]
 fn codex_root_installs_to_codex_skills_dir() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(home.path().join(".codex")).unwrap();
 
     let codex = ensure_installed_for_backend_at(home.path(), Backend::Codex)
@@ -744,7 +744,7 @@ fn codex_root_installs_to_codex_skills_dir() {
 
 #[test]
 fn codex_install_writes_bundled_skill_bodies_byte_for_byte() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(home.path().join(".codex")).unwrap();
 
     ensure_installed_for_backend_at(home.path(), Backend::Codex)
@@ -770,7 +770,7 @@ fn codex_install_writes_bundled_skill_bodies_byte_for_byte() {
 
 #[test]
 fn purges_managed_stale_agents_skill_copies() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let stale_skill = home.path().join(".agents/skills/alpha");
     std::fs::create_dir_all(&stale_skill).unwrap();
     std::fs::write(stale_skill.join("SKILL.md"), "<!-- managed-by: clud -->\n").unwrap();
@@ -785,7 +785,7 @@ fn purges_managed_stale_agents_skill_copies() {
 
 #[test]
 fn stale_agents_purge_preserves_unrelated_and_user_authored_content() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let stale_root = home.path().join(".agents/skills");
     let custom_skill = stale_root.join("custom");
     let edited_bundled_skill = stale_root.join("alpha");
@@ -821,7 +821,7 @@ fn stale_agents_purge_preserves_unrelated_and_user_authored_content() {
 
 #[test]
 fn stale_agents_purge_is_idempotent() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let stale_skill = home.path().join(".agents/skills/alpha");
     std::fs::create_dir_all(&stale_skill).unwrap();
     std::fs::write(stale_skill.join("SKILL.md"), "<!-- managed-by: clud -->\n").unwrap();
@@ -839,7 +839,7 @@ fn stale_agents_purge_is_idempotent() {
 /// that the user has hand-edited.
 #[test]
 fn codex_install_preserves_user_edited_skill_at_new_path() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     // Must name a *currently bundled* skill. Pointed at a retired name this
     // test passes vacuously — nothing would have written there anyway.
     let skill_dir = home.path().join(".codex/skills/clud-issue");
@@ -860,7 +860,7 @@ fn codex_install_preserves_user_edited_skill_at_new_path() {
 /// Codex install must clean up stale clud-managed copies from `~/.agents/skills/`.
 #[test]
 fn codex_install_purges_stale_agents_skills() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(home.path().join(".codex")).unwrap();
     let stale = home.path().join(".agents/skills/clud-issue");
     std::fs::create_dir_all(&stale).unwrap();
@@ -881,7 +881,7 @@ fn codex_install_purges_stale_agents_skills() {
 /// contract stays exercised even when no shipped backend uses it.
 #[test]
 fn skills_dir_honors_skills_home_subdir_override() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let backend = SkillBackend {
         backend: Backend::Codex,
         name: "Test",
@@ -1227,7 +1227,7 @@ fn worktrees_need_a_named_condition() {
 
 #[test]
 fn pending_upgrade_patch_is_refreshed() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let alpha_dir = dir.path().join("alpha");
     std::fs::create_dir_all(&alpha_dir).unwrap();
     let patch = "---\nname: alpha\n---\n<!-- Local explicit-invocation policy; \

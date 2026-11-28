@@ -458,7 +458,7 @@ fn render_dsh(scenario: &Scenario) -> String {
         wire_model: render.wire_model.as_deref(),
         base_url: render.base_url.as_deref(),
     };
-    let home = tempfile::tempdir().expect("scratch home");
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().expect("scratch home");
     let mut env = scenario.ambient.clone();
     crate::dsh_harness::prepare_child(
         &facts,

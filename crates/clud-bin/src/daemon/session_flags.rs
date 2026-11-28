@@ -242,10 +242,10 @@ mod tests {
 
     /// A daemon serving only the session-flag lane, recorded in a fresh
     /// state dir the way the real daemon records itself (`daemon.json`).
-    fn serve_session_flags() -> tempfile::TempDir {
+    fn serve_session_flags() -> kernal_api::platform::fs::TemporaryDirectory {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let state = tempfile::TempDir::new().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::write(
             super::super::paths::daemon_info_path(state.path()),
             json!({ "pid": std::process::id(), "port": port }).to_string(),
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn a_session_is_refused_when_no_daemon_is_recorded() {
-        let empty = tempfile::TempDir::new().unwrap();
+        let empty = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         prompt(empty.path(), "s1", "use worktrees");
         let refusal = crate::worktree_consent::refusal_in(empty.path(), Some("s1")).unwrap();
         assert!(refusal.contains("could not be asked"), "{refusal}");

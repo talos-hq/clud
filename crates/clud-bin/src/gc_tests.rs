@@ -6,7 +6,7 @@ use super::scanner::{scan_once_with, ScanDeps};
 use super::*;
 
 fn fresh_db_path(tag: &str) -> PathBuf {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let path = dir.path().join(format!("data-{tag}.redb"));
     std::mem::forget(dir);
     path
@@ -336,7 +336,7 @@ fn extract_pid_handles_trailing_text() {
 #[test]
 fn reconcile_dir_inserts_agent_subdirs() {
     let reg = fresh_registry("reconcile-dir");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let watch = dir.path().to_path_buf();
     std::fs::create_dir_all(watch.join("agent-abc")).unwrap();
     std::fs::create_dir_all(watch.join("agent-def")).unwrap();
@@ -360,7 +360,7 @@ fn reconcile_dir_inserts_agent_subdirs() {
 #[test]
 fn reconcile_extern_repos_dir_inserts_immediate_child_dirs() {
     let reg = fresh_registry("reconcile-extern-repos");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo_root = dir.path().join("repo");
     let watch = repo_root.join(".extern-repos");
     std::fs::create_dir_all(watch.join("dep-a")).unwrap();
@@ -428,7 +428,7 @@ fn sibling_clone_name_matching_is_conservative() {
 #[test]
 fn reconcile_sibling_clones_dir_inserts_only_matching_siblings() {
     let reg = fresh_registry("reconcile-sibling-clones");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo_root = dir.path().join("clud");
     std::fs::create_dir_all(&repo_root).unwrap();
 
@@ -473,7 +473,7 @@ fn reconcile_sibling_clones_dir_inserts_only_matching_siblings() {
 #[test]
 fn reconcile_repo_root_counts_sibling_clones() {
     let reg = fresh_registry("reconcile-repo-root-count");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo_root = dir.path().join("repo");
     std::fs::create_dir_all(repo_root.join(".claude").join("worktrees").join("agent-a")).unwrap();
     std::fs::create_dir_all(repo_root.join(".extern-repos").join("dep-a")).unwrap();
@@ -492,7 +492,7 @@ fn reconcile_repo_root_counts_sibling_clones() {
 #[test]
 fn reconcile_dir_handles_missing_watch_dir() {
     let reg = fresh_registry("reconcile-missing");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let watch = dir.path().join("does-not-exist");
     let res = reconcile_dir(&reg, &watch, None).unwrap();
     assert_eq!(res.inserted, 0);
@@ -506,7 +506,7 @@ fn reconcile_dir_is_idempotent_and_does_not_churn() {
     // *not* change between passes — the new scanner contract is
     // "insert once, leave alone".
     let reg = fresh_registry("reconcile-idem");
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let watch = dir.path().to_path_buf();
     std::fs::create_dir_all(watch.join("agent-abc")).unwrap();
     let first = reconcile_dir(&reg, &watch, None).unwrap();
@@ -529,7 +529,7 @@ fn reconcile_dir_is_idempotent_and_does_not_churn() {
 
 #[test]
 fn scan_skips_known_paths_after_first_success() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(dir.path().join("agent-x")).unwrap();
     let mut seen = HashSet::new();
     let inserts = Cell::new(0);
@@ -554,7 +554,7 @@ fn scan_skips_known_paths_after_first_success() {
 
 #[test]
 fn scan_does_not_memoize_failed_inserts() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(dir.path().join("agent-x")).unwrap();
     let mut seen = HashSet::new();
     let inserts = Cell::new(0);
@@ -580,7 +580,7 @@ fn scan_does_not_memoize_failed_inserts() {
 
 #[test]
 fn scan_discovers_new_dir_with_warm_memo() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(dir.path().join("agent-x")).unwrap();
     let mut seen = HashSet::new();
     let inserts = Cell::new(0);
@@ -602,7 +602,7 @@ fn scan_discovers_new_dir_with_warm_memo() {
 
 #[test]
 fn scan_defers_branch_lookup_until_after_memo_check() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(dir.path().join("agent-x")).unwrap();
     let mut seen = HashSet::new();
     let branches = Cell::new(0);

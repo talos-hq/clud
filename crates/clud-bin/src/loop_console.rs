@@ -1260,7 +1260,7 @@ mod tests {
 
     #[test]
     fn queued_text_round_trips_to_next_iteration_without_shell_interpretation() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut ui = Dashboard::default();
         ui.event(key(KeyCode::Char('q')));
         let text = "check C:\\Program Files\\app & $(exit) %PATH% café\nsecond line";
@@ -1284,7 +1284,7 @@ mod tests {
 
     #[test]
     fn failed_interrupt_save_keeps_the_action_and_requires_confirmation_on_retry() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::write(root.path().join(".clud"), "obstruct inbox").unwrap();
         let mut ui = Dashboard::default();
         assert!(!ui.save(root.path(), "important draft", Mode::Interrupt));

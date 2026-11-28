@@ -13,7 +13,7 @@ fn msys_drive_paths_normalize_without_touching_unc_paths() {
 }
 
 pub(crate) struct World {
-    _tmp: tempfile::TempDir,
+    _tmp: kernal_api::platform::fs::TemporaryDirectory,
     pub(crate) root: PathBuf,
     trash: PathBuf,
     audit: PathBuf,
@@ -21,7 +21,7 @@ pub(crate) struct World {
 }
 
 pub(crate) fn world() -> World {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let base = crate::path_norm::canonicalize_plain(tmp.path()).unwrap();
     let root = base.join("repo");
     let home = base.join("home");
@@ -871,7 +871,7 @@ fn ledger_unavailable_keeps_the_strict_refusal_and_says_so() {
 
 #[test]
 fn daemon_ledger_without_a_running_daemon_is_unavailable() {
-    let state = tempfile::tempdir().unwrap();
+    let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let source = ledger::DaemonLedger {
         state_dir: Some(state.path().to_path_buf()),
         session_id: Some("session-1".into()),
@@ -956,7 +956,7 @@ mod home_files_tests;
 /// sit outside every checkout, so the fixture now builds the outer repo.
 #[test]
 fn bogus_git_marker_does_not_widen_roots_to_the_enclosing_repo() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let outer = crate::path_norm::canonicalize_plain(tmp.path()).unwrap();
     git(&outer, &["init", "--quiet"]);
     let inner = outer.join("inner");

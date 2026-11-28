@@ -216,7 +216,7 @@ fn record_contains_no_secrets_paths_or_raw_session_ids() {
 
 #[test]
 fn bind_copies_pending_to_the_hashed_name_and_prunes() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state = temp.path();
     let child = vec![(MAX_CONTEXT_ENV.to_string(), "200000".to_string())];
     let record = plan_facts().at_launch(&[], &child, 7);
@@ -239,7 +239,7 @@ fn bind_copies_pending_to_the_hashed_name_and_prunes() {
 
 #[test]
 fn write_failure_is_silent() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     // A file where the directory should be: every write fails.
     std::fs::write(temp.path().join(DIR_NAME), b"x").unwrap();
     assert_eq!(write_pending(temp.path(), &plan_facts().preview(&[])), None);
@@ -248,7 +248,7 @@ fn write_failure_is_silent() {
 
 #[test]
 fn prune_enforces_age_and_count() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let d = temp.path();
     for i in 0..(MAX_RECORDS + 5) {
         std::fs::write(d.join(format!("r{i}.json")), b"{}").unwrap();

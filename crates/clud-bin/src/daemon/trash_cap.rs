@@ -263,7 +263,7 @@ mod tests {
 
     #[test]
     fn enforce_evicts_oldest_real_entries_and_never_follows_symlinks() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let trash = temp.path().join("trash");
         std::fs::create_dir_all(&trash).unwrap();
         let outside = temp.path().join("outside");
@@ -291,7 +291,7 @@ mod tests {
         if !crate::platform::host::UNIX {
             return;
         }
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let trash = temp.path().join("trash");
         std::fs::create_dir_all(&trash).unwrap();
         let old = entry(&trash, "sealed", 3_000, Duration::from_secs(48 * 3_600));

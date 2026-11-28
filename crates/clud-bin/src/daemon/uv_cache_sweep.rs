@@ -139,11 +139,11 @@ fn write_sentinel(path: &std::path::Path, now: SystemTime) -> std::io::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn first_run_writes_sentinel_and_returns_report() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let now = SystemTime::now();
         let result = maybe_sweep_at_root(&sentinel, &tmp.path().join("cache"), now).unwrap();
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn second_run_within_interval_is_skipped() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let now = SystemTime::now();
         maybe_sweep_at_root(&sentinel, &tmp.path().join("cache"), now).unwrap();
@@ -166,7 +166,7 @@ mod tests {
 
     #[test]
     fn run_after_interval_executes_again() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let now = SystemTime::now();
         maybe_sweep_at_root(&sentinel, &tmp.path().join("cache"), now).unwrap();
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn future_sentinel_is_treated_as_fresh_not_panic() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let now = SystemTime::now();
         let future = now + Duration::from_secs(60 * 60);
@@ -193,7 +193,7 @@ mod tests {
 
     #[test]
     fn malformed_sentinel_triggers_fresh_sweep() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         fs::create_dir_all(sentinel.parent().unwrap()).unwrap();
         fs::write(&sentinel, "not-a-number").unwrap();
@@ -220,7 +220,7 @@ mod tests {
             return;
         }
         use crate::gc::uv_cache_fixture::{link_exists, wheel};
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("cache").join("uv");
         let bad = wheel(&root, "pydantic", "2.13.4", "UZfKIsCOzJxPSTiX");
         let good = wheel(&root, "idna", "3.18", "12FEHyBt4cSdD5YF");

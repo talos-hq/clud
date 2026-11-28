@@ -66,7 +66,7 @@ fn run_isolated(home: &std::path::Path, args: &[&str]) -> (i32, Vec<u8>) {
 
 #[test]
 fn rejected_selection_does_not_persist_no_fix_hooks() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (exit, _) = run_isolated(
         home.path(),
         &[
@@ -87,7 +87,7 @@ fn rejected_kimi_on_the_codex_harness_writes_no_settings() {
     // refused during target resolution -- before any vault access and before
     // anything is persisted.
     for harness_args in [&["--harness", "codex"][..], &["--codex"][..]] {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut args = vec!["--no-fix-hooks", "--kimi"];
         args.extend_from_slice(harness_args);
         args.extend_from_slice(&["-p", "hello"]);
@@ -99,7 +99,7 @@ fn rejected_kimi_on_the_codex_harness_writes_no_settings() {
 
 #[test]
 fn default_claude_keeps_a_custom_wire_model_reachable() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (exit, output) = run_isolated(home.path(), &["--dry-run", "--model", "my-gateway-model"]);
     assert_eq!(exit, 0, "{}", String::from_utf8_lossy(&output));
     let value: serde_json::Value = serde_json::from_slice(&output).unwrap();

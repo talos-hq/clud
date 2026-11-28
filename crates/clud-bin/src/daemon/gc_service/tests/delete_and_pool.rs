@@ -7,7 +7,7 @@ use super::*;
 /// which broke the per-row button in the common multi-row case.
 #[test]
 fn delete_by_id_removes_only_the_targeted_row() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("delete-by-id.redb");
     let (tx, _g) = spawn_test_worker(&db_path);
 
@@ -89,7 +89,7 @@ fn purge_concurrency_from_raw_picks_user_value_and_falls_back() {
 /// gates, not the count actually removed.
 #[test]
 fn dispatch_purge_entries_returns_purge_started_with_counts() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path_keep = dir.path().join("keep");
     let path_a = dir.path().join("a");
     let path_b = dir.path().join("b");

@@ -30,7 +30,7 @@ mod service_tests {
     #[test]
     fn http_handler_runs_gh_api_include_and_revalidates_with_the_etag() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log = dir.path().join("calls");
         let gh = dir.path().join("gh");
         std::fs::write(

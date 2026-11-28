@@ -136,7 +136,7 @@ mod tests {
 
     #[test]
     fn record_redaction_preserves_shim_behavior() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = log_path(tmp.path());
         let secret = format!("ghp_{}", "A".repeat(36));
         let args = vec![OsString::from("status"), OsString::from(&secret)];
@@ -174,7 +174,7 @@ mod tests {
 
     #[test]
     fn one_record_with_every_field_and_no_environment() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = log_path(dir.path());
         let args = ["clone", "https://github.com/zackees/clud", "x"].map(OsString::from);
         let recorder = Recorder::start_at("git", &args, Some(path.clone()));
@@ -203,7 +203,7 @@ mod tests {
 
     #[test]
     fn an_unwritable_path_is_silently_ignored() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let blocker = dir.path().join("state");
         std::fs::write(&blocker, b"a file, not a directory").unwrap();
         let recorder = Recorder::start_at("gh", &[], Some(log_path(&blocker)));
@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn the_log_rotates_past_the_cap_and_keeps_two_files() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = log_path(dir.path());
         let record = serde_json::json!({"tool": "git"});
         for _ in 0..3 {

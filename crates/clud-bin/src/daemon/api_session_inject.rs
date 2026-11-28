@@ -701,9 +701,12 @@ mod tests {
     use crate::daemon::api_sessions::{
         ApiSessionBackend, CreateApiSession, ResolvedApiSessionSettings,
     };
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
-    fn session(temp: &TempDir, harness: Option<&str>) -> (ApiSessionStore, ApiSessionRecord) {
+    fn session(
+        temp: &TemporaryDirectory,
+        harness: Option<&str>,
+    ) -> (ApiSessionStore, ApiSessionRecord) {
         let store = ApiSessionStore::new(temp.path());
         let record = store
             .create(CreateApiSession {
@@ -740,7 +743,7 @@ mod tests {
 
     #[test]
     fn same_client_msg_id_is_recorded_once() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         let (first, dup) = store
             .record_injection(&record.id, &request("m1", "hi"))
@@ -756,7 +759,7 @@ mod tests {
 
     #[test]
     fn reused_client_msg_id_with_new_text_conflicts() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store
             .record_injection(&record.id, &request("m1", "hi"))
@@ -769,7 +772,7 @@ mod tests {
 
     #[test]
     fn injection_into_running_turn_stays_queued_in_seq_order() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
         let lifecycle = ApiSessionLifecycle::new(store.clone());
@@ -798,7 +801,7 @@ mod tests {
 
     #[test]
     fn queued_then_settled_moves_to_delivered_with_turn() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         let (entry, _) = store
             .record_injection(&record.id, &request("m", "x"))
@@ -818,7 +821,7 @@ mod tests {
 
     #[test]
     fn idle_session_delivery_failure_is_reported_not_dropped() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         let lifecycle = ApiSessionLifecycle::new(store.clone());
         let out = lifecycle
@@ -831,7 +834,7 @@ mod tests {
 
     #[test]
     fn sealed_session_rejects_injection() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store.terminate(&record.id).unwrap();
         assert_eq!(
@@ -843,7 +846,7 @@ mod tests {
 
     #[test]
     fn unsupported_harness_is_rejected_by_name() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, Some("deepseek"));
         assert_eq!(
             store.record_injection(&record.id, &request("m", "x")),
@@ -853,7 +856,7 @@ mod tests {
 
     #[test]
     fn unknown_session_is_not_found() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         assert_eq!(
             store.record_injection("sess-missing", &request("m", "x")),
@@ -863,7 +866,7 @@ mod tests {
 
     #[test]
     fn kind_defaults_to_directive_and_hash_matches_message() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store
             .record_injection(&record.id, &request("k-1", "use v2"))
@@ -887,7 +890,7 @@ mod tests {
 
     #[test]
     fn directive_replacement_and_retries_are_scoped_to_the_sender() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         let first = request("shared-id", "use v1");
         let mut other = first.clone();
@@ -913,7 +916,7 @@ mod tests {
 
     #[test]
     fn second_directive_supersedes_first_and_both_stay_in_history() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store
             .record_injection(&record.id, &request("d-1", "use v1"))
@@ -930,7 +933,7 @@ mod tests {
 
     #[test]
     fn note_never_supersedes_a_directive() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store
             .record_injection(&record.id, &request("d-1", "use v1"))
@@ -954,7 +957,7 @@ mod tests {
         assert_eq!(entry.kind, InjectionKind::Directive);
         assert_eq!(entry.message_sha256, None);
         assert_eq!(entry.superseded_by_seq, None);
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (_, mut record) = session(&temp, None);
         record.injections.push(entry);
         assert_eq!(current_directive(&record).unwrap().seq, 1);
@@ -967,7 +970,7 @@ mod tests {
 
     #[test]
     fn superseded_queued_directive_is_never_delivered_to_the_turn() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
         let lifecycle = ApiSessionLifecycle::new(store.clone());
@@ -1001,7 +1004,7 @@ mod tests {
 
     #[test]
     fn queued_note_is_unaffected_by_a_later_directive() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
         let lifecycle = ApiSessionLifecycle::new(store.clone());
@@ -1023,7 +1026,7 @@ mod tests {
 
     #[test]
     fn directive_superseded_between_read_and_claim_is_not_submitted() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         let lifecycle = ApiSessionLifecycle::new(store.clone());
         // The drain's read: d-1 is the oldest queued entry.
@@ -1054,7 +1057,7 @@ mod tests {
 
     #[test]
     fn claim_is_exclusive_between_two_drains() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store
             .record_injection(&record.id, &request("d-1", "use v1"))
@@ -1066,7 +1069,7 @@ mod tests {
 
     #[test]
     fn released_claim_of_a_replaced_directive_becomes_superseded() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store
             .record_injection(&record.id, &request("d-1", "use v1"))
@@ -1082,7 +1085,7 @@ mod tests {
 
     #[test]
     fn delivered_then_superseded_directive_keeps_turn_and_mark() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store
             .record_injection(&record.id, &request("d-1", "use v1"))
@@ -1120,7 +1123,7 @@ mod tests {
 
     #[test]
     fn current_directive_skips_failed_and_returns_the_live_one() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (_, mut record) = session(&temp, None);
         record_injection_in(&mut record, &request("d-1", "use v1")).unwrap();
         record.injections[0].state = InjectionState::Delivered;
@@ -1142,7 +1145,7 @@ mod tests {
         let source = include_str!("api_session_inject.rs");
         let needle = concat!("reused with a different message", " or kind\"");
         assert!(source.contains(needle));
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let (store, record) = session(&temp, None);
         store
             .record_injection(&record.id, &request("m1", "hi"))

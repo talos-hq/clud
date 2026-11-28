@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn save_provider_round_trips_for_every_offered_provider() {
         for provider in OFFERED {
-            let home = tempfile::tempdir().unwrap();
+            let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             save_provider(home.path(), provider).unwrap();
             let prefs =
                 crate::clud_settings::load_global_launch_preferences_at(home.path()).unwrap();

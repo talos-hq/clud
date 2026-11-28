@@ -433,7 +433,7 @@ mod tests {
     /// parsed and ignored. It must leave every path where it is.
     #[test]
     fn dry_run_moves_nothing() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let source = dir.path().join("artifact.log");
         let trash_root = dir.path().join("trash");
         std::fs::write(&source, b"keep me").unwrap();
@@ -447,14 +447,14 @@ mod tests {
 
     #[test]
     fn dry_run_reports_a_missing_path_as_an_error() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let missing = dir.path().join("absent");
         assert_eq!(dry_run(&[missing], &dir.path().join("trash")), 1);
     }
 
     #[test]
     fn same_volume_trash_renames_file_into_quarantine_dir() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let source = dir.path().join("artifact.dll");
         let trash_root = dir.path().join("trash");
         std::fs::write(&source, b"locked-ish").unwrap();
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn cross_volume_mode_copies_then_best_effort_removes_source() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let source = dir.path().join("artifact.exe");
         let trash_root = dir.path().join("trash");
         std::fs::write(&source, b"copy me").unwrap();

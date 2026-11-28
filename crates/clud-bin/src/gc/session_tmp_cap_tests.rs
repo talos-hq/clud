@@ -36,7 +36,7 @@ fn readonly_parent_of_an_idle_leaf_is_reclaimed_without_changing_shared_file_mod
     if !crate::platform::host::UNIX {
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = tmp.path().join("managed");
     let parent = root.join("skill_batch/hermes-agent");
     fs::create_dir_all(&parent).unwrap();
@@ -61,7 +61,7 @@ fn readonly_parent_of_an_idle_leaf_is_reclaimed_without_changing_shared_file_mod
 
 #[test]
 fn a_live_cwd_inside_the_root_protects_flattened_leaf_units() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let parent = session(
         tmp.path(),
@@ -83,7 +83,7 @@ fn live_or_unknown_readonly_leaf_is_not_chmodded_or_unlinked() {
         return;
     }
     for unknown in [false, true] {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let now = SystemTime::now();
         let parent = session(
             tmp.path(),
@@ -119,7 +119,7 @@ fn readonly_parent_repair_leaves_live_sibling_directories_sealed() {
     if !crate::platform::host::UNIX {
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let parent = session(
         tmp.path(),
@@ -151,7 +151,7 @@ fn readonly_parent_repair_leaves_live_sibling_directories_sealed() {
 
 #[test]
 fn global_root_or_ancestor_paths_do_not_pin_all_flattened_scratch() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let parent = session(
         tmp.path(),
@@ -174,7 +174,7 @@ fn global_root_or_ancestor_paths_do_not_pin_all_flattened_scratch() {
 
 #[test]
 fn under_cap_removes_nothing() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let s = session(tmp.path(), "claude-1/p/old", 10 * KIB, hours(100), now);
     let report = enforce_cap_at(tmp.path(), 100 * KIB, now, false, LiveSignals::nothing_live);
@@ -184,7 +184,7 @@ fn under_cap_removes_nothing() {
 
 #[test]
 fn cap_zero_disables() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let s = session(tmp.path(), "claude-1/p/old", 10 * KIB, hours(100), now);
     let report = enforce_cap_at(tmp.path(), 0, now, false, LiveSignals::nothing_live);
@@ -200,7 +200,7 @@ fn cap_zero_disables() {
 
 #[test]
 fn evicts_oldest_first_until_within_cap() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let oldest = session(tmp.path(), "claude-1/p/a", 10 * KIB, hours(30), now);
     let middle = session(tmp.path(), "claude-1/p/b", 10 * KIB, hours(20), now);
@@ -213,7 +213,7 @@ fn evicts_oldest_first_until_within_cap() {
 
 #[test]
 fn a_live_session_survives_even_when_far_over_cap() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     // Huge and actively written: must never be evicted.
     let live = session(
@@ -233,7 +233,7 @@ fn a_live_session_survives_even_when_far_over_cap() {
 
 #[test]
 fn old_dir_mtime_with_a_fresh_file_inside_is_live() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let s = session(tmp.path(), "claude-1/p/s", 50 * KIB, hours(80), now);
     // The dir mtime is ancient; a nested file was just written.
@@ -247,7 +247,7 @@ fn old_dir_mtime_with_a_fresh_file_inside_is_live() {
 
 #[test]
 fn a_future_mtime_is_treated_as_live() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let s = session(tmp.path(), "claude-1/p/s", 50 * KIB, Duration::ZERO, now);
     set_mtime(&s.join("data"), now + hours(5));
@@ -257,7 +257,7 @@ fn a_future_mtime_is_treated_as_live() {
 
 #[test]
 fn dry_run_reports_without_deleting() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let s = session(tmp.path(), "claude-1/p/old", 50 * KIB, hours(50), now);
     let report = enforce_cap_at(tmp.path(), KIB, now, true, LiveSignals::nothing_live);
@@ -268,7 +268,7 @@ fn dry_run_reports_without_deleting() {
 
 #[test]
 fn flat_files_are_units_and_siblings_of_live_sessions_go() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let live = session(
         tmp.path(),
@@ -288,7 +288,7 @@ fn flat_files_are_units_and_siblings_of_live_sessions_go() {
 
 #[test]
 fn missing_root_is_empty() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let report = enforce_cap_at(
         &tmp.path().join("nope"),
         KIB,
@@ -301,7 +301,7 @@ fn missing_root_is_empty() {
 
 #[test]
 fn idle_unit_with_a_live_process_inside_survives() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let parked = session(tmp.path(), "claude-1/p/parked", 50 * KIB, hours(30), now);
     let dead = session(tmp.path(), "claude-1/p/dead", 50 * KIB, hours(40), now);
@@ -314,7 +314,7 @@ fn idle_unit_with_a_live_process_inside_survives() {
 
 #[test]
 fn idle_unit_with_a_tracked_session_id_survives() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let tracked = session(tmp.path(), "claude-1/p/sess-42", 50 * KIB, hours(30), now);
     let ids = std::collections::HashSet::from(["sess-42".to_string()]);
@@ -327,7 +327,7 @@ fn idle_unit_with_a_tracked_session_id_survives() {
 
 #[test]
 fn unconsultable_signals_fail_safe() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = SystemTime::now();
     let idle = session(tmp.path(), "claude-1/p/idle", 50 * KIB, hours(30), now);
     let report = enforce_cap_at(tmp.path(), KIB, now, false, LiveSignals::default);

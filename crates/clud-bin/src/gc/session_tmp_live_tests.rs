@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn tracked_ids_skip_exited_and_terminated_records() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let sessions = tmp.path().join("sessions");
     let api = tmp.path().join("api-sessions");
     fs::create_dir_all(&sessions).unwrap();
@@ -26,7 +26,7 @@ fn tracked_ids_skip_exited_and_terminated_records() {
 
 #[test]
 fn missing_state_dirs_mean_no_sessions_but_garbage_is_doubt() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     assert!(tracked_session_ids(tmp.path()).unwrap().is_empty());
     let sessions = tmp.path().join("sessions");
     fs::create_dir_all(&sessions).unwrap();
@@ -60,7 +60,7 @@ fn process_path_inside_unit_or_matching_id_is_live() {
 
 #[test]
 fn claude_project_dir_is_live_while_a_process_works_in_it() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let unit = root.join("claude-1000").join("-home-u-proj").join("uuid-1");
     fs::create_dir_all(&unit).unwrap();
@@ -153,7 +153,7 @@ fn live_in(cwd: &str) -> LiveSignals {
 
 #[test]
 fn non_bmp_cwd_matches_js_two_dash_encoding() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     // U+1F600 is a surrogate pair in JS: two dashes, not one.
     let unit = root.join("claude-1000").join("-home-u---proj").join("s");
@@ -166,7 +166,7 @@ fn non_bmp_cwd_matches_js_two_dash_encoding() {
 
 #[test]
 fn truncated_long_project_dir_is_live() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let cwd = format!("/home/u/{}", "deep/".repeat(60));
     let full = crate::session_history::import::project_slug(&cwd);

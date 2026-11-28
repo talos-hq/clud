@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn the_injection_is_derived_from_the_state_file_path() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let writer = StatusStateWriter::new(state_path(dir.path(), 4321));
         let injection = injection_for_exe(&writer, PathBuf::from("/bin/clud")).unwrap();
         assert_eq!(injection.session_pid, 4321);
@@ -153,7 +153,7 @@ mod tests {
 
     #[test]
     fn a_failed_injection_drops_the_status_file_fallback() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let writer = Arc::new(StatusStateWriter::new(state_path(dir.path(), 1)));
         let plan = crate::foreground_runtime::tests::plan(
             crate::backend::ModelProvider::Claude,
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn claude_falls_back_to_its_status_line_and_codex_to_the_title() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let writer = Arc::new(StatusStateWriter::new(state_path(dir.path(), 1)));
         assert!(matches!(
             fallback_for_harness(Backend::Claude, Some(&writer)),

@@ -8101,7 +8101,7 @@ Connection: close
     #[test]
     fn cache_health_fuse_stops_the_next_large_uncached_bridge_turn() {
         let upstream = FakeResponses::start_with_response(Some(large_uncached_response()));
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = directory.path().join("bridge.jsonl");
         let mut bridge = BridgeHandle::start(
             BridgeConfig::default()
@@ -8153,7 +8153,7 @@ Connection: close
     #[test]
     fn terminal_codex_usage_is_published_to_the_session_status_writer() {
         let upstream = FakeResponses::start_with_response(Some(large_uncached_response()));
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let writer = std::sync::Arc::new(crate::toast::statusline::StatusStateWriter::new(
             crate::toast::statusline::state_path(directory.path(), 77),
         ));
@@ -8242,7 +8242,7 @@ Connection: close
     #[test]
     fn subagent_high_effort_request_is_counted_and_shown_on_the_statusline() {
         let upstream = FakeResponses::start_with_response(Some(large_uncached_response()));
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let writer = std::sync::Arc::new(crate::toast::statusline::StatusStateWriter::new(
             crate::toast::statusline::state_path(directory.path(), 79),
         ));
@@ -8312,7 +8312,7 @@ Connection: close
                     .with_upstreams(claude.base_url.clone(), deepseek.base_url.clone())
                     .with_openrouter_upstream(openrouter.base_url.clone()),
             );
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let writer = std::sync::Arc::new(crate::toast::statusline::StatusStateWriter::new(
             crate::toast::statusline::state_path(directory.path(), 78),
         ));
@@ -9219,7 +9219,7 @@ Connection: close
         )
         .into_bytes();
         let upstream = FakeResponses::start_with_response(Some(reply));
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let config = bridged_config(&upstream).with_log_path(log_path.clone());
         let mut bridge = BridgeHandle::start(config).unwrap();
@@ -9249,7 +9249,7 @@ Connection: close
     #[test]
     fn successful_turn_creates_no_forensic_log() {
         let upstream = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge =
             BridgeHandle::start(bridged_config(&upstream).with_log_path(log_path.clone())).unwrap();
@@ -9265,7 +9265,7 @@ Connection: close
 
     #[test]
     fn bearer_rejection_log_never_contains_the_bearer() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge =
             BridgeHandle::start(BridgeConfig::default().with_log_path(log_path.clone())).unwrap();
@@ -9283,7 +9283,7 @@ Connection: close
 
     #[test]
     fn bridge_log_cap_is_visible_through_the_real_bridge() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge = BridgeHandle::start(
             BridgeConfig::default()
@@ -9541,7 +9541,7 @@ Connection: close
     #[test]
     fn an_anthropic_pick_on_the_codex_route_is_served_by_the_default_and_recorded() {
         let upstream = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge = BridgeHandle::start(
             bridged_config(&upstream)
@@ -9577,7 +9577,7 @@ Connection: close
     #[test]
     fn a_haiku_side_call_is_not_reported_as_an_anthropic_pick() {
         let upstream = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge =
             BridgeHandle::start(bridged_config(&upstream).with_log_path(log_path.clone())).unwrap();
@@ -9664,7 +9664,7 @@ Connection: close
     #[test]
     fn a_catalog_fetch_records_the_advertised_model_ids() {
         let upstream = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge =
             BridgeHandle::start(bridged_config(&upstream).with_log_path(log_path.clone())).unwrap();
@@ -9801,7 +9801,7 @@ Connection: close
     #[test]
     fn a_unified_catalog_fetch_records_the_advertised_model_ids() {
         let fake = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let config = BridgeConfig::default()
             .with_unified_gateway(
@@ -9849,7 +9849,7 @@ Connection: close
     #[test]
     fn a_unified_refused_model_is_recorded_with_its_id() {
         let fake = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let config = BridgeConfig::default()
             .with_unified_gateway(
@@ -9891,7 +9891,7 @@ Connection: close
     #[test]
     fn a_refused_model_is_recorded_with_its_id_and_case() {
         let upstream = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge =
             BridgeHandle::start(bridged_config(&upstream).with_log_path(log_path.clone())).unwrap();
@@ -9935,7 +9935,7 @@ Connection: close
     #[test]
     fn a_model_outside_the_launch_allowlist_is_refused_with_the_boundary_named() {
         let upstream = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let config = bridged_config(&upstream)
             .with_allowed_models(vec!["codex-terra".to_string()])
@@ -10007,7 +10007,7 @@ Connection: close
     #[test]
     fn a_pinned_codex_catalog_only_advertises_rows_the_launch_would_serve() {
         let upstream = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let config = bridged_config(&upstream)
             .with_allowed_models(vec!["codex-terra".to_string()])
@@ -10041,7 +10041,7 @@ Connection: close
     #[test]
     fn a_unified_launch_refuses_and_logs_a_model_outside_its_allowlist() {
         let fake = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let config = BridgeConfig::default()
             .with_unified_gateway(
@@ -10079,7 +10079,7 @@ Connection: close
     #[test]
     fn a_pinned_unified_catalog_only_advertises_rows_the_launch_would_serve() {
         let fake = FakeResponses::start();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let config = BridgeConfig::default()
             .with_unified_gateway(
@@ -13418,7 +13418,7 @@ Connection: close
     fn a_saturated_bridge_admits_the_original_request_after_the_old_budget() {
         let (admitted_tx, admitted_rx) = std::sync::mpsc::sync_channel(1);
         let upstream = FakeResponses::start();
-        let log_dir = tempfile::tempdir().unwrap();
+        let log_dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = log_dir.path().join("bridge.jsonl");
         // Keep the first worker alive past the former admission deadline.
         // The second request must remain unaccepted rather than collecting a
@@ -13482,7 +13482,7 @@ Connection: close
     /// actual later socket before the aggregate queue observability is emitted.
     #[test]
     fn a_lone_held_request_emits_no_admission_events() {
-        let log_dir = tempfile::tempdir().unwrap();
+        let log_dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = log_dir.path().join("bridge.jsonl");
         let upstream = FakeResponses::start();
         let mut bridge = BridgeHandle::start(
@@ -13516,7 +13516,7 @@ Connection: close
             "the default must leave one slot for the foreground turn and one for anything else"
         );
         let (admitted_tx, admitted_rx) = std::sync::mpsc::sync_channel(1);
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = dir.path().join("bridge.jsonl");
         let upstream = FakeResponses::start();
         let mut bridge = BridgeHandle::start(
@@ -14260,7 +14260,7 @@ Connection: close
                 None,
                 None,
             ]);
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             let log_path = tmp.path().join("bridge.jsonl");
             let mut bridge =
                 BridgeHandle::start(bridged_config(&upstream).with_log_path(log_path.clone()))
@@ -14495,7 +14495,7 @@ Connection: close
             Some(parallel_function_call_response(2)),
             None,
         ]);
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge =
             BridgeHandle::start(bridged_config(&upstream).with_log_path(log_path.clone())).unwrap();
@@ -14708,7 +14708,7 @@ Connection: close
             Some(compact_success_response()),
             Some(failed_reply),
         ]);
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge =
             BridgeHandle::start(bridged_config(&upstream).with_log_path(log_path.clone())).unwrap();
@@ -14793,7 +14793,7 @@ Connection: close
         )
         .into_bytes();
         let upstream = FakeResponses::start_with_response(Some(failed_reply));
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log_path = tmp.path().join("bridge.jsonl");
         let mut bridge =
             BridgeHandle::start(bridged_config(&upstream).with_log_path(log_path.clone())).unwrap();

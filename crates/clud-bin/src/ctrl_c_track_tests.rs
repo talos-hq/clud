@@ -1,5 +1,5 @@
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 // Cross-module test serialization lives in `test_state_lock()` so
 // `startup::tests` can hold the same mutex while it drives
@@ -203,14 +203,14 @@ fn build_event_leaves_event_kind_none_when_probe_never_fired() {
 
 #[test]
 fn read_recent_events_returns_empty_when_dir_missing() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let events = read_recent_events(tmp.path(), 10);
     assert!(events.is_empty());
 }
 
 #[test]
 fn read_recent_events_returns_newest_first_and_respects_limit() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let dir = events_dir(tmp.path());
     fs::create_dir_all(&dir).unwrap();
     for i in 0..5u64 {
@@ -242,7 +242,7 @@ fn read_recent_events_returns_newest_first_and_respects_limit() {
 
 #[test]
 fn read_recent_events_skips_unparseable_files() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let dir = events_dir(tmp.path());
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("garbage.json"), b"not json").unwrap();
@@ -270,7 +270,7 @@ fn read_recent_events_skips_unparseable_files() {
 
 #[test]
 fn prune_old_events_keeps_newest() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let dir = events_dir(tmp.path());
     fs::create_dir_all(&dir).unwrap();
     // Create 10 files with monotonically-increasing mtime by writing
@@ -293,7 +293,7 @@ fn flush_on_exit_is_noop_when_never_observed() {
     // observation point. After reset, `was_observed` must be false
     // and `flush_on_exit` must write nothing.
     reset_for_test();
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     flush_on_exit(tmp.path(), InvocationKind::Direct, 0);
     let dir = events_dir(tmp.path());
     if dir.exists() {

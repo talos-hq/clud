@@ -158,7 +158,7 @@ fn reads_cleanup_and_other_places_are_allowed() {
 #[test]
 fn work_inside_an_existing_checkout_there_is_allowed() {
     temp_env(BAD_CMD_OVERRIDE_ENV, "unrelated-rule:reason", || {
-        let root = tempfile::tempdir().expect("tempdir");
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let checkout = root
             .path()
             .join(".claude")

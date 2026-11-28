@@ -98,7 +98,7 @@ fn daemon_declares_itself_and_drops_the_launchers_originator_tag() {
     let _serial = super::REAPER_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let scratch = tempfile::tempdir().expect("scratch dir");
+    let scratch = kernal_api::platform::fs::TemporaryDirectory::new().expect("scratch dir");
     let state_dir = scratch.path().join("state");
 
     // Stand in for a `clud` subcommand run from inside an agent session: this

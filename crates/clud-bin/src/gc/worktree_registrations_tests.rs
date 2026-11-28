@@ -6,8 +6,8 @@ fn git(cwd: &Path, args: &[&str]) {
 
 /// A repo with one live worktree, one whose directory was deleted, and one
 /// deleted-but-locked worktree.
-fn fixture() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
+fn fixture() -> (kernal_api::platform::fs::TemporaryDirectory, PathBuf) {
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo = dir.path().join("repo");
     fs::create_dir_all(&repo).unwrap();
     git(&repo, &["init", "-q"]);

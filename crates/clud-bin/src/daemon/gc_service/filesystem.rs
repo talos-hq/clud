@@ -220,7 +220,7 @@ mod tests {
 
     #[test]
     fn git_refusal_never_falls_back_to_recursive_source_deletion() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let source = tmp.path().join("source");
         std::fs::create_dir(&source).unwrap();
         std::fs::write(source.join("new-work"), "changed after probe").unwrap();
@@ -247,7 +247,7 @@ mod tests {
 
     #[test]
     fn failed_required_audit_preserves_source_and_registry_row() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let state = tmp.path().join("state");
         std::fs::create_dir_all(state.join(AUDIT_LOG_FILE)).unwrap();
         let _guard = StateDirGuard::set(&state);

@@ -656,7 +656,8 @@ pub(crate) fn run_verified_codex_installer_with_parent_env(
             "installer contents changed (sha256 {actual}); review the new script before updating the pin"
         ));
     }
-    let temp = tempfile::tempdir().map_err(|e| format!("cannot stage installer: {e}"))?;
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new()
+        .map_err(|e| format!("cannot stage installer: {e}"))?;
     let path = temp.path().join("install.sh");
     std::fs::write(&path, script).map_err(|e| format!("cannot write installer: {e}"))?;
     let process = NativeProcess::new(ProcessConfig {
@@ -1388,7 +1389,7 @@ mod tests {
     /// left, so clud asks to install again.
     #[test]
     fn reboot_wiped_temp_install_prompts_to_install_again() {
-        let home = tempfile::tempdir().expect("tempdir");
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let link = home.path().join("claude");
         if !crate::platform::host::WINDOWS {
             crate::platform::alias_link::symlink(Path::new("/nonexistent/claude"), &link)
@@ -1671,7 +1672,7 @@ mod tests {
 
     #[test]
     fn deepseek_in_the_managed_prefix_only_is_used_without_a_prompt() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let managed = dir.path().join("dsh");
         std::fs::write(&managed, b"managed").unwrap();
         let mut host = MockHost {
@@ -1799,7 +1800,7 @@ mod tests {
     #[test]
     fn path_fallback_uses_documented_native_install_location() {
         for backend in [Backend::Claude, Backend::Codex] {
-            let temp = tempfile::tempdir().expect("tempdir");
+            let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
             let native = temp.path().join(if crate::platform::host::WINDOWS {
                 format!("{}.exe", backend.executable_name())
             } else {
@@ -1829,7 +1830,7 @@ mod tests {
     #[test]
     fn existing_native_install_is_used_when_path_lookup_misses() {
         for backend in [Backend::Claude, Backend::Codex] {
-            let temp = tempfile::tempdir().expect("tempdir");
+            let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
             let native = temp.path().join(if crate::platform::host::WINDOWS {
                 format!("{}.exe", backend.executable_name())
             } else {
@@ -1862,7 +1863,7 @@ mod tests {
     /// "not installed" is debuggable from the transcript alone.
     #[test]
     fn missing_backend_prompt_reports_the_locations_checked() {
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let absent = temp.path().join("claude-not-here");
         let mut host = MockHost {
             find_results: VecDeque::from([None]),

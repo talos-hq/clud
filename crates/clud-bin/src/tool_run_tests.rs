@@ -1,7 +1,7 @@
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs::File;
 use std::path::Path;
-use tempfile::TempDir;
 
 #[test]
 fn captured_line_restores_delimiter_for_incremental_readers() {
@@ -47,7 +47,7 @@ fn resumable_fixture_exit_code(progress_timeout: bool, with_session: bool) -> i3
         start_time_ms: 0,
     };
     if with_session {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let ctx = SessionContext::from_state_root(temp.path(), 4242, 1);
         run_with_session(
             &ctx,
@@ -127,7 +127,7 @@ fn delayed_exit_observation_is_not_reported_as_success() {
         };
         let env = std::env::vars().collect::<Vec<_>>();
         let result = if with_session {
-            let root = TempDir::new().unwrap();
+            let root = TemporaryDirectory::new().unwrap();
             let ctx = SessionContext::from_state_root(root.path(), 4242, 1);
             run_with_session(
                 &ctx,
@@ -190,7 +190,7 @@ fn buffered_progress_after_delayed_observation_is_uncertain_in_both_runners() {
         "--nocapture".to_string(),
     ];
     for with_session in [false, true] {
-        let root = TempDir::new().unwrap();
+        let root = TemporaryDirectory::new().unwrap();
         let release = root.path().join("release");
         let _release_on_drop = FixtureRelease(release.clone());
         let args = vec![release.to_string_lossy().into_owned()];
@@ -399,7 +399,7 @@ fn resolved_cache_dir_falls_back_to_default() {
 
 #[test]
 fn pep723_script_uses_uv_script_runner() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let tool = tmp.path().join("tools").join("hooks").join("hook.py");
     let body = "#!/usr/bin/env -S uv run --script\n# /// script\n# dependencies = []\n# ///\n";
     let argv = build_tool_argv(
@@ -419,7 +419,7 @@ fn pep723_script_uses_uv_script_runner() {
 
 #[test]
 fn plain_python_uses_managed_python_when_present() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let tools_root = tmp.path().join("tools");
     let managed_dir = managed_python_install_dir(&tools_root).join("cpython-test");
     std::fs::create_dir_all(&managed_dir).unwrap();
@@ -443,7 +443,7 @@ fn plain_python_uses_managed_python_when_present() {
 
 #[test]
 fn pep723_block_without_shebang_uses_plain_python() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let tools_root = tmp.path().join("tools");
     let managed_dir = managed_python_install_dir(&tools_root).join("cpython-test");
     std::fs::create_dir_all(&managed_dir).unwrap();
@@ -465,7 +465,7 @@ fn pep723_block_without_shebang_uses_plain_python() {
 
 #[test]
 fn shebang_bin_sh_runs_through_shell() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let tool = tmp.path().join("tool.sh");
     let argv = build_tool_argv(
         &tool,
@@ -480,7 +480,7 @@ fn shebang_bin_sh_runs_through_shell() {
 
 #[test]
 fn uv_shebang_runs_script_runner() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let tool = tmp.path().join("tool.py");
     let argv = build_tool_argv(
         &tool,
@@ -496,7 +496,7 @@ fn uv_shebang_runs_script_runner() {
 
 #[test]
 fn binary_magic_executes_directly() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let tool = tmp.path().join("tool.bin");
     let argv = build_tool_argv(
         &tool,
@@ -614,7 +614,7 @@ fn session_started_event_records_the_real_child_pid() {
     use base64::engine::general_purpose::STANDARD_NO_PAD;
     use base64::Engine;
 
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let ctx = crate::session_index::SessionContext::from_state_root(tmp.path(), 4242, 1);
     let tool_id = crate::session_index::allocate_next_id(&ctx).unwrap();
 

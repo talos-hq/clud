@@ -131,7 +131,7 @@ mod tests {
 
     #[test]
     fn finds_repos_skips_package_trees_and_resumes_across_passes() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let h = home.path();
         repo(&h.join("code/a"));
         repo(&h.join("deep/x/y/b"));
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn crawl_state_round_trips_and_corrupt_reads_as_new() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = crawl_path(dir.path());
         let state = CrawlState {
             stack: vec!["/a".into()],

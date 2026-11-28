@@ -1,9 +1,9 @@
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
-use tempfile::TempDir;
 
 /// Convenience: build the `~/.clud` and `~/.codex/hooks.json` layout
 /// inside `root` and return both paths.
@@ -23,7 +23,7 @@ fn run(clud_dir: &Path, hooks_path: &Path) -> (NormalizeOutcome, String) {
 
 #[test]
 fn missing_clud_dir_is_created() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     assert!(!clud_dir.exists());
     let (_, _) = run(&clud_dir, &hooks_path);
@@ -32,7 +32,7 @@ fn missing_clud_dir_is_created() {
 
 #[test]
 fn missing_settings_json_is_created() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let (_, _) = run(&clud_dir, &hooks_path);
     let settings = clud_dir.join(SETTINGS_FILE_NAME);
@@ -44,7 +44,7 @@ fn missing_settings_json_is_created() {
 
 #[test]
 fn existing_settings_json_is_left_alone() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     std::fs::create_dir_all(&clud_dir).unwrap();
     let settings = clud_dir.join(SETTINGS_FILE_NAME);
@@ -58,7 +58,7 @@ fn existing_settings_json_is_left_alone() {
 
 #[test]
 fn missing_hooks_json_is_noop_and_silent() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     assert!(!hooks_path.exists());
     let (outcome, stderr) = run(&clud_dir, &hooks_path);
@@ -71,7 +71,7 @@ fn missing_hooks_json_is_noop_and_silent() {
 
 #[test]
 fn timeout_five_is_rewritten_to_thirty() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let body = json!({
         "hooks": {
@@ -103,7 +103,7 @@ fn timeout_five_is_rewritten_to_thirty() {
 
 #[test]
 fn timeout_above_five_is_left_unchanged() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let body = json!({
         "hooks": {
@@ -132,7 +132,7 @@ fn timeout_above_five_is_left_unchanged() {
 
 #[test]
 fn missing_timeout_is_left_unchanged() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let body = json!({
         "hooks": {
@@ -160,7 +160,7 @@ fn missing_timeout_is_left_unchanged() {
 fn float_timeout_five_point_zero_is_left_unchanged() {
     // Codex stores timeouts as integers, but a hand-edited 5.0 must NOT
     // be misclassified as a 5 — we only target the exact integer 5.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let raw = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"a","timeout":5.0}]}]}}"#;
     std::fs::write(&hooks_path, raw).unwrap();
@@ -175,7 +175,7 @@ fn float_timeout_five_point_zero_is_left_unchanged() {
 
 #[test]
 fn malformed_hooks_json_does_not_block_launch() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let bad = "{ not real json";
     std::fs::write(&hooks_path, bad).unwrap();
@@ -192,7 +192,7 @@ fn malformed_hooks_json_does_not_block_launch() {
 
 #[test]
 fn multiple_timeouts_are_all_normalized() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let body = json!({
         "hooks": {
@@ -230,7 +230,7 @@ fn multiple_timeouts_are_all_normalized() {
 
 #[test]
 fn rerun_after_change_is_idempotent_silent() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let body = json!({
         "hooks": {
@@ -260,7 +260,7 @@ fn rerun_after_change_is_idempotent_silent() {
 fn repair_after_regression_back_to_five() {
     // The pass is not a one-time migration: if a Codex update writes a
     // 5 back in, the next eligible launch should upgrade it again.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let body = json!({
         "hooks": {
@@ -295,7 +295,7 @@ fn concurrent_normalization_serializes_via_lock() {
     // the lock; the file must end up valid (no torn write), with exactly
     // one rewrite "winning" the green message and the other observing
     // the already-normalized state.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let body = json!({
         "hooks": {
@@ -334,7 +334,7 @@ fn concurrent_normalization_serializes_via_lock() {
 
 #[test]
 fn green_message_omitted_when_nothing_changes() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, hooks_path) = layout(tmp.path());
     let body = json!({
         "hooks": {

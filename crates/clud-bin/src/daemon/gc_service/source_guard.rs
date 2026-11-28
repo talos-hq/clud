@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn child_process_and_child_or_parent_container_binds_pin_source() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = tmp.path().canonicalize().unwrap();
         let child = root.join("nested-clone");
         let live = ProcessCwdSnapshot {
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn missing_bind_descendant_under_symlink_alias_still_pins_source() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let source = tmp.path().join("source");
         let alias = tmp.path().join("alias");
         std::fs::create_dir(&source).unwrap();
@@ -185,7 +185,7 @@ mod tests {
 
     #[test]
     fn mount_reader_keeps_only_bind_sources_and_rejects_incomplete_data() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = tmp.path().canonicalize().unwrap();
         let document = serde_json::json!([
             {"Type": "bind", "Source": root},

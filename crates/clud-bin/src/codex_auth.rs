@@ -736,7 +736,7 @@ mod tests {
 
     #[test]
     fn credential_store_round_trip_is_clud_owned() {
-        let home = tempfile::TempDir::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let credentials = SubscriptionCredentials {
             access_token: "access-secret".to_string(),
             refresh_token: "refresh-secret".to_string(),
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn refresh_replaces_only_an_expired_record() {
-        let home = tempfile::TempDir::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         save_at(
             home.path(),
             &SubscriptionCredentials {
@@ -849,7 +849,7 @@ mod tests {
 
     #[test]
     fn rejected_access_token_forces_refresh_before_recorded_expiry() {
-        let home = tempfile::TempDir::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         save_at(
             home.path(),
             &SubscriptionCredentials {
@@ -879,7 +879,7 @@ mod tests {
 
     #[test]
     fn rejected_access_token_reuses_a_competing_refresh() {
-        let home = tempfile::TempDir::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         save_at(
             home.path(),
             &SubscriptionCredentials {
@@ -900,7 +900,7 @@ mod tests {
 
     #[test]
     fn native_import_does_not_replace_a_record_changed_during_the_prompt() {
-        let home = tempfile::TempDir::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let initial = SubscriptionCredentials {
             access_token: "old-access".to_string(),
             refresh_token: "old-refresh".to_string(),
@@ -991,7 +991,7 @@ mod tests {
 
     #[test]
     fn concurrent_refresh_contenders_share_one_atomic_replacement() {
-        let home = tempfile::TempDir::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         save_at(
             home.path(),
             &SubscriptionCredentials {

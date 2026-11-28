@@ -1,5 +1,5 @@
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 pub(crate) fn write(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -50,7 +50,7 @@ fn launch_hook_gate_follows_effective_harness_not_provider_flag() {
 
 #[test]
 fn risky_uv_hook_invocations_are_counted_once_per_settings_file() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -98,7 +98,7 @@ pub(crate) fn trusted_state_for(path: &Path, group: usize, handler: usize) -> St
 
 #[test]
 fn claude_settings_parser_normalizes_pre_tool_matchers() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -117,7 +117,7 @@ fn claude_settings_parser_normalizes_pre_tool_matchers() {
 
 #[test]
 fn codex_current_shape_parses_and_legacy_shape_warns() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     let current = repo.join(".codex").join("hooks.json");
@@ -154,7 +154,7 @@ fn codex_current_shape_parses_and_legacy_shape_warns() {
 
 #[test]
 fn one_sided_hook_warnings_are_bidirectional() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -192,7 +192,7 @@ fn one_sided_hook_warnings_are_bidirectional() {
 
 #[test]
 fn matcher_mismatch_warns() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -233,7 +233,7 @@ fn windows_codex_project_key_normalizes_extended_path() {
 
 #[test]
 fn extended_path_only_trust_config_warns() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     // A Windows-shaped relative path is writable on the Windows checkout but
     // resolves under the read-only Linux source mount. Keep this fixture in temp.
     let repo = temp.path().join("repo");
@@ -259,7 +259,7 @@ fn extended_path_only_trust_config_warns() {
 
 #[test]
 fn deterministic_trust_repair_adds_canonical_key() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let config = temp.path().join("home").join(".codex").join("config.toml");
     add_codex_project_trust(&config, r"c:\users\niteris\dev\repo").unwrap();
 
@@ -271,7 +271,7 @@ fn deterministic_trust_repair_adds_canonical_key() {
 
 #[test]
 fn legacy_codex_hooks_feature_warns_and_plans_deterministic_repair() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let config = repo.join(".codex").join("config.toml");
     write(&config, "[features]\ncodex_hooks = true\n");
@@ -294,7 +294,7 @@ fn legacy_codex_hooks_feature_warns_and_plans_deterministic_repair() {
 
 #[test]
 fn legacy_codex_hooks_feature_migration_moves_value_and_preserves_other_config() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let config = temp.path().join("home").join(".codex").join("config.toml");
     write(
         &config,
@@ -312,7 +312,7 @@ fn legacy_codex_hooks_feature_migration_moves_value_and_preserves_other_config()
 
 #[test]
 fn legacy_codex_hooks_feature_migration_preserves_existing_hooks_value() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let config = temp.path().join("home").join(".codex").join("config.toml");
     write(&config, "[features]\ncodex_hooks = false\nhooks = true\n");
 
@@ -325,7 +325,7 @@ fn legacy_codex_hooks_feature_migration_preserves_existing_hooks_value() {
 
 #[test]
 fn catch_all_codex_hook_satisfies_specific_claude_matchers() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -368,7 +368,7 @@ fn catch_all_codex_hook_satisfies_specific_claude_matchers() {
 
 #[test]
 fn same_command_claude_hooks_plan_one_codex_catch_all_prompt() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -396,7 +396,7 @@ fn same_command_claude_hooks_plan_one_codex_catch_all_prompt() {
 
 #[test]
 fn different_command_claude_hooks_stay_per_matcher_prompts() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -424,7 +424,7 @@ fn the_broken_git_rev_parse_prefix_is_warned_about_with_the_fix() {
     // zackees/clud#967 Phase 1. Deliberately a Stop hook: the parser behind
     // `report.claude` reads only PreToolUse, so a warning built from that
     // summary alone would miss the exact shape that wedged a real session.
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -445,7 +445,7 @@ fn the_broken_git_rev_parse_prefix_is_warned_about_with_the_fix() {
 
 #[test]
 fn a_self_rooted_hook_earns_no_git_rev_parse_warning() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -466,7 +466,7 @@ fn a_hook_declared_in_both_places_is_warned_about_as_a_double_fire() {
     // Migrating a hook means moving it. A copy left in the frontend's own
     // settings still fires there, unrooted — which is the failure the
     // declaration was supposed to fix.
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     let command = "uv run python ci/hooks/check.py";
@@ -494,7 +494,7 @@ fn a_hook_declared_in_both_places_is_warned_about_as_a_double_fire() {
 
 #[test]
 fn a_hook_that_only_moved_earns_no_double_fire_warning() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     write(
@@ -513,7 +513,7 @@ fn a_hook_that_only_moved_earns_no_double_fire_warning() {
 
 #[test]
 fn codex_project_trusted_reads_the_projects_table() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let repo = temp.path().join("repo");
     let home = temp.path().join("home");
     let config = home.join(".codex").join("config.toml");
@@ -553,7 +553,7 @@ fn codex_project_trusted_reads_the_projects_table() {
 
 #[test]
 fn codex_trust_from_custom_home_accepts_extended_windows_key() {
-    let temp = tempdir().unwrap();
+    let temp = TemporaryDirectory::new().unwrap();
     let config = temp.path().join("config.toml");
     write(
         &config,

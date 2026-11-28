@@ -319,8 +319,8 @@ fn write_error(error: io::Error) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs;
-    use tempfile::tempdir;
 
     #[test]
     fn dotted_assignment_uses_the_authorized_settings_mutation() {
@@ -350,7 +350,7 @@ mod tests {
 
     #[test]
     fn repo_settings_path_requires_git_root() {
-        let repo = tempdir().unwrap();
+        let repo = TemporaryDirectory::new().unwrap();
         fs::create_dir(repo.path().join(".git")).unwrap();
         let child = repo.path().join("child");
         fs::create_dir(&child).unwrap();
@@ -360,14 +360,14 @@ mod tests {
             repo.path().join(".clud").join("settings.json")
         );
 
-        let outside = tempdir().unwrap();
+        let outside = TemporaryDirectory::new().unwrap();
         assert!(repo_settings_path_for_cwd(outside.path()).is_none());
     }
 
     #[test]
     fn show_json_seeds_global_defaults_and_merges_local_settings() {
-        let home = tempdir().unwrap();
-        let repo = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
+        let repo = TemporaryDirectory::new().unwrap();
         fs::create_dir(repo.path().join(".git")).unwrap();
         let local_path = repo.path().join(".clud").join("settings.json");
         fs::create_dir_all(local_path.parent().unwrap()).unwrap();
@@ -398,8 +398,8 @@ mod tests {
 
     #[test]
     fn ensure_edit_target_local_seeds_repo_settings() {
-        let home = tempdir().unwrap();
-        let repo = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
+        let repo = TemporaryDirectory::new().unwrap();
         fs::create_dir(repo.path().join(".git")).unwrap();
 
         let path = ensure_edit_target(home.path(), repo.path(), true).unwrap();
@@ -416,8 +416,8 @@ mod tests {
 
     #[test]
     fn ensure_edit_target_local_requires_repo() {
-        let home = tempdir().unwrap();
-        let outside = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
+        let outside = TemporaryDirectory::new().unwrap();
 
         let error = ensure_edit_target(home.path(), outside.path(), true).unwrap_err();
 

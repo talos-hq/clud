@@ -23,7 +23,7 @@ fn highest_layer_owns_commands_and_enabled() {
 
 #[test]
 fn receipt_written_only_when_every_command_passes() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = Path::new("/repo");
     let path = receipt_path(dir.path(), root, "abc", &cmds());
 

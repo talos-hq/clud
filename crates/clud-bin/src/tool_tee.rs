@@ -153,7 +153,7 @@ mod tests {
     use super::*;
     use base64::engine::general_purpose::STANDARD_NO_PAD;
     use base64::Engine;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     fn read_lines(path: &Path) -> Vec<serde_json::Value> {
         fs::read_to_string(path)
@@ -165,7 +165,7 @@ mod tests {
 
     #[test]
     fn open_creates_log_dir() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let log_dir = tmp.path().join("nested").join("does_not_exist");
         let _w = TeeWriter::open(&log_dir).unwrap();
         assert!(log_dir.join("stdout.jsonl").exists());
@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn emit_writes_one_jsonl_line_per_call() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let log_dir = tmp.path();
         let mut w = TeeWriter::open(log_dir).unwrap();
         w.emit(&StreamEvent {
@@ -198,7 +198,7 @@ mod tests {
 
     #[test]
     fn emit_routes_stderr_separately_and_into_combined() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let log_dir = tmp.path();
         let mut w = TeeWriter::open(log_dir).unwrap();
         w.emit(&StreamEvent {
@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn emit_batch_handles_multiple_events_in_order() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let log_dir = tmp.path();
         let mut w = TeeWriter::open(log_dir).unwrap();
         let events = vec![
@@ -258,7 +258,7 @@ mod tests {
 
     #[test]
     fn emit_captured_batch_restores_stdout_and_stderr_delimiters() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let log_dir = tmp.path();
         let mut w = TeeWriter::open(log_dir).unwrap();
         let events = vec![
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn emit_handles_arbitrary_binary_bytes() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let log_dir = tmp.path();
         let mut w = TeeWriter::open(log_dir).unwrap();
         // ANSI escape + partial UTF-8 sequence + raw bytes.

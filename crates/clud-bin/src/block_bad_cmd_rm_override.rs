@@ -1151,7 +1151,7 @@ mod tests {
 
     #[test]
     fn relative_mutators_cannot_write_home_settings() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         for command in [
             "cp staged.json .clud/settings.json",
             "mv staged.json .clud/settings.json",
@@ -1183,7 +1183,7 @@ mod tests {
 
     #[test]
     fn relative_spellings_into_home_settings_are_refused() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = crate::clud_settings::settings_path_at(home.path())
             .file_name()
             .unwrap()
@@ -1214,7 +1214,7 @@ mod tests {
 
     #[test]
     fn failed_cd_before_a_non_and_connector_keeps_the_old_cwd() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = settings_name(home.path());
         for command in [
             format!("cd /nonexistent; echo x > ../.clud/{name}"),
@@ -1235,7 +1235,7 @@ mod tests {
 
     #[test]
     fn globs_and_braces_that_can_match_the_protected_file_are_refused() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = settings_name(home.path());
         let stem = name.trim_end_matches(".json");
         for command in [
@@ -1270,7 +1270,7 @@ mod tests {
 
     #[test]
     fn unrelated_globs_and_lookalike_names_are_allowed() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = settings_name(home.path());
         for command in [
             "cp a ../other/*".to_string(),
@@ -1291,7 +1291,7 @@ mod tests {
 
     #[test]
     fn relative_reads_and_unrelated_paths_are_allowed() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = crate::clud_settings::settings_path_at(home.path())
             .file_name()
             .unwrap()
@@ -1309,7 +1309,7 @@ mod tests {
 
     #[test]
     fn reads_and_prose_that_name_the_settings_file_are_allowed() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = settings_name(home.path());
         for command in [
             format!("cat .clud/{name} 2>/dev/null"),
@@ -1328,7 +1328,7 @@ mod tests {
 
     #[test]
     fn writes_hidden_near_prose_or_reads_are_still_refused() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let name = settings_name(home.path());
         for command in [
             format!("cat > ~/.clud/{name} <<'EOF'\nsee ~/.clud/{name}\nEOF"),
@@ -1351,7 +1351,7 @@ mod tests {
 
     #[test]
     fn missing_settings_through_parent_alias_are_protected() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home = directory.path().join("home");
         std::fs::create_dir(&home).unwrap();
         let alias = crate::platform::path_norm::test_alias(&home, &directory.path().join("alias"));
@@ -1388,7 +1388,7 @@ mod tests {
 
     #[test]
     fn ordinary_patches_are_allowed_in_every_payload_shape() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         for input in [
             serde_json::json!(ORDINARY),
             serde_json::json!({"patch": ORDINARY}),
@@ -1403,7 +1403,7 @@ mod tests {
 
     #[test]
     fn crlf_and_indented_marker_lines_are_understood() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let crlf = ORDINARY.replace('\n', "\r\n");
         assert_eq!(patch_reason(home.path(), serde_json::json!(crlf)), None);
         let indented = ORDINARY.replace("\n*** ", "\n  *** ");
@@ -1418,7 +1418,7 @@ mod tests {
 
     #[test]
     fn relative_and_absolute_ordinary_paths_are_allowed() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let absolute = home.path().join("repo/src/lib.rs");
         let patch = format!(
             "*** Begin Patch\n*** Update File: ./src/lib.rs\n@@\n-a\n+b\n\
@@ -1430,7 +1430,7 @@ mod tests {
 
     #[test]
     fn patches_touching_the_protected_file_are_refused() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let settings = crate::clud_settings::settings_path_at(home.path());
         let shown = settings.display();
         let relative = settings
@@ -1461,7 +1461,7 @@ mod tests {
 
     #[test]
     fn trailing_whitespace_on_a_protected_target_is_refused() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let settings = crate::clud_settings::settings_path_at(home.path());
         for pad in [" ", "\t", "  \t "] {
             let patch = format!(
@@ -1474,7 +1474,7 @@ mod tests {
 
     #[test]
     fn decoy_candidates_do_not_hide_a_protected_target() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let settings = crate::clud_settings::settings_path_at(home.path());
         let protected = format!("*** Update File: {}\n@@\n-a\n+b", settings.display());
         let wrapped = format!("*** Begin Patch\n{protected}\n*** End Patch");
@@ -1490,7 +1490,7 @@ mod tests {
 
     #[test]
     fn multiple_ordinary_candidates_are_still_allowed() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let other = "*** Begin Patch\n*** Add File: src/other.rs\n+x\n*** End Patch";
         for input in [
             serde_json::json!({"patch": ORDINARY, "command": other}),
@@ -1511,7 +1511,7 @@ mod tests {
 
     #[test]
     fn unrecognized_payloads_fail_closed_with_their_own_code() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         for input in [
             serde_json::json!({}),
             serde_json::json!(42),
@@ -1526,7 +1526,7 @@ mod tests {
 
     #[test]
     fn headerless_patches_fail_closed_with_their_own_code() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         for input in [
             serde_json::json!("*** Begin Patch\n@@\n+No target header\n*** End Patch"),
             serde_json::json!({"cmd": "apply_patch <<'EOF'\n@@\n+x\nEOF"}),
@@ -1574,7 +1574,7 @@ mod tests {
 
     #[test]
     fn non_posix_dialect_heredoc_patches_are_judged_by_their_targets() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let settings = crate::clud_settings::settings_path_at(home.path());
         let name = settings_name(home.path());
         let source = format!(
@@ -1600,7 +1600,7 @@ mod tests {
 
     #[test]
     fn nested_exec_command_patches_are_judged_by_their_targets() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let settings = crate::clud_settings::settings_path_at(home.path());
         // Source text that merely discusses the protected file is ordinary.
         let source = "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n\
@@ -1655,7 +1655,7 @@ mod tests {
     /// and fails closed to the general rule), POSIX elsewhere.
     #[test]
     fn nested_shell_command_patch_follows_the_host_dialect() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let source = "*** Begin Patch\n*** Update File: src/lib.rs\n@@\n\
             -// reads ~/.clud/settings.json\n+// ok\n*** End Patch";
         let command = format!("apply_patch <<'EOF'\n{source}\nEOF");
@@ -1681,7 +1681,7 @@ mod tests {
 
     #[test]
     fn nested_patch_after_unreliable_cd_connectors_is_not_trusted() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let body = "<<'EOF'\n*** Begin Patch\n*** Update File: ../.clud/settings.json\n@@\n-a\n+b\n*** End Patch\nEOF";
         let cwd = home.path().join("proj");
         for command in [
@@ -1738,7 +1738,7 @@ mod tests {
 
     #[test]
     fn nested_cd_is_trusted_only_when_cdpath_cannot_apply() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cwd = home.path().join("proj");
         let body = "<<'EOF'\n*** Begin Patch\n*** Update File: settings.json\n@@\n-a\n+b\n*** End Patch\nEOF";
         for command in [
@@ -1793,7 +1793,7 @@ mod tests {
 
     #[test]
     fn direct_apply_patch_reaches_the_gate_through_the_entry_point() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let payload = patch_payload(home.path(), serde_json::json!({"command": ORDINARY}));
         assert_eq!(
             reason_for_payload_in(&payload, Some(home.path().to_path_buf())),
@@ -1808,7 +1808,7 @@ mod tests {
 
     #[test]
     fn unresolved_home_is_reported_as_such() {
-        let cwd = tempfile::tempdir().unwrap();
+        let cwd = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let payload = patch_payload(cwd.path(), serde_json::json!(ORDINARY));
         assert_eq!(
             native_file_reason(&payload, "apply_patch", None).as_deref(),

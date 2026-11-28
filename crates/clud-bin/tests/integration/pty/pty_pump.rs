@@ -76,7 +76,7 @@ fn raw_pump_forwards_stdin_bytes_verbatim() {
     require_pty_or_skip!("raw_pump_forwards_stdin_bytes_verbatim");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
     let ready = tmp.path().join("ready");
 
@@ -131,7 +131,7 @@ fn raw_pump_fires_voice_f3_press_while_forwarding_bytes() {
     require_pty_or_skip!("raw_pump_fires_voice_f3_press_while_forwarding_bytes");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
     let ready = tmp.path().join("ready");
 
@@ -197,7 +197,7 @@ fn raw_pump_fires_voice_f3_release_when_kitty_sequence_present() {
     require_pty_or_skip!("raw_pump_fires_voice_f3_release_when_kitty_sequence_present");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
     let ready = tmp.path().join("ready");
 
@@ -269,7 +269,7 @@ fn raw_pump_calls_on_tick_during_idle() {
     require_pty_or_skip!("raw_pump_calls_on_tick_during_idle");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
 
     let argv = vec![
@@ -323,7 +323,7 @@ fn raw_pump_honors_ctrlc_flag() {
     require_pty_or_skip!("raw_pump_honors_ctrlc_flag");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
 
     // Long-lived: 5 seconds of blocking stdin read — gives us headroom to
@@ -379,7 +379,7 @@ fn a_ctrl_c_interrupted_child_has_its_terminal_modes_undone() {
     require_pty_or_skip!("a_ctrl_c_interrupted_child_has_its_terminal_modes_undone");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let script = tmp.path().join("modes.ansi");
     std::fs::write(
         &script,
@@ -456,7 +456,7 @@ fn raw_pump_applies_resize_from_channel() {
     require_pty_or_skip!("raw_pump_applies_resize_from_channel");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
 
     // Long enough that the resize has time to land before the child exits.
@@ -538,7 +538,7 @@ fn raw_pump_exits_promptly_when_child_exits() {
     }
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
 
     // Short-lived child — it reads stdin for 400ms then exits.
@@ -590,7 +590,7 @@ fn raw_pump_restores_raw_mode_on_panic() {
     }
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
 
     let argv = vec![
@@ -867,7 +867,7 @@ fn stdin_forwarding_stays_fast_while_output_sink_stalls() {
     const SINK_SLEEP: Duration = Duration::from_millis(500);
     const MAX_FORWARD_LATENCY: Duration = Duration::from_millis(200);
 
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let ansi_path = tmp.path().join("burst.txt");
     // One sizeable, plain-ASCII burst the child flushes immediately at
     // startup (before it ever touches stdin) — enough to occupy the slow

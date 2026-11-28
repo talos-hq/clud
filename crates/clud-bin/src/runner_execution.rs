@@ -790,7 +790,7 @@ mod tests {
 
     #[test]
     fn child_env_for_backend_does_not_set_shell_vars_when_toggle_off() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         for backend in [Backend::Claude, Backend::Codex] {
             let env = child_env_for_backend_at(backend, Some(home.path()));
             assert_eq!(env_lookup(&env, "CLUD_DISABLE_POWERSHELL"), None);
@@ -801,7 +801,7 @@ mod tests {
 
     #[test]
     fn child_env_for_backend_sets_clud_disable_for_both_backends_when_top_level_true() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         clud_settings::save_shell_disable_powershell_at(home.path(), true).unwrap();
 
         let codex_env = child_env_for_backend_at(Backend::Codex, Some(home.path()));
@@ -842,7 +842,7 @@ mod tests {
 
     #[test]
     fn child_env_for_backend_sets_claude_kill_switch_when_claude_enabled() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         clud_settings::save_shell_disable_powershell_at(home.path(), true).unwrap();
         let expected_bash = warm_cache_vendored_bash(home.path());
 
@@ -865,7 +865,7 @@ mod tests {
 
     #[test]
     fn child_env_for_backend_backend_override_blocks_top_level() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         clud_settings::save_shell_disable_powershell_at(home.path(), true).unwrap();
         clud_settings::save_shell_disable_powershell_for_backend_at(
             home.path(),
@@ -911,7 +911,7 @@ mod tests {
 
     #[test]
     fn unsafe_child_env_preserves_marker_and_removes_clud_shell_guards() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home_str = home.path().to_string_lossy().into_owned();
         let base = env_pairs(&[
             ("HOME", home_str.as_str()),
@@ -934,7 +934,7 @@ mod tests {
     /// precisely so a Linux lane can assert the layer at all.
     #[test]
     fn forcing_windows_stdio_sets_the_python_utf8_pair_exactly_once() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home_str = home.path().to_string_lossy().into_owned();
         let base = env_pairs(&[
             ("HOME", home_str.as_str()),
@@ -964,7 +964,7 @@ mod tests {
     /// survive untouched. Merging the two builders must not start deleting it.
     #[test]
     fn without_windows_stdio_an_inherited_python_setting_survives() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home_str = home.path().to_string_lossy().into_owned();
         let base = env_pairs(&[
             ("HOME", home_str.as_str()),
@@ -988,7 +988,7 @@ mod tests {
     /// relaunch inside a clud session must not hand the child two values.
     #[test]
     fn the_clud_tag_replaces_any_inherited_one() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home_str = home.path().to_string_lossy().into_owned();
         let base = env_pairs(&[
             ("HOME", home_str.as_str()),
@@ -1026,7 +1026,7 @@ mod tests {
     /// key the builder actually adds or changes.
     #[test]
     fn the_policy_key_list_covers_every_key_the_builder_touches() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home_str = home.path().to_string_lossy().into_owned();
         let base = env_pairs(&[
             ("HOME", home_str.as_str()),

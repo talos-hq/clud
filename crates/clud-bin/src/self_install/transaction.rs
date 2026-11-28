@@ -970,7 +970,7 @@ mod tests {
 
     #[test]
     fn rename_when_released_moves_a_free_file_and_fails_fast_on_a_missing_one() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let from = temp.path().join("stage");
         let to = temp.path().join("clud");
         fs::write(&from, b"x").unwrap();
@@ -984,7 +984,7 @@ mod tests {
 
     #[test]
     fn failed_post_commit_verification_restores_prior_bytes() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let destination = dir.path().join("clud");
         fs::write(&destination, b"prior bytes").unwrap();
         let stage = dir.path().join("stage");

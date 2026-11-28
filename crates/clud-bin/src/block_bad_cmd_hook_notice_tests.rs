@@ -1,5 +1,5 @@
 use super::*;
-use tempfile::TempDir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 fn lines(texts: &[&str]) -> Vec<String> {
     texts.iter().map(|text| (*text).to_string()).collect()
@@ -13,7 +13,7 @@ fn identical_failures_collapse_into_one_counted_line() {
 
 #[test]
 fn a_session_sees_each_distinct_message_once() {
-    let state = TempDir::new().unwrap();
+    let state = TemporaryDirectory::new().unwrap();
     let first = unseen_at(state.path(), "s1", lines(&["a failed", "b failed"]));
     assert_eq!(first, lines(&["a failed", "b failed"]));
     let second = unseen_at(state.path(), "s1", lines(&["a failed", "c failed"]));
@@ -28,7 +28,7 @@ fn a_session_sees_each_distinct_message_once() {
 
 #[test]
 fn unreadable_state_shows_the_notice_rather_than_hiding_it() {
-    let state = TempDir::new().unwrap();
+    let state = TemporaryDirectory::new().unwrap();
     let blocker = state.path().join("not-a-dir");
     std::fs::write(&blocker, "x").unwrap();
     let shown = unseen_at(&blocker, "s1", lines(&["a failed"]));

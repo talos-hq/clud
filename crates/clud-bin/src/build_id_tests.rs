@@ -6,7 +6,7 @@ use super::*;
 /// crash is worse than reporting less.
 #[test]
 fn a_file_that_is_not_elf_is_not_an_error() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = tmp.path().join("not-an-elf");
     std::fs::write(
         &path,
@@ -24,7 +24,7 @@ fn a_file_that_is_not_elf_is_not_an_error() {
 /// interesting property is that no input produces anything but `None`.
 #[test]
 fn malformed_elf_headers_yield_none_rather_than_panicking() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
 
     let cases: &[(&str, Vec<u8>)] = &[
         ("empty", Vec::new()),

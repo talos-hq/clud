@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn record_redaction_preserves_daemon_behavior() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = daemon_events_path(tmp.path());
         let secret = format!("ghp_{}", "A".repeat(36));
         let event = json!({"op":"adopt_kill_accepted", "request_id":secret, "daemon_pid":42,
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn appends_one_json_object_per_line() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         log_event(tmp.path(), "daemon_start", [("port", json!(1234))]);
         log_event(
             tmp.path(),
@@ -208,7 +208,7 @@ mod tests {
 
     #[test]
     fn cached_handle_survives_rotation() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = daemon_events_path(tmp.path());
         fs::write(&path, vec![b'x'; (MAX_EVENT_LOG_BYTES + 1) as usize]).unwrap();
 
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn concurrent_append_keeps_one_valid_json_object_per_line() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let state_dir = tmp.path().to_path_buf();
         let threads = 12;
         let per_thread = 75;

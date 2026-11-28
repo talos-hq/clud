@@ -1,7 +1,7 @@
 use super::*;
 
-fn world() -> (tempfile::TempDir, PathBuf, Value) {
-    let directory = tempfile::tempdir().unwrap();
+fn world() -> (kernal_api::platform::fs::TemporaryDirectory, PathBuf, Value) {
+    let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = directory.path().join("home");
     fs::create_dir_all(home.join(".clud")).unwrap();
     let document = json!({

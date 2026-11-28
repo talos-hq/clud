@@ -118,7 +118,7 @@ fn cli_values_override_file_values() {
 
 #[test]
 fn discovers_implicit_and_explicit_files() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     assert!(LoopConfig::discover(root, None).unwrap().is_none());
 
@@ -146,7 +146,7 @@ fn discovers_implicit_and_explicit_files() {
 
 #[test]
 fn writes_resolved_copy_under_loop_dir() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = full().write_resolved(tmp.path()).unwrap();
     assert_eq!(path, LoopConfig::resolved_path(tmp.path()));
     let back = LoopConfig::parse(&path, &std::fs::read_to_string(&path).unwrap()).unwrap();

@@ -48,7 +48,7 @@ fn test_codex_interactive_follows_console_rule() {
 
 #[test]
 fn test_codex_keeps_native_agents_when_agents_md_exists() {
-    let repo = tempfile::tempdir().unwrap();
+    let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::write(repo.path().join("AGENTS.md"), "native agents").unwrap();
     std::fs::write(repo.path().join("CODEX.md"), "codex fallback").unwrap();
     std::fs::write(repo.path().join("CLAUDE.md"), "claude fallback").unwrap();
@@ -62,7 +62,7 @@ fn test_codex_keeps_native_agents_when_agents_md_exists() {
 
 #[test]
 fn test_codex_uses_codex_md_as_project_doc_fallback_before_claude_md() {
-    let repo = tempfile::tempdir().unwrap();
+    let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::write(repo.path().join("CODEX.md"), "codex fallback").unwrap();
     std::fs::write(repo.path().join("CLAUDE.md"), "claude fallback").unwrap();
 
@@ -76,7 +76,7 @@ fn test_codex_uses_codex_md_as_project_doc_fallback_before_claude_md() {
 
 #[test]
 fn test_codex_uses_claude_md_when_agents_and_codex_are_absent() {
-    let repo = tempfile::tempdir().unwrap();
+    let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::write(repo.path().join("CLAUDE.md"), "claude fallback").unwrap();
 
     let p = plan_at(&["clud", "--codex"], repo.path());
@@ -86,7 +86,7 @@ fn test_codex_uses_claude_md_when_agents_and_codex_are_absent() {
 
 #[test]
 fn test_codex_project_doc_fallback_noops_when_no_instruction_file_exists() {
-    let repo = tempfile::tempdir().unwrap();
+    let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
 
     let p = plan_at(&["clud", "--codex"], repo.path());
 

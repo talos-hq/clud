@@ -14,7 +14,7 @@ fn deferred_config() -> RegistryWorkerConfig {
 
 #[test]
 fn locked_registry_is_retried_until_the_holder_lets_go() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let db_path = dir.path().join("data.redb");
     // Stands in for the superseded daemon that still holds the redb lock.
     let holder = Registry::open_at(&db_path).expect("open holder");

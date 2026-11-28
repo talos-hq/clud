@@ -48,7 +48,7 @@ mod tests {
 
     #[test]
     fn detects_the_clud_repo_by_its_crate_manifest() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert!(!is_clud_repo(tmp.path()));
         let dir = tmp.path().join("crates/clud-bin");
         std::fs::create_dir_all(&dir).unwrap();

@@ -603,8 +603,8 @@ fn hook_home_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs;
-    use tempfile::tempdir;
 
     fn write(path: &Path, body: &str) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn the_running_clud_is_the_helper() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let clud = tmp.path().join(crate::shim_registry::file_name("clud"));
         write(&clud, "");
 
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn a_test_harness_is_not_the_installed_layout() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let harness = tmp
             .path()
             .join(crate::shim_registry::file_name("clud-3f9a1c"));
@@ -641,7 +641,7 @@ mod tests {
 
     #[test]
     fn public_launcher_gets_a_scanner_without_exposing_other_tools() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let source = tmp.path().join("tool-env/clud");
         write(&source, "current-build");
         let public = tmp.path().join("public/clud");
@@ -664,7 +664,7 @@ mod tests {
 
     #[test]
     fn migrates_exact_claude_and_codex_commands_when_helper_available() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         write(
@@ -705,7 +705,7 @@ mod tests {
         // #532: a hook config already migrated once (python shim ->
         // `clud-block-bad-cmd`) must also be carried forward to the
         // renamed `clud-cmd-scan` binary.
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         write(
@@ -741,7 +741,7 @@ mod tests {
 
     #[test]
     fn missing_helper_blocks_rewrite_of_legacy_native_command() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let path = home.join(".claude/settings.json");
@@ -764,7 +764,7 @@ mod tests {
     fn user_bare_helper_is_left_byte_for_byte_unchanged() {
         // #1334: the bare helper resolves from PATH at run time; pinning it
         // to the launching binary is what left dangling hooks behind.
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let body = r#"{"hooks":[{"command":"clud-cmd-scan"},{"command":"clud-cmd-scan; exit $LASTEXITCODE"}]}"#;
@@ -783,7 +783,7 @@ mod tests {
 
     #[test]
     fn migration_never_writes_an_absolute_path_in_any_scope() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let legacy = r#"{"hooks":[{"command":"clud tool run hooks/block-bad-cmd.py"},{"command":"clud tool run hooks/block-bad-cmd.py; exit $LASTEXITCODE"},{"command":"clud-block-bad-cmd"}]}"#;
@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn user_dangling_pinned_helper_returns_to_the_bare_name() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let gone = tmp.path().join("gone/target/debug/clud-cmd-scan");
@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn existing_pins_and_project_pins_are_not_rewritten() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let live = tmp.path().join("bin").join(native_helper_name());
@@ -900,7 +900,7 @@ mod tests {
     /// old rules. A helper clud owns is refreshed; anyone else's is not.
     #[test]
     fn a_stale_helper_clud_owns_is_refreshed_and_a_foreign_one_is_not() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let install = tmp.path().join("install");
         let clud = install.join(crate::shim_registry::file_name("clud"));
         write(&clud, "clud-v2-longer");
@@ -926,7 +926,7 @@ mod tests {
     /// refreshed with the scanner, but the real `python` there is not.
     #[test]
     fn refresh_covers_a_stale_clud_shim_and_never_an_interpreter() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let install = tmp.path().join("install");
         let clud = install.join(crate::shim_registry::file_name("clud"));
         write(&clud, "clud-v2-longer");
@@ -945,7 +945,7 @@ mod tests {
 
     #[test]
     fn a_foreign_helper_first_on_path_is_warned_about() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let clud = tmp
             .path()
             .join("install")
@@ -987,7 +987,7 @@ mod tests {
     /// and the legacy helper-bin is not rewritten for it (DD-203).
     #[test]
     fn the_legacy_helper_bin_is_kept_while_a_foreign_helper_is_first_on_path() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let clud = tmp
             .path()
             .join("install")
@@ -1011,7 +1011,7 @@ mod tests {
 
     #[test]
     fn an_up_to_date_helper_bin_entry_is_left_untouched() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let clud = tmp.path().join("install").join("clud");
         write(&clud, "clud-v2");
         let home = tmp.path().join("home");
@@ -1030,7 +1030,7 @@ mod tests {
 
     #[test]
     fn a_missing_helper_bin_is_not_created_by_the_refresh() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let clud = tmp.path().join("install").join("clud");
         write(&clud, "clud-v2");
         let home = tmp.path().join("home");
@@ -1042,7 +1042,7 @@ mod tests {
 
     #[test]
     fn helper_is_exposed_alone_not_its_install_directory() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let install = tmp.path().join("install");
         let clud = install.join(crate::shim_registry::file_name("clud"));
         write(&clud, "clud-v1");
@@ -1081,7 +1081,7 @@ mod tests {
 
     #[test]
     fn dangling_hook_program_produces_a_warning_naming_file_and_fix() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         // Build paths component-wise so they display with native separators,
         // matching the settings path the scanner reports on Windows.
@@ -1126,7 +1126,7 @@ mod tests {
     /// `clud-cmd-scan: command not found`.
     #[test]
     fn helper_dir_is_prepended_even_when_path_already_finds_a_helper() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let clud = tmp.path().join("install").join("clud");
         write(&clud, "clud-v2");
         let home = tmp.path().join("home");
@@ -1149,7 +1149,7 @@ mod tests {
 
     #[test]
     fn helper_dir_is_prepended_to_path_once() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let a = tmp.path().join("a");
         let dir = tmp.path().join("helper");
         let base = std::env::join_paths([&a]).unwrap().into_string().unwrap();
@@ -1177,7 +1177,7 @@ mod tests {
 
     #[test]
     fn missing_helper_blocks_rewrite_and_preserves_compatibility_command() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let path = home.join(".claude/settings.json");
@@ -1200,7 +1200,7 @@ mod tests {
 
     #[test]
     fn non_exact_user_variants_are_untouched() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let body = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"command":"python wrapper.py && clud tool run hooks/block-bad-cmd.py"},{"command":" clud tool run hooks/block-bad-cmd.py "}]}]}}"#;
@@ -1228,7 +1228,7 @@ mod tests {
     fn project_bare_helper_is_never_pinned_to_the_launching_install() {
         // #1426: a dev build (or the test suite) launched inside a checkout
         // rewrote the committed `clud-cmd-scan` to its own absolute path.
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let body = r#"{"hooks":{"PreToolUse":[{"matcher":"*","hooks":[{"command":"clud-cmd-scan"},{"command":"clud-cmd-scan; exit $LASTEXITCODE"}]}]}}"#;
@@ -1247,7 +1247,7 @@ mod tests {
 
     #[test]
     fn project_legacy_commands_migrate_to_the_portable_bare_helper() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let path = repo.join(".claude/settings.json");
         write(
@@ -1294,7 +1294,7 @@ mod tests {
 
     #[test]
     fn committed_repo_hook_configs_survive_a_launch_unchanged() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let claude = repo.join(".claude/settings.json");
         let codex = repo.join(".codex/hooks.json");

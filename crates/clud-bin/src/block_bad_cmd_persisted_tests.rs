@@ -1,6 +1,6 @@
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use serde_json::json;
-use tempfile::tempdir;
 
 fn spill(home: &str) -> PathBuf {
     PathBuf::from(format!(
@@ -129,7 +129,7 @@ fn the_ledger_stays_bounded() {
 
 #[test]
 fn refusals_are_recorded_per_session() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let path = spill("/home/niteris");
     assert_eq!(check_at(dir.path(), "sess-a", &path, 1_000), Verdict::Deny);
     assert_eq!(check_at(dir.path(), "sess-a", &path, 1_001), Verdict::Retry);
@@ -141,7 +141,7 @@ fn refusals_are_recorded_per_session() {
 
 #[test]
 fn an_unwritable_state_dir_allows() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let blocked = dir.path().join("blocked");
     std::fs::write(&blocked, b"not a directory").expect("write file");
     // `state_dir/blocked/...` cannot be created under a file: fail open.

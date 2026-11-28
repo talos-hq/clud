@@ -126,7 +126,7 @@ fn wait_for_identity_sidecar(state_dir: &Path) -> DaemonProcess {
 #[test]
 fn tier1_identity_sidecar_exists_by_the_time_daemon_reports_ready() {
     let _env = EnvGuard::unset(RUNNING_PROCESS_DISABLE_ENV);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().to_path_buf();
     let daemon_state_dir = state_dir.clone();
     let daemon_thread = thread::spawn(move || run_daemon_uninterrupted(&daemon_state_dir));
@@ -195,7 +195,7 @@ fn payload_protocol_is_frozen_registered_consumer_id() {
 #[test]
 fn tier1_frame_lane_serves_probe_and_clud_requests_end_to_end() {
     let _env = EnvGuard::unset(RUNNING_PROCESS_DISABLE_ENV);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().to_path_buf();
     let daemon_state_dir = state_dir.clone();
     let daemon_thread = thread::spawn(move || run_daemon_uninterrupted(&daemon_state_dir));
@@ -254,7 +254,7 @@ fn tier1_frame_lane_serves_probe_and_clud_requests_end_to_end() {
 #[test]
 fn tier1_disable_env_skips_frame_lane_entirely() {
     let _env = EnvGuard::set(RUNNING_PROCESS_DISABLE_ENV, "1");
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().to_path_buf();
     let daemon_state_dir = state_dir.clone();
     let daemon_thread = thread::spawn(move || run_daemon_uninterrupted(&daemon_state_dir));
@@ -292,7 +292,7 @@ fn tier1_disable_env_skips_frame_lane_entirely() {
 /// when the sidecar is missing.
 #[test]
 fn tier1_client_round_trips_via_frame_lane_and_falls_back_to_tcp() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().to_path_buf();
     let daemon_state_dir = state_dir.clone();
     let daemon_thread;
@@ -354,7 +354,7 @@ fn tier1_client_round_trips_via_frame_lane_and_falls_back_to_tcp() {
 /// the seam endpoint even when the cached sidecar endpoint is bogus.
 #[test]
 fn tier1_fake_backend_seam_overrides_cached_endpoint() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().to_path_buf();
     let daemon_state_dir = state_dir.clone();
     let daemon_thread;
@@ -406,7 +406,7 @@ fn install_service_definition_writes_valid_shared_broker_servicedef() {
     use running_process::broker::protocol::{BrokerIsolation, ServiceDefinition};
     use running_process::broker::server::validate_service_definition_for_service;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let _env = EnvGuard::set(
         "RUNNING_PROCESS_SERVICE_DEF_DIR",
         tmp.path().to_str().unwrap(),
@@ -467,7 +467,7 @@ fn publish_cache_manifest_records_clud_roots_and_round_trips() {
     use running_process::broker::manifest::read_manifest;
     use running_process::broker::protocol::{CacheManifest, CacheRootKind};
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let registry = tmp.path().join("manifests");
     let state_dir = tmp.path().join("state");
     let _env = EnvGuard::set("RUNNING_PROCESS_MANIFEST_DIR", registry.to_str().unwrap());
@@ -562,7 +562,7 @@ fn real_lane(
 
 #[test]
 fn lane_cleanup_removes_its_own_sidecar() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let lane = lane_with_sidecar(tmp.path(), 1_000);
     let identity_path = daemon_identity_path(tmp.path());
     assert!(identity_path.exists());
@@ -576,7 +576,7 @@ fn lane_cleanup_removes_its_own_sidecar() {
 
 #[test]
 fn superseded_lane_cleanup_keeps_the_newer_sidecar() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let older = lane_with_sidecar(tmp.path(), 1_000);
     // The superseding daemon rewrites the sidecar at the same path.
     let _newer = lane_with_sidecar(tmp.path(), 2_000);
@@ -595,7 +595,7 @@ fn live_lane_cleanup_removes_its_own_socket_and_sidecar() {
     if crate::platform::host::WINDOWS {
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (lane, _listener) = real_lane(tmp.path(), 1_000);
     let endpoint = endpoint_for_state_dir(tmp.path()).unwrap();
     assert!(Path::new(&endpoint.path).exists());
@@ -614,7 +614,7 @@ fn superseded_lane_cleanup_keeps_the_newer_bound_socket() {
     if crate::platform::host::WINDOWS {
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (older, _older_listener) = real_lane(tmp.path(), 1_000);
     let (_newer, listener) = real_lane(tmp.path(), 2_000);
     let endpoint = endpoint_for_state_dir(tmp.path()).unwrap();
@@ -640,7 +640,7 @@ fn cleanup_keeps_a_socket_whose_inode_was_reused_by_the_successor() {
     if crate::platform::host::WINDOWS {
         return;
     }
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (_b, listener) = real_lane(tmp.path(), 2_000);
     let endpoint = endpoint_for_state_dir(tmp.path()).unwrap();
     let identity_path = daemon_identity_path(tmp.path());
@@ -678,7 +678,7 @@ fn two_builds_register_separate_v2_definitions_on_their_images() {
     use running_process::broker::protocol::BrokerIsolation;
     use running_process::broker::protocol_v2::ServiceDefinition;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let defs = tmp.path().join("defs");
     std::fs::create_dir_all(&defs).unwrap();

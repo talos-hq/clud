@@ -57,7 +57,7 @@ mod tests {
     /// `install_std` is `leak_duplicate` plus one `SetStdHandle` call.
     #[test]
     fn leaked_duplicate_writes_into_the_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("err.log");
         let file = std::fs::OpenOptions::new()
             .create(true)

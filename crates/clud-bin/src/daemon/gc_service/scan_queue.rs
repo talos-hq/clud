@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn queue_round_trips_through_disk() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = queue_path(dir.path());
         let q = queue(&["/a", "/b"]);
         save(&path, &q).unwrap();

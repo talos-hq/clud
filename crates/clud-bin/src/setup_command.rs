@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn non_terminal_without_yes_is_refused_before_any_write() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let source = fake_clud(root.path());
         let home = root.path().join("home");
         let (code, _) = run_capture(&home, &source, &opts(false, false, None), false);
@@ -548,7 +548,7 @@ mod tests {
 
     #[test]
     fn dry_run_writes_nothing_and_lists_every_step() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let source = fake_clud(root.path());
         let home = root.path().join("home");
         let (code, out) = run_capture(&home, &source, &opts(true, false, None), false);
@@ -568,7 +568,7 @@ mod tests {
             .into_iter()
             .filter(|provider| *provider != ModelProvider::OpenRouter)
         {
-            let root = tempfile::tempdir().unwrap();
+            let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             let source = fake_clud(root.path());
             let home = root.path().join("home");
             let options = opts(false, true, Some(provider));
@@ -597,7 +597,7 @@ mod tests {
     /// menu would select (DeepSeek V4.1 Flash, 1017 checkpoint).
     #[test]
     fn non_interactive_openrouter_setup_saves_the_default_model() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut out = Vec::new();
         assert_eq!(default_openrouter_model(root.path(), false, &mut out), 0);
         assert_eq!(
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn non_interactive_openrouter_setup_keeps_a_saved_model() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         crate::clud_settings::save_settings_patch_at(
             root.path(),
             crate::clud_settings::GlobalSettingsPatch {
@@ -641,7 +641,7 @@ mod tests {
 
     #[test]
     fn dry_run_reports_the_default_model_and_writes_nothing() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut out = Vec::new();
         assert_eq!(default_openrouter_model(root.path(), true, &mut out), 0);
         assert_eq!(saved_openrouter_model(root.path()), None);
@@ -657,7 +657,7 @@ mod tests {
     #[test]
     fn providers_setup_does_not_offer_are_rejected() {
         for &provider in crate::self_install::setup::NOT_OFFERED {
-            let root = tempfile::tempdir().unwrap();
+            let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             let source = fake_clud(root.path());
             let (code, _) = run_capture(
                 &root.path().join("home"),

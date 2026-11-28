@@ -110,7 +110,7 @@ mod tests {
     #[test]
     fn launch_and_exit_stages_share_the_file_with_distinct_prefixes() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("trace.log");
         std::env::set_var("CLUD_EXIT_TIMING_FILE", &path);
 
@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn begin_lands_before_body_runs_so_a_killed_body_is_attributable() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("trace.log");
         std::env::set_var("CLUD_EXIT_TIMING_FILE", &path);
 

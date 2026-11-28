@@ -89,7 +89,7 @@ fn pid_is_alive(pid: u32) -> bool {
 /// running: the hop is not allowed to own a lifetime that outranks it.
 #[test]
 fn a_relayed_child_can_leave_a_detached_daemon_running_behind_it() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let pid_path = temp.path().join("detached.pid");
 
     let code = clud::trampoline::relay_child_and_wait(

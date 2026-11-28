@@ -151,7 +151,7 @@ pub fn format_summary(summary: &[BucketStats]) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     fn stats_of(bucket: &str, n: usize, p50: u64, p90: u64) -> BucketStats {
         BucketStats {
@@ -164,7 +164,7 @@ mod tests {
 
     #[test]
     fn the_repo_root_is_found_from_a_subdirectory() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join(".git")).unwrap();
         let nested = root.join("crates").join("clud-bin").join("src");
@@ -177,7 +177,7 @@ mod tests {
     /// writing a store in someone's home directory.
     #[test]
     fn a_path_with_no_git_root_falls_back_to_itself() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         assert_eq!(repo_root_from(tmp.path()), tmp.path());
     }
 

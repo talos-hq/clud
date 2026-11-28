@@ -81,7 +81,7 @@ fn serve_session_creation(listener: &TcpListener) -> Value {
 struct Client {
     process: Arc<NativeProcess>,
     output: Arc<Mutex<String>>,
-    _cwd: tempfile::TempDir,
+    _cwd: kernal_api::platform::fs::TemporaryDirectory,
 }
 
 impl Client {
@@ -99,7 +99,7 @@ impl Client {
 
     /// `program` with exactly `env`, or this process's environment for `None`.
     fn launch(program: &Path, origin: &str, env: Option<Vec<(String, String)>>) -> Self {
-        let cwd = tempfile::tempdir().unwrap();
+        let cwd = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let process = Arc::new(NativeProcess::new(ProcessConfig {
             command: CommandSpec::Argv(vec![
                 program.to_string_lossy().into_owned(),
@@ -505,16 +505,13 @@ fn shell_output_reaches_the_server_and_the_client_terminal() {
 /// on no PATH, `%LOCALAPPDATA%\clud-connect-<guid>\bin` on Windows and
 /// `.clud-connect.XXXXXX/bin` elsewhere, run from there. Returns the
 /// directory's owner and the copy.
-fn private_clud_copy() -> (tempfile::TempDir, PathBuf) {
+fn private_clud_copy() -> (kernal_api::platform::fs::TemporaryDirectory, PathBuf) {
     let source = exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
     let (parent, prefix) = match std::env::var_os("LOCALAPPDATA") {
         Some(local) if clud::platform::host::WINDOWS => (PathBuf::from(local), "clud-connect-"),
         _ => (std::env::temp_dir(), ".clud-connect."),
     };
-    let work = tempfile::Builder::new()
-        .prefix(prefix)
-        .tempdir_in(parent)
-        .unwrap();
+    let work = kernal_api::platform::fs::TemporaryDirectory::in_directory(&parent, prefix).unwrap();
     let bin = work.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     let copy = bin.join(source.file_name().unwrap());
@@ -623,12 +620,12 @@ fn open_address_is_refused_without_control_and_for_a_local_file() {
 struct TtyClient {
     process: Arc<NativePtyProcess>,
     output: Arc<Mutex<String>>,
-    _cwd: tempfile::TempDir,
+    _cwd: kernal_api::platform::fs::TemporaryDirectory,
 }
 
 impl TtyClient {
     fn start(origin: &str) -> Self {
-        let cwd = tempfile::tempdir().unwrap();
+        let cwd = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut env: Vec<(String, String)> = std::env::vars().collect();
         env.push(("TERM".into(), "xterm-256color".into()));
         let argv = vec![
@@ -1102,8 +1099,8 @@ fn a_server_without_encryption_is_refused_when_encryption_is_required() {
 }
 
 /// Numbered lines in a file, and the shell command that prints it.
-fn numbered_file(lines: usize) -> (tempfile::TempDir, String) {
-    let dir = tempfile::tempdir().unwrap();
+fn numbered_file(lines: usize) -> (kernal_api::platform::fs::TemporaryDirectory, String) {
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = dir.path().join("numbers.txt");
     let mut text = String::with_capacity(lines * 9);
     for number in 1..=lines {

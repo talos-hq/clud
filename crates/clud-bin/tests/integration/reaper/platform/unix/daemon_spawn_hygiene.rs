@@ -16,7 +16,7 @@ fn daemon_does_not_inherit_a_launchers_non_cloexec_fds() {
     let _serial = crate::reaper::REAPER_TEST_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    let scratch = tempfile::tempdir().expect("scratch dir");
+    let scratch = kernal_api::platform::fs::TemporaryDirectory::new().expect("scratch dir");
     let state_dir = scratch.path().join("state");
 
     let mut fds = [0 as libc::c_int; 2];

@@ -58,7 +58,7 @@ mod tests {
 
     #[test]
     fn fallback_file_and_dir_are_owner_only() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let folder = dir.path().join("credentials");
         create_dir(&folder).unwrap();
         let file = folder.join("key");
@@ -70,7 +70,7 @@ mod tests {
 
     #[test]
     fn a_group_readable_file_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let file = dir.path().join("key");
         crate::fs_private::write_private_atomic(&file, b"fixture-key").unwrap();
         fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn a_symlinked_credential_file_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let target = dir.path().join("target");
         let file = dir.path().join("key");
         crate::fs_private::write_private_atomic(&target, b"fixture-key").unwrap();

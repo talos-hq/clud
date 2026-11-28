@@ -1,8 +1,8 @@
 //! Where foreign checkouts live, and who may claim the directory (#986).
 
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs;
-use tempfile::TempDir;
 
 fn repo(base: &Path, name: &str) -> PathBuf {
     let path = base.join(name);
@@ -12,7 +12,7 @@ fn repo(base: &Path, name: &str) -> PathBuf {
 
 #[test]
 fn checkouts_belong_beside_the_repo_not_inside_it() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
 
     let sibling = sibling_for(&root).expect("derivable");
@@ -40,7 +40,7 @@ fn a_repo_with_no_parent_has_no_sibling_to_derive() {
 #[test]
 fn the_legacy_location_is_still_known() {
     // Existing checkouts have to keep working while users move them.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
 
     assert_eq!(legacy_for(&root), root.join(".extern-repos"));
@@ -71,7 +71,7 @@ fn a_rootless_repo_still_reports_the_legacy_location() {
 
 #[test]
 fn containment_matches_either_known_location() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let roots = known_roots(&root);
 
@@ -91,7 +91,7 @@ fn containment_matches_either_known_location() {
 fn a_sibling_whose_name_merely_starts_the_same_is_not_contained() {
     // `myrepo-extern` and `myrepo-external` are different directories; a
     // prefix comparison without the separator would conflate them.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let roots = known_roots(&root);
 
@@ -107,7 +107,7 @@ fn a_sibling_whose_name_merely_starts_the_same_is_not_contained() {
 
 #[test]
 fn an_absent_or_empty_directory_is_free_to_claim() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let sibling = sibling_for(&root).unwrap();
 
@@ -122,7 +122,7 @@ fn an_absent_or_empty_directory_is_free_to_claim() {
 fn a_directory_holding_someone_elses_work_is_refused() {
     // The name is derived from the repo's own; guessing wrong must not
     // scatter clones through an unrelated project.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let sibling = sibling_for(&root).unwrap();
     fs::create_dir_all(&sibling).unwrap();
@@ -136,7 +136,7 @@ fn a_directory_holding_someone_elses_work_is_refused() {
 
 #[test]
 fn a_directory_this_repo_already_claimed_is_ours() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let sibling = sibling_for(&root).unwrap();
 
@@ -148,7 +148,7 @@ fn a_directory_this_repo_already_claimed_is_ours() {
 
 #[test]
 fn a_directory_another_repo_claimed_is_refused_and_names_the_owner() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let other = repo(tmp.path(), "otherrepo");
     let sibling = sibling_for(&root).unwrap();
@@ -166,7 +166,7 @@ fn a_directory_another_repo_claimed_is_refused_and_names_the_owner() {
 
 #[test]
 fn claiming_is_idempotent() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let sibling = sibling_for(&root).unwrap();
 
@@ -183,7 +183,7 @@ fn claiming_is_idempotent() {
 fn a_claim_marker_clud_cannot_read_is_treated_as_ours() {
     // Refusing on a corrupt marker would strand the repo with nowhere to put
     // checkouts, and the directory is one clud created either way.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let sibling = sibling_for(&root).unwrap();
     fs::create_dir_all(&sibling).unwrap();

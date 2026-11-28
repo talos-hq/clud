@@ -253,14 +253,14 @@ mod tests {
     use serde_json::json;
 
     struct Fixture {
-        root: tempfile::TempDir,
+        root: kernal_api::platform::fs::TemporaryDirectory,
         payload: HookPayloadView,
         facts: Value,
     }
 
     impl Fixture {
         fn new() -> Self {
-            let root = tempfile::tempdir().unwrap();
+            let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             let transcript = root.path().join("session.jsonl");
             std::fs::write(&transcript, "{}").unwrap();
             let payload = HookPayloadView {

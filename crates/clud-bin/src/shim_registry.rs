@@ -434,8 +434,8 @@ pub fn executable(path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::ffi::OsString;
-    use tempfile::TempDir;
 
     fn write_exe(path: &Path, bytes: &[u8]) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -516,7 +516,7 @@ mod tests {
     /// used, so clud's own spawns cannot recurse into the shim.
     #[test]
     fn real_program_uses_only_a_target_outside_the_alias_dirs() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let home = temp.path().join("home");
         let session = home.join(SESSION_SUBDIR);
         let alias = session.join(file_name("git"));
@@ -603,7 +603,7 @@ mod tests {
 
     #[test]
     fn next_on_path_skips_the_shim_dir_and_copies_of_the_shim() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let shim = temp.path().join("shim").join(file_name("gh"));
         let copy = temp.path().join("copy").join(file_name("gh"));
         let real = temp.path().join("real").join(file_name("gh"));
@@ -631,7 +631,7 @@ mod tests {
 
     #[test]
     fn strict_mode_requires_the_shim_dir_on_path() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let shim = temp.path().join("shim").join(file_name("rm"));
         let real = temp.path().join("real").join(file_name("rm"));
         write_exe(&shim, b"shim");
@@ -649,7 +649,7 @@ mod tests {
 
     #[test]
     fn a_target_inside_a_shim_dir_or_equal_to_the_shim_is_invalid() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let home = temp.path().join("home");
         let shim = home.join(SESSION_SUBDIR).join(file_name("gh"));
         let python_alias = home.join(INTERPRETER_SUBDIR).join(file_name("gh"));

@@ -1,5 +1,5 @@
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 const NOW: u64 = 10_000_000;
 
@@ -19,7 +19,7 @@ fn old_build(root: &Path, name: &str, used: u64) -> PathBuf {
 
 #[test]
 fn two_builds_of_one_version_get_separate_directories() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let one = place(&home, &build(tmp.path(), "a", b"build one")).unwrap();
     let two = place(&home, &build(tmp.path(), "b", b"build two")).unwrap();
@@ -30,7 +30,7 @@ fn two_builds_of_one_version_get_separate_directories() {
 
 #[test]
 fn two_installs_of_the_same_bytes_share_a_directory() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let one = place(&home, &build(tmp.path(), "a", b"same")).unwrap();
     let two = place(&home, &build(tmp.path(), "b", b"same")).unwrap();
@@ -39,7 +39,7 @@ fn two_installs_of_the_same_bytes_share_a_directory() {
 
 #[test]
 fn the_image_survives_the_install_being_replaced() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let clud = build(tmp.path(), "a", b"old");
     let dir = place(&home, &clud).unwrap();
@@ -55,7 +55,7 @@ fn the_image_survives_the_install_being_replaced() {
 
 #[test]
 fn a_symlinked_alias_stays_pinned_to_its_build() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let clud = build(tmp.path(), "a", b"old");
     let dir = place(&home, &clud).unwrap();
@@ -72,7 +72,7 @@ fn a_symlinked_alias_stays_pinned_to_its_build() {
 
 #[test]
 fn a_copied_alias_is_a_complete_executable() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let dir = place(&home, &build(tmp.path(), "a", b"body")).unwrap();
     let names = vec!["rm".to_string()];
@@ -82,7 +82,7 @@ fn a_copied_alias_is_a_complete_executable() {
 
 #[test]
 fn a_rebuilt_binary_is_hashed_again_despite_the_memo() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let clud = build(tmp.path(), "a", b"first");
     let first = locate(&home, &clud).unwrap();
@@ -94,7 +94,7 @@ fn a_rebuilt_binary_is_hashed_again_despite_the_memo() {
 
 #[test]
 fn sweep_removes_only_a_stale_unleased_build() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let current = old_build(root, "v1-current", 0);
     let stale = old_build(root, "v1-stale", 0);
@@ -120,7 +120,7 @@ fn sweep_removes_only_a_stale_unleased_build() {
 
 #[test]
 fn a_dead_process_releases_its_lease() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let dir = old_build(root, "v1-old", 0);
     let lease = open_lock_file(&dir.join(LEASE_FILE)).unwrap();
@@ -132,7 +132,7 @@ fn a_dead_process_releases_its_lease() {
 
 #[test]
 fn a_build_with_no_ledger_is_stamped_not_removed() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let dir = root.join("v1-unstamped");
     fs::create_dir_all(&dir).unwrap();
@@ -143,7 +143,7 @@ fn a_build_with_no_ledger_is_stamped_not_removed() {
 
 #[test]
 fn sweep_collects_an_interrupted_delete_and_ignores_other_entries() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let interrupted = root.join(".gc-v1-old-7");
     fs::create_dir_all(&interrupted).unwrap();
@@ -156,7 +156,7 @@ fn sweep_collects_an_interrupted_delete_and_ignores_other_entries() {
 
 #[test]
 fn the_sweep_runs_at_most_once_per_interval() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     assert!(sweep_if_due(root, Path::new("/none"), NOW)
         .unwrap()
@@ -173,7 +173,7 @@ fn the_sweep_runs_at_most_once_per_interval() {
 
 #[test]
 fn every_builds_alias_dirs_are_listed_and_recognized() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path();
     let root = home.join(ROOT_SUBDIR);
     fs::create_dir_all(&root).unwrap();
@@ -193,7 +193,7 @@ fn every_builds_alias_dirs_are_listed_and_recognized() {
 
 #[test]
 fn session_aliases_of_two_builds_never_clobber_each_other() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let one = build(tmp.path(), "a", b"build one");
     let two = build(tmp.path(), "b", b"build two");
@@ -211,7 +211,7 @@ fn session_aliases_of_two_builds_never_clobber_each_other() {
 
 #[test]
 fn interpreter_aliases_live_in_the_build_directory() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let clud = build(tmp.path(), "a", b"body");
     crate::shim_install::extract_shims_at(&home, &clud).unwrap();
@@ -223,7 +223,7 @@ fn interpreter_aliases_live_in_the_build_directory() {
 
 #[test]
 fn another_builds_alias_is_never_the_real_program() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let old = build(tmp.path(), "old", b"old build");
     let new = build(tmp.path(), "new", b"new build");
@@ -238,7 +238,7 @@ fn another_builds_alias_is_never_the_real_program() {
 
 #[test]
 fn another_builds_alias_is_not_a_real_program_for_clud_spawns() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let old = build(tmp.path(), "old", b"old build");
     let old_dir = crate::shim_install::install_rm_at(&home, &old).unwrap();
@@ -254,7 +254,7 @@ fn another_builds_alias_is_not_a_real_program_for_clud_spawns() {
 
 #[test]
 fn a_session_mismatch_is_reported() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let active = tmp.path().join("v2-new/rm-shim");
     let session = tmp.path().join("v1-old/rm-shim");
     fs::create_dir_all(&active).unwrap();
@@ -266,7 +266,7 @@ fn a_session_mismatch_is_reported() {
 
 #[test]
 fn a_daemon_runs_from_the_pinned_image_and_survives_the_upgrade() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let clud = build(tmp.path(), "a", b"old");
     let image = pinned_executable(&home, &clud).unwrap();
@@ -281,7 +281,7 @@ fn a_daemon_runs_from_the_pinned_image_and_survives_the_upgrade() {
 
 #[test]
 fn a_test_harness_is_never_pinned() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let exe = tmp.path().join("clud-3f9a1c");
     fs::write(&exe, b"x").unwrap();

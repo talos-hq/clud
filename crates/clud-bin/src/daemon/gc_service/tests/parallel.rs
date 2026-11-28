@@ -4,7 +4,7 @@ use super::*;
 /// leaves it in place so the next purge tries again.
 #[test]
 fn apply_purge_completion_drops_row_on_success_keeps_on_failure() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("apply-completion.redb");
     let registry = Registry::open_at(&db_path).unwrap();
     let ok_path = dir.path().join("ok");
@@ -74,7 +74,7 @@ fn apply_purge_completion_drops_row_on_success_keeps_on_failure() {
 /// blew past the 30s `WORKER_REPLY_TIMEOUT`.
 #[test]
 fn bulk_purge_keeps_serving_list_while_pool_grinds_through() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("parallel-serve.redb");
     let (tx, _g) = spawn_test_worker(&db_path);
 
@@ -149,7 +149,7 @@ fn bulk_purge_keeps_serving_list_while_pool_grinds_through() {
 /// Lets the dashboard refresh-then-click race resolve without a 500.
 #[test]
 fn delete_by_id_with_missing_id_is_idempotent() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("delete-missing.redb");
     let (tx, _g) = spawn_test_worker(&db_path);
 

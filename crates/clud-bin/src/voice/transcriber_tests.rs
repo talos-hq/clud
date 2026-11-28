@@ -135,7 +135,7 @@ fn fake(dir: &Path, body: &str) -> PathBuf {
 }
 
 fn run_fake(body: &str, deadline: Duration) -> Result<String, String> {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let script = fake(dir.path(), body);
     transcribe_with(&script, None, &[0.25; 160], deadline)
 }
@@ -147,7 +147,7 @@ fn a_fake_transcriber_succeeds_and_receives_a_wav_that_is_then_removed() {
     if crate::platform::host::WINDOWS {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let seen = dir.path().join("seen");
     let body = format!(
         "echo \"$2\" > '{seen}'\nhead -c 4 \"$2\" >> '{seen}'\necho 'VAD: 1s'\necho\necho 'hello there'",

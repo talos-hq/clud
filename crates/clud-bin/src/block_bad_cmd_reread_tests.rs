@@ -1,6 +1,6 @@
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use serde_json::json;
-use tempfile::tempdir;
 
 fn whole(at: u64) -> Span {
     Span {
@@ -164,7 +164,7 @@ fn kill_switch_accepts_zero_and_off_only() {
 
 #[test]
 fn a_request_needs_a_path() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     assert!(request_for("Read", Some(&json!({"offset": 10}))).is_none());
     assert!(request_for("Read", None).is_none());
     let file = dir.path().join("a.py");
@@ -223,8 +223,8 @@ fn big_file(dir: &Path, body: &str) -> PathBuf {
 
 #[test]
 fn check_at_denies_only_the_unchanged_second_read() {
-    let state = tempdir().unwrap();
-    let work = tempdir().unwrap();
+    let state = TemporaryDirectory::new().unwrap();
+    let work = TemporaryDirectory::new().unwrap();
     let path = big_file(work.path(), &"x".repeat(9_000));
     let request =
         request_for("Read", Some(&json!({"file_path": path.to_str().unwrap()}))).expect("req");
@@ -250,8 +250,8 @@ fn check_at_denies_only_the_unchanged_second_read() {
 
 #[test]
 fn check_at_denies_a_covered_window_from_a_previous_call() {
-    let state = tempdir().unwrap();
-    let work = tempdir().unwrap();
+    let state = TemporaryDirectory::new().unwrap();
+    let work = TemporaryDirectory::new().unwrap();
     let path = big_file(work.path(), &"x".repeat(20_000));
     let name = path.to_str().unwrap();
     let wide = request_for("Read", Some(&json!({"file_path": name}))).expect("req");
@@ -277,8 +277,8 @@ fn check_at_denies_a_covered_window_from_a_previous_call() {
 
 #[test]
 fn check_at_allows_after_an_edit_and_for_small_files() {
-    let state = tempdir().unwrap();
-    let work = tempdir().unwrap();
+    let state = TemporaryDirectory::new().unwrap();
+    let work = TemporaryDirectory::new().unwrap();
     let path = big_file(work.path(), &"x".repeat(9_000));
     let request =
         request_for("Read", Some(&json!({"file_path": path.to_str().unwrap()}))).expect("req");
@@ -312,7 +312,7 @@ fn check_at_allows_after_an_edit_and_for_small_files() {
 
 #[test]
 fn a_missing_file_fails_open() {
-    let state = tempdir().unwrap();
+    let state = TemporaryDirectory::new().unwrap();
     let request = request_for(
         "Read",
         Some(&json!({"file_path": "/nonexistent/does-not-exist.py"})),
@@ -330,8 +330,8 @@ fn a_missing_file_fails_open() {
 
 #[test]
 fn a_legacy_exact_key_ledger_still_parses() {
-    let state = tempdir().unwrap();
-    let work = tempdir().unwrap();
+    let state = TemporaryDirectory::new().unwrap();
+    let work = TemporaryDirectory::new().unwrap();
     let path = big_file(work.path(), &"x".repeat(9_000));
     let request =
         request_for("Read", Some(&json!({"file_path": path.to_str().unwrap()}))).expect("req");
@@ -410,8 +410,8 @@ fn ago_text_is_compact() {
 
 #[test]
 fn the_hook_path_denies_through_the_state_dir_env() {
-    let state = tempdir().unwrap();
-    let work = tempdir().unwrap();
+    let state = TemporaryDirectory::new().unwrap();
+    let work = TemporaryDirectory::new().unwrap();
     let path = big_file(work.path(), &"x".repeat(9_000));
     let input = json!({"file_path": path.to_str().unwrap()});
     // SAFETY: single-threaded assertion window; the guard reads the env once

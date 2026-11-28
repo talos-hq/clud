@@ -470,7 +470,7 @@ fn push_or_replace(env: &mut Vec<(String, String)>, key: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn child_env_provides_stable_deletion_session_identity() {
@@ -560,7 +560,7 @@ mod tests {
 
     #[test]
     fn child_env_sets_the_rm_roots_from_the_launch_checkout() {
-        let repo = tempfile::tempdir().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo_path = std::fs::canonicalize(repo.path()).unwrap();
         std::fs::create_dir_all(repo_path.join(".git")).unwrap();
         std::fs::create_dir_all(repo_path.join("src")).unwrap();
@@ -604,7 +604,7 @@ mod tests {
     /// in gates the session only once a `tap` executable is on its PATH.
     #[test]
     fn opted_in_session_is_gated_only_when_tap_is_on_path() {
-        let bin = tempdir().unwrap();
+        let bin = TemporaryDirectory::new().unwrap();
         let path = bin.path().to_str().unwrap().to_string();
         let base = |path: &str| {
             vec![
@@ -636,7 +636,7 @@ mod tests {
 
     #[test]
     fn nounset_opt_out_strips_an_inherited_clud_shim_at_the_policy_boundary() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let inherited = crate::shell::nounset::env_overrides_at(tmp.path(), false, None)
             .into_iter()
             .find(|(key, _)| key == crate::shell::nounset::BASH_ENV_KEY)
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn nounset_opt_out_preserves_a_user_owned_bash_env() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let user_owned = tmp.path().join("user-bash-env.sh");
         std::fs::write(&user_owned, "# user-owned\necho custom\n").unwrap();
         let user_owned = user_owned.display().to_string();

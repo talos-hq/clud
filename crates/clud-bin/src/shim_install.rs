@@ -365,11 +365,11 @@ fn aliases_behind(dir: &Path, source: &Path, source_modified: std::time::SystemT
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs;
-    use tempfile::TempDir;
 
-    fn make_source(content: &[u8]) -> (TempDir, PathBuf) {
-        let tmp = TempDir::new().unwrap();
+    fn make_source(content: &[u8]) -> (TemporaryDirectory, PathBuf) {
+        let tmp = TemporaryDirectory::new().unwrap();
         let src = tmp.path().join("clud");
         fs::write(&src, content).unwrap();
         (tmp, src)
@@ -427,7 +427,7 @@ mod tests {
 
     #[test]
     fn repairs_replaced_bytes_even_with_matching_sentinel() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let (_source_dir, source) = make_source(b"trusted");
         extract_shims_at(home.path(), &source).unwrap();
         let target = interpreter_dir(home.path(), &source).join(&alias_names()[0]);
@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn session_installs_only_active_aliases_and_repairs_replacement() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let (_source_dir, source) = make_source(b"trusted");
         let dir = install_rm_at(home.path(), &source).unwrap();
         for name in rm_alias_names() {
@@ -459,7 +459,7 @@ mod tests {
 
     #[test]
     fn concurrent_session_installs_repair_gh_without_deleting_staging_files() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let (_source_dir, source) = make_source(b"trusted");
         let dir = install_rm_at(home.path(), &source).unwrap();
         let gh = dir.join(shim_registry::file_name("gh"));
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn a_process_that_is_not_clud_links_nothing() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let other = home
             .path()
             .join(shim_registry::file_name("some-test-harness"));
@@ -489,7 +489,7 @@ mod tests {
 
     #[test]
     fn an_upgraded_clud_refreshes_every_session_alias() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let (_source_dir, source) = make_source(b"v1");
         let dir = legacy(home.path(), &source).unwrap();
         replace_file(&source, b"v2 is different");
@@ -546,8 +546,8 @@ mod tests {
     /// dir so that session's `gh`/`rm` run current code (#1743).
     #[test]
     fn an_upgraded_clud_refreshes_a_running_sessions_aliases() {
-        let home = TempDir::new().unwrap();
-        let bin = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
+        let bin = TemporaryDirectory::new().unwrap();
         let clud = bin.path().join(shim_registry::file_name("clud"));
         fs::write(&clud, b"v1").unwrap();
         let dir = legacy(home.path(), &clud).unwrap();
@@ -565,8 +565,8 @@ mod tests {
 
     #[test]
     fn a_running_session_refresh_never_downgrades_or_strays() {
-        let home = TempDir::new().unwrap();
-        let bin = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
+        let bin = TemporaryDirectory::new().unwrap();
         let clud = bin.path().join(shim_registry::file_name("clud"));
         let newer = bin
             .path()
@@ -621,7 +621,7 @@ mod tests {
         );
         assert!(links_to(&clud, &alias));
 
-        let empty = TempDir::new().unwrap();
+        let empty = TemporaryDirectory::new().unwrap();
         let vars = running_session(empty.path(), &clud);
         assert!(!refresh(empty.path(), &clud, &vars));
         assert!(
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn extract_creates_aliases() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let (_src_dir, src) = make_source(b"#!fake shim binary\n");
         let count = extract_shims_at(home.path(), &src).unwrap();
         assert_eq!(count, alias_names().len());
@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn extract_is_noop_when_hash_matches() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let (_src_dir, src) = make_source(b"fake shim v1");
         // First pass: writes all aliases.
         assert_eq!(
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn extract_refreshes_when_source_changes() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let (src_dir, src) = make_source(b"v1");
         extract_shims_at(home.path(), &src).unwrap();
         let old_alias = interpreter_dir(home.path(), &src).join(&alias_names()[0]);
@@ -695,7 +695,7 @@ mod tests {
 
     #[test]
     fn extract_no_op_when_source_missing() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let nonexistent = home.path().join("not-there");
         let count = extract_shims_at(home.path(), &nonexistent).unwrap();
         assert_eq!(count, 0);
@@ -715,7 +715,7 @@ mod tests {
 
     #[test]
     fn prepare_session_shims_extracts_aliases_and_prepends_path() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let bin = home.path().join("bin");
         fs::create_dir_all(&bin).unwrap();
         let current_exe = bin.join(shim_registry::file_name("clud"));

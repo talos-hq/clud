@@ -136,8 +136,11 @@ mod tests {
 
     /// A clone whose branch `feat` was pushed, then rebased onto a newer main:
     /// its tracking ref is stale.
-    fn rebased() -> (tempfile::TempDir, std::path::PathBuf) {
-        let tmp = tempfile::tempdir().unwrap();
+    fn rebased() -> (
+        kernal_api::platform::fs::TemporaryDirectory,
+        std::path::PathBuf,
+    ) {
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let base = crate::path_norm::canonicalize_plain(tmp.path()).unwrap();
         let origin = base.join("origin.git");
         std::fs::create_dir_all(&origin).unwrap();
@@ -215,7 +218,7 @@ mod tests {
 
     #[test]
     fn no_upstream_means_nothing_to_judge() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let dir = crate::path_norm::canonicalize_plain(tmp.path()).unwrap();
         git(&dir, &["init", "-q", "-b", "main"]);
         commit(&dir, "a.txt");

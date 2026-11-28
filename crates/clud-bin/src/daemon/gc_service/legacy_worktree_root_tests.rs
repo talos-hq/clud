@@ -3,8 +3,8 @@
 
 use super::super::extern_repo::probe_cmd;
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::time::Duration;
-use tempfile::tempdir;
 
 fn run_git(cwd: &Path, args: &[&str]) -> String {
     match probe_cmd("git", cwd, args, Duration::from_secs(30)) {
@@ -42,7 +42,7 @@ fn new_root(home: &Path) -> PathBuf {
 
 #[test]
 fn an_idle_worktree_moves_and_git_follows_it() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let repo = repo(tmp.path());
     let old = legacy(&home).join("repo-wt-a");
@@ -74,7 +74,7 @@ fn an_idle_worktree_moves_and_git_follows_it() {
 
 #[test]
 fn a_worktree_a_live_process_works_in_stays_until_it_is_idle() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     let busy = legacy(&home).join("repo-wt-busy");
     std::fs::create_dir_all(busy.join("src")).unwrap();
@@ -90,7 +90,7 @@ fn a_worktree_a_live_process_works_in_stays_until_it_is_idle() {
 
 #[test]
 fn other_entries_are_renamed_and_a_taken_name_gets_a_suffix() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path().join("home");
     std::fs::create_dir_all(legacy(&home).join("repo-wt-x")).unwrap();
     std::fs::write(legacy(&home).join("repo-wt-x").join("f"), "1").unwrap();
@@ -107,7 +107,7 @@ fn other_entries_are_renamed_and_a_taken_name_gets_a_suffix() {
 
 #[test]
 fn without_an_old_root_nothing_happens() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     assert!(migrate(tmp.path(), &[]).is_empty());
     assert!(!new_root(tmp.path()).exists(), "nothing is created");
 }

@@ -1,6 +1,6 @@
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs;
-use tempfile::tempdir;
 
 /// Write a `~/.claude.json`-shaped state file.
 fn write_state(path: &Path, body: &str) {
@@ -38,7 +38,7 @@ fn with_local_settings(cwd: &Path) -> PathBuf {
 
 #[test]
 fn accepted_trust_dialog_reads_as_trusted() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let state = tmp.path().join(".claude.json");
@@ -49,7 +49,7 @@ fn accepted_trust_dialog_reads_as_trusted() {
 
 #[test]
 fn project_present_but_not_accepted_reads_as_untrusted() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let state = tmp.path().join(".claude.json");
@@ -65,7 +65,7 @@ fn project_present_but_not_accepted_reads_as_untrusted() {
 fn project_absent_from_state_reads_as_untrusted() {
     // This is the reported case: grind ran in a directory the harness had
     // never been opened in interactively, so there was no entry at all.
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(&cwd).unwrap();
     let state = tmp.path().join(".claude.json");
@@ -82,7 +82,7 @@ fn project_absent_from_state_reads_as_untrusted() {
 
 #[test]
 fn state_file_without_projects_map_reads_as_untrusted() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let state = tmp.path().join(".claude.json");
     write_state(&state, r#"{"numStartups":3}"#);
 
@@ -97,7 +97,7 @@ fn missing_or_corrupt_state_file_reads_as_unknown() {
     // Never warn on a guess: a fresh machine, a relocated config root, and a
     // half-written file all have to stay silent rather than tell a user
     // their trusted workspace is untrusted.
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let missing = tmp.path().join("nope.json");
     assert_eq!(
         read_workspace_trust(&missing, tmp.path()),
@@ -117,7 +117,7 @@ fn non_canonical_cwd_still_matches_its_project_entry() {
     // The harness stores the path it resolved; clud may be handed a
     // `.`-laden or symlinked spelling of the same directory. A string
     // compare would miss and warn a user whose workspace is trusted.
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let cwd = tmp.path().join("repo");
     fs::create_dir_all(cwd.join("sub")).unwrap();
     let canonical = fs::canonicalize(&cwd).unwrap();
@@ -133,7 +133,7 @@ fn non_canonical_cwd_still_matches_its_project_entry() {
 
 #[test]
 fn settings_probe_finds_local_then_tracked_then_nothing() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     // No .claude dir at all: nothing for the trust decision to suppress.
     assert_eq!(project_settings_file(tmp.path()), None);
 
@@ -152,7 +152,7 @@ fn settings_probe_finds_local_then_tracked_then_nothing() {
 
 #[test]
 fn notice_names_the_file_and_the_fix() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let settings = with_local_settings(tmp.path());
 
     let notice = untrusted_workspace_notice(&settings, 200);
@@ -170,7 +170,7 @@ fn notice_never_tells_the_user_to_hand_edit_trust() {
     // Trust is a security boundary. The notice points at the interactive
     // prompt; it must not coach anyone into flipping the flag by hand, and
     // clud must never write it for them.
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let settings = with_local_settings(tmp.path());
     let notice = untrusted_workspace_notice(&settings, 5);
 

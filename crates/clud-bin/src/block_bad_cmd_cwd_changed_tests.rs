@@ -1,7 +1,7 @@
 //! Tests for the `CwdChanged` backstop handler (#967 Phase 5, #966 D12).
 
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 /// Serializes the tests that mutate process-global env (`HOME`,
 /// `CLAUDE_PROJECT_DIR`).
@@ -52,8 +52,8 @@ impl Drop for EnvGuard {
 
 /// A tempdir holding a bare fixture repo (git marker + `src/` subdir) plus
 /// an isolated `home/` for the hook log and the frontend-settings scan.
-fn fixture() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempdir().expect("tempdir");
+fn fixture() -> (kernal_api::platform::fs::TemporaryDirectory, PathBuf) {
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let repo = dir.path().join("repo");
     for sub in [".clud", ".git", "src"] {
         std::fs::create_dir_all(repo.join(sub)).unwrap();

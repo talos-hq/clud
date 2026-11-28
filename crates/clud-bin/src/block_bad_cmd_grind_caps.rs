@@ -1994,7 +1994,7 @@ mod tests {
 
     #[test]
     fn rm_profile_deletion_roots_follow_the_role() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let wt = tmp.path().join("repo-wt-1");
         std::fs::create_dir_all(wt.join(".git")).unwrap();
         std::fs::create_dir_all(wt.join("src/cache")).unwrap();
@@ -2995,7 +2995,7 @@ mod tests {
     #[test]
     fn each_session_resolves_its_own_runs_facts() {
         use crate::grind_facts::{facts_path_in, lookup_in, Lookup};
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let (a, b) = ("aaaaaaaa-0000", "bbbbbbbb-0000");
         std::fs::write(
             facts_path_in(dir.path(), a).unwrap(),

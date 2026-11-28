@@ -246,7 +246,7 @@ mod tests {
 
     #[test]
     fn groups_and_deduplicates_worktrees_and_measures_nested_files() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let one = temp.path().join("one");
         let two = temp.path().join("two");
         fs::create_dir_all(one.join("target/nested")).unwrap();
@@ -266,7 +266,7 @@ mod tests {
 
     #[test]
     fn missing_and_budget_exhaustion_never_claim_zero_size() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert_eq!(
             measure_tree(&temp.path().join("absent"), &mut 10),
             (None, "missing")
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn cache_read_does_not_remeasure_and_marks_stale_and_future_data() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = temp.path().join("snapshot");
         fs::write(&path, br#"{"checked_unix":100,"rows":[{"repo_root":"repo","worktree":"gone","target":"gone/target","bytes":42,"status":"complete"}]}"#).unwrap();
         let fresh = report(load(&path).unwrap(), 101);
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn background_snapshot_persistence_uses_an_explicit_isolated_destination() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let checkout = temp.path().join("checkout");
         fs::create_dir_all(checkout.join("target")).unwrap();
         fs::write(checkout.join("target/output"), b"12345").unwrap();

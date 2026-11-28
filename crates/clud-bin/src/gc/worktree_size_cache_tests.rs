@@ -3,7 +3,7 @@
 //! real `~/.clud`.
 
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 const GIB: u64 = 1 << 30;
 const NOW: i64 = 1_800_000_000;
@@ -104,7 +104,7 @@ fn banner_line_names_size_threshold_path_and_setting() {
 
 #[test]
 fn cache_round_trips_and_lives_beside_tmp_wt() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = crate::gc::worktree_root::worktree_root_for(home.path());
     let path = cache_path_for(&root);
     assert_eq!(path.parent(), root.parent());
@@ -117,7 +117,7 @@ fn cache_round_trips_and_lives_beside_tmp_wt() {
 
 #[test]
 fn missing_or_corrupt_cache_reads_as_none() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let path = dir.path().join("worktrees-size.json");
     assert_eq!(read_cache(&path), None);
     std::fs::write(&path, b"{not json").unwrap();
@@ -128,7 +128,7 @@ fn missing_or_corrupt_cache_reads_as_none() {
 
 #[test]
 fn launch_warning_reads_cache_only_and_is_failure_silent() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = crate::gc::worktree_root::worktree_root_for(home.path());
     // No cache, no settings, no worktrees dir: nothing, no panic.
     assert_eq!(launch_warning_at(home.path(), NOW), None);
@@ -147,7 +147,7 @@ fn launch_warning_reads_cache_only_and_is_failure_silent() {
 
 #[test]
 fn refresh_cache_records_a_bounded_check() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = crate::gc::worktree_root::worktree_root_for(home.path());
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("blob"), vec![0u8; 200]).unwrap();
@@ -162,7 +162,7 @@ fn refresh_cache_records_a_bounded_check() {
 
 #[test]
 fn tmp_cache_lives_beside_tmp_not_inside_it() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let tmp = crate::gc::session_tmp::session_tmp_dir_for(home.path());
     let path = tmp_cache_path_for(home.path());
     assert_eq!(path.parent(), tmp.parent(), "sibling of ~/.clud/tmp");
@@ -199,7 +199,7 @@ fn tmp_list_warning_is_quiet_under_and_disabled() {
 
 #[test]
 fn tmp_refresh_and_launch_warning_round_trip_and_never_delete() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     // No cache, no settings, no tmp dir: nothing, no panic.
     assert_eq!(tmp_launch_warning_at(home.path(), NOW), None);
     let tmp = crate::gc::session_tmp::session_tmp_dir_for(home.path());
@@ -239,7 +239,7 @@ fn tmp_refresh_and_launch_warning_round_trip_and_never_delete() {
 
 #[test]
 fn clud_cache_size_file_lives_beside_cache_not_inside_it() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = clud_cache_dir_for(home.path());
     assert_eq!(root, home.path().join(".clud").join("cache"));
     let path = clud_cache_size_path_for(home.path());
@@ -269,7 +269,7 @@ fn clud_cache_banner_and_list_lines_name_cache_setting() {
 
 #[test]
 fn clud_cache_refresh_and_launch_warning_round_trip_and_never_delete() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(clud_cache_launch_warning_at(home.path(), NOW), None);
     let root = clud_cache_dir_for(home.path());
     std::fs::create_dir_all(root.join("uv/archive-v0/x")).unwrap();
@@ -303,7 +303,7 @@ fn clud_cache_refresh_and_launch_warning_round_trip_and_never_delete() {
 /// banner; dropping back under the limit clears the list.
 #[test]
 fn over_limit_refresh_names_the_largest_worktrees() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = crate::gc::worktree_root::worktree_root_for(home.path());
     std::fs::create_dir_all(root.join("repo-wt-big")).unwrap();
     std::fs::write(root.join("repo-wt-big").join("blob"), vec![0u8; 4096]).unwrap();
@@ -318,7 +318,7 @@ fn over_limit_refresh_names_the_largest_worktrees() {
 
 #[test]
 fn over_is_flagged_as_a_lower_bound_and_old_files_still_read() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = dir.path().join("worktrees-size.json");
     for (check, lower) in [
         (SizeCheck::Over(60 * GIB), true),

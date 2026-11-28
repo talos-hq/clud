@@ -442,7 +442,7 @@ fn disk_watchdog_decision_warns_and_purges_only_below_thresholds() {
 
 #[test]
 fn round_trip_insert_then_list() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("test.redb");
     let (tx, _g) = spawn_test_worker(&db_path);
 
@@ -472,7 +472,7 @@ fn round_trip_insert_then_list() {
 
 #[test]
 fn purge_with_no_duration_removes_all_non_live() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("purge-all.redb");
     let (tx, _g) = spawn_test_worker(&db_path);
 
@@ -519,7 +519,7 @@ fn purge_with_no_duration_removes_all_non_live() {
 
 #[test]
 fn purge_dry_run_does_not_modify_db() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("purge-dry.redb");
     let (tx, _g) = spawn_test_worker(&db_path);
 
@@ -555,7 +555,7 @@ fn purge_dry_run_does_not_modify_db() {
 
 #[test]
 fn purge_skips_entry_equal_to_live_session_cwd() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("live-cwd-direct.redb");
     let path_a = dir.path().join("A");
     let path_b = dir.path().join("B");
@@ -606,7 +606,7 @@ fn purge_skips_entry_equal_to_live_session_cwd() {
 
 #[test]
 fn purge_skips_entry_that_is_ancestor_of_live_session_cwd() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("live-cwd-ancestor.redb");
     let path_a = dir.path().join("A");
     let live_subdir = path_a.join("sub");
@@ -658,7 +658,7 @@ fn purge_skips_entry_that_is_ancestor_of_live_session_cwd() {
 
 #[test]
 fn periodic_tick_spares_unverified_source_when_free_space_low() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("periodic-purge.redb");
     let registry = Registry::open_at(&db_path).unwrap();
     let old_path = dir.path().join("old-worktree");
@@ -745,7 +745,7 @@ fn periodic_tick_spares_unverified_source_when_free_space_low() {
 
 #[test]
 fn periodic_tick_keeps_old_worktree_entry_when_free_space_is_healthy() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("periodic-healthy.redb");
     let registry = Registry::open_at(&db_path).unwrap();
     let old_path = dir.path().join("old-worktree");
@@ -805,7 +805,7 @@ fn periodic_tick_keeps_old_worktree_entry_when_free_space_is_healthy() {
 
 #[test]
 fn trash_reaper_deletes_successful_entry_and_row() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("trash-reap.redb");
     let registry = Registry::open_at(&db_path).unwrap();
     let trash_dir = dir.path().join("trash-item");
@@ -830,7 +830,7 @@ fn trash_reaper_deletes_successful_entry_and_row() {
 
 #[test]
 fn rm_tool_trash_is_kept_for_its_window_then_reaped() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let registry = Registry::open_at(&dir.path().join("rm-trash.redb")).unwrap();
     let entry = dir.path().join("20260101T000000Z-abcdef-build");
     std::fs::create_dir_all(&entry).unwrap();
@@ -865,7 +865,7 @@ fn rm_tool_trash_is_kept_for_its_window_then_reaped() {
 
 #[test]
 fn unregistered_rm_tool_trash_is_swept_only_once_expired() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let entry = dir.path().join("20260101T000000Z-abcdef-notes.txt");
     std::fs::create_dir_all(&entry).unwrap();
     std::fs::write(entry.join(crate::rm_tool::TRASH_MANIFEST), b"{}").unwrap();
@@ -884,7 +884,7 @@ fn unregistered_rm_tool_trash_is_swept_only_once_expired() {
 
 #[test]
 fn trash_reaper_keeps_row_when_delete_fails() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("trash-reap-fail.redb");
     let registry = Registry::open_at(&db_path).unwrap();
     let not_a_dir = dir.path().join("still-locked.dll");
@@ -910,7 +910,7 @@ fn trash_reaper_keeps_row_when_delete_fails() {
 #[test]
 fn periodic_tick_removes_stale_extern_repo_entry() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("extern-purge.redb");
     let repo = dir.path().join("extern");
     fs::create_dir_all(&repo).unwrap();
@@ -999,7 +999,7 @@ fn periodic_tick_removes_stale_extern_repo_entry() {
 #[test]
 fn periodic_tick_keeps_fresh_extern_repo_entry() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("extern-keep.redb");
     let repo = dir.path().join("extern");
     fs::create_dir_all(&repo).unwrap();
@@ -1055,7 +1055,7 @@ fn periodic_tick_keeps_fresh_extern_repo_entry() {
 #[test]
 fn list_surfaces_the_ticks_reason_from_cache_and_never_probes_itself() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("list-state.redb");
     let repo = dir.path().join("extern-pinned");
     // A `.git` that is not a usable repository: the anchor gate passes, then
@@ -1139,7 +1139,7 @@ fn list_surfaces_the_ticks_reason_from_cache_and_never_probes_itself() {
 #[test]
 fn worker_side_ops_never_compute_an_extern_verdict() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("no-inline-probe.redb");
     let repo = dir.path().join("extern");
     fs::create_dir_all(&repo).unwrap();
@@ -1207,7 +1207,7 @@ fn a_stale_reclaimable_verdict_does_not_authorize_a_delete() {
     // ENV_GC_EXTERN_REPO_MAX_AGE_SECS is process-global and other tests set it
     // (to 0); without the lock a parallel test makes the pool skip the veto.
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo = dir.path().join("extern");
     fs::create_dir_all(&repo).unwrap();
 
@@ -1250,7 +1250,7 @@ fn the_purge_pool_refuses_a_delete_the_recheck_vetoes() {
     // ENV_GC_EXTERN_REPO_MAX_AGE_SECS is process-global and other tests set it
     // (to 0); without the lock a parallel test makes the pool skip the veto.
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo = dir.path().join("extern-live-again");
     fs::create_dir_all(&repo).unwrap();
     let path = repo.to_string_lossy().to_string();
@@ -1317,7 +1317,7 @@ fn the_purge_pool_refuses_a_delete_the_recheck_vetoes() {
 /// Other kinds have no probe verdict and are unaffected by the re-check.
 #[test]
 fn tracked_worktree_reverification_checks_source_references() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let entry = TrackedEntry {
         id: 1,
         kind: WORKTREE_KIND.to_string(),
@@ -1341,7 +1341,7 @@ fn tracked_worktree_reverification_checks_source_references() {
 
 #[test]
 fn worktree_preview_requires_a_current_source_verdict() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let entry = TrackedEntry {
         id: 1,
         kind: WORKTREE_KIND.to_string(),
@@ -1388,7 +1388,7 @@ fn a_second_probe_does_not_stack_on_an_in_flight_one() {
 #[test]
 fn list_marks_a_row_whose_path_is_gone_as_dangling() {
     let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("dangling.redb");
 
     let registry = Registry::open_at(&db_path).expect("open registry");
@@ -1442,7 +1442,7 @@ fn list_rows(
 
 #[test]
 fn list_filter_by_kind() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("filter.redb");
     let (tx, _g) = spawn_test_worker(&db_path);
 
@@ -1495,7 +1495,7 @@ mod repo_worktree_reclaim_tick;
 #[test]
 fn repo_worktree_rows_surface_in_gc_list_shape() {
     use super::repo_worktree::{RepoWorktreeState, RepoWorktreeVerdict};
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let landed = tmp.path().join("landed");
     let busy = tmp.path().join("busy");
     let tracked = tmp.path().join("tracked");
@@ -1555,7 +1555,7 @@ fn repo_worktree_rows_surface_in_gc_list_shape() {
 /// the size cap, or removed by hand) is done, not a failure retried forever.
 #[test]
 fn trash_reaper_drops_row_whose_path_is_gone() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let registry = Registry::open_at(&dir.path().join("trash-gone.redb")).unwrap();
     let gone = dir.path().join("20260101T000000Z-abcdef");
     registry
@@ -1583,7 +1583,7 @@ fn trash_reaper_removes_read_only_trees() {
     if !crate::platform::host::UNIX {
         return;
     }
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let registry = Registry::open_at(&dir.path().join("trash-ro.redb")).unwrap();
     let entry = dir.path().join("20260101T000000Z-123456");
     let sealed = entry.join("target").join("debug");
@@ -1612,7 +1612,7 @@ fn trash_reaper_removes_read_only_trees() {
 
 #[test]
 fn dangling_source_rows_are_forgotten_and_present_ones_kept() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let registry = Registry::open_at(&dir.path().join("dangling.redb")).unwrap();
     let present = dir.path().join("repo-wt-live");
     std::fs::create_dir_all(&present).unwrap();
@@ -1653,7 +1653,7 @@ fn dangling_source_rows_are_forgotten_and_present_ones_kept() {
 /// handed to the worker, and lands in `repo_visits` without a launch count.
 #[test]
 fn shim_hints_join_the_scan_and_register_the_repo() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo = dir.path().join("seen-by-shim");
     fs::create_dir_all(repo.join(".git")).unwrap();
     let repo = fs::canonicalize(repo).unwrap();

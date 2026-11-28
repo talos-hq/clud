@@ -8,10 +8,10 @@
 use std::fs;
 use std::time::Duration;
 
+use kernal_api::platform::fs::TemporaryDirectory;
 use running_process::{
     CommandSpec, NativeProcess, ProcessConfig, ReadStatus, StderrMode, StdinMode,
 };
-use tempfile::TempDir;
 
 use crate::exe;
 
@@ -87,7 +87,7 @@ fn run_clud(args: &[&str], state_dir: &std::path::Path) -> (i32, String) {
 
 #[test]
 fn symbols_verify_all_passes_when_every_report_has_file_line_frames() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().join("state");
     let crashes_dir = state_dir.join("crashes");
     fs::create_dir_all(&crashes_dir).unwrap();
@@ -112,7 +112,7 @@ fn symbols_verify_all_passes_when_every_report_has_file_line_frames() {
 
 #[test]
 fn symbols_verify_all_fails_when_any_report_is_unsymbolicated() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().join("state");
     let crashes_dir = state_dir.join("crashes");
     fs::create_dir_all(&crashes_dir).unwrap();
@@ -144,7 +144,7 @@ fn symbols_verify_all_fails_when_any_report_is_unsymbolicated() {
 /// the alias rather than the behaviour.
 #[test]
 fn symbols_verify_inspects_only_most_recent_report() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().join("state");
     let crashes_dir = state_dir.join("crashes");
     fs::create_dir_all(&crashes_dir).unwrap();
@@ -175,7 +175,7 @@ fn symbols_verify_inspects_only_most_recent_report() {
 
 #[test]
 fn symbols_bare_prints_summary() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().join("state");
     let crashes_dir = state_dir.join("crashes");
     fs::create_dir_all(&crashes_dir).unwrap();
@@ -212,7 +212,7 @@ fn symbols_bare_prints_summary() {
 /// with a reason, not an error: an old report is a normal thing to have.
 #[test]
 fn symbols_install_reports_a_pre_1016_report_rather_than_guessing() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().join("state");
     let crashes_dir = state_dir.join("crashes");
     fs::create_dir_all(&crashes_dir).unwrap();
@@ -237,7 +237,7 @@ fn symbols_install_reports_a_pre_1016_report_rather_than_guessing() {
 /// failure or reach for the network to find out.
 #[test]
 fn symbols_install_with_no_reports_is_not_an_error() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let state_dir = tmp.path().join("state");
     fs::create_dir_all(state_dir.join("crashes")).unwrap();
 

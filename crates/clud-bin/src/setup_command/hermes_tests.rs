@@ -7,8 +7,8 @@ fn fake_key() -> String {
     format!("{}{}", "sk-or-v1-", "0123456789abcdef".repeat(4))
 }
 
-fn home_with(config: &str) -> tempfile::TempDir {
-    let home = tempfile::tempdir().unwrap();
+fn home_with(config: &str) -> kernal_api::platform::fs::TemporaryDirectory {
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(home.path().join(".hermes")).unwrap();
     std::fs::write(home.path().join(".hermes/config.yaml"), config).unwrap();
     home
@@ -50,7 +50,7 @@ fn top_level_provider_and_providers_section_are_read() {
 fn non_openrouter_config_is_not_offered() {
     let home = home_with("model:\n  default: claude\n  provider: anthropic\n");
     assert_eq!(detect(home.path(), None, None), Detection::None);
-    let empty = tempfile::tempdir().unwrap();
+    let empty = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     assert_eq!(detect(empty.path(), None, None), Detection::None);
 }
 
@@ -66,7 +66,7 @@ fn invalid_yaml_is_reported_not_fatal() {
 #[test]
 fn key_comes_from_environment_then_hermes_dotenv_and_hermes_home_wins() {
     let home = home_with("model: x\n");
-    let custom = tempfile::tempdir().unwrap();
+    let custom = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::write(custom.path().join("config.yaml"), REAL_SHAPE).unwrap();
     std::fs::write(
         custom.path().join(".env"),
@@ -87,7 +87,7 @@ fn key_comes_from_environment_then_hermes_dotenv_and_hermes_home_wins() {
 
 #[test]
 fn profile_dirs_are_scanned() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let profile = home.path().join(".hermes/profiles/work");
     std::fs::create_dir_all(&profile).unwrap();
     std::fs::write(profile.join("config.yaml"), REAL_SHAPE).unwrap();
@@ -211,7 +211,7 @@ fn crate_src_dir(manifest_dir: &Path, cwd: &Path) -> Option<std::path::PathBuf> 
 
 #[test]
 fn crate_src_dir_falls_back_to_the_checkout_above_cwd() {
-    let checkout = tempfile::tempdir().unwrap();
+    let checkout = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let src = checkout.path().join("crates").join("clud-bin").join("src");
     std::fs::create_dir_all(&src).unwrap();
     let nested = checkout.path().join("bundle").join("target");
@@ -220,7 +220,7 @@ fn crate_src_dir_falls_back_to_the_checkout_above_cwd() {
     assert_eq!(crate_src_dir(&missing, &nested), Some(src.clone()));
     let host = checkout.path().join("crates").join("clud-bin");
     assert_eq!(crate_src_dir(&host, &missing), Some(src));
-    let empty = tempfile::tempdir().unwrap();
+    let empty = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     assert_eq!(crate_src_dir(&missing, empty.path()), None);
 }
 
@@ -299,7 +299,7 @@ fn only_setup_hermes_module_names_hermes_paths_or_env() {
 
 #[test]
 fn optional_personality_reference_does_not_read_or_inject_the_file() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let instance = home.path().join(".hermes");
     std::fs::create_dir(&instance).unwrap();
     std::fs::write(
@@ -312,7 +312,7 @@ fn optional_personality_reference_does_not_read_or_inject_the_file() {
     assert!(reference.contains("SOUL.md"));
     assert!(reference.contains("Reading it is optional"));
     assert!(!reference.contains("PERSONA_CONTENT_MUST_NOT_BE_INJECTED"));
-    let other = tempfile::tempdir().unwrap();
+    let other = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::write(other.path().join("SOUL.md"), "other personality").unwrap();
     let reference = context_reference(home.path(), Some(other.path().into())).unwrap();
     let path = other.path().join("SOUL.md").canonicalize().unwrap();
@@ -322,7 +322,7 @@ fn optional_personality_reference_does_not_read_or_inject_the_file() {
 
 #[test]
 fn missing_optional_personality_file_is_an_actionable_error() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let error = context_reference(home.path(), None).unwrap_err();
     assert!(error.contains("context.hermes.enabled=false"));
     assert!(error.contains("SOUL.md"));

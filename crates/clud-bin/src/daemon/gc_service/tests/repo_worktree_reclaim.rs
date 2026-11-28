@@ -83,7 +83,7 @@ fn age_checkout(root: &Path, path: &Path) {
 
 #[test]
 fn published_idle_worktree_is_removed_and_recent_edit_is_spared() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let origin = tmp.path().join("origin");
     fs::create_dir(&origin).unwrap();
     run_git(&origin, &["init", "--initial-branch=main"]);
@@ -183,7 +183,7 @@ fn same_path(a: &str, b: &Path) -> bool {
 
 #[test]
 fn janitor_quarantines_verified_partial_removal_and_keeps_unknown_files() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo = tmp.path().join("repo");
     fs::create_dir(&repo).unwrap();
     run_git(&repo, &["init", "--initial-branch=main"]);
@@ -344,7 +344,7 @@ fn state_for(spare_reasons: &SpareReasons, path: &Path) -> (RepoWorktreeState, S
     reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
 )]
 fn a_real_tick_reclaims_only_the_squash_merged_clean_worktree() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let origin = root.join("origin");
     fs::create_dir_all(&origin).unwrap();
@@ -507,7 +507,7 @@ fn a_real_tick_reclaims_only_the_squash_merged_clean_worktree() {
 #[test]
 fn observe_mode_never_dispatches() {
     use crate::daemon::gc_service::repo_worktree::RepoWorktreeVerdict;
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let wt = tmp.path().join("wt");
     fs::create_dir_all(&wt).unwrap();
     let registry = Registry::open_at(&tmp.path().join("gc.redb")).unwrap();
@@ -553,7 +553,7 @@ fn observe_mode_never_dispatches() {
 /// never removed.
 #[test]
 fn a_real_tick_reclaims_tmp_wt_landed_and_abandoned_empty_worktrees() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let origin = root.join("origin");
     fs::create_dir_all(&origin).unwrap();
@@ -667,7 +667,7 @@ fn a_real_tick_reclaims_tmp_wt_landed_and_abandoned_empty_worktrees() {
 /// file between the probe and the delete is spared by the pool's re-check.
 #[test]
 fn a_real_tick_reclaims_only_old_empty_reservations() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let wt_root =
         crate::gc::worktree_root::ensure_worktree_root_at(&tmp.path().join("home")).unwrap();
     let alloc = |suffix: &str| {
@@ -770,7 +770,7 @@ fn spared_and_failed_batches_refresh_before_the_next_reclaim() {
         ReclaimOutcome::Spared("now not empty".to_string()),
         ReclaimOutcome::Failed("sharing violation".to_string()),
     ] {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let registry = Registry::open_at(&tmp.path().join("gc.redb")).unwrap();
         let mut state = SpareReasons::new();
         let path = tmp.path().join("reservation").to_string_lossy().to_string();

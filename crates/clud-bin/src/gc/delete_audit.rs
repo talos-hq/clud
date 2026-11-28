@@ -198,7 +198,7 @@ mod tests {
     }
 
     fn assert_rule_redaction(required: bool) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log = tmp.path().join("audit.jsonl");
         let secret = format!("ghp_{}", "A".repeat(36));
         let target = tmp.path().join(&secret);
@@ -245,7 +245,7 @@ mod tests {
 
     #[test]
     fn record_at_writes_parseable_jsonl_with_site_path_rule() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log = tmp.path().join("gc-audit.jsonl");
         record_at(
             &log,
@@ -268,7 +268,7 @@ mod tests {
 
     #[test]
     fn source_deletion_audit_must_be_durable_or_fail() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log = tmp.path().join("audit.jsonl");
         record_required_at(
             &log,
@@ -292,7 +292,7 @@ mod tests {
 
     #[test]
     fn successive_records_append_one_line_each() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let log = tmp.path().join("nested").join("gc-audit.jsonl");
         record_at(&log, "a", Path::new("/x"), "r1");
         record_at(&log, "b", Path::new("/y"), "r2");
@@ -302,7 +302,7 @@ mod tests {
 
     #[test]
     fn an_unwritable_log_is_silent_not_fatal() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let blocker = tmp.path().join("blocker");
         fs::write(&blocker, b"x").unwrap();
         // Parent is an existing *file* — open can never succeed.
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn audit_log_path_honors_the_daemon_state_dir_env() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let _guard = StateDirGuard::set(tmp.path());
         let resolved = audit_log_path().expect("env override resolves without home");
         assert_eq!(
@@ -327,7 +327,7 @@ mod tests {
     /// the developer's real state dir.
     #[test]
     fn record_in_tests_writes_only_under_this_threads_guard() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         {
             let _guard = StateDirGuard::set(tmp.path());
             let tmp2 = tmp.path().to_path_buf();

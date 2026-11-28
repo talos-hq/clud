@@ -148,7 +148,7 @@ fn kill_stub(pid: u32) {
 #[test]
 fn daemons_started_inside_a_session_survive_the_tool_shell_that_started_them() {
     let tracker = ForegroundJobTracker::install().expect("install foreground Job tracker");
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
 
     for (mode, label, why) in [
         (
@@ -185,7 +185,7 @@ fn daemons_started_inside_a_session_survive_the_tool_shell_that_started_them() {
 #[test]
 fn a_genuinely_leaked_client_is_still_reaped() {
     let tracker = ForegroundJobTracker::install().expect("install foreground Job tracker");
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let pid_path = temp.path().join("leaked.pid");
 
     // `ping` is an ordinary long-running non-shell client: it declares nothing,
@@ -236,7 +236,7 @@ fn a_genuinely_leaked_client_is_still_reaped() {
 fn one_sessions_exit_does_not_reap_another_sessions_daemon() {
     let session_a = ForegroundJobTracker::install().expect("install tracker A");
     let session_b = ForegroundJobTracker::install().expect("install tracker B");
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
 
     let b_pid = run_session_that_starts_a_daemon(&session_b, temp.path(), "spawn-marked", "b");
     // Now churn session A: a full tool-shell lifecycle of its own.

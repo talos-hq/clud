@@ -6,10 +6,10 @@ use crate::command::LaunchPlan;
 use crate::daemon::wire_prost::{
     decode_worker_server_line, encode_worker_client_line, DaemonWireFormat,
 };
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::io::BufRead;
 use std::sync::Arc;
 use std::time::Instant;
-use tempfile::TempDir;
 
 fn cross_route_plan() -> LaunchPlan {
     LaunchPlan {
@@ -57,7 +57,7 @@ fn worker_cross_route_runtime_exposes_bridge_only_to_the_child_environment() {
     assert!(!env.iter().any(|(key, _)| key == "ANTHROPIC_API_KEY"));
 }
 
-fn test_shared(tmp: &TempDir) -> Arc<WorkerShared> {
+fn test_shared(tmp: &TemporaryDirectory) -> Arc<WorkerShared> {
     let snapshot = SessionSnapshot {
         id: "worker-wire-test".to_string(),
         kind: SessionKind::Subprocess,
@@ -160,7 +160,7 @@ fn read_server_message(reader: &mut BufReader<TcpStream>) -> (String, WorkerServ
 
 #[test]
 fn worker_attach_live_path_preserves_json_wire() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let shared = test_shared(&tmp);
     let (mut stream, handle) = spawn_worker_handler(shared);
 
@@ -177,7 +177,7 @@ fn worker_attach_live_path_preserves_json_wire() {
 
 #[test]
 fn worker_attach_live_path_accepts_prost_messages() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let shared = test_shared(&tmp);
     let (mut stream, handle) = spawn_worker_handler(Arc::clone(&shared));
 
@@ -324,7 +324,7 @@ fn an_exit_before_the_first_attach_keeps_the_worker_accepting() {
 
 #[test]
 fn the_first_attach_window_opens_at_exit_and_closes_on_attach_or_grace() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let shared = test_shared(&tmp);
     let grace = std::time::Duration::from_secs(30);
     shared.broadcast_exit(0);
@@ -352,7 +352,7 @@ fn the_first_attach_window_opens_at_exit_and_closes_on_attach_or_grace() {
 /// waited 10 s for it to exit and failed).
 #[test]
 fn a_background_launch_has_no_first_attach_grace() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let shared = test_shared(&tmp);
     shared.broadcast_exit(17);
     assert!(!shared.awaiting_first_client(first_attach_grace(true)));

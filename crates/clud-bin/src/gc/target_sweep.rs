@@ -226,14 +226,14 @@ pub(crate) fn dir_size_bounded(path: &Path, budget: &mut usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs::File;
     use std::io::Write;
     use std::time::Duration as StdDuration;
-    use tempfile::tempdir;
 
     #[test]
     fn recent_build_output_below_target_keeps_it_fresh() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let target = make_crate_with_target(tmp.path(), "c");
         let now = SystemTime::now() + StdDuration::from_secs(4 * 24 * 60 * 60);
         let debug = target.join("debug");
@@ -273,7 +273,7 @@ mod tests {
 
     #[test]
     fn find_discovers_target_next_to_cargo_toml() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let target = make_crate_with_target(tmp.path(), "mycrate");
         let found = find_target_dirs(tmp.path());
         assert_eq!(found, vec![target]);
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn find_ignores_target_without_sibling_cargo_toml() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         // A bare `target/` with no Cargo.toml sibling must not match.
         fs::create_dir_all(tmp.path().join("weird").join("target")).unwrap();
         let found = find_target_dirs(tmp.path());
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn find_does_not_descend_into_skip_dirs() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         // A target buried under node_modules should be skipped entirely.
         let nm = tmp.path().join("node_modules").join("pkg");
         fs::create_dir_all(&nm).unwrap();
@@ -308,7 +308,7 @@ mod tests {
 
     #[test]
     fn sweep_leaves_fresh_targets() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let target = make_crate_with_target(tmp.path(), "c");
         let report = sweep_roots_at(
             &[tmp.path().to_path_buf()],
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn sweep_removes_stale_targets_and_counts_bytes() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let target = make_crate_with_target(tmp.path(), "c");
         let future_now = SystemTime::now() + StdDuration::from_secs(15 * 24 * 60 * 60);
         let report = sweep_roots_at(
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn sweep_dry_run_does_not_delete() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let target = make_crate_with_target(tmp.path(), "c");
         let future_now = SystemTime::now() + StdDuration::from_secs(15 * 24 * 60 * 60);
         let report = sweep_roots_at(
@@ -360,14 +360,14 @@ mod tests {
 
     #[test]
     fn guard_accepts_a_qualified_target_dir() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let target = make_crate_with_target(tmp.path(), "c");
         ensure_removable_build_output(&target).unwrap();
     }
 
     #[test]
     fn guard_refuses_a_directory_not_named_target() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         // A live repo root: named like a repo, has a Cargo.toml. Exactly the
         // shape #893 reported vanishing — the guard must refuse it even if a
         // future discovery-walk regression ever hands it to the sweeper.
@@ -380,7 +380,7 @@ mod tests {
 
     #[test]
     fn guard_refuses_target_without_sibling_cargo_toml() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let bare = tmp.path().join("weird").join("target");
         fs::create_dir_all(&bare).unwrap();
         let err = ensure_removable_build_output(&bare).unwrap_err();
@@ -395,8 +395,8 @@ mod tests {
     fn sweep_writes_pre_deletion_audit_line() {
         use crate::gc::delete_audit::{StateDirGuard, AUDIT_LOG_FILE};
 
-        let tmp = tempdir().unwrap();
-        let state = tempfile::tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
+        let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let _guard = StateDirGuard::set(state.path());
         let target = make_crate_with_target(tmp.path(), "c");
         let future_now = SystemTime::now() + StdDuration::from_secs(15 * 24 * 60 * 60);

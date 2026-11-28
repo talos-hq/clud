@@ -285,7 +285,7 @@ mod tests {
 
     #[test]
     fn a_missing_daemon_is_a_miss_not_an_error() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let client = BrokerClient {
             state_dir: dir.path().to_path_buf(),
             gh: PathBuf::from("/usr/bin/gh"),

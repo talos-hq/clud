@@ -21,7 +21,7 @@ fn fake_key() -> String {
 }
 
 struct Fixture {
-    _root: tempfile::TempDir,
+    _root: kernal_api::platform::fs::TemporaryDirectory,
     home: PathBuf,
     vault: PathBuf,
 }
@@ -40,7 +40,7 @@ fn fixture() -> Fixture {
 
 /// A fixture with no frontend installed.
 fn bare_fixture() -> Fixture {
-    let root = tempfile::tempdir().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = root.path().join("home");
     let vault = root.path().join("vault");
     fs::create_dir_all(&home).unwrap();

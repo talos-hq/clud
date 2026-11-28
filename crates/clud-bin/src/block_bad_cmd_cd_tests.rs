@@ -6,8 +6,8 @@
 
 use super::*;
 use crate::repo_clud_config::BlockCd;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs;
-use tempfile::TempDir;
 
 fn root() -> PathBuf {
     if crate::platform::host::WINDOWS {
@@ -528,7 +528,7 @@ fn write_json(path: &Path, body: &str) {
 fn a_stop_hook_is_scanned_even_though_hook_health_reads_only_pretooluse() {
     // The FastLED wedge came from a Stop hook; a PreToolUse-only scan would
     // have resolved `"auto"` to escape-only and allowed the cd that wedged it.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_json(
         &tmp.path().join(".claude").join("settings.json"),
         r#"{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"uv run python ci/hooks/check-on-stop.py"}]}]}}"#,
@@ -543,7 +543,7 @@ fn a_stop_hook_is_scanned_even_though_hook_health_reads_only_pretooluse() {
 
 #[test]
 fn a_repo_whose_hooks_are_all_path_binaries_resolves_to_relaxed() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_json(
         &tmp.path().join(".claude").join("settings.json"),
         r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"clud-cmd-scan"}]}]}}"#,
@@ -563,7 +563,7 @@ fn a_hooks_json_opt_in_is_dispatcher_managed_even_with_no_raw_hooks() {
     // The Phase 5 core: a fully-migrated repo's scan sees no raw hooks at
     // all, yet `"auto"` must not resolve to off — its declared hooks are
     // dispatcher-managed and cwd-immune, so the repo earns relaxed.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_json(
         &tmp.path().join(".clud").join("hooks.json"),
         r#"{"hooks":{"Stop":[{"command":"uv run python ci/hooks/check-on-stop.py"}]}}"#,
@@ -585,7 +585,7 @@ fn a_hooks_json_opt_in_does_not_mask_a_sensitive_raw_hook() {
     // Migrating is not complete while a cwd-sensitive hook is still declared
     // in a frontend config — the harness fires that copy itself, unrooted, so
     // any drift still breaks it (DD-063).
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_json(
         &tmp.path().join(".clud").join("hooks.json"),
         r#"{"hooks":{"Stop":[{"command":"uv run python ci/hooks/check-on-stop.py"}]}}"#,
@@ -602,7 +602,7 @@ fn a_hooks_json_opt_in_does_not_mask_a_sensitive_raw_hook() {
 
 #[test]
 fn an_empty_hooks_json_is_not_an_opt_in() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_json(&tmp.path().join(".clud").join("hooks.json"), r#"{}"#);
     let scan = scan_hook_cwd_sensitivity(tmp.path(), None);
     assert!(!scan.dispatcher_managed);
@@ -612,7 +612,7 @@ fn an_empty_hooks_json_is_not_an_opt_in() {
 #[test]
 fn a_repo_with_no_hooks_gets_no_policy_at_all() {
     // Exit criterion: repos with no hooks see no behavior change.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let scan = scan_hook_cwd_sensitivity(tmp.path(), None);
     assert_eq!(scan, HookCwdScan::default());
     assert_eq!(resolve_policy(BlockCd::Auto, true, &scan), CdPolicy::Off);
@@ -620,7 +620,7 @@ fn a_repo_with_no_hooks_gets_no_policy_at_all() {
 
 #[test]
 fn codex_hook_configs_are_scanned_too() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_json(
         &tmp.path().join(".codex").join("hooks.json"),
         r#"{"hooks":{"PreToolUse":[{"hooks":[{"command":"uv run python ci/hooks/guard.py"}]}]}}"#,
@@ -631,7 +631,7 @@ fn codex_hook_configs_are_scanned_too() {
 
 #[test]
 fn the_broken_prefix_is_recorded_with_its_source_for_the_hooks_report() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_json(
         &tmp.path().join(".claude").join("settings.json"),
         r#"{"hooks":{"Stop":[{"hooks":[{"command":"cd \"$(git rev-parse --show-superproject-working-tree 2>/dev/null || git rev-parse --show-toplevel 2>/dev/null || echo .)\" && uv run python ci/hooks/check.py"}]}]}}"#,
@@ -643,7 +643,7 @@ fn the_broken_prefix_is_recorded_with_its_source_for_the_hooks_report() {
 
 #[test]
 fn an_unparsable_hook_config_is_skipped_rather_than_fatal() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_json(
         &tmp.path().join(".claude").join("settings.json"),
         "{not json",
@@ -704,7 +704,7 @@ fn drift_warning_judges_against_the_whole_registered_root_set() {
 
 #[test]
 fn nearest_repo_root_distinguishes_no_repo_from_repo_at_cwd() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let nested = tmp.path().join("crates").join("clud-bin");
     fs::create_dir_all(&nested).unwrap();
     assert_eq!(nearest_repo_root(&nested), None);
@@ -719,7 +719,7 @@ fn nearest_repo_root_distinguishes_no_repo_from_repo_at_cwd() {
 
 #[test]
 fn a_git_file_counts_so_linked_worktrees_resolve() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     fs::write(
         tmp.path().join(".git"),
         "gitdir: /elsewhere/.git/worktrees/wt",
@@ -781,7 +781,7 @@ fn full_denial() -> String {
 
 #[test]
 fn first_block_in_a_session_is_full_then_short() {
-    let dir = TempDir::new().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let first = condense_at(Some(dir.path()), Some("s1"), full_denial());
     assert_eq!(first, full_denial());
     let second = condense_at(Some(dir.path()), Some("s1"), full_denial());
@@ -802,7 +802,7 @@ fn first_block_in_a_session_is_full_then_short() {
 
 #[test]
 fn a_different_session_gets_the_full_text_again() {
-    let dir = TempDir::new().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     condense_at(Some(dir.path()), Some("s1"), full_denial());
     let other = condense_at(Some(dir.path()), Some("s2"), full_denial());
     assert_eq!(other, full_denial());
@@ -810,7 +810,7 @@ fn a_different_session_gets_the_full_text_again() {
 
 #[test]
 fn stale_seen_markers_are_pruned_when_a_new_one_is_written() {
-    let dir = TempDir::new().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let seen = dir.path().join(SEEN_DIR_NAME);
     fs::create_dir_all(&seen).unwrap();
     let stale = seen.join("stale.seen");
@@ -829,7 +829,7 @@ fn stale_seen_markers_are_pruned_when_a_new_one_is_written() {
 
 #[test]
 fn unreadable_state_or_no_session_fails_open_to_full() {
-    let dir = TempDir::new().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let blocker = dir.path().join("not-a-dir");
     fs::write(&blocker, b"x").unwrap();
     for _ in 0..2 {
@@ -973,7 +973,7 @@ fn a_codex_session_is_one_without_a_claude_project_dir() {
 
 #[test]
 fn a_repeat_denial_is_still_shortened() {
-    let dir = TempDir::new().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let full = || deny("cd /elsewhere && make", CdPolicy::Strict).expect("denied");
     let first = condense_at(Some(dir.path()), Some("s2"), full());
     let second = condense_at(Some(dir.path()), Some("s2"), full());
@@ -982,7 +982,7 @@ fn a_repeat_denial_is_still_shortened() {
 
 #[test]
 fn issue_2571_repeated_substitution_notice_is_short_but_every_command_is_rewritten() {
-    let dir = TempDir::new().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     for (index, command) in ["cd x && ls", "cd y && pwd"].iter().enumerate() {
         let rewritten = sub(command).unwrap();
         let notice = condense_at(
@@ -1030,7 +1030,7 @@ fn issue_2571_repeated_substitution_notice_is_short_but_every_command_is_rewritt
 #[test]
 fn issue_2571_repeated_verify_ratio_notes_omit_configuration_instructions() {
     use crate::block_bad_cmd::block_bad_cmd_verify_ratio::{note_text, Counts};
-    let dir = TempDir::new().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     let full = note_text(
         Counts {
             edits: 1,

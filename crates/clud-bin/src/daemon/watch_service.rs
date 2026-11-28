@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn registry_dedups_watchers_per_canonical_root() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let now = Instant::now();
         let path = dir.path().to_string_lossy();
         let mut registry = WatchRegistry::default();

@@ -3,8 +3,8 @@
 
 use super::*;
 use crate::gc::session_tmp::{self, session_tmp_dir_for};
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::time::{Duration, SystemTime};
-use tempfile::tempdir;
 
 fn age_path(path: &Path, age: Duration) {
     let when = SystemTime::now() - age;
@@ -15,7 +15,7 @@ fn age_path(path: &Path, age: Duration) {
 /// `session_tmp` root.
 #[test]
 fn worktree_root_is_clud_home_tmp_wt_and_not_under_session_tmp() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = worktree_root_for(home.path());
     assert_eq!(root, home.path().join(".clud").join("worktrees"));
     let tmp = session_tmp_dir_for(home.path());
@@ -32,7 +32,7 @@ fn worktree_root_is_clud_home_tmp_wt_and_not_under_session_tmp() {
 /// idempotent (a second start with worktrees inside leaves them alone).
 #[test]
 fn ensure_worktree_root_creates_it_idempotently() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = ensure_worktree_root_at(home.path()).unwrap();
     assert!(root.is_dir());
     let child = root.join("repo-wt-1");
@@ -46,7 +46,7 @@ fn ensure_worktree_root_creates_it_idempotently() {
 /// outside its scope.
 #[test]
 fn session_tmp_sweep_never_touches_tmp_wt() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let tmp = session_tmp_dir_for(home.path());
     fs::create_dir_all(&tmp).unwrap();
     let wt = ensure_worktree_root_at(home.path())
@@ -70,7 +70,7 @@ fn session_tmp_sweep_never_touches_tmp_wt() {
 
 #[test]
 fn under_root_matches_children_only() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = ensure_worktree_root_at(home.path()).unwrap();
     let child = root.join("repo-wt-2");
     fs::create_dir_all(&child).unwrap();
@@ -84,7 +84,7 @@ fn under_root_matches_children_only() {
 
 #[test]
 fn size_check_is_under_over_or_unknown() {
-    let dir = tempdir().unwrap();
+    let dir = TemporaryDirectory::new().unwrap();
     fs::create_dir_all(dir.path().join("a/b")).unwrap();
     fs::write(dir.path().join("a/b/x"), vec![0u8; 100]).unwrap();
     fs::write(dir.path().join("a/y"), vec![0u8; 50]).unwrap();
@@ -128,7 +128,7 @@ fn the_root_is_not_a_sibling_clone_name() {
 
 #[test]
 fn alloc_takes_the_plain_name_first_and_it_exists() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = worktree_root_for(home.path());
     let path = alloc_wt_path_in(&root, "clud", "432").unwrap();
     assert!(path.is_dir(), "returned path must exist on return");
@@ -139,7 +139,7 @@ fn alloc_takes_the_plain_name_first_and_it_exists() {
 /// `clud-wt-432-2`, `clud-wt-432-3`, and each exists the moment it is returned.
 #[test]
 fn alloc_collisions_take_the_next_ordinal_and_every_path_exists() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = worktree_root_for(home.path());
     let mut got = Vec::new();
     for _ in 0..3 {
@@ -161,7 +161,7 @@ fn alloc_collisions_take_the_next_ordinal_and_every_path_exists() {
 /// ordinal first.
 #[test]
 fn alloc_skips_a_file_and_fills_a_gap() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = ensure_worktree_root_at(home.path()).unwrap();
     fs::write(root.join("clud-wt-7"), b"not a dir").unwrap();
     fs::create_dir(root.join("clud-wt-7-3")).unwrap();
@@ -177,7 +177,7 @@ fn alloc_skips_a_file_and_fills_a_gap() {
 
 #[test]
 fn concurrent_allocations_never_share_a_path() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = worktree_root_for(home.path());
     let handles: Vec<_> = (0..8)
         .map(|_| {
@@ -194,7 +194,7 @@ fn concurrent_allocations_never_share_a_path() {
 
 #[test]
 fn alloc_rejects_components_that_would_escape_the_root() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = worktree_root_for(home.path());
     for (slug, suffix) in [
         ("", "1"),
@@ -251,7 +251,7 @@ fn every_worktree_path_is_repo_wt_name() {
 
 #[test]
 fn the_suggestion_names_the_first_free_path_and_creates_nothing() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let root = ensure_worktree_root_at(home.path()).unwrap();
     fs::create_dir(root.join("clud-wt-1962")).unwrap();
     let path = suggest_wt_path_in(&root, "clud", "1962");

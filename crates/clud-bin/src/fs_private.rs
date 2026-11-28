@@ -55,7 +55,7 @@ mod tests {
 
     #[test]
     fn writes_replace_atomically_and_leave_no_temp_files() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("nested").join("index.json");
         write_private_atomic(&path, b"one").unwrap();
         write_private_atomic(&path, b"two").unwrap();

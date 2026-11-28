@@ -267,8 +267,8 @@ fn resolve_target_raw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::path::PathBuf;
-    use tempfile::TempDir;
 
     fn env(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
         pairs
@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn gh_target_resolution_skips_the_alias_before_path_prepend() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let shim_dir = temp.path().join("shim");
         let real_dir = temp.path().join("real");
         std::fs::create_dir_all(&shim_dir).unwrap();
@@ -314,7 +314,7 @@ mod tests {
     /// never to the alias in the session directory or the managed shim dirs.
     #[test]
     fn git_target_resolution_never_selects_an_alias_dir() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let home = temp.path().join("home");
         let shim_dir = home.join(shim_registry::SESSION_SUBDIR);
         let interp_dir = home.join(shim_registry::INTERPRETER_SUBDIR);

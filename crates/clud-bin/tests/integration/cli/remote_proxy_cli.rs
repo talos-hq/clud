@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 
 #[test]
 fn remote_proxy_launch_uses_session_bearer_without_local_provider_credentials() {
-    let root = tempfile::tempdir().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = root.path().join("empty-home");
     let bin = root.path().join("bin");
     std::fs::create_dir_all(&home).unwrap();
@@ -79,7 +79,7 @@ fn remote_proxy_launch_uses_session_bearer_without_local_provider_credentials() 
 /// harness. It must reach the server with no harness launch and no local state.
 #[test]
 fn remote_connect_on_a_fresh_machine_needs_no_harness_or_credentials() {
-    let root = tempfile::tempdir().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = root.path().join("empty-home");
     let bin = root.path().join("bin");
     std::fs::create_dir_all(&home).unwrap();
