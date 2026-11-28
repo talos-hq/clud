@@ -13,7 +13,7 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use super::budget::{Budget, Window};
 use super::collection;
@@ -203,7 +203,11 @@ impl BrokerRead<'_> {
         hasher.update([0]);
         hasher.update(label.as_bytes());
         let digest = hasher.finalize();
-        digest.iter().map(|b| format!("{b:02x}")).collect()
+        digest
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 

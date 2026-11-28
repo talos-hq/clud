@@ -179,7 +179,10 @@ impl Upstream for FakeGitHub {
         let digest = Sha256::digest(&body);
         let etag = format!(
             "\"{:02x}{:02x}{:02x}{:02x}\"",
-            digest[0], digest[1], digest[2], digest[3]
+            digest.as_bytes()[0],
+            digest.as_bytes()[1],
+            digest.as_bytes()[2],
+            digest.as_bytes()[3]
         );
         let mut headers = vec![
             (

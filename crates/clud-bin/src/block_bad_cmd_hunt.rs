@@ -32,9 +32,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 /// Multi-range hunts allowed per session; the next distinct hunt is refused.
 pub(super) const DEFAULT_LIMIT: u32 = 3;
@@ -95,7 +95,10 @@ impl Hunt {
             key.push_str(&format!("{}\0{}\0{}\n", range.path, range.start, range.end));
         }
         let digest = Sha256::digest(format!("{HASH_DOMAIN}{key}").as_bytes());
-        digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+        digest.as_bytes()[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 
@@ -310,7 +313,10 @@ fn shell_tool(tool_name: &str) -> bool {
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
-    let hash: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hash: String = digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     state_dir.join(DIR_NAME).join(format!("{hash}.json"))
 }
 

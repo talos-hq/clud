@@ -24,8 +24,8 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::server_settings::ContextWindowSource;
 
@@ -51,7 +51,10 @@ pub const AUTOCOMPACT_PCT_ENV: &str = "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE";
 /// domain prefix keeps it from matching any other clud hash of the same id.
 pub fn session_hash(session_id: &str) -> String {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}{session_id}").as_bytes());
-    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+    digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// How the child reaches its model.

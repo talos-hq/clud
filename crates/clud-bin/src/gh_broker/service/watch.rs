@@ -13,8 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::{error_json, BrokerRead, Caller, GhBroker, ReadError};
 
@@ -61,6 +61,7 @@ pub struct WatchReply {
 
 fn digest(body: &[u8]) -> String {
     Sha256::digest(body)
+        .as_bytes()
         .iter()
         .take(16)
         .map(|b| format!("{b:02x}"))

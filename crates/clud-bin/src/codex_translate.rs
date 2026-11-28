@@ -22,8 +22,8 @@
 
 use std::collections::HashMap;
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::backend::ModelProvider;
 use crate::codex_model::{Effort, ModelSpec, SelectionError};
@@ -679,6 +679,7 @@ pub fn shorten_identifier(id: &str) -> String {
     // construction, this truncation became the only residual collision
     // surface for identifiers over 64 chars, so it gets the wider margin.
     let suffix: String = digest
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))

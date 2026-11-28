@@ -6,8 +6,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use fs4::fs_std::FileExt;
+use kernal_api::hash::Sha256Hasher as Sha256;
 use running_process::ReadStatus;
-use sha2::{Digest, Sha256};
 
 use super::activation::{self, ActivationPlan};
 use super::catalog::{Arch, Flavor, MediaType, Os, ResolvedAsset};

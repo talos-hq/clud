@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use crate::cache_health::TokenUsage;
 use crate::codex_translate;
@@ -934,6 +934,7 @@ fn sanitize_tool_id(id: &str) -> String {
         .collect();
     let digest = Sha256::digest(id.as_bytes());
     let suffix: String = digest
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))

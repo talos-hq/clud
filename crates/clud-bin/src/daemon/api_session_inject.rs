@@ -68,8 +68,9 @@ pub enum InjectionKind {
 
 /// Hex sha256 of an injected message, recorded as provenance (#2523).
 pub fn message_sha256(message: &str) -> String {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     Sha256::digest(message.as_bytes())
+        .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()

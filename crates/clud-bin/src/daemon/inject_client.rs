@@ -24,9 +24,12 @@ pub struct InjectOptions {
 
 /// The stable id a retry of the same CLI call reuses when none is given.
 pub fn default_client_msg_id(session: &str, message: &str) -> String {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     let digest = Sha256::digest(format!("{session}\n{message}").as_bytes());
-    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     format!("cli-{hex}")
 }
 

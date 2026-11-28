@@ -15,9 +15,9 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 /// Calls in a row that are still allowed; call `DEFAULT_LIMIT + 1` is denied.
 pub(super) const DEFAULT_LIMIT: u32 = 200;
@@ -753,14 +753,20 @@ pub(super) fn poll_key(tool_name: &str, tool_input: Option<&Value>) -> String {
     if let Some(files) = local_file_poll(command) {
         let digest =
             Sha256::digest(format!("{HASH_DOMAIN}filepoll\0{tool_name}\0{files}").as_bytes());
-        return digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+        return digest.as_bytes()[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
     }
     let core = poll_core(command);
     if core.is_empty() {
         return call_key(tool_name, tool_input);
     }
     let digest = Sha256::digest(format!("{HASH_DOMAIN}poll\0{tool_name}\0{core}").as_bytes());
-    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+    digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// The one advisory line the poll note carries (#2631).
@@ -816,12 +822,18 @@ pub(super) fn call_key(tool_name: &str, tool_input: Option<&Value>) -> String {
     let mut text = String::new();
     canonical(tool_input.unwrap_or(&Value::Null), &mut text);
     let digest = Sha256::digest(format!("{HASH_DOMAIN}{tool_name}\0{text}").as_bytes());
-    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+    digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
-    let hash: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hash: String = digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     state_dir.join(DIR_NAME).join(format!("{hash}.json"))
 }
 

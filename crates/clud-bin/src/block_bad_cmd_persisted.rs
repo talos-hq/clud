@@ -37,9 +37,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 /// Files smaller than this are cheap to re-send; a spill file is by
 /// definition bigger than the harness preview, and this keeps the guard off
@@ -181,7 +181,7 @@ fn now_secs() -> u64 {
 fn signature(path: &Path) -> String {
     let digest =
         Sha256::digest(format!("{HASH_DOMAIN}path\0{}", path.to_string_lossy()).as_bytes());
-    digest[..8]
+    digest.as_bytes()[..8]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
@@ -189,7 +189,7 @@ fn signature(path: &Path) -> String {
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
-    let hash: String = digest[..8]
+    let hash: String = digest.as_bytes()[..8]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();

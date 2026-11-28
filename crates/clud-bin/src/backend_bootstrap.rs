@@ -649,7 +649,7 @@ pub(crate) fn run_verified_codex_installer_with_parent_env(
     home: &Path,
     parent_env: &[(String, String)],
 ) -> Result<(), String> {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     let actual = format!("{:x}", Sha256::digest(script));
     if actual != expected_sha256 {
         return Err(format!(

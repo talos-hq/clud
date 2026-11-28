@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use super::super::{BrokerRead, GhBroker, ReadError, DEFAULT_TTL_MS, RUNS_TTL_MS};
 use super::{WatchRequest, MAX_WATCH_MS};
@@ -54,7 +54,7 @@ impl Upstream for Fake {
             .get(request.endpoint)
             .cloned()
             .ok_or("no such endpoint")?;
-        let etag = format!("\"{:x}\"", Sha256::digest(&body)[0]);
+        let etag = format!("\"{:x}\"", Sha256::digest(&body).as_bytes()[0]);
         let headers = vec![
             ("Etag".to_string(), etag.clone()),
             ("X-RateLimit-Limit".to_string(), "5000".to_string()),

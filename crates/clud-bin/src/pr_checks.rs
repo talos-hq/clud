@@ -14,9 +14,9 @@
 
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use running_process::{CommandSpec, NativeProcess, ProcessConfig, StderrMode, StdinMode};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 /// Skip the gate for one command (`CLUD_SKIP_PR_CHECKS=1 git push`) or a
 /// whole session (exported).
@@ -120,7 +120,10 @@ pub fn receipt_path(
         hasher.update(command.as_bytes());
     }
     let digest = hasher.finalize();
-    let hash: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    let hash: String = digest.as_bytes()[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     state_dir.join(RECEIPT_DIR).join(format!("{hash}.json"))
 }
 

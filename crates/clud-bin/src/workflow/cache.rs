@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 use super::engine::AgentRequest;
 
@@ -26,7 +26,11 @@ pub fn key(req: &AgentRequest) -> String {
         "schema": req.schema,
     });
     let digest = Sha256::digest(canonical.to_string().as_bytes());
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    digest
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// On-disk result cache for one workflow script.

@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use super::pin::{self, ArchiveKind, Artifact};
 use super::provision::{self, Inputs, Resolution, Source};

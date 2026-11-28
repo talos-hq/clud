@@ -30,8 +30,8 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 /// Manifest TOML embedded at compile time. See module docs.
 pub const EMBEDDED_MANIFEST_TOML: &str = include_str!("../../vendor/win32/git-bash-bin.toml");
@@ -202,7 +202,7 @@ impl From<io::Error> for FetchError {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hex_encode(&hasher.finalize())
+    hex_encode(hasher.finalize().as_bytes())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

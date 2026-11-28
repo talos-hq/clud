@@ -1,6 +1,6 @@
 //! Shell text budget at the Claude-to-Codex subscription bridge boundary.
 //! Complete edge lines survive; the recovery marker is additional to the budget.
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ pub(crate) fn cap(text: &str, limit: usize) -> io::Result<String> {
         .get_or_init(Mutex::default)
         .lock()
         .map_err(|error| io::Error::other(error.to_string()))?;
-    let key: [u8; 32] = Sha256::digest(text.as_bytes()).into();
+    let key: [u8; 32] = *Sha256::digest(text.as_bytes()).as_bytes();
     if let Some(path) = spills.get(&key) {
         if std::fs::read(path).is_ok_and(|bytes| bytes == text.as_bytes()) {
             return Ok(render(text, limit, path));

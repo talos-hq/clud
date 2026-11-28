@@ -1,8 +1,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use running_process::broker::protocol::Endpoint;
-use sha2::{Digest, Sha256};
 
 use super::RUNNING_PROCESS_SERVICE_NAME;
 
@@ -20,7 +20,7 @@ pub(in crate::daemon) fn daemon_identity_path(state_dir: &Path) -> PathBuf {
 fn state_dir_token(state_dir: &Path) -> String {
     let digest = Sha256::digest(state_dir.to_string_lossy().as_bytes());
     let mut token = String::with_capacity(16);
-    for byte in &digest[..8] {
+    for byte in &digest.as_bytes()[..8] {
         token.push_str(&format!("{byte:02x}"));
     }
     token

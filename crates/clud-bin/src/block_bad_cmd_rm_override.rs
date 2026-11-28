@@ -10,7 +10,7 @@
 use std::io::Read;
 use std::path::Path;
 
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use crate::shell_ast::{Invocation, Value};
 
@@ -1073,7 +1073,7 @@ fn executable_digest(path: &Path) -> std::io::Result<[u8; 32]> {
         }
         digest.update(&buffer[..count]);
     }
-    Ok(digest.finalize().into())
+    Ok(*digest.finalize().as_bytes())
 }
 
 /// `gh issue|pr` verbs that only talk to the forge (#2454): their text

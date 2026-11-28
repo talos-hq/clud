@@ -52,9 +52,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use super::block_bad_cmd_hunt::{
     hunt_ranges, is_in_place_sed, is_source_file, parse_range, plausible_path, program,
@@ -101,7 +101,10 @@ impl Slice {
     fn signature(&self) -> String {
         let key = format!("{}\0{}\0{}", self.path, self.start, self.end);
         let digest = Sha256::digest(format!("{HASH_DOMAIN}{key}").as_bytes());
-        digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+        digest.as_bytes()[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 
@@ -426,7 +429,10 @@ fn shell_tool(tool_name: &str) -> bool {
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
-    let hash: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hash: String = digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     state_dir.join(DIR_NAME).join(format!("{hash}.json"))
 }
 
@@ -567,7 +573,10 @@ impl WholeRead {
     /// Stable identity for "this exact read", so a forced retry passes.
     fn signature(&self) -> String {
         let digest = Sha256::digest(format!("{HASH_DOMAIN}cat\0{}", self.paths.join("\0")));
-        digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+        digest.as_bytes()[..8]
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 
     /// The first file named: the one the advice points at.

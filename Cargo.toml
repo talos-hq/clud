@@ -24,6 +24,10 @@ exclude = [
 # already over a ceiling carry `#[expect(clippy::..., reason = "...")]`, never
 # `allow`: an expectation that stops firing is itself a warning, so a
 # refactored function's suppression is deleted in the same change.
+[workspace.dependencies]
+# Shared facade (forge-ci/kernal-api). Crates opt into the features they use.
+kernal-api = { version = "=0.1.41", default-features = false }
+
 [workspace.lints.clippy]
 cognitive_complexity = "warn"
 too_many_lines = "warn"

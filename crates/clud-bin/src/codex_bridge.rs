@@ -3042,8 +3042,9 @@ fn sessionless_conversation_key(
             format!("prefix:{prefix}")
         }
     };
-    let digest = <sha2::Sha256 as sha2::Digest>::digest(identity.as_bytes());
+    let digest = kernal_api::hash::Sha256Hasher::digest(identity.as_bytes());
     let short: String = digest
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))
@@ -5374,8 +5375,9 @@ fn side_call_key(body: &[u8], main: &ConversationKey) -> Option<ConversationKey>
         .get("system")
         .map(ToString::to_string)
         .unwrap_or_default();
-    let digest = <sha2::Sha256 as sha2::Digest>::digest(system.as_bytes());
+    let digest = kernal_api::hash::Sha256Hasher::digest(system.as_bytes());
     let short: String = digest
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))

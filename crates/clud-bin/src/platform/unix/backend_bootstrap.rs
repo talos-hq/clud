@@ -43,7 +43,7 @@ mod tests {
 
     #[test]
     fn codex_update_fixture_covers_fresh_complete_and_stale_staging() {
-        use sha2::{Digest, Sha256};
+        use kernal_api::hash::Sha256Hasher as Sha256;
         let home = tempfile::tempdir().unwrap();
         let home = home.path();
         std::fs::write(
@@ -113,7 +113,7 @@ ln -sfn releases/0.156.0 "$root/current"
 
     #[test]
     fn codex_update_removes_stale_files_from_both_session_routes() {
-        use sha2::{Digest, Sha256};
+        use kernal_api::hash::Sha256Hasher as Sha256;
         use std::os::unix::fs::PermissionsExt;
         let home = tempfile::tempdir().unwrap();
         let home_path = home.path().to_string_lossy().into_owned();

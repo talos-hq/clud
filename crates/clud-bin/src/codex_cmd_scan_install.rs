@@ -50,7 +50,7 @@ pub struct InstallOutcome {
 /// Codex's trust hash for one command handler: sha256 of the canonical JSON
 /// of the handler's normalized group.
 pub fn codex_hook_trust_hash(matcher: &str, command: &str, timeout: u64) -> String {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     let value = json!({
         "event_name": "pre_tool_use",
         "hooks": [{"async": false, "command": command, "timeout": timeout, "type": "command"}],
