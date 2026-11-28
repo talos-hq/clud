@@ -267,7 +267,7 @@ fn crash_metadata(role: &str) -> kernal_api::crash::CrashMetadata {
 ///
 /// No clud code runs in the crash context: kernal-api writes one fixed-size
 /// binary record, and [`collect_spooled_crashes`] converts it into the usual
-/// JSON report on the next clud start (docs/DESIGN_DECISIONS.md, DD-033).
+/// JSON report on the next clud start (docs/DESIGN_DECISIONS.md, DD-239).
 pub fn install_native(role: &str) {
     install(role);
     let mut slot = match NATIVE_GUARD.lock() {
@@ -281,15 +281,24 @@ pub fn install_native(role: &str) {
         None if !first => return,
         _ => {}
     }
-    if first {
-        let Ok(spool) = crash_spool_dir() else {
-            return;
-        };
-        // kernal-api 0.1.41 reads the spool location only from this
-        // variable. Set it before the first install; children inherit it.
-        std::env::set_var(kernal_api::crash::spool::SPOOL_DIR_ENV, &spool);
+    let Ok(spool) = crash_spool_dir() else {
+        return;
+    };
+    // kernal-api 0.1.41 takes the spool location only from this variable,
+    // and reads it only while `install` creates the sink. Set it for the
+    // call and restore it at once, so children clud spawns (soldr, other
+    // kernal-api apps) never inherit clud's spool and file their crashes
+    // as clud's.
+    let env = kernal_api::crash::spool::SPOOL_DIR_ENV;
+    let previous = std::env::var_os(env);
+    std::env::set_var(env, &spool);
+    let installed =
+        kernal_api::crash::install(kernal_api::crash::CrashPolicy::On, crash_metadata(role));
+    match previous {
+        Some(value) => std::env::set_var(env, value),
+        None => std::env::remove_var(env),
     }
-    match kernal_api::crash::install(kernal_api::crash::CrashPolicy::On, crash_metadata(role)) {
+    match installed {
         Ok(guard) => {
             // Drop the old registration only after the new one exists, so
             // there is never a window without an armed handler.
@@ -863,25 +872,12 @@ mod tests {
         }
     }
 
-    /// The fault code each platform's crash handler reports for a segfault.
     fn native_segv_code() -> i64 {
-        if cfg!(windows) {
-            EXCEPTION_ACCESS_VIOLATION
-        } else if cfg!(target_os = "macos") {
-            1 // EXC_BAD_ACCESS
-        } else {
-            11 // SIGSEGV
-        }
+        crate::platform::crash_report::SEGV_FAULT.0
     }
 
     fn native_segv_label() -> &'static str {
-        if cfg!(windows) {
-            "EXCEPTION_ACCESS_VIOLATION"
-        } else if cfg!(target_os = "macos") {
-            "EXC_BAD_ACCESS"
-        } else {
-            "SIGSEGV"
-        }
+        crate::platform::crash_report::SEGV_FAULT.1
     }
 
     #[test]

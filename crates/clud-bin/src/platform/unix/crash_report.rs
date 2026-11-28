@@ -40,3 +40,10 @@ pub(crate) fn decode_fault(code: i64, addr: u64) -> NativeCrashMeta {
         faulting_address: hex_addr(addr as usize),
     }
 }
+
+/// The fault code and label this platform's record carries for a segfault,
+/// for host-neutral tests of the record -> report conversion.
+#[cfg(all(test, not(target_os = "macos")))]
+pub(crate) const SEGV_FAULT: (i64, &str) = (11, "SIGSEGV");
+#[cfg(all(test, target_os = "macos"))]
+pub(crate) const SEGV_FAULT: (i64, &str) = (1, "EXC_BAD_ACCESS");

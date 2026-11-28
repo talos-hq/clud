@@ -11,3 +11,11 @@ pub(crate) fn decode_fault(code: i64, addr: u64) -> NativeCrashMeta {
         faulting_address: hex_addr(addr as usize),
     }
 }
+
+/// The fault code and label this platform's record carries for a segfault,
+/// for host-neutral tests of the record -> report conversion.
+#[cfg(test)]
+pub(crate) const SEGV_FAULT: (i64, &str) = (
+    crate::crash_report::EXCEPTION_ACCESS_VIOLATION,
+    "EXCEPTION_ACCESS_VIOLATION",
+);

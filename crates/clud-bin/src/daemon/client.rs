@@ -541,7 +541,14 @@ fn read_daemon_response_with_deadline(
             ));
         }
         stream.set_read_timeout(Some(remaining))?;
-        let bytes = stream.read(&mut chunk)?;
+        // A timed socket read is not restarted after a signal even with
+        // SA_RESTART, and kernal-api's crash sampler signals every thread
+        // (DD-239), so EINTR here just means "read again".
+        let bytes = match stream.read(&mut chunk) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err),
+        };
         if bytes == 0 {
             break;
         }
