@@ -120,6 +120,15 @@ working tree and keeps CRLF); in a `/grind` run it refuses files outside the
 run facts' task list for the checkout (#1339). `code/ast_grep.py` runs a pinned
 ast-grep for structural search and rewrite (#1339).
 
+`edit/edit.py` makes structured single-file edits that fail loudly instead
+of the silent no-ops of inline `s.replace(...)` splices: `toml FILE
+get|set|delete PATH` (with `name[key=value]` / `name[N]` array-of-tables
+selectors, comments preserved), `nix FILE get|set PATH EXPR`, `md FILE
+table-row --after-key|--before-key|--replace-key K|--append --row ROW`, and
+`text FILE replace --old|--old-file --new|--new-file [--expect-count N]`.
+Missing or ambiguous targets exit 2; `--dry-run` prints the diff. The
+`/clud-edit` skill carries the agent-facing grammar.
+
 PR watcher callers select a declared session/background/foreground wait and
 required-check or all-check completion scope. An empty head check rollup stays
 pending even if a workflow completed, bounded by the watch deadline; repositories

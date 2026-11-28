@@ -282,6 +282,17 @@ pub const BUNDLED_TOOLS: &[BundledTool] = &[
         quiet_ok: false,
     },
     BundledTool {
+        rel_path: "edit/edit.py",
+        body: include_str!("../assets/tools/edit/edit.py"),
+        // Structured single-file edits (TOML/Nix/Markdown/exact text). It
+        // writes one file atomically (temp + rename) in milliseconds, so a
+        // kill leaves the old or the new file, never a half edit.
+        kill_semantics: KillSemantics::Killable,
+        command_timeout: Duration::from_secs(60),
+        progress_timeout: None,
+        quiet_ok: false,
+    },
+    BundledTool {
         rel_path: "code/ast_grep.py",
         body: include_str!("../assets/tools/code/ast_grep.py"),
         // Structural search, or a rewrite only with `-U` (#1339 item 6); a
@@ -644,6 +655,19 @@ mod tests {
             tool.body.contains("--max-bytes") && tool.body.contains("--lines"),
             "slice.py must expose the bounded range interface its routing promises"
         );
+    }
+
+    #[test]
+    fn bundled_includes_edit_tool() {
+        let tool = BUNDLED_TOOLS
+            .iter()
+            .find(|t| t.rel_path == "edit/edit.py")
+            .expect("BUNDLED_TOOLS must include edit/edit.py");
+        assert!(tool.body.contains("managed-by: clud"));
+        assert!(!tool.body.contains("import subprocess"));
+        for verb in ["\"toml\"", "\"nix\"", "\"md\"", "\"text\"", "--dry-run"] {
+            assert!(tool.body.contains(verb), "edit.py must expose {verb}");
+        }
     }
 
     #[test]
