@@ -8988,3 +8988,17 @@ The bare `[gate] run` plan (`bosn ci run --trigger pr` with no `--job`) also rep
 - Tasks run one at a time, so independent goals no longer build in parallel. Parallel mode stays `grind-run` with worktrees.
 - A PR whose watch budget runs out while it is still queued is reported `left_in_queue`. Its dependents are blocked, not restarted.
 - An inline `Workflow` script containing chaperone wording is refused by the command hook. The router launches tailored scripts by `scriptPath`.
+
+## DD-238: attested lanes are keyed by their inputs and share one local ledger across worktrees
+
+**Status:** Accepted. Extends [DD-225](#dd-225-prooft-attestations-reduce-pr-clippy-and-dylint-in-place-the-merge-queue-still-runs-them) and [DD-228](#dd-228-local-attestation-runs-lanes-at-once-keeps-soldrs-verdicts-and-checks-dylints-output).
+
+**Context:** no lane in `ci-attestations.yml` declared `inputs`, so every trailer was bound to one exact tree and parents. Every worktree and every rebase reran the full Clippy, rustfmt and Dylint lanes, even when no file they read had changed.
+
+**Decision:**
+- Every lane declares `inputs`. The globs cover every `*.rs` file and `Cargo.toml`, `Cargo.lock`, the rust-toolchain files, rustfmt, Clippy and `.cargo` config, `dylints/**`, and `ci/**`, where the lane commands live. Clippy and Dylint also cover every file a crate pulls in with `include_str!`/`include_bytes!`, plus `pyproject.toml`, `uv.lock` and the policy itself. `tests/test_attest.py` fails when an include is not covered. A trailer whose key matches the commit's recomputed key stays valid after a rebase (prooft verifies it as "inputs unchanged").
+- `python -m ci.attest` computes each lane's key on HEAD and looks it up in a `DirLedger` at `<git rev-parse --git-common-dir>/prooft-ledger`. Every worktree of a clone shares that directory. When the lane's key has a pass younger than its `max-age-hours`, the lane is not run. HEAD is still stamped, with `via: reused`. A lane that runs and passes is recorded in the ledger. A failed lane records nothing.
+
+**Trust rules (unchanged):** the ledger is local and unshared. No hosted job reads it: `prooft plan` in `CI mode` takes no `--ledger`. Hosted PR runs still read the policy from the PR base and refuse untrusted heads, stale proofs and edited trailers. **The merge queue never consumes client attestations or ledgers.** It still runs every gate. Changing the globs edits `ci-attestations.yml`, so that PR runs in full.
+
+**Consequences:** a rebase or another worktree that leaves a lane's inputs alone costs a key computation instead of a lane run. A file that a lane reads but no glob matches would give a false PR-level skip, which the merge queue would still catch. That is why the globs are generous and the include check exists.

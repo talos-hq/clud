@@ -22,6 +22,26 @@
 # it. Dylint gates prove workspace linting and library loading, not unit/UI tests.
 version: 1
 mode: shadow
+# Lane input keys (prooft keys.py): a proof stays valid on any commit whose
+# matching files are byte-identical, so a rebase or another worktree reuses
+# it, and `python -m ci.attest` skips a lane whose key already passed in the
+# shared local ledger (<git common dir>/prooft-ledger, DD-238). A lane that
+# reads a file these globs miss would skip falsely, so they are generous:
+# every Rust source and manifest, toolchain and lint config, dylints/**, the
+# files the crates include_str!/include_bytes! (tests/test_attest.py checks
+# each include is covered), and ci/** where the lane commands live. A
+# changed input reruns the lane. The merge queue never consumes any of this.
+lanes:
+  clippy:
+    inputs: ["**/*.rs", "**/Cargo.toml", Cargo.lock, "rust-toolchain*", "**/rust-toolchain*", "**/.rustfmt.toml", "**/rustfmt.toml", "**/clippy.toml", "**/.clippy.toml", "**/.cargo/**", "crates/**", "testbins/**", "dylints/**", "clud-webterm/**", "proto/**", "src/clud/**", "tests/fixtures/**", "docs/architecture/grind.md", "docs/cli-grammar.md", "models/README.md", "bosn/Dockerfile", ".claude/settings.json", ".codex/hooks.json", "ci/**", pyproject.toml, uv.lock, ci-attestations.yml]
+  dylint:
+    inputs: ["**/*.rs", "**/Cargo.toml", Cargo.lock, "rust-toolchain*", "**/rust-toolchain*", "**/.rustfmt.toml", "**/rustfmt.toml", "**/clippy.toml", "**/.clippy.toml", "**/.cargo/**", "crates/**", "testbins/**", "dylints/**", "clud-webterm/**", "proto/**", "src/clud/**", "tests/fixtures/**", "docs/architecture/grind.md", "docs/cli-grammar.md", "models/README.md", "bosn/Dockerfile", ".claude/settings.json", ".codex/hooks.json", "ci/**", pyproject.toml, uv.lock, ci-attestations.yml]
+  dylint-x86_64-pc-windows-msvc:
+    inputs: ["**/*.rs", "**/Cargo.toml", Cargo.lock, "rust-toolchain*", "**/rust-toolchain*", "**/.rustfmt.toml", "**/rustfmt.toml", "**/clippy.toml", "**/.clippy.toml", "**/.cargo/**", "crates/**", "testbins/**", "dylints/**", "clud-webterm/**", "proto/**", "src/clud/**", "tests/fixtures/**", "docs/architecture/grind.md", "docs/cli-grammar.md", "models/README.md", "bosn/Dockerfile", ".claude/settings.json", ".codex/hooks.json", "ci/**", pyproject.toml, uv.lock, ci-attestations.yml]
+  dylint-aarch64-apple-darwin:
+    inputs: ["**/*.rs", "**/Cargo.toml", Cargo.lock, "rust-toolchain*", "**/rust-toolchain*", "**/.rustfmt.toml", "**/rustfmt.toml", "**/clippy.toml", "**/.clippy.toml", "**/.cargo/**", "crates/**", "testbins/**", "dylints/**", "clud-webterm/**", "proto/**", "src/clud/**", "tests/fixtures/**", "docs/architecture/grind.md", "docs/cli-grammar.md", "models/README.md", "bosn/Dockerfile", ".claude/settings.json", ".codex/hooks.json", "ci/**", pyproject.toml, uv.lock, ci-attestations.yml]
+  rustfmt:
+    inputs: ["**/*.rs", "**/Cargo.toml", Cargo.lock, "rust-toolchain*", "**/rust-toolchain*", "**/.rustfmt.toml", "**/rustfmt.toml", "**/clippy.toml", "**/.clippy.toml", "**/.cargo/**", ci/attest.py, ci/lint.py, ci-attestations.yml]
 gates:
   rust/x86_64-unknown-linux-gnu/clippy: {lane: clippy}    # xbuild clippy (workspace, all targets)
   rust/x86_64-unknown-linux-gnu/rustfmt: {lane: rustfmt}  # workspace formatting

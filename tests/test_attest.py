@@ -36,6 +36,7 @@ BUILD_YML = (WORKFLOWS / "_build-target.yml").read_text(encoding="utf-8")
 DYLINT_YML = (WORKFLOWS / "_dylint.yml").read_text(encoding="utf-8")
 POLICY_TEXT = attest.POLICY.read_text(encoding="utf-8")
 CLIPPY_JOB = "ci.yml:lint-linux-x64"
+CLIPPY_GATE = "rust/x86_64-unknown-linux-gnu/clippy"
 DYLINT_PASSES = ("host", *attest.DYLINT_CROSS_TARGETS)
 
 
@@ -380,7 +381,7 @@ def test_a_changed_tree_invalidates_the_proof(repo: Path) -> None:
 
 
 @pytestmark_git
-def test_new_parents_invalidate_the_proof(repo: Path) -> None:
+def test_a_rebase_keeps_the_proof_only_while_inputs_match(repo: Path) -> None:
     Repo(repo).lane("clippy").run(list(PASS))
     message = _git(repo, "log", "-1", "--format=%B")
     tree = _git(repo, "rev-parse", "HEAD^{tree}").strip()
@@ -395,8 +396,126 @@ def test_new_parents_invalidate_the_proof(repo: Path) -> None:
         check=True,
     ).stdout.strip()
     _git(repo, "checkout", "-q", rebased)
-    state = Repo(repo).verify().state("rust/x86_64-unknown-linux-gnu/clippy")
-    assert str(state) == "wrong-parents"
+    # Only README.md moved, which no lane reads: the input key still matches.
+    assert str(Repo(repo).verify().state(CLIPPY_GATE)) == "valid"
+    # A rebase that brings in a changed input is a different key: it reruns.
+    (repo / "crates" / "x" / "src").mkdir(parents=True)
+    (repo / "crates" / "x" / "src" / "lib.rs").write_text("pub fn h() {}\n", encoding="utf-8")
+    _git(repo, "add", "crates")
+    _git(repo, "commit", "-q", "--amend", "--no-edit")
+    assert str(Repo(repo).verify().state(CLIPPY_GATE)) == "wrong-tree"
+
+
+class _Counting:
+    def __init__(self) -> None:
+        self.ran: list[str] = []
+
+    def __call__(self, name: str) -> attest.LaneResult:
+        self.ran.append(name)
+        return attest.LaneResult(name, 0, 3)
+
+
+def _stamps(repo: Path) -> dict[str, str]:
+    trailers = Trailers.parse(_git(repo, "log", "-1", "--format=%B")).attestations
+    return {a.gate: a.via for a in trailers}
+
+
+@pytestmark_git
+def test_ledger_is_shared_through_the_git_common_dir(repo: Path, tmp_path: Path) -> None:
+    worktree = tmp_path / "wt"
+    _git(repo, "worktree", "add", "-q", "--detach", str(worktree), "HEAD")
+    expected = (repo / ".git").resolve() / "prooft-ledger"
+    assert attest.ledger_dir(repo) == expected
+    assert attest.ledger_dir(worktree) == expected
+    first = _Counting()
+    assert attest.attest(["clippy"], root=repo, run=first) == 0
+    assert first.ran == ["clippy"]
+    second = _Counting()
+    assert attest.attest(["clippy", "rustfmt"], root=worktree, run=second) == 0
+    assert second.ran == ["rustfmt"]
+    assert _stamps(worktree)[CLIPPY_GATE] == "reused"
+
+
+@pytestmark_git
+def test_a_ledger_hit_skips_the_lane_but_still_stamps_head(repo: Path) -> None:
+    ledger = repo / "ledger"
+    first = _Counting()
+    assert attest.attest(["clippy"], root=repo, run=first, ledger_root=ledger) == 0
+    assert first.ran == ["clippy"]
+    assert _stamps(repo) == {CLIPPY_GATE: "run"}
+    _commit(repo, "README.md", "not a lane input\n", "docs only")
+    assert not _stamps(repo)
+    second = _Counting()
+    assert attest.attest(["clippy"], root=repo, run=second, ledger_root=ledger) == 0
+    assert second.ran == []
+    assert _stamps(repo) == {CLIPPY_GATE: "reused"}
+    assert str(Repo(repo).verify().state(CLIPPY_GATE)) == "valid"
+
+
+@pytestmark_git
+def test_a_changed_input_misses_the_ledger(repo: Path) -> None:
+    ledger = repo / "ledger"
+    assert attest.attest(["clippy"], root=repo, run=_Counting(), ledger_root=ledger) == 0
+    _commit(repo, "src/lib.rs", "pub fn changed() {}\n", "input change")
+    again = _Counting()
+    assert attest.attest(["clippy"], root=repo, run=again, ledger_root=ledger) == 0
+    assert again.ran == ["clippy"]
+    assert _stamps(repo) == {CLIPPY_GATE: "run"}
+
+
+@pytestmark_git
+def test_a_stale_or_failed_ledger_entry_reruns(repo: Path) -> None:
+    from prooft.ledger import DirLedger
+
+    ledger = repo / "ledger"
+    policy = Repo(repo).policy()
+    key = Repo(repo).keys(policy)["clippy"]
+    DirLedger(ledger).record("clippy", key, source="old", at=1.0)
+    run = _Counting()
+    assert attest.attest(["clippy"], root=repo, run=run, ledger_root=ledger) == 0
+    assert run.ran == ["clippy"]
+    _commit(repo, "src/lib.rs", "pub fn broken() {}\n", "fails")
+    assert (
+        attest.attest(
+            ["clippy"],
+            root=repo,
+            run=lambda n: attest.LaneResult(n, 1, 1),
+            ledger_root=ledger,
+        )
+        == 1
+    )
+    key = Repo(repo).keys(policy)["clippy"]
+    assert DirLedger(ledger).lookup("clippy", key) is None
+
+
+_INCLUDE = re.compile(r'include(?:_str|_bytes)?!\(\s*"([^"]+)"')
+
+
+def test_every_lane_input_list_covers_the_files_the_crates_include() -> None:
+    from prooft.keys import matches
+
+    policy = _policy()
+    assert set(policy.inputs) == set(attest.lanes())
+    tracked = process.run(
+        ["git", "ls-files", "*.rs"], cwd=ROOT, capture_output=True, text=True, check=True
+    ).stdout.split()
+    missed = []
+    for rel in tracked:
+        source = ROOT / rel
+        text = source.read_text(encoding="utf-8", errors="replace")
+        for target in _INCLUDE.findall(text):
+            path = (source.parent / target).resolve()
+            if not path.is_relative_to(ROOT):
+                continue
+            target_rel = path.relative_to(ROOT).as_posix()
+            for lane in ("clippy", "dylint", *(f"dylint-{t}" for t in attest.DYLINT_CROSS_TARGETS)):
+                if not matches(target_rel, policy.inputs[lane]):
+                    missed.append(f"{lane}: {rel} includes {target_rel}")
+    assert not missed, missed
+    for lane in policy.inputs:
+        for path in ("Cargo.lock", "rust-toolchain.toml", ".rustfmt.toml", "ci/attest.py"):
+            assert matches(path, policy.inputs[lane]), (lane, path)
+    assert matches("dylints/x/src/lib.rs", policy.inputs["dylint"])
 
 
 @pytestmark_git
