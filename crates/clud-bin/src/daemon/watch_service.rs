@@ -13,7 +13,7 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
+use kernal_api::platform::fs_watch::{RecursiveMode, WatchNotification, Watcher};
 
 use crate::gc::watch_event_may_affect_registration;
 
@@ -49,7 +49,7 @@ impl WatchService {
 
 enum ServiceMsg {
     Register(GcWatchRoot),
-    Event(notify::Result<Event>),
+    Event(std::io::Result<WatchNotification>),
 }
 
 #[derive(Debug)]
@@ -97,12 +97,9 @@ fn run(
     tx: mpsc::Sender<ServiceMsg>,
     registry_tx: mpsc::Sender<RegistryMsg>,
 ) {
-    let watcher_result = RecommendedWatcher::new(
-        move |event| {
-            let _ = tx.send(ServiceMsg::Event(event));
-        },
-        Config::default(),
-    );
+    let watcher_result = Watcher::new(move |event| {
+        let _ = tx.send(ServiceMsg::Event(event));
+    });
     // The fallback scan remains active if the OS watcher itself cannot be
     // created. Avoid making daemon bring-up depend on native watch APIs.
     let mut watcher = watcher_result.ok();
@@ -130,11 +127,7 @@ fn run(
     }
 }
 
-fn ensure_watched(
-    watcher: Option<&mut RecommendedWatcher>,
-    roots: &mut WatchRegistry,
-    root: &Path,
-) {
+fn ensure_watched(watcher: Option<&mut Watcher>, roots: &mut WatchRegistry, root: &Path) {
     let Some(entry) = roots.roots.get_mut(root) else {
         return;
     };
@@ -146,14 +139,14 @@ fn ensure_watched(
     }
 }
 
-fn mark_event(roots: &mut WatchRegistry, event: notify::Result<Event>, now: Instant) {
+fn mark_event(roots: &mut WatchRegistry, event: std::io::Result<WatchNotification>, now: Instant) {
     let affected: Vec<PathBuf> = match event {
-        Ok(event) if !event.paths.is_empty() => roots
+        Ok(WatchNotification::Change(event)) if !event.paths().is_empty() => roots
             .roots
             .iter()
             .filter(|(root, entry)| {
                 entry.registrations.iter().any(|registration| {
-                    event.paths.iter().any(|path| {
+                    event.paths().iter().any(|path| {
                         watch_event_may_affect_registration(
                             &registration.kind,
                             root,
@@ -165,7 +158,8 @@ fn mark_event(roots: &mut WatchRegistry, event: notify::Result<Event>, now: Inst
             })
             .map(|(root, _)| root.clone())
             .collect(),
-        // notify errors, including overflow, must be recovered by a full scan.
+        // Watcher errors and rescan notices (overflow, lost watch) must be
+        // recovered by a full scan.
         // Some backends cannot identify the failed root, so conservatively
         // rescan registered roots; the normal event path remains root-local.
         _ => roots.roots.keys().cloned().collect(),
@@ -179,7 +173,7 @@ fn mark_event(roots: &mut WatchRegistry, event: notify::Result<Event>, now: Inst
 
 fn dispatch_due(
     roots: &mut WatchRegistry,
-    watcher: &mut Option<RecommendedWatcher>,
+    watcher: &mut Option<Watcher>,
     registry_tx: &mpsc::Sender<RegistryMsg>,
     now: Instant,
 ) {

@@ -142,23 +142,27 @@ pub fn activate_if_temp_install(claude_binary: &Path) {
 /// Block on write events under `logs_root`; purge only when they push the
 /// logs over the cap. Ends quietly if the watcher cannot start.
 fn purge_on_writes(logs_root: &Path) {
-    use notify::Watcher;
+    use kernal_api::platform::fs_watch::{ChangeKind, RecursiveMode, WatchNotification, Watcher};
     let (tx, rx) = std::sync::mpsc::channel();
-    let Ok(mut watcher) = notify::recommended_watcher(tx) else {
+    let Ok(mut watcher) = Watcher::new(move |event| {
+        let _ = tx.send(event);
+    }) else {
         return;
     };
-    if watcher
-        .watch(logs_root, notify::RecursiveMode::Recursive)
-        .is_err()
-    {
+    if watcher.watch(logs_root, RecursiveMode::Recursive).is_err() {
         return;
     }
     let mut last_check: Option<std::time::Instant> = None;
     for event in rx {
-        let Ok(event) = event else { continue };
+        let Ok(WatchNotification::Change(event)) = event else {
+            continue;
+        };
         if !matches!(
-            event.kind,
-            notify::EventKind::Create(_) | notify::EventKind::Modify(_)
+            event.kind(),
+            ChangeKind::Created(_)
+                | ChangeKind::ContentModified
+                | ChangeKind::MetadataModified
+                | ChangeKind::NameModified(_)
         ) {
             continue;
         }
