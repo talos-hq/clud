@@ -92,8 +92,8 @@ fn archive_defect_flags_only_damage_that_breaks_an_install() {
 
 mod unix {
     use super::*;
+    use crate::file_lock::FileExt;
     use crate::gc::uv_cache_fixture::{link_exists, wheel, wheel_with_pointer, Entry};
-    use fs4::fs_std::FileExt;
 
     fn invalidated(entry: &Entry) -> bool {
         !entry.pointer.exists() && !link_exists(entry)

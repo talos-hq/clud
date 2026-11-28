@@ -59,7 +59,9 @@ sha2 = "0.10"
 # discovery. The reconciliation fallback in `daemon::watch_service` bounds
 # missed notifications / watcher failure, so the watcher is never the sole
 # source of truth.
-kernal-api = { workspace = true, features = ["hash-sha256", "fs-watch"] }
+# Advisory file locks (issue #138; session registry, gc-daemon bringup and
+# friends) go through kernal-api `fs`, wrapped in `crate::file_lock`.
+kernal-api = { workspace = true, features = ["hash-sha256", "fs-watch", "fs"] }
 hmac = "0.12.1"
 # End-to-end encryption of the clud.bot session socket (remote_connect/e2e.rs,
 # DD-219): ephemeral X25519, HKDF-SHA256 and ChaCha20-Poly1305. All three
@@ -81,14 +83,6 @@ tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
 redb = "2"
 thiserror = "2"
 strum = { version = "0.27.2", features = ["derive"] }
-# Issue #138: cross-platform advisory file lock used to serialize concurrent
-# redb opens of the session registry, and to serialize gc-daemon bringup.
-# redb itself takes an exclusive per-process file lock — two `clud`
-# processes that open the registry at the same time would otherwise race
-# and one would fail with `DatabaseAlreadyOpen`. The lockfile narrows
-# the redb-open window to a few milliseconds at startup/shutdown so
-# concurrent launches serialize cleanly.
-fs4 = "0.13"
 running-process = { version = "4.10.19", default-features = false, features = ["telemetry", "client", "originator-scan", "pty"] }
 # running-process consumer adoption (upstream #385): the daemon's broker
 # v1 frame lane binds a local-socket endpoint (named pipe on Windows,

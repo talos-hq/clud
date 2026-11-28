@@ -3,7 +3,7 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 
 use crate::platform::host;
 use crate::platform::self_install as fs_host;

@@ -94,6 +94,7 @@ pub mod build_id;
 pub mod clud_repo_dev;
 pub mod dnd;
 pub mod failover;
+pub mod file_lock;
 pub mod foreground_runtime;
 pub mod fs_private;
 pub mod gate;

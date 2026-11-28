@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use serde::Serialize;
 
 /// Env var: PID of the clud daemon that owns this session.

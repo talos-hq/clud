@@ -207,7 +207,7 @@ fn compact_if_needed(path: &Path) {
     else {
         return;
     };
-    if fs4::fs_std::FileExt::lock_exclusive(&lock).is_err() {
+    if crate::file_lock::FileExt::lock_exclusive(&lock).is_err() {
         return;
     }
     // Re-read under the lock: the file may have grown since the check above.

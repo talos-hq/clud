@@ -24,7 +24,7 @@ use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 
 /// Subdirectory under `~/.clud/` where per-version cached binaries
 /// live. Mirrors zccache's `runtime-binaries/` convention.

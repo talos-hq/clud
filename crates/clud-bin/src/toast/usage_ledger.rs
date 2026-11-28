@@ -7,7 +7,7 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

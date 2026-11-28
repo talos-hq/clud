@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use running_process::{
     CommandSpec, NativeProcess, ProcessConfig, ProcessError, StderrMode, StdinMode,
 };

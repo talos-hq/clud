@@ -16,7 +16,7 @@ use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 

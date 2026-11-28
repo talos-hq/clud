@@ -11,7 +11,7 @@ const MAX_MODEL_PAGES: usize = 8;
 const MAX_MODEL_BYTES: usize = 512 * 1024;
 const MAX_MODEL_FRAME_BYTES: usize = 128 * 1024;
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use running_process::{
     CommandSpec, NativeProcess, ProcessConfig, ReadStatus, StderrMode, StdinMode, StreamKind,
 };

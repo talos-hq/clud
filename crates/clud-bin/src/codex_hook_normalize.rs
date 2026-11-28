@@ -29,7 +29,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Write};
 use std::path::Path;
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use serde_json::Value;
 
 const GREEN: &str = "\x1b[32m";
