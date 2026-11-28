@@ -2,7 +2,7 @@
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use crate::platform::{host, self_install as fs_host};
 

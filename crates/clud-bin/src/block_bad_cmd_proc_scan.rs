@@ -32,9 +32,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 /// Unbounded dumps allowed per session; the next distinct one is refused once.
 pub(super) const DEFAULT_LIMIT: u32 = 3;
@@ -72,7 +72,7 @@ impl Dump {
     /// twice.
     pub(super) fn signature(&self) -> String {
         let digest = Sha256::digest(format!("{HASH_DOMAIN}{}", self.pipeline).as_bytes());
-        digest[..8]
+        digest.as_bytes()[..8]
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect()
@@ -331,7 +331,7 @@ fn applies_to(tool_name: &str) -> bool {
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
-    let hash: String = digest[..8]
+    let hash: String = digest.as_bytes()[..8]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();

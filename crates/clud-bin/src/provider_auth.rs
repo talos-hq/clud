@@ -311,7 +311,7 @@ enum ProbeOutcome {
 }
 
 fn key_fingerprint(key: &str) -> String {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     let digest = format!("{:x}", Sha256::digest(key.as_bytes()));
     format!("{} chars, sha256 {}", key.chars().count(), &digest[..12])
 }

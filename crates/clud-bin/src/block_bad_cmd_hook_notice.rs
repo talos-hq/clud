@@ -17,8 +17,8 @@ use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use super::block_bad_cmd_repeat::{prune, write_fast};
 
@@ -56,7 +56,10 @@ pub(super) fn collapse(notices: &[String]) -> Vec<String> {
 
 fn digest(text: &str) -> String {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}{text}").as_bytes());
-    digest[..8].iter().map(|b| format!("{b:02x}")).collect()
+    digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {

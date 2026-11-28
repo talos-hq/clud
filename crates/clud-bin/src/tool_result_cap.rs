@@ -1,6 +1,6 @@
 //! Shell text budget at the Claude-to-Codex subscription bridge boundary.
 //! Complete edge lines survive; the recovery marker is additional to the budget.
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::path::PathBuf;

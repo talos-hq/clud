@@ -211,7 +211,7 @@ pub(super) fn span_from(tool_input: Option<&Value>) -> Span {
 }
 
 fn file_key(path: &Path) -> String {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     let mut hasher = Sha256::new();
     hasher.update(HASH_DOMAIN.as_bytes());
     hasher.update(b"file\0");
@@ -222,6 +222,7 @@ fn file_key(path: &Path) -> String {
     hasher.update(normalized.to_string_lossy().as_bytes());
     hasher
         .finalize()
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))
@@ -333,9 +334,9 @@ fn now_secs() -> u64 {
 }
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
-    let hash: String = digest[..8]
+    let hash: String = digest.as_bytes()[..8]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();

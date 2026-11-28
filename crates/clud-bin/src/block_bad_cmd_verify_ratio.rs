@@ -28,9 +28,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 #[path = "block_bad_cmd_verify_python.rs"]
 mod python_write;
@@ -536,7 +536,10 @@ fn effective_limits() -> Limits {
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
-    let hash: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hash: String = digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     state_dir.join(DIR_NAME).join(format!("{hash}.json"))
 }
 

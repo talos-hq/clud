@@ -22,7 +22,7 @@
 
 use std::collections::HashMap;
 
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use crate::cache_health::TokenUsage;
 use crate::codex_translate;

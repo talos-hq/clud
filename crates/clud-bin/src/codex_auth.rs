@@ -14,8 +14,8 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use fs4::fs_std::FileExt;
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::args::CodexAuthSubcommand;
 pub(crate) use crate::platform::codex_auth::protect_windows_credential_file;
@@ -676,7 +676,7 @@ fn pkce_pair() -> Result<(String, String), getrandom::Error> {
     let verifier = random_urlsafe(64)?;
     let challenge = base64::Engine::encode(
         &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-        Sha256::digest(verifier.as_bytes()),
+        Sha256::digest(verifier.as_bytes()).as_bytes(),
     );
     Ok((verifier, challenge))
 }

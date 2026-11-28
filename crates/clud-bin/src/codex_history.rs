@@ -11,8 +11,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 /// Deterministic identity for a Messages client that provides no conversation
 /// identity. A bridge is owned by one foreground harness session, so this

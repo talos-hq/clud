@@ -30,8 +30,8 @@ use std::fs;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::Deserialize;
-use sha2::{Digest, Sha256};
 
 /// Manifest TOML embedded at compile time. See module docs.
 pub const EMBEDDED_MANIFEST_TOML: &str = include_str!("../../vendor/win32/git-bash-bin.toml");

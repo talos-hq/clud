@@ -3,8 +3,8 @@
 use std::cmp::Ordering;
 use std::collections::HashSet;
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 const MAX_CATALOG_BYTES: usize = 8 * 1024 * 1024;
 const SCHEMA: &str = "https://zackees.github.io/manifest.json/v1/manifest.schema.json";
@@ -641,8 +641,8 @@ pub(super) fn verify_static_elf_file(file: &mut std::fs::File, arch: Arch) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::hash::Sha256Hasher as Sha256;
     use serde_json::{json, Value};
-    use sha2::{Digest, Sha256};
 
     fn elf(machine: u16) -> Vec<u8> {
         let mut bytes = vec![0; 128];

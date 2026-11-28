@@ -4,8 +4,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use super::repo_worktree_probe::git;
 use crate::path_norm::{canonicalize_lenient, normalize_for_key, same_path};

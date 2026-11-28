@@ -22,8 +22,8 @@
 
 use std::collections::HashMap;
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 use crate::backend::ModelProvider;
 use crate::codex_model::{Effort, ModelSpec, SelectionError};

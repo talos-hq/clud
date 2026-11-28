@@ -14,9 +14,9 @@
 
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use running_process::{CommandSpec, NativeProcess, ProcessConfig, StderrMode, StdinMode};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 /// Skip the gate for one command (`CLUD_SKIP_PR_CHECKS=1 git push`) or a
 /// whole session (exported).

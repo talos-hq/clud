@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 /// Default model filename. Whisper.cpp uses this name on Hugging
 /// Face and most user-facing docs reference it.

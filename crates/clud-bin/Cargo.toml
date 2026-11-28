@@ -57,7 +57,10 @@ gix-hash = { version = "=0.26.0", features = ["sha1"] }
 # notifications / watcher failure, so `notify` is never the sole source of
 # truth.
 notify = "7"
+# Kept only for the `Hmac<Sha256>` / `Hkdf<Sha256>` type parameters; plain
+# digests go through kernal-api `hash-sha256`.
 sha2 = "0.10"
+kernal-api = { workspace = true, features = ["hash-sha256"] }
 hmac = "0.12.1"
 # End-to-end encryption of the clud.bot session socket (remote_connect/e2e.rs,
 # DD-219): ephemeral X25519, HKDF-SHA256 and ChaCha20-Poly1305. All three

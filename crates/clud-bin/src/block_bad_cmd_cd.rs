@@ -494,9 +494,12 @@ const SEEN_DIR_NAME: &str = "block-cd-seen";
 const SEEN_DOMAIN: &str = "clud-block-cd-seen-v1\0";
 
 fn seen_file(state_dir: &Path, session_id: &str) -> PathBuf {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     let digest = Sha256::digest(format!("{SEEN_DOMAIN}{session_id}").as_bytes());
-    let hash: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hash: String = digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     state_dir.join(SEEN_DIR_NAME).join(format!("{hash}.seen"))
 }
 

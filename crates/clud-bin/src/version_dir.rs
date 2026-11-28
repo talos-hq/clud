@@ -29,7 +29,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use fs4::fs_std::FileExt;
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use crate::alias_link::{self, Method};
 

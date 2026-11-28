@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::Args;
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 
 use crate::subprocess::{capture_separate, CapturedOutput};
 

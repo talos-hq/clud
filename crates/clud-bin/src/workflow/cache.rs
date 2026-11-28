@@ -11,8 +11,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 
 use super::engine::AgentRequest;
 

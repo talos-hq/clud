@@ -40,9 +40,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 /// Distinct views of one image allowed before the single refusal.
 pub(super) const DEFAULT_LIMIT: u32 = 12;
@@ -334,7 +334,7 @@ fn content_hash(path: &Path, size: u64) -> Option<String> {
     let bytes = std::fs::read(path).ok()?;
     let digest = Sha256::digest(&bytes);
     Some(
-        digest[..16]
+        digest.as_bytes()[..16]
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect(),
@@ -350,7 +350,7 @@ pub(super) fn session_limit_from(env: Option<&str>) -> u32 {
 
 fn session_file(state_dir: &Path, session_id: &str) -> PathBuf {
     let digest = Sha256::digest(format!("{HASH_DOMAIN}session\0{session_id}").as_bytes());
-    let hash: String = digest[..8]
+    let hash: String = digest.as_bytes()[..8]
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();

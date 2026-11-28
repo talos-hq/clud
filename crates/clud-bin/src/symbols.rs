@@ -339,7 +339,7 @@ fn print_not_published(reason: &str, target: &str) {
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
+    use kernal_api::hash::Sha256Hasher as Sha256;
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     hasher

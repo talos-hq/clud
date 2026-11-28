@@ -17,8 +17,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use fs4::fs_std::FileExt;
+use kernal_api::hash::Sha256Hasher as Sha256;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 pub const INDEX_VERSION: u32 = 1;
 

@@ -1,8 +1,8 @@
 use std::io;
 use std::path::{Path, PathBuf};
 
+use kernal_api::hash::Sha256Hasher as Sha256;
 use running_process::broker::protocol::Endpoint;
-use sha2::{Digest, Sha256};
 
 use super::RUNNING_PROCESS_SERVICE_NAME;
 

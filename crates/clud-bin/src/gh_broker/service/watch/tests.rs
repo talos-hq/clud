@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use sha2::{Digest, Sha256};
+use kernal_api::hash::Sha256Hasher as Sha256;
 
 use super::super::{BrokerRead, GhBroker, ReadError, DEFAULT_TTL_MS, RUNS_TTL_MS};
 use super::{WatchRequest, MAX_WATCH_MS};
