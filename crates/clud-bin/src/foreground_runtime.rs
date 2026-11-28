@@ -850,6 +850,9 @@ impl ForegroundRuntime {
             command.insert(1, settings.value.clone());
             command.insert(1, "--settings".to_string());
         }
+        if crate::subprocess::argv_is_batch_wrapped(&command) {
+            spill_system_prompt_for_batch_wrapper(&mut command, crate::gc::session_tmp::ensure_dir);
+        }
         adapter.spawn(mode, command, cwd, self.env.clone())
     }
 
@@ -1749,6 +1752,51 @@ fn settings_effort(command: &[String]) -> Option<&str> {
     })
 }
 
+/// cmd.exe caps a command line at 8191 chars, and a `claude.cmd` (npm shim)
+/// launch goes through it. clud's appended system prompt alone is ~6.5 KB, so
+/// past this budget it moves to `--append-system-prompt-file`.
+const BATCH_COMMAND_LINE_BUDGET: usize = 7000;
+
+/// Moves `--append-system-prompt <text>` into a file under the session temp
+/// directory when a batch-wrapped launch would overflow cmd.exe's limit. The
+/// file is left for the session-temp sweep: Claude reads it after spawn.
+/// Leaves the command untouched when no directory or write is available.
+fn spill_system_prompt_for_batch_wrapper(
+    command: &mut [String],
+    dir: impl FnOnce() -> Option<PathBuf>,
+) {
+    let length: usize = command.iter().map(|argument| argument.len() + 3).sum();
+    if length <= BATCH_COMMAND_LINE_BUDGET {
+        return;
+    }
+    let Some(index) = command
+        .iter()
+        .take_while(|argument| argument.as_str() != "--")
+        .position(|argument| argument == "--append-system-prompt")
+    else {
+        return;
+    };
+    let Some(prompt) = command.get(index + 1) else {
+        return;
+    };
+    let Some(dir) = dir() else {
+        return;
+    };
+    let written = tempfile::Builder::new()
+        .prefix("clud-claude-system-prompt-")
+        .suffix(".md")
+        .tempfile_in(&dir)
+        .and_then(|mut file| {
+            file.write_all(prompt.as_bytes())?;
+            file.keep().map_err(|error| error.error)
+        });
+    let Ok((_, path)) = written else {
+        return;
+    };
+    command[index] = "--append-system-prompt-file".to_string();
+    command[index + 1] = path.to_string_lossy().into_owned();
+}
+
 fn remove_settings_effort(command: &mut Vec<String>) {
     if settings_effort(command).is_some() {
         if let Some(index) = command.iter().position(|arg| arg == "--effort") {
@@ -2010,6 +2058,35 @@ pub(crate) mod tests {
     use crate::graphics::GraphicsConfig;
     use std::cell::RefCell;
     use std::net::TcpListener;
+
+    #[test]
+    fn oversized_batch_launch_moves_system_prompt_to_a_file() {
+        let fixture = tempfile::tempdir().unwrap();
+        let prompt = "x".repeat(BATCH_COMMAND_LINE_BUDGET);
+        let mut command: Vec<String> = vec![
+            "claude.cmd".into(),
+            "--append-system-prompt".into(),
+            prompt.clone(),
+            "-p".into(),
+            "hello".into(),
+        ];
+        spill_system_prompt_for_batch_wrapper(&mut command, || Some(fixture.path().to_owned()));
+        assert_eq!(command[1], "--append-system-prompt-file");
+        assert_eq!(std::fs::read_to_string(&command[2]).unwrap(), prompt);
+        assert_eq!(&command[3..], ["-p", "hello"]);
+    }
+
+    #[test]
+    fn short_batch_launch_keeps_the_inline_system_prompt() {
+        let mut command: Vec<String> = vec![
+            "claude.cmd".into(),
+            "--append-system-prompt".into(),
+            "short".into(),
+        ];
+        let before = command.clone();
+        spill_system_prompt_for_batch_wrapper(&mut command, || panic!("no file for a short line"));
+        assert_eq!(command, before);
+    }
 
     #[test]
     fn missing_system_temp_root_uses_owned_fallback() {
