@@ -46,3 +46,6 @@ E text src/x.rs replace --old-file old.txt --new-file new.txt --expect-count 1
 Use `text replace` only when no structured verb fits, and keep `--old`
 long enough to be unique. For multi-file search/replace blocks, use
 `code/patch.py`.
+
+**RED -> GREEN** still applies: when an edit changes code behavior, show the
+failing test first, then make the edit that turns it green.
