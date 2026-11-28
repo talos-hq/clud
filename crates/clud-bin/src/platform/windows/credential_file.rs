@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn a_written_private_file_is_readable_but_a_broadened_dacl_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("key");
         crate::fs_private::write_private_atomic(&path, b"fixture-key").unwrap();
         assert_eq!(read(&path).unwrap(), "fixture-key");

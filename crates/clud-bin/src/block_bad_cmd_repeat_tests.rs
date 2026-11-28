@@ -121,7 +121,7 @@ fn opt_out_token_is_whole_word() {
 
 #[test]
 fn check_at_persists_only_hashes_and_counts_per_session() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for i in 0..3 {
         assert_eq!(
             check_at(
@@ -186,7 +186,7 @@ fn check_at_persists_only_hashes_and_counts_per_session() {
 
 #[test]
 fn state_failures_fail_open() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     // A file where the state directory should be: writes fail, calls allow.
     let blocked = tmp.path().join("state");
     std::fs::write(&blocked, b"not a dir").unwrap();
@@ -309,7 +309,7 @@ fn poll_count_counts_one_query_and_expires_it() {
 /// it carries survives the upgrade rather than restarting at one.
 #[test]
 fn a_legacy_streak_seeds_the_ledger() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = 5_000_u64;
     let legacy = Streak {
         key: "exact".to_string(),
@@ -362,7 +362,7 @@ fn a_legacy_streak_seeds_the_ledger() {
 /// the key would never re-arm and the poll guard would refuse a live read.
 #[test]
 fn a_fresh_poll_key_never_inherits_the_count_of_another() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = 5_000_u64;
     let exact = "exact";
     let mut past = Past {
@@ -463,7 +463,7 @@ fn an_alternating_poll_dressing_still_counts_as_one_query() {
     // 2026-11-08: the single-slot steady counter reset on every flip, so 193
     // calls of one query produced no note and no refusal. The ledger keeps a
     // count per query, so the flip no longer erases it.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut notes = Vec::new();
     for index in 0..30_u64 {
         let (verdict, note) = flapped_scan(
@@ -481,7 +481,7 @@ fn an_alternating_poll_dressing_still_counts_as_one_query() {
 
 #[test]
 fn the_poll_guard_refuses_an_alternating_poll_past_its_limit() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut refusals = 0;
     for index in 0..=u64::from(POLL_DENY_AT) + 2 {
         let (verdict, _) = flapped_scan(
@@ -498,7 +498,7 @@ fn the_poll_guard_refuses_an_alternating_poll_past_its_limit() {
 
 #[test]
 fn the_ledger_is_bounded_and_forgets_expired_queries() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for index in 0..(MAX_POLL_KEYS as u64 + 6) {
         let key = format!("q{index}");
         check_at(
@@ -540,7 +540,7 @@ fn the_ledger_is_bounded_and_forgets_expired_queries() {
 
 #[test]
 fn the_note_fires_once_at_six_and_once_at_twenty_four() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut notes = Vec::new();
     for index in 0..30_u64 {
         let (verdict, note) = check_at(
@@ -565,7 +565,7 @@ fn the_note_fires_once_at_six_and_once_at_twenty_four() {
 
 #[test]
 fn a_non_query_repeat_never_produces_the_poll_note() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for index in 0..30_u64 {
         let (_, note) = check_at(
             tmp.path(),
@@ -626,7 +626,7 @@ fn poll_message_names_the_blocking_waiter_and_no_sleep_loop() {
 /// 2026-11-05: one session, 127 identical `gh issue view` polls in 24 h.
 #[test]
 fn the_poll_guard_refuses_the_identical_query_past_its_own_limit() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut first_denied = None;
     let mut denials = 0;
     for index in 0..=POLL_DENY_AT as u64 + 4 {
@@ -658,7 +658,7 @@ fn the_poll_guard_refuses_the_identical_query_past_its_own_limit() {
 /// test command is the burst guard's business and is never refused here.
 #[test]
 fn the_poll_guard_never_refuses_a_command_that_cannot_read_state() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for index in 0..(POLL_DENY_AT as u64 * 3) {
         let (verdict, note) = check_at(
             tmp.path(),
@@ -679,7 +679,7 @@ fn the_poll_guard_never_refuses_a_command_that_cannot_read_state() {
 
 #[test]
 fn poll_limit_zero_disables_only_the_poll_guard() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for index in 0..(POLL_DENY_AT as u64 * 2) {
         let (verdict, _) = check_at(
             tmp.path(),
@@ -787,7 +787,7 @@ fn poll_ledger_collapses_a_pipeline_dressing_into_one_query() {
 
 #[test]
 fn the_measured_ci_poll_is_refused_past_its_limit() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut refusals: Vec<usize> = Vec::new();
     for index in 0..=u64::from(POLL_DENY_AT) + 3 {
         let command = CI_POLL_DRESSINGS[index as usize % CI_POLL_DRESSINGS.len()];
@@ -819,7 +819,7 @@ fn file_poll_key(command: &str) -> String {
 
 #[test]
 fn one_local_file_polled_through_its_dressings_shares_one_key() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state = dir.path().join("state.json");
     std::fs::write(&state, r#"{"manager_session_id":"abc","workers":2}"#).unwrap();
     let path = state.display();
@@ -850,7 +850,7 @@ fn one_local_file_polled_through_its_dressings_shares_one_key() {
 
 #[test]
 fn a_changed_file_starts_a_fresh_poll_count() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state = dir.path().join("state.json");
     std::fs::write(&state, "{\"tick\":1}").unwrap();
     let command = format!("cat {}", state.display());
@@ -868,7 +868,7 @@ fn a_changed_file_starts_a_fresh_poll_count() {
 
 #[test]
 fn a_writer_is_never_a_file_poll() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let source = dir.path().join("state.json");
     let target = dir.path().join("copy.json");
     std::fs::write(&source, "{}").unwrap();
@@ -887,7 +887,7 @@ fn a_writer_is_never_a_file_poll() {
 
 #[test]
 fn unresolvable_and_mixed_commands_are_not_file_polls() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state = dir.path().join("state.json");
     std::fs::write(&state, "{}").unwrap();
     for command in [
@@ -917,7 +917,7 @@ fn unresolvable_and_mixed_commands_are_not_file_polls() {
 
 #[test]
 fn a_file_poll_earns_the_poll_note_and_then_the_refusal() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state = dir.path().join("state.json");
     std::fs::write(&state, r#"{"workers":0}"#).unwrap();
     let command = format!("cat {} 2>&1 | head -60", state.display());

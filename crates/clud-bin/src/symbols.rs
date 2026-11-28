@@ -803,7 +803,7 @@ mod tests {
 
     #[test]
     fn list_reports_orders_by_unix_ms_prefix_desc() -> std::io::Result<()> {
-        let tmp = tempfile::tempdir()?;
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new()?;
         fs::write(tmp.path().join("100-foreground-1.json"), "{}")?;
         fs::write(tmp.path().join("300-foreground-3.json"), "{}")?;
         fs::write(tmp.path().join("200-foreground-2.json"), "{}")?;
@@ -817,7 +817,7 @@ mod tests {
 
     #[test]
     fn read_report_backtrace_extracts_role_and_ts() -> std::io::Result<()> {
-        let tmp = tempfile::tempdir()?;
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new()?;
         let path = tmp.path().join("500-daemon-9999.json");
         fs::write(
             &path,
@@ -1086,7 +1086,7 @@ mod tests {
     /// fetched, verified and cached under that build-id.
     #[test]
     fn a_matching_build_id_installs_the_sidecar_under_its_build_id() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let net = release(BUILD_ID, b"dwarf package bytes");
@@ -1113,7 +1113,7 @@ mod tests {
     /// and the sidecar URL is never requested.
     #[test]
     fn a_different_build_id_skips_without_requesting_the_sidecar() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let net = release(&"ee".repeat(20), b"dwarf package bytes");
@@ -1131,7 +1131,7 @@ mod tests {
     /// No entry for the triple: same skip.
     #[test]
     fn a_missing_entry_skips_without_requesting_the_sidecar() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let mut net = release(BUILD_ID, b"dwarf package bytes");
@@ -1145,7 +1145,7 @@ mod tests {
     /// the pairing) is the same "not a published build" answer.
     #[test]
     fn a_release_without_build_ids_skips_without_requesting_the_sidecar() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let mut net = release(BUILD_ID, b"dwarf package bytes");
@@ -1159,7 +1159,7 @@ mod tests {
     /// so nothing is fetched at all.
     #[test]
     fn a_report_without_a_build_id_skips_without_any_network() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", None);
         let cache = tmp.path().join("symbols");
         let net = release(BUILD_ID, b"unused");
@@ -1172,7 +1172,7 @@ mod tests {
     /// the cache write outside the cache.
     #[test]
     fn a_non_hex_build_id_is_treated_as_absent() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some("../../escape"));
         let cache = tmp.path().join("symbols");
         let net = release("../../escape", b"payload");
@@ -1187,7 +1187,7 @@ mod tests {
     /// symbolicating at all, which is #1016's own argument.
     #[test]
     fn a_checksum_mismatch_installs_nothing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let mut net = release(BUILD_ID, b"the published bytes");
@@ -1211,7 +1211,7 @@ mod tests {
     /// is refused before the sidecar is requested.
     #[test]
     fn a_build_ids_file_that_fails_its_checksum_is_refused_before_download() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let mut net = release(BUILD_ID, b"payload");
@@ -1225,7 +1225,7 @@ mod tests {
     /// nothing to check the bytes against. Refuse before downloading them.
     #[test]
     fn an_asset_absent_from_the_manifest_is_refused_before_download() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let mut net = release(BUILD_ID, b"never requested");
@@ -1243,7 +1243,7 @@ mod tests {
     /// A network failure (not a 404) on BUILD-IDS.txt is a real error.
     #[test]
     fn a_failed_build_ids_fetch_is_an_error() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let code = install_with(
@@ -1258,7 +1258,7 @@ mod tests {
     /// answer, and it must not cost a request that would 404.
     #[test]
     fn a_target_with_no_published_sidecar_touches_no_network() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = write_report(
             &tmp.path().join("crashes"),
             "2.8.0",
@@ -1278,7 +1278,7 @@ mod tests {
     /// typed the command twice would be its own bug.
     #[test]
     fn an_already_installed_sidecar_is_not_fetched_again() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "2.8.0", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let net = release(BUILD_ID, b"dwarf package bytes");
@@ -1302,7 +1302,7 @@ mod tests {
     /// be named. That is a skip with a reason, not an error, and not a guess.
     #[test]
     fn a_report_without_version_or_target_is_not_guessed_at() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let dir = tmp.path().join("crashes");
         fs::create_dir_all(&dir).unwrap();
         let report = dir.join("1700000000000-crash.json");
@@ -1317,7 +1317,7 @@ mod tests {
     /// No reports is a normal state, not a failure, and not a reason to fetch.
     #[test]
     fn no_reports_is_not_an_error() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let net = release(BUILD_ID, b"unused");
 
         assert_eq!(install_with(&[], &|url| net.fetch(url), tmp.path()), 0);
@@ -1329,7 +1329,7 @@ mod tests {
     /// its own release.
     #[test]
     fn the_fetched_urls_name_the_reports_own_release() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "1.2.3", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let net = release(BUILD_ID, b"payload");
@@ -1372,7 +1372,7 @@ mod tests {
 
     #[test]
     fn the_cache_keeps_only_the_newest_builds() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = tmp.path();
         let dirs = seed_builds(cache, &["aaaa0001", "ffff0002", "0000cafe", "bbbb0004"]);
 
@@ -1389,7 +1389,7 @@ mod tests {
     /// version-keyed dirs an older clud left behind age out by the same rule.
     #[test]
     fn pruning_is_by_recency_not_by_name() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = tmp.path();
         // Created oldest-to-newest; the names sort in the opposite order.
         let dirs = seed_builds(cache, &["2.9.0", "ffff", "0000"]);
@@ -1406,7 +1406,7 @@ mod tests {
 
     #[test]
     fn a_cache_within_the_bound_is_left_alone() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = tmp.path();
         let dirs = seed_builds(cache, &["aaaa", "bbbb"]);
 
@@ -1416,7 +1416,7 @@ mod tests {
 
     #[test]
     fn pruning_a_missing_cache_is_not_an_error() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert_eq!(prune_cache(&tmp.path().join("never-created")), 0);
     }
 
@@ -1424,7 +1424,7 @@ mod tests {
     /// evicts, so exactly the 2 newest build-ids remain.
     #[test]
     fn installing_prunes_the_cache_to_two_builds() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let report = report_in(tmp.path(), "9.9.9", Some(BUILD_ID));
         let cache = tmp.path().join("symbols");
         let old = seed_builds(&cache, &["aaaa0001", "bbbb0002"]);

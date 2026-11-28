@@ -128,8 +128,8 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs::File;
-    use tempfile::TempDir;
 
     #[test]
     fn managed_uv_path_includes_pinned_version() {
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn discover_uv_finds_managed_install() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let managed = managed_uv_path(tmp.path());
         std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
         File::create(&managed).unwrap();
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn discover_uv_returns_none_when_nothing_installed() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let found = discover_uv("", tmp.path());
         assert!(found.is_none());
     }
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn discover_uv_finds_path_install() {
         // Drop a fake `uv` binary into a dir; pass that dir as PATH.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let exe_name = if crate::platform::host::WINDOWS {
@@ -178,7 +178,7 @@ mod tests {
 
     #[test]
     fn acquire_install_lock_creates_lock_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let install_dir = tmp.path().join("uv-install");
         let guard = acquire_install_lock(&install_dir).unwrap();
         assert!(guard.lock_path().exists());
@@ -193,7 +193,7 @@ mod tests {
         // Within a single process, fs4 exclusive locks may be reentrant
         // depending on the platform; rather than racing threads we assert
         // the lock-file path and that release happens on drop.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let install_dir = tmp.path().join("uv-install");
         {
             let _g = acquire_install_lock(&install_dir).unwrap();

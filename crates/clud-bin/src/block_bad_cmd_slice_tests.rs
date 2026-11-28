@@ -2,7 +2,7 @@
 //! single-range read guard (#2233).
 
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 const LIMIT: u32 = DEFAULT_LIMIT;
 
@@ -91,7 +91,7 @@ fn limit_from_parses_and_falls_back() {
 
 #[test]
 fn detect_counts_a_single_wide_range_above_the_cap() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "big.rs", 400, 60);
     let slice = detect("sed -n '200,400p' big.rs", dir.path()).expect("detected");
     assert_eq!((slice.start, slice.end), (200, 400));
@@ -101,7 +101,7 @@ fn detect_counts_a_single_wide_range_above_the_cap() {
 
 #[test]
 fn detect_ignores_a_range_whose_printed_text_fits_the_cap() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "small_window.rs", 400, 20);
     assert!(
         detect("sed -n '1,200p' small_window.rs", dir.path()).is_none(),
@@ -111,7 +111,7 @@ fn detect_ignores_a_range_whose_printed_text_fits_the_cap() {
 
 #[test]
 fn detect_ignores_multi_range_calls_that_belong_to_the_hunt_guard() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "two.rs", 800, 60);
     assert!(detect(
         "sed -n '1,400p' two.rs; sed -n '500,800p' two.rs",
@@ -122,14 +122,14 @@ fn detect_ignores_multi_range_calls_that_belong_to_the_hunt_guard() {
 
 #[test]
 fn detect_ignores_a_piped_read_whose_output_is_bounded() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "piped.rs", 800, 60);
     assert!(detect("sed -n '1,700p' piped.rs | head -20", dir.path()).is_none());
 }
 
 #[test]
 fn detect_ignores_redirects_and_in_place_edits() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "w.rs", 800, 60);
     assert!(detect("sed -n '1,700p' w.rs > out.txt", dir.path()).is_none());
     assert!(detect("sed -i '1,700p' w.rs", dir.path()).is_none());
@@ -137,21 +137,21 @@ fn detect_ignores_redirects_and_in_place_edits() {
 
 #[test]
 fn detect_ignores_files_below_the_size_floor() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "tiny.rs", 40, 10);
     assert!(detect("sed -n '1,40p' tiny.rs", dir.path()).is_none());
 }
 
 #[test]
 fn detect_ignores_non_source_targets_like_logs_and_data() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "build.log", 800, 60);
     assert!(detect("sed -n '1,700p' build.log", dir.path()).is_none());
 }
 
 #[test]
 fn detect_ignores_a_missing_file_and_a_range_past_the_end() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "short.rs", 100, 60);
     assert!(detect("sed -n '1,700p' missing.rs", dir.path()).is_none());
     assert!(
@@ -162,7 +162,7 @@ fn detect_ignores_a_missing_file_and_a_range_past_the_end() {
 
 #[test]
 fn detect_resolves_relative_targets_against_the_declared_cwd() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     std::fs::create_dir_all(dir.path().join("crates")).expect("nested");
     let expected = source(&dir.path().join("crates"), "deep.rs", 400, 60);
     let slice = detect("sed -n '1,400p' crates/deep.rs", dir.path()).expect("detected");
@@ -171,7 +171,7 @@ fn detect_resolves_relative_targets_against_the_declared_cwd() {
 
 #[test]
 fn printed_bytes_counts_every_line_of_the_range_plus_its_newline() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let path = source(dir.path(), "count.rs", 100, 40);
     // 40-byte lines, range 10..19 == ten lines.
     assert_eq!(
@@ -207,7 +207,7 @@ fn opts_out_matches_the_token_as_a_whole_word_only() {
 
 #[test]
 fn non_shell_tools_and_missing_session_allow() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let input = Some(serde_json::json!({"command": "sed -n '1,700p' a.rs"}));
     assert!(reason("Read", input.as_ref(), Some("s1"), dir.path()).is_none());
     assert!(reason("Bash", input.as_ref(), None, dir.path()).is_none());
@@ -215,7 +215,7 @@ fn non_shell_tools_and_missing_session_allow() {
 
 #[test]
 fn the_refusal_names_the_exact_bounded_command() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let path = source(dir.path(), "msg.rs", 900, 60);
     let slice = detect("sed -n '300,900p' msg.rs", dir.path()).expect("detected");
     let message = deny_message(&slice, 3, LIMIT);
@@ -229,7 +229,7 @@ fn the_refusal_names_the_exact_bounded_command() {
 
 #[test]
 fn corrupt_state_and_state_errors_fail_open() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let slice = slice_for("/w/a.rs", 1, 400);
     std::fs::create_dir_all(dir.path().join(DIR_NAME)).expect("dir");
     let path = session_file(dir.path(), "s1");
@@ -239,7 +239,7 @@ fn corrupt_state_and_state_errors_fail_open() {
 
 #[test]
 fn check_at_counts_across_calls_and_refuses_the_third_distinct_read() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let path = source(dir.path(), "walk.rs", 900, 60);
     let first = detect("sed -n '1,400p' walk.rs", dir.path()).expect("first");
     let second = detect("sed -n '1,300p' walk.rs", dir.path()).expect("second");
@@ -275,7 +275,7 @@ fn whole_for(paths: &[&str], bytes: u64) -> WholeRead {
 
 #[test]
 fn a_whole_file_cat_is_sized_from_the_file_not_guessed() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let path = source(dir.path(), "handoff.md", 300, 60);
     let whole = detect_whole("cat handoff.md", dir.path()).expect("detected");
     assert_eq!(whole.bytes, std::fs::metadata(&path).expect("meta").len());
@@ -284,14 +284,14 @@ fn a_whole_file_cat_is_sized_from_the_file_not_guessed() {
 
 #[test]
 fn a_small_cat_is_left_alone() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "tiny.md", 20, 40);
     assert!(detect_whole("cat tiny.md", dir.path()).is_none());
 }
 
 #[test]
 fn several_small_cats_that_add_up_are_one_oversized_read() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "a.md", 80, 60);
     source(dir.path(), "b.md", 80, 60);
     let whole = detect_whole("cat a.md b.md", dir.path()).expect("detected");
@@ -301,7 +301,7 @@ fn several_small_cats_that_add_up_are_one_oversized_read() {
 
 #[test]
 fn cat_with_a_pipe_redirect_or_glob_passes_untouched() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "doc.md", 300, 60);
     assert!(detect_whole("cat doc.md | head -20", dir.path()).is_none());
     assert!(detect_whole("cat doc.md > /tmp/out.txt", dir.path()).is_none());
@@ -310,7 +310,7 @@ fn cat_with_a_pipe_redirect_or_glob_passes_untouched() {
 
 #[test]
 fn cat_of_logs_data_and_missing_files_is_never_counted() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let log = dir.path().join("run.log");
     std::fs::write(&log, "x".repeat(64 * 1024)).expect("fixture");
     assert!(detect_whole("cat run.log", dir.path()).is_none());
@@ -320,7 +320,7 @@ fn cat_of_logs_data_and_missing_files_is_never_counted() {
 
 #[test]
 fn a_multi_range_sed_call_is_left_to_the_hunt_guard() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "wide.rs", 900, 60);
     assert!(
         detect_whole(
@@ -347,7 +347,7 @@ fn distinct_whole_file_cats_are_refused_once_past_the_limit_and_a_retry_passes()
 
 #[test]
 fn whole_file_and_ranged_reads_keep_separate_counts() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let path = source(dir.path(), "mix.rs", 900, 60);
     let ranged = detect("sed -n '1,400p' mix.rs", dir.path()).expect("ranged");
     let whole = whole_for(&[path.to_string_lossy().as_ref()], 9_000);
@@ -391,7 +391,7 @@ fn the_whole_file_refusal_names_the_outline_and_slice_commands() {
 
 #[test]
 fn check_whole_at_counts_across_calls_and_refuses_the_third_distinct_read() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let first = whole_for(&["/w/a.md"], 9_000);
     let second = whole_for(&["/w/b.md"], 9_000);
     let third = whole_for(&["/w/c.md"], 9_000);
@@ -422,7 +422,7 @@ fn check_whole_at_counts_across_calls_and_refuses_the_third_distinct_read() {
 
 #[test]
 fn whole_file_state_errors_fail_open() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     let whole = whole_for(&["/w/a.md"], 9_000);
     std::fs::create_dir_all(dir.path().join(DIR_NAME)).expect("dir");
     let path = session_file(dir.path(), "s1");
@@ -437,7 +437,7 @@ fn whole_file_state_errors_fail_open() {
 
 #[test]
 fn a_wide_range_behind_a_head_is_sized_by_the_lines_the_head_keeps() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "wide.rs", 900, 60);
     // 200 lines of 61 B each: the pipe bounds the read, but not below the cap.
     let slice = detect("sed -n '1,700p' wide.rs | head -200", dir.path()).expect("detected");
@@ -447,7 +447,7 @@ fn a_wide_range_behind_a_head_is_sized_by_the_lines_the_head_keeps() {
 
 #[test]
 fn a_head_that_keeps_only_a_few_lines_is_left_alone() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "wide.rs", 900, 60);
     assert!(detect("sed -n '1,700p' wide.rs | head -20", dir.path()).is_none());
     assert!(detect("sed -n '1,700p' wide.rs | head", dir.path()).is_none());
@@ -455,7 +455,7 @@ fn a_head_that_keeps_only_a_few_lines_is_left_alone() {
 
 #[test]
 fn a_column_cut_that_still_prints_a_lot_is_sized_by_the_columns_it_keeps() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "lines.rs", 700, 400);
     let slice = detect("sed -n '1,700p' lines.rs | cut -c1-350", dir.path()).expect("detected");
     assert_eq!(slice.bytes, 700 * 351);
@@ -463,7 +463,7 @@ fn a_column_cut_that_still_prints_a_lot_is_sized_by_the_columns_it_keeps() {
 
 #[test]
 fn a_head_and_a_cut_together_apply_both_bounds() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "lines.rs", 900, 400);
     let slice = detect(
         "sed -n '1,900p' lines.rs | head -200 | cut -c1-80",
@@ -475,7 +475,7 @@ fn a_head_and_a_cut_together_apply_both_bounds() {
 
 #[test]
 fn a_pipe_whose_bound_cannot_be_predicted_stays_invisible() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "wide.rs", 900, 60);
     for command in [
         "sed -n '1,700p' wide.rs | tail -200",
@@ -489,7 +489,7 @@ fn a_pipe_whose_bound_cannot_be_predicted_stays_invisible() {
 
 #[test]
 fn a_piped_read_that_bounds_nothing_is_still_not_counted() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "wide.rs", 900, 60);
     assert!(detect("sed -n '1,700p' wide.rs | head -200 > out.txt", dir.path()).is_none());
     assert!(detect("sed -ni '1,700p' wide.rs | head -200", dir.path()).is_none());
@@ -497,7 +497,7 @@ fn a_piped_read_that_bounds_nothing_is_still_not_counted() {
 
 #[test]
 fn a_cat_behind_a_head_is_sized_by_the_lines_the_head_keeps() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "handoff.md", 300, 60);
     let whole = detect_whole("cat handoff.md | head -300", dir.path()).expect("detected");
     assert_eq!(whole.bytes, 300 * 61);
@@ -509,7 +509,7 @@ fn a_cat_behind_a_head_is_sized_by_the_lines_the_head_keeps() {
 
 #[test]
 fn a_cat_inside_a_subshell_is_sized_like_any_other() {
-    let dir = tempdir().expect("dir");
+    let dir = TemporaryDirectory::new().expect("dir");
     source(dir.path(), "a.md", 80, 60);
     source(dir.path(), "b.md", 80, 60);
     let whole = detect_whole("(cd deep; cat a.md b.md)", dir.path()).expect("detected");

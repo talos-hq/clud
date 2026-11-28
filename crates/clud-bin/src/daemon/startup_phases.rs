@@ -169,7 +169,7 @@ mod tests {
 
     #[test]
     fn phases_are_logged_in_order_with_monotonic_elapsed() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let phases = StartupPhases::new(tmp.path(), Instant::now());
         for name in ["a", "b", "c"] {
             phases.mark(name);
@@ -188,7 +188,7 @@ mod tests {
 
     #[test]
     fn fail_records_event_and_stderr_log() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let phases = StartupPhases::new(tmp.path(), Instant::now());
         assert_eq!(phases.fail("loopback_bind", "boom"), 1);
         let got = events(tmp.path());
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn panic_report_keeps_message_location_and_thread_when_appended() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join(STDERR_LOG_NAME);
         let info = "panicked at src/x.rs:1:2:\ndaemon-boom-2386";
         append_stderr_log(&path, &panic_report(Some("worker"), &info, &"<bt>"));
@@ -215,7 +215,7 @@ mod tests {
 
     #[test]
     fn stderr_log_rolls_past_the_cap() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join(STDERR_LOG_NAME);
         fs::write(&path, vec![b'x'; MAX_STDERR_LOG_BYTES as usize]).unwrap();
         append_stderr_log(&path, "fresh");

@@ -1804,7 +1804,7 @@ mod tests {
 
     #[test]
     fn startup_failure_in_daemon_info_write_records_start_failed_after_phases() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         // A directory where daemon.json belongs forces the write to fail.
         fs::create_dir_all(daemon_info_path(tmp.path())).unwrap();
         assert_eq!(run_daemon(tmp.path(), &AtomicBool::new(false)), 1);
@@ -1936,7 +1936,7 @@ mod tests {
 
     #[test]
     fn api_kill_dispatch_uses_the_supplied_lifecycle_owner() {
-        let temp = tempfile::TempDir::new().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let store = super::super::api_sessions::ApiSessionStore::new(temp.path());
         let record = store
             .create(super::super::api_sessions::CreateApiSession {
@@ -2183,7 +2183,7 @@ mod tests {
     #[test]
     fn noop_insert_dispatch_writes_no_events() {
         let _guard = gc_event_test_lock();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
         let tx = test_gc_worker(tmp.path());
 
@@ -2224,7 +2224,7 @@ mod tests {
     fn creation_ledger_round_trips_through_the_daemon() {
         use super::super::types::GcOp;
         let _guard = gc_event_test_lock();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
         let tx = test_gc_worker(tmp.path());
         let entry = crate::gc::CreatedEntry {
@@ -2280,7 +2280,7 @@ mod tests {
     #[test]
     fn mutating_and_error_ops_still_journal_gc_finished() {
         let _guard = gc_event_test_lock();
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
         let tx = test_gc_worker(tmp.path());
         let _ = dispatch_daemon_request(
@@ -2318,7 +2318,7 @@ mod tests {
             }
         }
         let _restore = Restore(prior);
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
         let tx = test_gc_worker(tmp.path());
         let _ = dispatch_daemon_request(
@@ -2446,7 +2446,7 @@ mod tests {
     /// poll it and exit instead of ignoring the signal.
     #[test]
     fn tier1_daemon_exits_when_interrupted_flag_is_set() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let state_dir = tmp.path().to_path_buf();
         let flag = Arc::new(AtomicBool::new(false));
         let (dir, thread_flag) = (state_dir.clone(), Arc::clone(&flag));
@@ -2462,7 +2462,7 @@ mod tests {
     /// leaves the successor's file alone.
     #[test]
     fn tier1_superseded_daemon_exits_and_keeps_successor_info() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let state_dir = tmp.path().to_path_buf();
         let dir = state_dir.clone();
         let daemon_thread = thread::spawn(move || run_daemon_uninterrupted(&dir));
@@ -2516,7 +2516,7 @@ mod tests {
             fs::write(home.join("entered-test"), test).unwrap();
             return false;
         }
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut env: HashMap<String, String> = std::env::vars().collect();
         let root = home.path().to_string_lossy().into_owned();
         env.insert("HOME".into(), root.clone());
@@ -2572,7 +2572,7 @@ mod tests {
         if isolated_daemon_test("tier1_startup_readiness_survives_delayed_start") {
             return;
         }
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let state_dir = home.path().join("state");
         let flag = Arc::new(AtomicBool::new(false));
         let (release_tx, release_rx) = std::sync::mpsc::channel();
@@ -2612,7 +2612,7 @@ mod tests {
         }
         let bound = Duration::from_secs(5);
         for use_flag in [false, true] {
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             let state_dir = tmp.path().to_path_buf();
             let flag = Arc::new(AtomicBool::new(false));
             let (dir, thread_flag) = (state_dir.clone(), Arc::clone(&flag));
@@ -2653,7 +2653,7 @@ mod tests {
 
     #[test]
     fn tier1_daemon_accepts_legacy_json_and_prost_clients_in_one_process() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let state_dir = tmp.path().to_path_buf();
         let daemon_state_dir = state_dir.clone();
         let daemon_thread = thread::spawn(move || run_daemon_uninterrupted(&daemon_state_dir));
@@ -2704,7 +2704,7 @@ mod tests {
     /// fast, and pin the spawn-side latency below 100ms even on slow CI.
     #[test]
     fn spawn_adopt_kill_worker_returns_promptly() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let started = Instant::now();
         spawn_adopt_kill_worker(
             tmp.path().to_path_buf(),
@@ -2724,7 +2724,7 @@ mod tests {
     /// credentials through a helper.
     #[test]
     fn tier1_daemon_accepts_previous_release_raw_json_shutdown() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let state_dir = tmp.path().to_path_buf();
         let daemon_state_dir = state_dir.clone();
         let daemon_thread = thread::spawn(move || run_daemon_uninterrupted(&daemon_state_dir));
@@ -2824,7 +2824,7 @@ mod tests {
 
     #[test]
     fn tier1_prost_daemon_wire_list_rpc_stays_within_json_latency_budget() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let state_dir = tmp.path().to_path_buf();
         let daemon_state_dir = state_dir.clone();
         let daemon_thread = thread::spawn(move || run_daemon_uninterrupted(&daemon_state_dir));
@@ -2874,7 +2874,7 @@ mod tests {
     fn spawn_adopt_kill_worker_accepts_empty_pids() {
         // Zero-PID payload is valid wire data (the CLI may have lost the
         // root PID); the worker must still spawn without panicking.
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let started = Instant::now();
         spawn_adopt_kill_worker(tmp.path().to_path_buf(), Vec::new(), None);
         assert!(started.elapsed() < Duration::from_millis(100));
@@ -2882,7 +2882,7 @@ mod tests {
 
     #[test]
     fn tier1_adopt_kill_request_writes_jsonl_events() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
 
         let response = dispatch_daemon_request(
@@ -2923,7 +2923,7 @@ mod tests {
 
     #[test]
     fn tier1_reap_orphans_request_writes_jsonl_events() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
 
         let response =
@@ -2958,7 +2958,7 @@ mod tests {
 
     #[test]
     fn metrics_request_returns_daemon_pid_and_cpu_sample() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
 
         let response = dispatch_daemon_request(tmp.path(), &workers, None, DaemonRequest::Metrics);
@@ -2973,7 +2973,7 @@ mod tests {
 
     #[test]
     fn proc_snapshot_request_returns_cached_shape() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
 
         let response = dispatch_daemon_request(
@@ -2995,7 +2995,7 @@ mod tests {
 
     #[test]
     fn client_lease_rpc_is_idempotent_for_one_process_identity() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let workers = Arc::new(Mutex::new(HashMap::<String, Arc<NativeProcess>>::new()));
         let leases = ClientLeaseRegistry::default();
         let identity = crate::process_identity::ProcessIdentity::new(

@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn enabled_file_logging_writes_timestamped_lines() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         std::env::set_var(ENV_VERBOSE_LOG_DIR, tmp.path());
         let path = enable_file_logging().expect("enable file logging");
 

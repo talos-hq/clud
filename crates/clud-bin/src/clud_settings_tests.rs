@@ -1,10 +1,10 @@
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 /// #1999: readers of the previous file must never observe an in-place rewrite.
 #[test]
 fn settings_patch_replaces_the_file_without_truncating_an_existing_reader() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let original = br#"{"unrelated":"preserved","safe_rm":{"extra_roots":[]}}"#;
@@ -33,7 +33,7 @@ fn settings_patch_replaces_the_file_without_truncating_an_existing_reader() {
 
 #[test]
 fn missing_settings_file_has_no_launch_setup_scope() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(
         load_launch_setup_scope_at(home.path(), Backend::Codex).unwrap(),
         None
@@ -42,7 +42,7 @@ fn missing_settings_file_has_no_launch_setup_scope() {
 
 #[test]
 fn missing_settings_file_defaults_auto_fix_hooks_enabled() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert!(load_auto_fix_hooks_enabled_at(home.path()).unwrap());
 }
 
@@ -50,7 +50,7 @@ fn missing_settings_file_defaults_auto_fix_hooks_enabled() {
 /// never deletes a remote branch, and the seeded default says so.
 #[test]
 fn gc_delete_remote_branches_is_off_unless_literally_true() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert!(!load_gc_delete_remote_branches_at(home.path()).unwrap());
     for (doc, want) in [
         (json!({}), false),
@@ -69,7 +69,7 @@ fn gc_delete_remote_branches_is_off_unless_literally_true() {
 #[test]
 fn worktrees_warn_bytes_defaults_and_parses() {
     use crate::gc::worktree_root::DEFAULT_WARN_BYTES;
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(
         load_worktrees_warn_bytes_at(home.path()).unwrap(),
         DEFAULT_WARN_BYTES
@@ -96,7 +96,7 @@ fn worktrees_warn_bytes_defaults_and_parses() {
 fn tmp_warn_bytes_defaults_and_parses() {
     use crate::gc::worktree_size_cache::DEFAULT_TMP_WARN_BYTES;
     assert_eq!(DEFAULT_TMP_WARN_BYTES, 10 * 1024 * 1024 * 1024);
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(
         load_tmp_warn_bytes_at(home.path()).unwrap(),
         DEFAULT_TMP_WARN_BYTES
@@ -125,7 +125,7 @@ fn tmp_warn_bytes_defaults_and_parses() {
 fn tmp_max_bytes_defaults_and_parses() {
     use crate::gc::session_tmp_cap::DEFAULT_TMP_MAX_BYTES;
     assert_eq!(DEFAULT_TMP_MAX_BYTES, 10 * 1024 * 1024 * 1024);
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     assert_eq!(
         load_tmp_max_bytes_at(home.path()).unwrap(),
         DEFAULT_TMP_MAX_BYTES
@@ -149,7 +149,7 @@ fn tmp_max_bytes_defaults_and_parses() {
 fn trash_max_bytes_defaults_and_parses() {
     use crate::rm_tool::TRASH_MAX_BYTES_DEFAULT;
     assert_eq!(TRASH_MAX_BYTES_DEFAULT, 20 * 1024 * 1024 * 1024);
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(
         load_trash_max_bytes_at(home.path()).unwrap(),
         TRASH_MAX_BYTES_DEFAULT
@@ -176,7 +176,7 @@ fn trash_max_bytes_defaults_and_parses() {
 fn cache_warn_bytes_defaults_and_parses() {
     use crate::gc::worktree_size_cache::DEFAULT_CACHE_WARN_BYTES;
     assert_eq!(DEFAULT_CACHE_WARN_BYTES, 20 * 1024 * 1024 * 1024);
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(
         load_cache_warn_bytes_at(home.path()).unwrap(),
         DEFAULT_CACHE_WARN_BYTES
@@ -214,7 +214,7 @@ fn cache_warn_bytes_defaults_and_parses() {
 fn cache_max_bytes_defaults_and_parses() {
     use crate::gc::uv_cache::DEFAULT_MAX_BYTES;
     assert_eq!(DEFAULT_MAX_BYTES, 32 * 1024 * 1024 * 1024);
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(peek_cache_max_bytes_at(home.path()), DEFAULT_MAX_BYTES);
     for (doc, want) in [
         (json!({}), DEFAULT_MAX_BYTES),
@@ -232,7 +232,7 @@ fn cache_max_bytes_defaults_and_parses() {
 
 #[test]
 fn gh_read_broker_defaults_on_and_round_trips() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert!(load_gh_read_broker_enabled_at(home.path()).unwrap());
     save_gh_read_broker_enabled_at(home.path(), false).unwrap();
     assert!(!load_gh_read_broker_enabled_at(home.path()).unwrap());
@@ -249,13 +249,13 @@ fn gh_read_broker_defaults_on_and_round_trips() {
 
 #[test]
 fn missing_settings_file_defaults_pr_wait_fail_fast_enabled() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert!(load_pr_wait_fail_fast_enabled_at(home.path()).unwrap());
 }
 
 #[test]
 fn web_term_preference_round_trips_without_clobbering_other_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_pr_wait_fail_fast_enabled_at(home.path(), true).unwrap();
     assert!(!load_web_term_enabled_at(home.path()).unwrap());
 
@@ -269,7 +269,7 @@ fn web_term_preference_round_trips_without_clobbering_other_settings() {
 
 #[test]
 fn saves_pr_wait_fail_fast_sticky_opt_in_and_reset() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_pr_wait_fail_fast_enabled_at(home.path(), true).unwrap();
     assert!(load_pr_wait_fail_fast_enabled_at(home.path()).unwrap());
@@ -288,7 +288,7 @@ fn saves_pr_wait_fail_fast_sticky_opt_in_and_reset() {
 
 #[test]
 fn pr_wait_fail_fast_setting_preserves_existing_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -308,7 +308,7 @@ fn pr_wait_fail_fast_setting_preserves_existing_settings() {
 
 #[test]
 fn missing_codex_overrides_default_without_writing_on_dry_run() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     assert_eq!(
         load_or_init_codex_config_overrides_at(home.path(), false).unwrap(),
@@ -319,7 +319,7 @@ fn missing_codex_overrides_default_without_writing_on_dry_run() {
 
 #[test]
 fn missing_settings_file_has_no_default_backend() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(load_default_backend_at(home.path()).unwrap(), None);
     assert_eq!(
         load_global_launch_preferences_at(home.path()).unwrap(),
@@ -329,7 +329,7 @@ fn missing_settings_file_has_no_default_backend() {
 
 #[test]
 fn saves_default_backend() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_default_backend_at(home.path(), Backend::Codex).unwrap();
 
@@ -344,7 +344,7 @@ fn saves_default_backend() {
 
 #[test]
 fn infers_default_backend_from_sole_global_launch_setup_scope() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_launch_setup_scope_at(home.path(), Backend::Codex, LaunchSetupScope::Global).unwrap();
 
@@ -356,7 +356,7 @@ fn infers_default_backend_from_sole_global_launch_setup_scope() {
 
 #[test]
 fn does_not_infer_default_backend_when_multiple_scopes_are_global() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_launch_setup_scope_at(home.path(), Backend::Claude, LaunchSetupScope::Global).unwrap();
     save_launch_setup_scope_at(home.path(), Backend::Codex, LaunchSetupScope::Global).unwrap();
@@ -366,7 +366,7 @@ fn does_not_infer_default_backend_when_multiple_scopes_are_global() {
 
 #[test]
 fn default_backend_preserves_existing_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -386,7 +386,7 @@ fn default_backend_preserves_existing_settings() {
 
 #[test]
 fn saves_global_launch_setup_selection_in_one_document() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_global_launch_setup_selection_at(home.path(), Backend::Codex, LaunchSetupScope::Global)
         .unwrap();
@@ -407,7 +407,7 @@ fn saves_global_launch_setup_selection_in_one_document() {
 
 #[test]
 fn round_trips_harness_preference_and_reads_old_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, r#"{"backend":{"default":"codex"}}"#).unwrap();
@@ -440,7 +440,7 @@ fn round_trips_harness_preference_and_reads_old_settings() {
 
 #[test]
 fn deepseek_model_provider_round_trips_through_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_settings_patch_at(
         home.path(),
@@ -467,7 +467,7 @@ fn deepseek_model_provider_round_trips_through_settings() {
 /// (#937 Phase 3).
 #[test]
 fn kimi_model_provider_round_trips_through_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_settings_patch_at(
         home.path(),
@@ -492,7 +492,7 @@ fn kimi_model_provider_round_trips_through_settings() {
 
 #[test]
 fn one_atomic_patch_updates_all_typed_settings_and_preserves_unknown_fields() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, r#"{"unrelated":{"kept":true}}"#).unwrap();
@@ -522,7 +522,7 @@ fn one_atomic_patch_updates_all_typed_settings_and_preserves_unknown_fields() {
 
 #[test]
 fn partial_settings_patch_preserves_omission_and_latest_launch_preferences() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
 
     save_settings_patch_at(
@@ -583,7 +583,7 @@ fn partial_settings_patch_preserves_omission_and_latest_launch_preferences() {
 
 #[test]
 fn atomic_settings_patch_validates_the_merged_launch_preferences() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let error = save_settings_patch_at(
         home.path(),
         GlobalSettingsPatch {
@@ -607,7 +607,7 @@ fn atomic_settings_patch_validates_the_merged_launch_preferences() {
 
 #[test]
 fn global_prompt_save_rejects_a_concurrently_invalidated_partial_choice() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_settings_patch_at(
         home.path(),
         GlobalSettingsPatch {
@@ -661,7 +661,7 @@ fn global_prompt_save_rejects_a_concurrently_invalidated_partial_choice() {
 
 #[test]
 fn first_run_codex_overrides_are_documented_in_settings_json() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     assert_eq!(
         load_or_init_codex_config_overrides_at(home.path(), true).unwrap(),
@@ -685,7 +685,7 @@ fn first_run_codex_overrides_are_documented_in_settings_json() {
 
 #[test]
 fn first_run_global_settings_seed_discoverable_defaults_only() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     let document = load_or_init_global_settings_at(home.path()).unwrap();
 
@@ -715,7 +715,7 @@ fn first_run_global_settings_seed_discoverable_defaults_only() {
 
 #[test]
 fn global_settings_seed_preserves_null_opinions() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -770,7 +770,7 @@ fn merged_settings_deep_merges_and_treats_null_as_defer() {
 
 #[test]
 fn existing_codex_overrides_are_user_owned() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, r#"{"codex":{"config_overrides":[]}}"#).unwrap();
@@ -785,7 +785,7 @@ fn existing_codex_overrides_are_user_owned() {
 
 #[test]
 fn saves_auto_fix_hooks_sticky_opt_out_and_reset() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_auto_fix_hooks_enabled_at(home.path(), false).unwrap();
     assert!(!load_auto_fix_hooks_enabled_at(home.path()).unwrap());
@@ -800,7 +800,7 @@ fn saves_auto_fix_hooks_sticky_opt_out_and_reset() {
 
 #[test]
 fn saves_launch_setup_scope_per_backend() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     save_launch_setup_scope_at(home.path(), Backend::Codex, LaunchSetupScope::Global).unwrap();
 
@@ -819,7 +819,7 @@ fn saves_launch_setup_scope_per_backend() {
 
 #[test]
 fn preserves_existing_settings_when_saving_scope() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -839,7 +839,7 @@ fn preserves_existing_settings_when_saving_scope() {
 
 #[test]
 fn auto_fix_hooks_setting_preserves_existing_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -859,7 +859,7 @@ fn auto_fix_hooks_setting_preserves_existing_settings() {
 
 #[test]
 fn saves_rust_optimize_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let settings = RustOptimizeSettings {
         use_soldr_shims: true,
         install_soldr: false,
@@ -885,7 +885,7 @@ fn saves_rust_optimize_settings() {
 
 #[test]
 fn rust_optimize_settings_preserve_existing_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, r#"{"unrelated":{"value":"kept"}}"#).unwrap();
@@ -901,7 +901,7 @@ fn rust_optimize_settings_preserve_existing_settings() {
 
 #[test]
 fn legacy_toml_is_read_and_migrated_on_next_save() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let legacy = legacy_settings_path_at(home.path());
     fs::create_dir_all(legacy.parent().unwrap()).unwrap();
     fs::write(
@@ -939,7 +939,7 @@ fn legacy_toml_is_read_and_migrated_on_next_save() {
 
 #[test]
 fn missing_shell_section_defaults_to_false_for_both_backends() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert!(!load_shell_disable_powershell_for_backend_at(home.path(), Backend::Claude).unwrap());
     assert!(!load_shell_disable_powershell_for_backend_at(home.path(), Backend::Codex).unwrap());
     assert!(!settings_path_at(home.path()).exists());
@@ -947,7 +947,7 @@ fn missing_shell_section_defaults_to_false_for_both_backends() {
 
 #[test]
 fn top_level_disable_propagates_to_both_backends_when_overrides_null() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_shell_disable_powershell_at(home.path(), true).unwrap();
 
     assert!(load_shell_disable_powershell_for_backend_at(home.path(), Backend::Claude).unwrap());
@@ -956,7 +956,7 @@ fn top_level_disable_propagates_to_both_backends_when_overrides_null() {
 
 #[test]
 fn backend_override_wins_over_top_level() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_shell_disable_powershell_at(home.path(), true).unwrap();
     save_shell_disable_powershell_for_backend_at(home.path(), Backend::Claude, Some(false))
         .unwrap();
@@ -973,7 +973,7 @@ fn backend_override_wins_over_top_level() {
 
 #[test]
 fn saves_shell_disable_powershell_preserves_existing_settings() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -1000,7 +1000,7 @@ fn saves_shell_disable_powershell_preserves_existing_settings() {
 
 #[test]
 fn clearing_backend_override_falls_back_to_top_level() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_shell_disable_powershell_at(home.path(), true).unwrap();
     save_shell_disable_powershell_for_backend_at(home.path(), Backend::Claude, Some(false))
         .unwrap();
@@ -1022,7 +1022,7 @@ fn clearing_backend_override_falls_back_to_top_level() {
 
 #[test]
 fn legacy_toml_shell_section_is_migrated() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let legacy = legacy_settings_path_at(home.path());
     fs::create_dir_all(legacy.parent().unwrap()).unwrap();
     fs::write(
@@ -1043,14 +1043,14 @@ fn legacy_toml_shell_section_is_migrated() {
 
 #[test]
 fn cpu_banner_defaults_when_settings_missing() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let got = load_cpu_banner_settings_at(home.path()).unwrap();
     assert_eq!(got, CpuBannerSettings::default());
 }
 
 #[test]
 fn cpu_banner_reads_enabled_override() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, r#"{"foreground":{"cpu_banner":{"enabled":false}}}"#).unwrap();
@@ -1061,7 +1061,7 @@ fn cpu_banner_reads_enabled_override() {
 
 #[test]
 fn cpu_banner_reads_heartbeat_override() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -1076,7 +1076,7 @@ fn cpu_banner_reads_heartbeat_override() {
 
 #[test]
 fn toast_settings_default_to_enabled_with_the_claude_status_line() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let got = load_toast_settings_at(home.path()).unwrap();
     assert_eq!(got, ToastSettings::default());
     assert!(got.enabled && got.claude_statusline);
@@ -1084,7 +1084,7 @@ fn toast_settings_default_to_enabled_with_the_claude_status_line() {
 
 #[test]
 fn toast_settings_read_both_switches_independently() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(
@@ -1102,7 +1102,7 @@ fn toast_settings_read_both_switches_independently() {
 
 #[test]
 fn provider_profile_round_trips_through_save_and_load() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_settings_patch_at(
         home.path(),
         GlobalSettingsPatch {
@@ -1137,7 +1137,7 @@ fn provider_profile_round_trips_through_save_and_load() {
 /// other provider's profile.
 #[test]
 fn provider_profile_round_trips_for_kimi() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_settings_patch_at(
         home.path(),
         GlobalSettingsPatch {
@@ -1169,7 +1169,7 @@ fn provider_profile_round_trips_for_kimi() {
 
 #[test]
 fn provider_profile_effort_clears_when_patched_to_none() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_settings_patch_at(
         home.path(),
         GlobalSettingsPatch {
@@ -1214,7 +1214,7 @@ fn write_provider_settings(home: &Path, body: &str) {
 
 #[test]
 fn provider_profile_rejects_non_canonical_model() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(
         home.path(),
         r#"{"providers":{"codex":{"model":"gpt-5.6-terra"}}}"#,
@@ -1232,7 +1232,7 @@ fn provider_profile_rejects_non_canonical_model() {
 /// loading, normalized to the successor's canonical ID.
 #[test]
 fn provider_profile_normalizes_a_retired_canonical_model_id() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(
         home.path(),
         r#"{"providers":{"deepseek":{"model":"deepseek-v4-flash"}}}"#,
@@ -1248,7 +1248,7 @@ fn provider_profile_normalizes_a_retired_canonical_model_id() {
 
 #[test]
 fn provider_profile_rejects_cross_provider_model() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(
         home.path(),
         r#"{"providers":{"codex":{"model":"deepseek-v4-pro"}}}"#,
@@ -1267,7 +1267,7 @@ fn provider_profile_rejects_cross_provider_model() {
 /// `deepseek-v4-pro` model was rejected on the Codex profile above.
 #[test]
 fn provider_profile_rejects_deepseek_model_on_kimi_profile() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(
         home.path(),
         r#"{"providers":{"kimi":{"model":"deepseek-v4-pro"}}}"#,
@@ -1285,7 +1285,7 @@ fn provider_profile_rejects_deepseek_model_on_kimi_profile() {
 /// inventory is the gateway's, not the static catalog's (DD-054).
 #[test]
 fn openrouter_profile_keeps_a_gateway_wire_id_and_it_resolves_at_launch() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     save_settings_patch_at(
         home.path(),
         GlobalSettingsPatch {
@@ -1336,7 +1336,7 @@ fn only_openrouter_profiles_accept_non_catalog_models() {
             ModelProvider::Kimi,
         ),
     ] {
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         write_provider_settings(home.path(), settings);
         let result = load_launch_preferences_read_only_at(home.path());
         assert!(
@@ -1388,7 +1388,7 @@ fn only_an_explicit_live_openrouter_model_is_remembered() {
 
 #[test]
 fn provider_profile_rejects_unknown_effort() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(home.path(), r#"{"providers":{"codex":{"effort":"turbo"}}}"#);
     assert!(matches!(
         load_launch_preferences_read_only_at(home.path()),
@@ -1398,7 +1398,7 @@ fn provider_profile_rejects_unknown_effort() {
 
 #[test]
 fn provider_profile_invalid_harness_lists_all_supported_harnesses() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(
         home.path(),
         r#"{"providers":{"codex":{"harness":"other"}}}"#,
@@ -1414,7 +1414,7 @@ fn provider_profile_invalid_harness_lists_all_supported_harnesses() {
 
 #[test]
 fn provider_profile_rejects_unsupported_context_window() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(
         home.path(),
         r#"{"providers":{"codex":{"context_window":"2m"}}}"#,
@@ -1427,7 +1427,7 @@ fn provider_profile_rejects_unsupported_context_window() {
 
 #[test]
 fn provider_profile_rejects_codex_harness_on_non_codex_provider() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(
         home.path(),
         r#"{"providers":{"deepseek":{"harness":"codex"}}}"#,
@@ -1443,7 +1443,7 @@ fn provider_profile_rejects_codex_harness_on_non_codex_provider() {
 
 #[test]
 fn launcher_last_harness_round_trips_without_changing_routing_preferences() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     write_provider_settings(
         home.path(),
         r#"{"backend":{"default":"codex"},"custom":{"keep":true}}"#,
@@ -1469,7 +1469,7 @@ fn launcher_last_harness_round_trips_without_changing_routing_preferences() {
 #[test]
 fn block_cd_round_trips_through_the_settings_file() {
     use crate::repo_clud_config::BlockCd;
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
 
     for setting in [BlockCd::Always, BlockCd::Never, BlockCd::Auto] {
         save_settings_patch_at(
@@ -1499,7 +1499,7 @@ fn block_cd_round_trips_through_the_settings_file() {
 
 #[test]
 fn block_cd_defaults_to_auto_when_the_settings_file_says_nothing() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(
         load_block_cd_at(home.path()).unwrap(),
         crate::repo_clud_config::BlockCd::Auto
@@ -1508,7 +1508,7 @@ fn block_cd_defaults_to_auto_when_the_settings_file_says_nothing() {
 
 #[test]
 fn land_bias_reads_saved_preference() {
-    let home = tempdir().unwrap();
+    let home = TemporaryDirectory::new().unwrap();
     assert_eq!(load_land_bias_at(home.path()).unwrap(), None);
     let path = settings_path_at(home.path());
     fs::create_dir_all(path.parent().unwrap()).unwrap();

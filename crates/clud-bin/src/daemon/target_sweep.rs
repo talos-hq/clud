@@ -147,10 +147,10 @@ fn write_sentinel(path: &std::path::Path, now: SystemTime) -> std::io::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs::File;
     use std::io::Write;
     use std::time::Duration as StdDuration;
-    use tempfile::tempdir;
 
     fn make_crate_with_target(root: &std::path::Path, name: &str) -> PathBuf {
         let crate_dir = root.join(name);
@@ -172,7 +172,7 @@ mod tests {
 
     #[test]
     fn first_run_writes_sentinel_and_sweeps_stale() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let dev = tmp.path().join("dev");
         let target = make_crate_with_target(&dev, "c");
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn future_sentinel_is_repaired_instead_of_skipping() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let now = SystemTime::now();
         write_sentinel(&sentinel, now + Duration::from_secs(30 * 24 * 60 * 60)).unwrap();
@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn second_run_within_interval_skips() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let now = SystemTime::now();
         maybe_sweep_at(&sentinel, &[], Duration::from_secs(1), now).unwrap();

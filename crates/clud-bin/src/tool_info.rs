@@ -175,8 +175,8 @@ mod tests {
     use super::*;
     use base64::engine::general_purpose::STANDARD_NO_PAD;
     use base64::Engine;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::io::Write;
-    use tempfile::TempDir;
 
     fn write_jsonl_chunk(path: &Path, bytes: &[u8]) {
         let encoded = STANDARD_NO_PAD.encode(bytes);
@@ -192,14 +192,14 @@ mod tests {
 
     #[test]
     fn read_last_lines_returns_empty_for_missing_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let missing = tmp.path().join("absent.jsonl");
         assert!(read_last_lines(&missing, 10).unwrap().is_empty());
     }
 
     #[test]
     fn read_last_lines_decodes_and_splits_chunks() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("stdout.jsonl");
         write_jsonl_chunk(&path, b"line1\nline2\n");
         write_jsonl_chunk(&path, b"line3\n");
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn read_last_lines_caps_at_n() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("stdout.jsonl");
         for i in 0..50 {
             write_jsonl_chunk(&path, format!("line{i}\n").as_bytes());

@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn rejects_older_unknown_and_malformed_versions_without_changing_manifest() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = root.path().join("session.jsonl");
         let payload = payload(&path);
         let manifest = json!({"orchestration_resume": {"remaining_goals": ["b", "c"]}});
@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn uses_latest_matching_session_version_in_bounded_transcript_tail() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = root.path().join("session.jsonl");
         let payload = payload(&path);
         for version in ["2.1.306", "2.2.0", "3.0.0"] {
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn only_native_supported_origin_receipts_allow_resume_after_upgrade() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = root.path().join("session.jsonl");
         std::fs::create_dir(root.path().join("session")).unwrap();
         std::fs::write(&path, record(json!("2.1.306"), "session")).unwrap();
@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn launch_receipt_does_not_race_native_session_directory_creation() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = root.path().join("session.jsonl");
         std::fs::write(&path, record(json!("2.1.306"), "session")).unwrap();
         let mut payload = payload(&path);
@@ -294,7 +294,7 @@ mod tests {
 
     #[test]
     fn initial_admission_waits_for_native_transcript_metadata_to_flush() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = root.path().join("session.jsonl");
         let mut payload = payload(&path);
         payload.tool_input = Some(json!({"name": "grind-run", "args": {"orchestration": {}}}));
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn native_manifest_binds_epochs_and_every_other_resume_argument() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = root.path().join("session.jsonl");
         std::fs::write(&path, record(json!("2.1.306"), "session")).unwrap();
         let mut payload = payload(&path);
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn stopped_run_resumes_with_identical_launch_args_2470() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = root.path().join("session.jsonl");
         std::fs::write(&path, record(json!("2.1.306"), "session")).unwrap();
         let mut payload = payload(&path);
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn non_graph_resumes_are_unchanged_and_facts_cannot_hide_a_graph() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut payload = payload(&root.path().join("session.jsonl"));
         payload.tool_input = Some(json!({"resumeFromRunId": "wf-prior"}));
         assert!(reason_for(&payload, None).is_none());

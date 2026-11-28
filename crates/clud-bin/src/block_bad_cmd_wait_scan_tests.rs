@@ -59,7 +59,7 @@ fn corpus_positives_are_refused_and_negatives_allowed() {
                 crate::clud_hooks_compile::GUARDED_TOOLS.contains(&tool),
                 "{tool} never reaches the scanner"
             );
-            let dir = tempfile::tempdir().expect("tempdir");
+            let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
             let reason = corpus_reason(entry, dir.path());
             let shape = entry["shape"].as_str().unwrap_or_default();
             match (refuse, reason) {
@@ -269,7 +269,7 @@ fn heredoc_scripts_classify_fed_and_written_bodies() {
 
 #[test]
 fn script_file_reads_only_literal_existing_scripts() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     std::fs::write(dir.path().join("w.sh"), "sleep 1\n").expect("write");
     std::fs::write(dir.path().join("w.py"), "import time\n").expect("write");
     let cwd = Some(dir.path());
@@ -331,7 +331,7 @@ fn codex_watch_payload_keeps_command_and_recovery_capabilities() {
 
 #[test]
 fn execution_payload_uses_declared_fields_without_guessing_the_harness() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     for tool in ["Bash", "functions.exec_command"] {
         let raw = serde_json::json!({
             "tool_name": tool,

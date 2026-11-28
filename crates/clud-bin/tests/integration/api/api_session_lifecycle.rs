@@ -74,7 +74,7 @@ fn session(store: &ApiSessionStore, cwd: &Path) -> String {
 
 #[test]
 fn running_submit_is_busy_while_duplicate_replays_after_controller_restart() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let store = ApiSessionStore::new(temp.path());
     let id = session(&store, temp.path());
     let lifecycle = ApiSessionLifecycle::new(store.clone());
@@ -178,7 +178,7 @@ fn running_submit_is_busy_while_duplicate_replays_after_controller_restart() {
 
 #[test]
 fn identity_makes_interrupt_resumable_replace_drains_then_kill_is_terminal() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let script = temp.path().join("provider.jsonl");
     std::fs::write(&script, "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"provider-a\"}\n{\"type\":\"future\"}\n").unwrap();
     let store = ApiSessionStore::new(temp.path());
@@ -236,7 +236,7 @@ fn identity_makes_interrupt_resumable_replace_drains_then_kill_is_terminal() {
 
 #[test]
 fn completed_turn_without_provider_identity_cannot_be_resumed() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let store = ApiSessionStore::new(temp.path());
     let id = session(&store, temp.path());
     let lifecycle = ApiSessionLifecycle::new(store.clone());

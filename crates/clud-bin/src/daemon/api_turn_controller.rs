@@ -391,9 +391,9 @@ fn bounded_value(value: Value) -> Value {
 mod tests {
     use super::*;
     use crate::daemon::api_sessions::{CreateApiSession, ResolvedApiSessionSettings};
-    use tempfile::TempDir;
-    fn store() -> (TempDir, ApiSessionStore, String) {
-        let temp = TempDir::new().unwrap();
+    use kernal_api::platform::fs::TemporaryDirectory;
+    fn store() -> (TemporaryDirectory, ApiSessionStore, String) {
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store
             .create(CreateApiSession {
@@ -523,7 +523,7 @@ mod tests {
     /// the `ProcessConfig` that is literally handed to `NativeProcess`.
     #[test]
     fn an_api_turn_created_with_a_client_env_spawns_with_that_envs_path() {
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let home_str = home.path().to_string_lossy().into_owned();
         let client = pairs(&[
             ("PATH", "/client/only/bin"),
@@ -560,7 +560,7 @@ mod tests {
     /// exact-match `PATH` entry is absent there.
     #[test]
     fn no_client_env_falls_back_to_the_daemon_environment() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let cwd = temp.path().to_path_buf();
         let config = turn_process_config(vec!["claude".to_string()], cwd, &[], "s1");
         let env = config
@@ -576,7 +576,7 @@ mod tests {
 
     #[test]
     fn the_session_id_is_the_turns_board_address() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let client = vec![(BOARD_ID_ENV.to_string(), "stale".to_string())];
         let config = turn_process_config(
             vec!["claude".to_string()],
@@ -591,7 +591,7 @@ mod tests {
 
     #[test]
     fn the_board_card_parent_is_exported_to_the_turn() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         crate::daemon::board::register_agent(crate::daemon::board::AgentUpdate {
             id: "sess-parented".to_string(),
             parent: Some("main-agent".to_string()),

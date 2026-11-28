@@ -82,7 +82,7 @@ fn video_plugin_manifest_is_json_with_a_name() {
 
 #[test]
 fn video_plugin_wrapper_layout_and_no_harness_skill_writes() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let checkout = checkout_dir(home.path());
     std::fs::create_dir_all(checkout.join("helpers")).unwrap();
     std::fs::write(checkout.join("SKILL.md"), "---\nname: video-use\n---\n").unwrap();

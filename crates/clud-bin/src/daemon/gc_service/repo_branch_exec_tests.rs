@@ -32,7 +32,7 @@ fn commit_file(dir: &Path, name: &str, body: &str, msg: &str) {
 }
 
 struct Fixture {
-    _tmp: tempfile::TempDir,
+    _tmp: kernal_api::platform::fs::TemporaryDirectory,
     origin: PathBuf,
     repo: PathBuf,
     tip_a: String,
@@ -44,7 +44,7 @@ struct Fixture {
 /// * `feat-c`: unlanded work with no PR.
 /// * `feat-d`: no commits of its own.
 fn fixture() -> Fixture {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let origin = root.join("origin");
     std::fs::create_dir_all(&origin).unwrap();

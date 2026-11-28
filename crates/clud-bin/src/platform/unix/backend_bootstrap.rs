@@ -44,7 +44,7 @@ mod tests {
     #[test]
     fn codex_update_fixture_covers_fresh_complete_and_stale_staging() {
         use kernal_api::hash::Sha256Hasher as Sha256;
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home = home.path();
         std::fs::write(
             home.join("fixture-codex"),
@@ -115,7 +115,7 @@ ln -sfn releases/0.156.0 "$root/current"
     fn codex_update_removes_stale_files_from_both_session_routes() {
         use kernal_api::hash::Sha256Hasher as Sha256;
         use std::os::unix::fs::PermissionsExt;
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home_path = home.path().to_string_lossy().into_owned();
         let shim_dir = home.path().join("session-shim");
         std::fs::create_dir(&shim_dir).unwrap();
@@ -159,7 +159,7 @@ ln -sfn releases/0.156.0 "$root/current"
 
     #[test]
     fn codex_update_rejects_changed_installer_before_execution() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let err =
             run_verified_codex_installer(b"touch \"$HOME/not-run\"\n", "wrong-digest", home.path())
                 .unwrap_err();

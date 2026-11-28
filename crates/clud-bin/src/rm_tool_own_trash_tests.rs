@@ -71,7 +71,7 @@ fn another_sessions_entry_stays_refused() {
 
 #[test]
 fn clud_trash_owner_marker_is_recognized() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let dir = tmp.path().join("20261024-abc123");
     std::fs::create_dir(&dir).unwrap();
     write_owner(&dir, "session-9");

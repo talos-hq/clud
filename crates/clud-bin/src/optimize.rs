@@ -675,11 +675,11 @@ fn soldr_asset_for_current_platform(version: &str) -> Result<SoldrAsset, String>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn writes_repo_directive() {
-        let dir = tempdir().unwrap();
+        let dir = TemporaryDirectory::new().unwrap();
         let path = dir.path().join(".clud").join("settings.json");
         let settings = RustOptimizeSettings {
             use_soldr_shims: false,
@@ -701,7 +701,7 @@ mod tests {
 
     #[test]
     fn repo_directive_preserves_existing_json() {
-        let dir = tempdir().unwrap();
+        let dir = TemporaryDirectory::new().unwrap();
         let path = dir.path().join(".clud").join("settings.json");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "{\n  \"other\": true\n}\n").unwrap();
@@ -741,7 +741,7 @@ mod tests {
 
     #[test]
     fn finds_nested_binary() {
-        let dir = tempdir().unwrap();
+        let dir = TemporaryDirectory::new().unwrap();
         let nested = dir.path().join("pkg").join("bin");
         fs::create_dir_all(&nested).unwrap();
         let binary = nested.join("soldr");

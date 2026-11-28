@@ -1,5 +1,5 @@
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 fn write(path: &Path, contents: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -48,7 +48,7 @@ fn record_path_reads_the_path_column() {
 
 #[test]
 fn archive_defect_flags_only_damage_that_breaks_an_install() {
-    let tmp = tempdir().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
 
     let healthy = healthy_archive(&tmp.path().join("healthy"));
     assert_eq!(archive_defect(&healthy), None);
@@ -108,7 +108,7 @@ mod unix {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("uv");
         let no_dist_info = wheel(&root, "pydantic", "2.13.4", "UZfKIsCOzJxPSTiX");
         let no_record = wheel(&root, "boto3", "1.40.72", "QyCXRcDq7Uvf5m2G");
@@ -144,7 +144,7 @@ mod unix {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("uv");
         let bad = wheel(&root, "click", "8.4.2", "rSjdBjdBMaYzOqLS");
         fs::remove_dir_all(&bad.dist_info).unwrap();
@@ -160,7 +160,7 @@ mod unix {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("uv");
         let bad = wheel(&root, "idna", "3.15", "EFeC21fNvyaO7F5i");
         fs::remove_dir_all(&bad.dist_info).unwrap();
@@ -194,7 +194,7 @@ mod unix {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("uv");
         let bad = wheel(&root, "cbor2", "6.1.4", "YhCxU60UQ8nYjHbp");
         fs::remove_dir_all(&bad.dist_info).unwrap();
@@ -214,7 +214,7 @@ mod unix {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("uv");
         let bad = wheel(&root, "pyopenssl", "26.4.0", "Z7k5ZDvjpxvvt4zW");
         fs::remove_dir_all(&bad.dist_info).unwrap();
@@ -234,7 +234,7 @@ mod unix {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("uv");
         // Archive gone entirely: uv ignores the pointer and refetches itself.
         let stale = wheel(&root, "anyio", "4.13.0", "L_il0CL7Yel2jsh7");
@@ -262,7 +262,7 @@ mod unix {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("uv");
         let bad = wheel_with_pointer(&root, "fastled", "2.0.20", "OeSzUNns2fMjF5oz", "rev");
         fs::remove_dir_all(&bad.dist_info).unwrap();
@@ -277,9 +277,9 @@ mod unix {
             return;
         }
         use crate::gc::delete_audit::{StateDirGuard, AUDIT_LOG_FILE};
-        let state = tempdir().unwrap();
+        let state = TemporaryDirectory::new().unwrap();
         let _guard = StateDirGuard::set(state.path());
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().join("uv");
         let bad = wheel(&root, "websockets", "17.0.1", "p9D_Iim7736KhyVf");
         fs::remove_dir_all(&bad.dist_info).unwrap();

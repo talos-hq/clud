@@ -386,7 +386,7 @@ fn on_the_main_screen_text_tier_uses_the_title_fallback() {
 #[test]
 fn non_kitty_usage_fallback_keeps_model_and_cache_health_in_the_title() {
     let now = Instant::now();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = Arc::new(StatusStateWriter::new(state_path(dir.path(), 80)));
     writer.publish_usage(StatusUsage {
         provider: "codex".into(),
@@ -406,7 +406,7 @@ fn non_kitty_usage_fallback_keeps_model_and_cache_health_in_the_title() {
 #[test]
 fn usage_title_fallback_is_bounded_and_control_free() {
     let now = Instant::now();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = Arc::new(StatusStateWriter::new(state_path(dir.path(), 81)));
     writer.publish_usage(StatusUsage {
         provider: "codex".into(),
@@ -432,7 +432,7 @@ fn usage_title_fallback_is_bounded_and_control_free() {
 #[test]
 fn the_status_file_fallback_mirrors_and_clears_the_toast() {
     let now = Instant::now();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = state_path(dir.path(), 4242);
     let writer = Arc::new(StatusStateWriter::new(path.clone()));
     let (mut c, hub) = compositor(
@@ -454,7 +454,7 @@ fn the_status_file_fallback_mirrors_and_clears_the_toast() {
 #[test]
 fn claude_status_line_carries_the_cpu_toast_instead_of_a_grid_overlay() {
     let now = Instant::now();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = state_path(dir.path(), 4243);
     let writer = Arc::new(StatusStateWriter::new(path.clone()));
     let (mut c, hub) = compositor(ToastTier::Kitty, Fallback::StatusFile(Arc::clone(&writer)));
@@ -489,7 +489,7 @@ fn an_expiry_only_republish_is_mirrored_to_the_status_file() {
     // #2395: `shown_at` survives an unchanged republish, so only
     // `expires_at` differs and the status-line copy must still be refreshed.
     let now = Instant::now();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = state_path(dir.path(), 4244);
     let writer = Arc::new(StatusStateWriter::new(path.clone()));
     let (mut c, hub) = compositor(ToastTier::Kitty, Fallback::StatusFile(Arc::clone(&writer)));
@@ -585,7 +585,7 @@ fn a_resize_re_pins_the_toast_to_the_new_top_right() {
 #[test]
 fn token_usage_alone_never_creates_a_kitty_overlay() {
     let now = Instant::now();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = Arc::new(StatusStateWriter::new(state_path(dir.path(), 77)));
     writer.publish_usage(StatusUsage {
         provider: "codex".into(),
@@ -604,7 +604,7 @@ fn token_usage_alone_never_creates_a_kitty_overlay() {
 #[test]
 fn title_fallback_keeps_model_and_cache_health_when_cpu_hud_cannot_fit() {
     let now = Instant::now();
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = Arc::new(StatusStateWriter::new(state_path(dir.path(), 80)));
     writer.publish_usage(StatusUsage {
         provider: "codex".into(),

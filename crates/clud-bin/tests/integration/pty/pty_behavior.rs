@@ -47,7 +47,7 @@ use crate::common::{
 
 #[test]
 fn cargo_build_output_reports_mock_agent_executable() {
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let exe = tmp.path().join(if clud::platform::host::WINDOWS {
         "mock-agent.exe"
     } else {
@@ -79,7 +79,7 @@ fn respond_to_queries_matches_platform_stub() {
     require_pty_or_skip!("respond_to_queries_matches_platform_stub");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
 
     let argv = vec![
@@ -122,7 +122,7 @@ fn respond_to_queries_is_linear_in_query_count() {
     require_pty_or_skip!("respond_to_queries_is_linear_in_query_count");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
 
     let argv = vec![
@@ -167,7 +167,7 @@ fn initial_pty_size_is_forwarded_to_child() {
     require_pty_or_skip!("initial_pty_size_is_forwarded_to_child");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let size_report = tmp.path().join("size.json");
 
     let argv = vec![
@@ -234,7 +234,7 @@ fn resize_impl_propagates_on_posix_and_noops_on_windows() {
     require_pty_or_skip!("resize_impl_propagates_on_posix_and_noops_on_windows");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let size_report = tmp.path().join("size.json");
 
     let argv = vec![
@@ -377,7 +377,7 @@ fn extreme_cols_does_not_crash_at_spawn() {
     require_pty_or_skip!("extreme_cols_does_not_crash_at_spawn");
 
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let size_report = tmp.path().join("size.json");
 
     let argv = vec![

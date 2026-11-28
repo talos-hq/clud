@@ -546,7 +546,7 @@ mod tests {
 
     #[test]
     fn write_patch_round_trips() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = openrouter_patch_path(dir.path(), "openai/gpt-5");
         write_openrouter_patch(&path, "openai/gpt-5", "https://openrouter.ai/api").unwrap();
         let body = std::fs::read_to_string(&path).unwrap();
@@ -574,7 +574,7 @@ mod tests {
 
     #[test]
     fn deepseek_launch_gets_the_vault_key_and_no_overlay() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut env = Vec::new();
         prepare_child(
             &facts(ModelProvider::DeepSeek, "/usr/bin/dsh"),
@@ -599,7 +599,7 @@ mod tests {
 
     #[test]
     fn openrouter_launch_gets_only_the_openrouter_key_and_its_overlay() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut env = Vec::new();
         prepare_child(
             &facts(ModelProvider::OpenRouter, "/usr/bin/dsh"),
@@ -624,7 +624,7 @@ mod tests {
 
     #[test]
     fn an_ambient_key_wins_over_the_vault() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut env = Vec::new();
         prepare_child(
             &facts(ModelProvider::DeepSeek, "/usr/bin/dsh"),
@@ -643,7 +643,7 @@ mod tests {
 
     #[test]
     fn a_managed_dsh_runs_on_its_private_node() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let exe = managed_executable(dir.path(), crate::platform::host::WINDOWS);
         let exe = exe.to_string_lossy().into_owned();
         let mut env = vec![("PATH".to_string(), "/usr/bin".to_string())];

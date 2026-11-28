@@ -1,8 +1,8 @@
 //! Trust-store lifecycle: parse, record, revoke, and the name+origin gate.
 
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs;
-use tempfile::TempDir;
 
 fn repo(base: &Path, name: &str) -> PathBuf {
     let path = base.join(name);
@@ -12,7 +12,7 @@ fn repo(base: &Path, name: &str) -> PathBuf {
 
 #[test]
 fn an_empty_or_missing_store_is_empty() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
 
     assert!(load(&root).is_empty());
@@ -76,7 +76,7 @@ fn parse_errors_only_on_bad_json() {
 
 #[test]
 fn record_writes_and_load_reads_back() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
 
     record(
@@ -105,7 +105,7 @@ fn record_writes_and_load_reads_back() {
 
 #[test]
 fn record_preserves_other_keys_in_settings_local_json() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     fs::create_dir_all(root.join(".clud")).unwrap();
     fs::write(
@@ -127,7 +127,7 @@ fn record_preserves_other_keys_in_settings_local_json() {
 
 #[test]
 fn record_replaces_an_existing_entry_for_the_same_name() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
 
     record(&root, "alpha", "https://first").unwrap();
@@ -141,7 +141,7 @@ fn record_replaces_an_existing_entry_for_the_same_name() {
 
 #[test]
 fn revoke_removes_by_name_and_reports_whether_anything_was_removed() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
 
     assert!(!revoke(&root, "alpha").unwrap(), "nothing to revoke yet");
@@ -178,7 +178,7 @@ fn trust_is_keyed_to_name_plus_origin() {
 
 #[test]
 fn a_stale_entry_after_gc_teardown_is_harmless() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let extern_root = root.parent().unwrap().join("myrepo-extern");
     fs::create_dir_all(extern_root.join("alpha")).unwrap();
@@ -214,7 +214,7 @@ fn valid_name_rejects_paths() {
 
 #[test]
 fn origin_of_reads_the_git_config_file() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
 
     assert_eq!(origin_of(&root), None, "no config yet");
@@ -262,7 +262,7 @@ fn remote_origin_url_skips_valueless_keys_and_bare_remote_headers() {
 
 #[test]
 fn origin_of_follows_a_worktree_gitdir_file() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let worktree = tmp.path().join("myrepo-wt");
     fs::create_dir_all(&worktree).unwrap();
@@ -285,7 +285,7 @@ fn origin_of_follows_a_worktree_gitdir_file() {
 
 #[test]
 fn origin_of_reads_config_through_worktree_commondir() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
     let wt_git = root.join(".git").join("worktrees").join("wt");
     fs::create_dir_all(&wt_git).unwrap();
@@ -311,7 +311,7 @@ fn origin_of_reads_config_through_worktree_commondir() {
 
 #[test]
 fn extern_dir_for_finds_sibling_then_legacy() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = repo(tmp.path(), "myrepo");
 
     assert_eq!(extern_dir_for(&root, "alpha"), None);

@@ -19,8 +19,8 @@ impl LedgerWriter for FakeWriter {
     }
 }
 
-pub(crate) fn base() -> (tempfile::TempDir, PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
+pub(crate) fn base() -> (kernal_api::platform::fs::TemporaryDirectory, PathBuf) {
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let base = crate::path_norm::canonicalize_plain(tmp.path()).unwrap();
     (tmp, base)
 }

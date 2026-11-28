@@ -17,7 +17,7 @@ const PAYLOAD: &str = r#"{"session_id":"s","hook_event_name":"PreToolUse","tool_
 const MOCK_RAN: &str = "[done]";
 
 struct Fixture {
-    _root: tempfile::TempDir,
+    _root: kernal_api::platform::fs::TemporaryDirectory,
     root: PathBuf,
     home: PathBuf,
     bin: PathBuf,
@@ -25,7 +25,7 @@ struct Fixture {
 }
 
 fn fixture() -> Fixture {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = dir.path().to_path_buf();
     let home = root.join("home");
     let bin = root.join("bin");

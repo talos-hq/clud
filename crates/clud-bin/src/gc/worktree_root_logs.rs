@@ -143,7 +143,7 @@ mod tests {
 
     #[test]
     fn idle_root_logs_move_and_everything_else_stays() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = home.path().join(".clud").join("worktrees");
         let worktree = root.join("repo-wt-a");
         fs::create_dir_all(&worktree).unwrap();
@@ -176,7 +176,7 @@ mod tests {
 
     #[test]
     fn a_name_collision_keeps_both_files() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = home.path().join("worktrees");
         let logs = home.path().join("logs");
         fs::create_dir_all(&root).unwrap();
@@ -191,7 +191,7 @@ mod tests {
 
     #[test]
     fn the_logs_dir_is_capped_by_age_and_size_oldest_first() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = home.path().join("worktrees");
         let logs = home.path().join("logs");
         fs::create_dir_all(&root).unwrap();

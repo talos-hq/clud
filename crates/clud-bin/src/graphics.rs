@@ -401,7 +401,7 @@ mod tests {
 
     #[test]
     fn default_header_uses_bundled_hero_asset() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let hero_path = temp.path().join("hero.jpg");
         std::fs::write(&hero_path, HERO_CLUD_JPG).unwrap();
 
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn explicit_header_image_override_takes_precedence() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let override_path = temp.path().join("override.png");
         let image = image::RgbaImage::from_pixel(16, 16, image::Rgba([255, 0, 0, 255]));
         image.save(&override_path).unwrap();

@@ -207,7 +207,7 @@ mod tests {
 
     #[test]
     fn record_redaction_preserves_bridge_behavior() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("bridge.jsonl");
         let secret = format!("ghp_{}", "A".repeat(36));
         let event = serde_json::json!({"event":"upstream_attempt", "attempt":2,
@@ -240,7 +240,7 @@ mod tests {
 
     #[test]
     fn healthy_log_creates_no_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("bridge.jsonl");
         drop(BridgeLog::new(path.clone()));
         assert!(!path.exists());
@@ -248,7 +248,7 @@ mod tests {
 
     #[test]
     fn concurrent_callers_produce_complete_json_lines() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("bridge.jsonl");
         let log = std::sync::Arc::new(std::sync::Mutex::new(BridgeLog::new(path.clone())));
         let mut workers = Vec::new();
@@ -275,7 +275,7 @@ mod tests {
 
     #[test]
     fn byte_cap_leaves_visible_truncation_marker() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("bridge.jsonl");
         let mut log = BridgeLog::with_max_bytes(path.clone(), 100);
         for value in 0..100 {

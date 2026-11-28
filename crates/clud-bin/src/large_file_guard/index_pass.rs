@@ -153,7 +153,7 @@ pub(super) fn classify_entries(entries: impl Iterator<Item = (PathBuf, u32)>) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)
@@ -244,7 +244,7 @@ mod tests {
 
     #[test]
     fn resolve_index_path_for_a_git_directory() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         assert_eq!(
             resolve_index_path(tmp.path()),
@@ -255,7 +255,7 @@ mod tests {
     #[test]
     fn resolve_index_path_follows_a_worktree_git_file() {
         // A linked worktree's `.git` is a file pointing at the real gitdir.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let real_gitdir = tmp.path().join("realrepo/.git/worktrees/wt");
         std::fs::create_dir_all(&real_gitdir).unwrap();
         let wt = tmp.path().join("wt");
@@ -274,13 +274,13 @@ mod tests {
 
     #[test]
     fn resolve_index_path_none_without_git() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         assert_eq!(resolve_index_path(tmp.path()), None);
     }
 
     #[test]
     fn index_pass_errors_without_an_index() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         assert_eq!(index_pass(tmp.path()), Err(IndexPassError::NoIndex));
     }
 
@@ -291,7 +291,7 @@ mod tests {
         // qualifying, or — if git recorded it racily-clean with size 0 — on the
         // verification list, which `run()` then re-stats). The small file must
         // never qualify.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         if crate::worktrees::run_git(root, &["init"]).is_err() {
             return; // no git in this environment — skip rather than fail.

@@ -113,8 +113,8 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::time::Duration;
 
-    fn private_root() -> tempfile::TempDir {
-        let root = tempfile::tempdir().unwrap();
+    fn private_root() -> kernal_api::platform::fs::TemporaryDirectory {
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         fs::set_permissions(root.path(), fs::Permissions::from_mode(0o700)).unwrap();
         root
     }
@@ -272,7 +272,7 @@ mod tests {
 
     #[test]
     fn reporter_alias_has_no_outer_deadline() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let directory = root.path().join("diagnostics");
         fs::create_dir(&directory).unwrap();
         let reporter = directory.join("test_report.py");
@@ -325,7 +325,7 @@ mod tests {
 mod macos_tests {
     #[test]
     fn private_capture_fails_closed_before_spawn() {
-        let root = tempfile::tempdir().expect("temporary root");
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().expect("temporary root");
         let error = super::verify_root(root.path()).expect_err("ACL verification is unavailable");
         assert_eq!(error.kind(), std::io::ErrorKind::Unsupported);
     }

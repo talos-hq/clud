@@ -1,8 +1,8 @@
 //! The typed root registry and its firing rule (#967 Phase 3).
 
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs;
-use tempfile::TempDir;
 
 fn make_repo(root: &Path, relative: &[&str]) -> PathBuf {
     let mut path = root.to_path_buf();
@@ -19,7 +19,7 @@ fn kind_for(roots: &HookRoots, path: &Path) -> Option<RootKind> {
 
 #[test]
 fn the_session_root_is_the_parent() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let roots = HookRoots::parent_only(tmp.path());
 
     assert_eq!(kind_for(&roots, tmp.path()), Some(RootKind::Parent));
@@ -33,7 +33,7 @@ fn the_session_root_is_the_parent() {
 fn extern_repos_children_are_registered_implicitly() {
     // The GC-tracked convention: clud put them there, so it knows what they
     // are without anyone declaring them.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let sub = make_repo(tmp.path(), &[EXTERN_REPOS_DIR, "running-process"]);
 
     let roots = HookRoots::parent_only(tmp.path());
@@ -49,7 +49,7 @@ fn extern_repos_children_are_registered_implicitly() {
 fn a_nested_git_repo_is_not_a_child_unless_declared() {
     // #966 D8: declaration is the consent that makes the child tier's
     // no-prompt trust sound, and it collapses if nothing was declared.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let nested = make_repo(tmp.path(), &["vendor", "somelib"]);
 
     let undeclared = HookRoots::parent_only(tmp.path());
@@ -65,7 +65,7 @@ fn a_nested_git_repo_is_not_a_child_unless_declared() {
 
 #[test]
 fn a_declared_child_may_be_absolute_or_relative_in_either_spelling() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let nested = make_repo(tmp.path(), &["child"]);
 
     for declaration in [
@@ -86,7 +86,7 @@ fn a_declared_child_may_be_absolute_or_relative_in_either_spelling() {
 fn the_most_specific_root_wins() {
     // A sub-repo lives inside the parent's tree by construction, so a
     // registration-order-dependent lookup would answer "parent" for it.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let sub = make_repo(tmp.path(), &[EXTERN_REPOS_DIR, "dep"]);
 
     let roots = HookRoots::parent_only(tmp.path());
@@ -103,8 +103,8 @@ fn the_most_specific_root_wins() {
 
 #[test]
 fn a_path_outside_every_root_is_unregistered() {
-    let tmp = TempDir::new().unwrap();
-    let elsewhere = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
+    let elsewhere = TemporaryDirectory::new().unwrap();
 
     let roots = HookRoots::parent_only(tmp.path());
 
@@ -120,7 +120,7 @@ fn a_path_outside_every_root_is_unregistered() {
 fn parent_hooks_never_fire_in_an_extern_root() {
     // A parent guard pointed at a foreign checkout can only misfire or error
     // -- that is the #841 ENOENT wedge.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let sub = make_repo(tmp.path(), &[EXTERN_REPOS_DIR, "dep"]);
 
     let roots = HookRoots::parent_only(tmp.path());
@@ -132,7 +132,7 @@ fn parent_hooks_never_fire_in_an_extern_root() {
 #[test]
 fn parent_hooks_do_fire_in_a_declared_child() {
     // A declared child is part of the parent's world, unlike a visitor.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let child = make_repo(tmp.path(), &["packages", "core"]);
 
     let roots = HookRoots::resolve(tmp.path(), &["packages/core".to_string()], None);
@@ -155,8 +155,8 @@ fn the_kind_alone_decides_whether_parent_hooks_apply() {
 fn roots_round_trip_through_the_env_encoding() {
     // The hook cannot rediscover --add-dir targets: they appear in no hook
     // payload, so clud has to carry them across the process boundary.
-    let tmp = TempDir::new().unwrap();
-    let extra = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
+    let extra = TemporaryDirectory::new().unwrap();
 
     let encoded = HookRoots::resolve(
         tmp.path(),
@@ -175,7 +175,7 @@ fn roots_round_trip_through_the_env_encoding() {
 
 #[test]
 fn an_unparsable_env_value_is_ignored_rather_than_fatal() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
 
     let roots = HookRoots::resolve(tmp.path(), &[], Some("{not json"));
 
@@ -184,7 +184,7 @@ fn an_unparsable_env_value_is_ignored_rather_than_fatal() {
 
 #[test]
 fn an_env_entry_missing_a_field_is_skipped_not_guessed() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
 
     let roots = HookRoots::resolve(
         tmp.path(),
@@ -197,7 +197,7 @@ fn an_env_entry_missing_a_field_is_skipped_not_guessed() {
 
 #[test]
 fn the_same_root_registered_twice_appears_once() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let child = make_repo(tmp.path(), &["child"]);
     let encoded = format!(
         r#"[{{"kind":"child","path":{}}}]"#,
@@ -211,7 +211,7 @@ fn the_same_root_registered_twice_appears_once() {
 
 #[test]
 fn paths_lists_every_root_for_the_cwd_pinning_set() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let sub = make_repo(tmp.path(), &[EXTERN_REPOS_DIR, "dep"]);
 
     let paths = HookRoots::parent_only(tmp.path()).paths();
@@ -281,7 +281,7 @@ fn a_cd_target_replaces_cwd_rather_than_joining_it() {
     // `cd .extern-repos/dep && make`, because cwd is still the parent. The
     // parent's guards then fire inside the sub-repo -- the exact failure this
     // tier exists to prevent.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let extern_root = make_repo(tmp.path(), &[EXTERN_REPOS_DIR, "dep"]);
     let roots = HookRoots::parent_only(tmp.path());
 

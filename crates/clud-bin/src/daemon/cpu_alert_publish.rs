@@ -219,7 +219,7 @@ mod tests {
     /// value the client would render as a spike.
     #[test]
     fn the_baseline_round_trips_as_a_below_threshold_reading() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         write_snapshot(dir.path(), BASELINE_CPU_PCT).expect("write baseline");
 
         let text = std::fs::read_to_string(metrics_snapshot_path(dir.path()))
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn a_written_snapshot_round_trips() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         write_snapshot(dir.path(), 88.5).expect("write snapshot");
         let text = std::fs::read_to_string(metrics_snapshot_path(dir.path())).expect("read");
         let snapshot: MetricsSnapshot = serde_json::from_str(&text).expect("parse");

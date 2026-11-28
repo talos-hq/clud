@@ -88,7 +88,7 @@ fn dashboard_access_requires_loopback_host_and_capability_token() {
 
 #[test]
 fn api_discovery_routes_require_bearer_and_return_json() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let port = spawn_dashboard_with_activity(
         dir.path().to_path_buf(),
         None,
@@ -130,7 +130,7 @@ fn api_discovery_routes_require_bearer_and_return_json() {
     reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
 )]
 fn api_create_list_get_and_auth_boundary_are_request_level_contracts() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let port = spawn_dashboard_with_activity(
         dir.path().to_path_buf(),
         None,
@@ -425,7 +425,7 @@ fn dashboard_state_surfaces_api_sessions_as_nonattachable_rows() {
         ApiSessionBackend, CreateApiSession, ResolvedApiSessionSettings,
     };
 
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let record = super::super::api_sessions::ApiSessionStore::new(temp.path())
         .create(CreateApiSession {
             backend: ApiSessionBackend::Codex,
@@ -600,7 +600,7 @@ fn wait_for_no_activity(activity: &super::super::activity::DaemonActivity) {
     reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
 )]
 fn tier1_authenticated_http_claude_turn_captures_identity_resumes_and_holds_activity() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let cwd = temp.path().join("cwd");
     std::fs::create_dir(&cwd).unwrap();
     let script = temp.path().join("claude.jsonl");
@@ -716,7 +716,7 @@ fn tier1_authenticated_http_claude_turn_captures_identity_resumes_and_holds_acti
 
 #[test]
 fn tier1_authenticated_http_codex_turn_captures_thread_identity_and_resumes() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let cwd = temp.path().join("cwd");
     std::fs::create_dir(&cwd).unwrap();
     let script = temp.path().join("codex.jsonl");
@@ -813,7 +813,7 @@ fn tier1_authenticated_http_codex_turn_captures_thread_identity_and_resumes() {
     reason = "complexity ratchet baseline (zackees/ci.yml#229); split this function"
 )]
 fn tier1_authenticated_http_turn_idempotency_replay_conflict_replace_and_interrupt() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let cwd = temp.path().join("cwd");
     std::fs::create_dir(&cwd).unwrap();
     // A controlled test-only slow child keeps the turn live long enough to
@@ -994,7 +994,7 @@ fn empty_live_provider() -> super::LiveSessionsProvider {
 
 #[test]
 fn build_state_with_empty_state_dir_returns_zeros() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let state = build_dashboard_state(dir.path(), None, 9999, 100, Vec::new()).expect("build");
     assert_eq!(state.stats.session_count, 0);
     assert_eq!(state.stats.live_session_count, 0);
@@ -1010,7 +1010,7 @@ fn dashboard_state_does_not_wait_for_a_silent_daemon_snapshot_peer() {
     // #1465: /state.json is served by the daemon itself. A peer that accepts
     // its process-snapshot RPC but never replies must not hold the dashboard
     // HTTP thread past the caller's two-second response deadline.
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.set_nonblocking(true).unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -1063,7 +1063,7 @@ fn dashboard_state_does_not_wait_for_a_silent_daemon_snapshot_peer() {
 fn dashboard_state_does_not_wait_for_a_trickling_daemon_snapshot_peer() {
     // A per-read socket timeout is insufficient: each byte can arrive just
     // before that timeout and postpone the newline forever (#1465).
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let info = crate::daemon::types::DaemonInfo {
         pid: std::process::id(),
@@ -1169,7 +1169,7 @@ fn tool_telemetry_merges_start_finish_and_aggregates_recent_calls() {
 /// cross-test races on `CLUD_SESSION_DB`.
 #[test]
 fn build_state_surfaces_direct_runner_registry_rows() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let live = vec![LiveSession {
         pid: 4242,
         started_unix: 1_700_000_000,
@@ -1202,7 +1202,7 @@ fn build_state_surfaces_direct_runner_registry_rows() {
 
 #[test]
 fn build_state_surfaces_completed_foreground_launch_records() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let launches_dir = dir.path().join("launches");
     std::fs::create_dir_all(&launches_dir).unwrap();
     let record = LaunchRecord {
@@ -1247,7 +1247,7 @@ fn build_state_surfaces_completed_foreground_launch_records() {
 
 #[test]
 fn build_state_includes_session_snapshots() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     write_fake_session(
         dir.path(),
         "sess-a",
@@ -1273,7 +1273,7 @@ fn build_state_includes_session_snapshots() {
 #[test]
 fn build_state_includes_ctrl_c_events_when_present() {
     use crate::ctrl_c_track::{events_dir, CtrlCEvent, InvocationKind};
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let edir = events_dir(dir.path());
     std::fs::create_dir_all(&edir).unwrap();
     for i in 0..3u64 {
@@ -1308,7 +1308,7 @@ fn build_state_includes_ctrl_c_events_when_present() {
 
 #[test]
 fn build_state_includes_ctrl_c_profile() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut snap = fake_snapshot("sess-ctrl-c", "interrupt", "/dev/ctrl-c");
     snap.ctrl_c = Some(CtrlCProfile {
         cli_pid: Some(777),
@@ -1333,7 +1333,7 @@ fn build_state_includes_ctrl_c_profile() {
 
 #[test]
 fn end_to_end_state_endpoint_returns_all_three_kinds() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("e2e.redb");
 
     // Seed: one session.
@@ -1406,7 +1406,7 @@ fn end_to_end_state_endpoint_returns_all_three_kinds() {
 
 #[test]
 fn end_to_end_tool_event_endpoint_round_trips_summary() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let port = spawn_dashboard(
         dir.path().to_path_buf(),
         None,
@@ -1436,7 +1436,7 @@ fn end_to_end_tool_event_endpoint_round_trips_summary() {
 
 #[test]
 fn end_to_end_purge_kind_round_trip_mutates_registry() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("purge.redb");
 
     let registry = Registry::open_at(&db_path).expect("open registry");
@@ -1513,7 +1513,7 @@ fn end_to_end_purge_kind_round_trip_mutates_registry() {
 /// that returned a 500 in this case.
 #[test]
 fn end_to_end_per_row_delete_only_targets_requested_id() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let db_path = dir.path().join("delete-by-id.redb");
 
     let registry = Registry::open_at(&db_path).expect("open registry");
@@ -1787,7 +1787,7 @@ fn create_session_with_running_turn(port: u16, cwd: &std::path::Path) -> String 
 
 #[test]
 fn tier1_injection_mid_turn_is_delivered_once_as_the_next_user_turn() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let cwd = temp.path().join("cwd");
     std::fs::create_dir(&cwd).unwrap();
     let script = temp.path().join("claude.jsonl");

@@ -67,7 +67,7 @@ fn version_newer_than_current() -> String {
 
 #[test]
 fn newer_daemon_is_refused_and_rendered_yellow() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     let info = DaemonInfo {
@@ -94,7 +94,7 @@ fn newer_daemon_is_refused_and_rendered_yellow() {
 
 #[test]
 fn daemon_stop_sends_shutdown_to_newer_daemon() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (port, line_rx) = spawn_shutdown_ack_peer();
     let info = DaemonInfo {
         pid: std::process::id(),
@@ -186,7 +186,7 @@ fn spawn_silent_peer() -> (u16, Arc<AtomicBool>) {
 
 #[test]
 fn try_register_gc_watch_is_silent_when_daemon_is_unreachable() {
-    let state = tempfile::tempdir().unwrap();
+    let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let roots = [GcWatchRoot {
         kind: "worktree".to_string(),
         watch_dir: state.path().join("worktrees").to_string_lossy().to_string(),
@@ -220,7 +220,7 @@ fn spawn_shutdown_ack_peer() -> (u16, mpsc::Receiver<String>) {
 
 #[test]
 fn send_daemon_request_translates_silent_peer_to_unexpected_eof() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (port, saw_request) = spawn_silent_peer();
     write_daemon_info(tmp.path(), std::process::id(), port);
 
@@ -252,7 +252,7 @@ fn send_daemon_request_translates_silent_peer_to_unexpected_eof() {
 
 #[test]
 fn ensure_daemon_fast_path_skips_stale_state_cleanup() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (port, _saw_request) = spawn_silent_peer();
     write_daemon_info(tmp.path(), std::process::id(), port);
     write_unfinished_session(tmp.path(), "stale-session");
@@ -270,7 +270,7 @@ fn ensure_daemon_fast_path_skips_stale_state_cleanup() {
 #[test]
 fn send_daemon_request_defaults_to_prost_wire() {
     let _guard = EnvGuard::unset(super::super::wire_prost::ENV_DAEMON_WIRE);
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (port, line_rx) = spawn_shutdown_ack_peer();
     write_daemon_info(tmp.path(), std::process::id(), port);
 
@@ -293,7 +293,7 @@ fn send_daemon_request_defaults_to_prost_wire() {
 #[test]
 fn send_daemon_request_uses_legacy_json_wire_when_requested() {
     let _guard = EnvGuard::set(super::super::wire_prost::ENV_DAEMON_WIRE, "json");
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (port, line_rx) = spawn_shutdown_ack_peer();
     write_daemon_info(tmp.path(), std::process::id(), port);
 
@@ -339,7 +339,7 @@ fn is_old_daemon_signature_recognizes_connection_drop_variants() {
 
 #[test]
 fn request_daemon_shutdown_treats_dead_pid_as_not_found() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     write_daemon_info(tmp.path(), u32::MAX, 9);
 
     let err = request_daemon_shutdown(tmp.path())
@@ -353,7 +353,7 @@ fn request_daemon_shutdown_treats_dead_pid_as_not_found() {
 
 #[test]
 fn shutdown_connect_error_cleans_a_daemon_that_exited_after_the_precheck() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     write_daemon_info(tmp.path(), u32::MAX, 9);
 
     let err = shutdown_connect_error(
@@ -496,7 +496,7 @@ fn spawn_hung_peer() -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
 #[test]
 fn a_stalled_admission_times_out_once_instead_of_waiting_forever() {
     // #2000: `Create` used to wait on the daemon with no deadline at all.
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let (port, connections) = spawn_hung_peer();
     write_daemon_info(tmp.path(), std::process::id(), port);
     let started = std::time::Instant::now();

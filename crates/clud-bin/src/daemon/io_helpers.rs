@@ -272,7 +272,7 @@ mod tests {
     /// worker and the daemon's Ctrl+C thread).
     #[test]
     fn concurrent_write_json_file_never_publishes_partial_content() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("sessions").join("s.json");
         let payload: Vec<u64> = (0..2048).collect();
         write_json_file(&path, &payload).unwrap();
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn the_daemon_path_is_the_shared_builder() {
         let _env_lock = EnvGuard::set_all(&[]);
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home_path = home.path().to_string_lossy().to_string();
         let base = pairs(&[
             ("PATH", "/client/only/bin"),
@@ -831,7 +831,7 @@ mod tests {
         use std::sync::atomic::AtomicBool;
         use std::sync::Arc;
 
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("record.json");
         write_json_file(&path, &0_u64).unwrap();
 

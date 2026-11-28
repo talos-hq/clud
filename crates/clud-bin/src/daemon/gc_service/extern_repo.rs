@@ -707,14 +707,14 @@ mod tests {
 
     #[test]
     fn shared_git_metadata_is_not_disposable_source() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(dir.path().join(".git/worktrees/active-child")).unwrap();
         assert_eq!(git_work_state(dir.path()), GitWorkState::HasLocalWork);
     }
 
     #[test]
     fn nested_checkout_parent_is_not_a_disposable_clone() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let child = dir.path().join("nested-clone");
         std::fs::create_dir_all(child.join(".git")).unwrap();
         std::fs::write(child.join("unpushed-work"), "irreplaceable").unwrap();
@@ -740,7 +740,7 @@ mod tests {
     /// window it must still be spared.
     #[test]
     fn a_future_mtime_is_age_zero_not_recently_active_forever() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo = dir.path().join("extern");
         std::fs::create_dir(&repo).unwrap();
         let future = SystemTime::now() + Duration::from_secs(2);
@@ -879,7 +879,7 @@ mod tests {
     /// only ones that never could be.
     #[test]
     fn a_squash_merged_checkout_is_merged_not_local_work() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let work = squash_merged_clone(tmp.path());
         assert_eq!(git_work_state(&work), GitWorkState::Merged);
     }
@@ -888,7 +888,7 @@ mod tests {
     /// upstream in any form still pins the checkout.
     #[test]
     fn an_unmerged_commit_still_reads_as_local_work() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let work = squash_merged_clone(tmp.path());
         std::fs::write(work.join("later.txt"), "not upstream\n").unwrap();
         git(&work, &["add", "-A"]);
@@ -900,7 +900,7 @@ mod tests {
     /// must veto the merged verdict rather than be judged unseen.
     #[test]
     fn unmerged_work_on_another_branch_vetoes_the_merged_verdict() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let work = squash_merged_clone(tmp.path());
         git(&work, &["checkout", "-b", "side"]);
         std::fs::write(work.join("side.txt"), "side\n").unwrap();
@@ -959,7 +959,7 @@ mod tests {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let (code, out) = probe_cmd(
             "sh",
             tmp.path(),
@@ -973,13 +973,13 @@ mod tests {
 
     #[test]
     fn standalone_non_git_dir_reads_as_unknown() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert_eq!(git_work_state(tmp.path()), GitWorkState::Unknown);
     }
 
     #[test]
     fn linked_worktree_is_not_pinned_by_another_branch_or_shared_stash() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         std::fs::create_dir(&repo).unwrap();
         init_repo(&repo);
@@ -1018,7 +1018,7 @@ mod tests {
 
     #[test]
     fn linked_worktree_preserves_unpublished_private_refs() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         std::fs::create_dir(&repo).unwrap();
         init_repo(&repo);
@@ -1061,7 +1061,7 @@ mod tests {
     /// probe that always says `HasLocalWork` passes the whole suite.
     #[test]
     fn non_git_dir_nested_inside_a_repo_still_reads_as_unknown() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let parent = tmp.path();
         init_repo(parent);
         // Make the parent unmistakably dirty.
@@ -1082,7 +1082,7 @@ mod tests {
     /// verdict that would delete it without ever looking inside.
     #[test]
     fn bare_repo_is_spared_rather_than_purged_uninspected() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         git(tmp.path(), &["init", "--bare", "mirror.git"]);
         let bare = tmp.path().join("mirror.git");
 
@@ -1102,7 +1102,7 @@ mod tests {
     /// checkout that was never inspected.
     #[test]
     fn malformed_git_dir_inside_a_repo_does_not_borrow_the_parents_answer() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let parent = tmp.path();
         init_repo(parent);
         std::fs::write(parent.join("dirty.txt"), "uncommitted").unwrap();
@@ -1123,7 +1123,7 @@ mod tests {
 
     #[test]
     fn unpushed_or_untracked_repo_is_pinned() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         init_repo(root);
         std::fs::write(root.join("a.txt"), "hello").unwrap();
@@ -1144,7 +1144,7 @@ mod tests {
     /// the repo's own guard blocks) is involved.
     #[test]
     fn clean_fully_pushed_checkout_is_reclaimable() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let upstream = tmp.path().join("upstream.git");
         let work = tmp.path().join("work");
         std::fs::create_dir_all(&work).unwrap();

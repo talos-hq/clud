@@ -6,7 +6,7 @@ pub(super) fn prompt(options: &Options) -> Result<Secret, Failure> {
     if super::real_ui_disabled() && !super::test_mode() {
         return Err(Failure::Unavailable);
     }
-    let dir = tempfile::tempdir().map_err(|_| Failure::Sink)?;
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().map_err(|_| Failure::Sink)?;
     let path = dir.path().join("credential");
     let mut request = options.clone();
     request.to_file = Some(path.clone());

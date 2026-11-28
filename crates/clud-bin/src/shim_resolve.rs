@@ -186,13 +186,13 @@ fn path_sep() -> char {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs::File;
     use std::path::PathBuf;
-    use tempfile::TempDir;
 
     #[test]
     fn which_explicit_path_contract() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let a = tmp.path().join("a");
         let b = tmp.path().join("b");
         std::fs::create_dir_all(&a).unwrap();
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn which_python_finds_first_match_in_path() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let a = tmp.path().join("a");
         let b = tmp.path().join("b");
         std::fs::create_dir_all(&a).unwrap();
@@ -337,7 +337,7 @@ mod tests {
 
     #[test]
     fn which_python_returns_none_when_no_match() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         // Empty dir, no python3 anywhere.
         let found = which_python_default("python3", &tmp.path().to_string_lossy());
         assert!(found.is_none());

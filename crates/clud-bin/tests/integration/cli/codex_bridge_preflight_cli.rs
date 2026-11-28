@@ -66,8 +66,12 @@ fn run(home: &std::path::Path, path: &std::path::Path, args: &[String]) -> (i32,
     (exit, output)
 }
 
-fn isolated_fixture() -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
-    let root = tempfile::tempdir().unwrap();
+fn isolated_fixture() -> (
+    kernal_api::platform::fs::TemporaryDirectory,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = root.path().join("home");
     let bin = root.path().join("bin");
     fs::create_dir_all(home.join(".codex")).unwrap();

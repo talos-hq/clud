@@ -6,12 +6,12 @@ mod tests {
     use crate::hook_health::tests::{trusted_state_for, write};
     use crate::hook_health::{apply_deterministic_repairs, deterministic_repair_actions};
     use crate::hook_health::{codex_project_key, inspect_paths, plan_repairs, RepairAction};
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs;
-    use tempfile::tempdir;
 
     #[test]
     fn claude_windows_hook_stdin_bug_warning_mentions_workaround() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let repo = temp.path().join("repo");
         let home = temp.path().join("home");
         write(
@@ -36,7 +36,7 @@ mod tests {
 
     #[test]
     fn codex_batch_hook_exit_code_risk_warns_and_plans_repair() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let repo = temp.path().join("repo");
         let home = temp.path().join("home");
         let codex = repo.join(".codex").join("hooks.json");
@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn codex_batch_hook_exit_code_repair_appends_lastexitcode() {
-        let temp = tempdir().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let repo = temp.path().join("repo");
         let home = temp.path().join("home");
         let codex = repo.join(".codex").join("hooks.json");

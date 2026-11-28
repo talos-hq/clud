@@ -153,7 +153,7 @@ impl Read for ChunkedStdin {
 /// Run one path × chunking through a real PTY into mock-agent; what it read.
 fn child_reads(path: Path, chunking: Chunking) -> Vec<u8> {
     let agent = mock_agent_path();
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let raw_stdin = tmp.path().join("stdin_raw.bin");
     let ready = tmp.path().join("ready");
     let argv = vec![

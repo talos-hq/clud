@@ -270,7 +270,7 @@ mod tests {
 
     #[test]
     fn prunes_top_level_and_nested_targets_and_sums_reclaimed() {
-        let wt = tempfile::tempdir().unwrap();
+        let wt = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         make_target(wt.path(), 1000);
         make_target(&wt.path().join("nested"), 500);
         let mut seen = Vec::new();
@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn a_failed_prune_is_counted_and_reclaims_nothing() {
-        let wt = tempfile::tempdir().unwrap();
+        let wt = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         make_target(wt.path(), 100);
         let mut run = |_: &Path| Err("boom".to_string());
         let out = go(wt.path(), &mut run, &mut PruneState::default(), later());
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn target_without_cargo_toml_is_left_alone() {
-        let wt = tempfile::tempdir().unwrap();
+        let wt = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         fs::create_dir_all(wt.path().join("target")).unwrap();
         let mut run = |_: &Path| -> Result<(), String> { panic!("must not run") };
         let out = go(wt.path(), &mut run, &mut PruneState::default(), later());
@@ -313,7 +313,7 @@ mod tests {
 
     #[test]
     fn second_sweep_of_an_unchanged_target_does_not_call_the_runner() {
-        let wt = tempfile::tempdir().unwrap();
+        let wt = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         make_target(wt.path(), 100);
         let mut state = PruneState::default();
         let mut calls = 0;
@@ -328,7 +328,7 @@ mod tests {
 
     #[test]
     fn state_round_trips_through_the_gc_state_dir() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = home.path().join("worktrees");
         let target = home.path().join("target");
         fs::create_dir_all(&target).unwrap();
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn save_drops_entries_for_vanished_targets() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = home.path().join("worktrees");
         let live = home.path().join("live-target");
         fs::create_dir_all(&live).unwrap();
@@ -366,7 +366,7 @@ mod tests {
             }
         }
         let _lock = crate::test_env::home_lock();
-        let cargo_home = tempfile::tempdir().unwrap();
+        let cargo_home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let bin = cargo_home.path().join("bin");
         fs::create_dir_all(&bin).unwrap();
         let name = if crate::platform::host::WINDOWS {
@@ -385,7 +385,7 @@ mod tests {
 
     #[test]
     fn recent_build_output_counts_as_in_use() {
-        let wt = tempfile::tempdir().unwrap();
+        let wt = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         make_target(wt.path(), 100);
         let mut run = |_: &Path| -> Result<(), String> { panic!("must not run") };
         let now = secs(SystemTime::now());
@@ -395,7 +395,7 @@ mod tests {
 
     #[test]
     fn a_worktree_that_becomes_in_use_mid_loop_stops_being_pruned() {
-        let wt = tempfile::tempdir().unwrap();
+        let wt = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         make_target(wt.path(), 100);
         make_target(&wt.path().join("nested"), 100);
         let asked = std::cell::Cell::new(0);
@@ -419,9 +419,9 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return; // directory symlinks need privileges there
         }
-        let outside = tempfile::tempdir().unwrap();
+        let outside = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         make_target(outside.path(), 100);
-        let wt = tempfile::tempdir().unwrap();
+        let wt = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         fs::write(wt.path().join("Cargo.toml"), "").unwrap();
         crate::platform::alias_link::symlink(
             &outside.path().join("target"),

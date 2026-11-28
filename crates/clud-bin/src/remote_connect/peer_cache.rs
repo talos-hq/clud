@@ -97,7 +97,7 @@ mod tests {
 
     #[test]
     fn a_new_process_can_load_a_current_peer_but_ignores_bad_records() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = directory.path().join("remote-peer.json");
         let now = UNIX_EPOCH + Duration::from_secs(1_000_000);
         let peer = "[2001:db8::1]:443".parse().unwrap();

@@ -26,7 +26,7 @@ fn calls_are_classified_by_tool_and_command() {
 
 #[test]
 fn python_source_writes_count_as_edits_without_counting_reads_or_text() {
-    let repository = tempfile::tempdir().unwrap();
+    let repository = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir(repository.path().join(".git")).unwrap();
     std::fs::create_dir_all(repository.path().join("crates/clud-bin/src")).unwrap();
     std::fs::create_dir(repository.path().join("src")).unwrap();
@@ -104,7 +104,7 @@ fn python_source_writes_count_as_edits_without_counting_reads_or_text() {
             "{command}"
         );
     }
-    let outside = tempfile::tempdir().unwrap();
+    let outside = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     assert_eq!(
         classify_kind_at("Bash", writes[0], Some(outside.path())),
         Some(Kind::Other)
@@ -118,7 +118,7 @@ fn python_source_writes_count_as_edits_without_counting_reads_or_text() {
 
 #[test]
 fn python_attempt_recognition_uses_the_payload_shell_dialect() {
-    let repository = tempfile::tempdir().unwrap();
+    let repository = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir(repository.path().join(".git")).unwrap();
     std::fs::create_dir(repository.path().join("src")).unwrap();
     let command = "python -c \"open('src/a.rs','w')\"";
@@ -135,8 +135,8 @@ fn python_attempt_recognition_uses_the_payload_shell_dialect() {
 
 #[test]
 fn python_edit_attempt_rejects_paths_through_external_or_dangling_symlinks() {
-    let repository = tempfile::tempdir().unwrap();
-    let outside = tempfile::tempdir().unwrap();
+    let repository = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+    let outside = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir(repository.path().join(".git")).unwrap();
     std::fs::create_dir(repository.path().join("src")).unwrap();
     match crate::platform::gc_test_fs::symlink(
@@ -222,7 +222,7 @@ fn the_ratio_comes_from_env_then_settings_then_default() {
 
 #[test]
 fn state_round_trips_per_session_and_fails_open_without_one() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for _ in 0..MIN_VERIFY - 1 {
         assert_eq!(observe_at(dir.path(), "s1", Class::Verify, 3), None);
     }
@@ -267,7 +267,7 @@ fn call(kind: Kind, now_ms: u64) -> Call {
 
 #[test]
 fn python_write_in_a_mixed_sequence_counts_as_an_edit() {
-    let repository = tempfile::tempdir().unwrap();
+    let repository = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir(repository.path().join(".git")).unwrap();
     std::fs::create_dir(repository.path().join("src")).unwrap();
     let cwd = Some(repository.path());
@@ -299,7 +299,7 @@ fn a_redelivered_tool_call_is_counted_once() {
 
 #[test]
 fn concurrent_hook_invocations_do_not_lose_ledger_updates() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let handles: Vec<_> = (0..8)
         .map(|n| {
             let state = dir.path().to_path_buf();
@@ -493,7 +493,7 @@ fn a_1988_ledger_without_the_new_fields_still_loads() {
 
 #[test]
 fn timing_and_stats_round_trip_through_the_session_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut test = call(Kind::Test, 0);
     test.id = Some("t1".into());
     observe_call_at(dir.path(), "s1", &test, LIMITS);
@@ -519,7 +519,7 @@ fn the_share_limit_comes_from_env_then_settings_then_default() {
 
 #[test]
 fn pruning_ledgers_never_removes_a_sessions_lock() {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let ledger = session_file(dir.path(), "s1");
     let lock = lock_path(&ledger);
     drop(SessionLock::acquire(&ledger));
@@ -550,7 +550,7 @@ fn posting_text_that_mentions_lint_is_not_a_lint_run_2470() {
 
 #[test]
 fn issue_2571_persisted_notes_are_condensed_without_changing_the_guard() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut notes = Vec::new();
     for _ in 0..(WINDOW * 3) {
         if let Some(Verdict::Note(note)) =
@@ -587,7 +587,7 @@ fn issue_2571_share_and_modifier_repeats_keep_only_the_current_signal() {
         (share_text(80, 70), "80%"),
         (modifier_text("clud"), "`clud`"),
     ] {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let first =
             super::super::block_bad_cmd_cd::condense_at(Some(dir.path()), Some("s"), full.clone());
         assert_eq!(first, full);

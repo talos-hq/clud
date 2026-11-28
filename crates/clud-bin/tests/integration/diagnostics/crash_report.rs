@@ -12,7 +12,7 @@
 use std::fs;
 use std::sync::Mutex;
 
-use tempfile::TempDir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 static SERIALIZE: Mutex<()> = Mutex::new(());
 
@@ -20,7 +20,7 @@ static SERIALIZE: Mutex<()> = Mutex::new(());
 fn panic_writes_a_crash_report_with_role_and_backtrace() {
     let _g = SERIALIZE.lock().unwrap();
 
-    let temp = TempDir::new().expect("tempdir");
+    let temp = TemporaryDirectory::new().expect("tempdir");
     let state_dir = temp.path().join("state");
     // Redirect ~/.clud/state to our tempdir via the public env var.
     // SAFETY: `set_var` is safe on Edition 2021; this test is single-threaded
@@ -93,7 +93,7 @@ fn panic_writes_a_crash_report_with_role_and_backtrace() {
 fn install_is_idempotent_and_retag_updates_role() {
     let _g = SERIALIZE.lock().unwrap();
 
-    let temp = TempDir::new().expect("tempdir");
+    let temp = TemporaryDirectory::new().expect("tempdir");
     let state_dir = temp.path().join("state");
     std::env::set_var("CLUD_DAEMON_STATE_DIR", &state_dir);
 

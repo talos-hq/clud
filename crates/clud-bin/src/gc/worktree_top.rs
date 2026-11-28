@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn names_the_largest_children_first_and_round_trips() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = home.path().join("worktrees");
         write(&root.join("small/a"), 10);
         write(&root.join("big/x/y"), 300);
@@ -179,7 +179,7 @@ mod tests {
 
     #[test]
     fn an_exhausted_budget_marks_a_lower_bound() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = home.path().join("worktrees");
         for i in 0..5 {
             // `walk_bytes` only reads the metadata length, so set the size

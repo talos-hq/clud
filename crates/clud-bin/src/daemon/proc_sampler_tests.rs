@@ -165,7 +165,7 @@ fn parent_chain_falls_back_to_session_worker_originator() {
 
 #[test]
 fn dead_rows_are_retained_and_marked_frozen() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut sampler = ProcSampler::new(
         tmp.path().to_path_buf(),
         DEFAULT_SAMPLE_INTERVAL_MS,

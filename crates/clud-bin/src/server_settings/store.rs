@@ -247,7 +247,7 @@ mod tests {
         loaded.snapshot
     }
 
-    fn cache_in(dir: &tempfile::TempDir) -> PathBuf {
+    fn cache_in(dir: &kernal_api::platform::fs::TemporaryDirectory) -> PathBuf {
         dir.path()
             .join("server-settings")
             .join("server-settings.json")
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn a_missing_cache_is_filled_from_the_served_document() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_in(&dir);
         let (fetch, calls) = counting(|| Ok(served("deepseek-flash-2[1m]")));
         let snapshot = load_joined(Some(cache.clone()), SystemTime::now(), fetch);
@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn a_fresh_cache_is_used_without_a_request() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_in(&dir);
         seed_cache(&cache, "deepseek-flash-2");
         let (fetch, calls) = counting(|| Ok(served("deepseek-flash-3")));
@@ -295,7 +295,7 @@ mod tests {
 
     #[test]
     fn a_stale_cache_is_refreshed_for_the_same_launch() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_in(&dir);
         seed_cache(&cache, "deepseek-flash-2");
         let (fetch, _) = counting(|| Ok(served("deepseek-flash-3")));
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn a_slow_refresh_leaves_the_launch_on_its_cache_and_lands_for_the_next() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_in(&dir);
         seed_cache(&cache, "deepseek-flash-2");
         let (fetch, _) = counting(|| {
@@ -337,7 +337,7 @@ mod tests {
             b"{\"schema_version\":1,\"sections\":{},\"sections\":{}}".to_vec(),
             Vec::new(),
         ] {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             let cache = cache_in(&dir);
             seed_cache(&cache, "deepseek-flash-2");
             let before = std::fs::read(&cache).unwrap();
@@ -351,7 +351,7 @@ mod tests {
 
     #[test]
     fn an_invalid_served_section_keeps_its_last_good_value() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_in(&dir);
         seed_cache(&cache, "deepseek-flash-2");
         let (fetch, _) = counting(|| Ok(served("gpt-5.6-terra")));
@@ -366,7 +366,7 @@ mod tests {
 
     #[test]
     fn a_section_removed_on_the_server_resets_to_built_in() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_in(&dir);
         seed_cache(&cache, "deepseek-flash-2");
         let (fetch, _) = counting(|| Ok(br#"{"schema_version":1,"sections":{}}"#.to_vec()));
@@ -379,7 +379,7 @@ mod tests {
 
     #[test]
     fn a_failed_attempt_is_not_retried_until_the_interval_passes() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_in(&dir);
         let (fetch, calls) = counting(|| Err("unreachable".to_string()));
         let now = SystemTime::now();
@@ -397,7 +397,7 @@ mod tests {
 
     #[test]
     fn a_corrupt_cache_is_ignored_and_replaced_by_a_good_refresh() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_in(&dir);
         std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
         std::fs::write(&cache, b"{\"schema_version\":1,\"sect").unwrap();

@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn lock_failure_evicts_then_retries_until_the_lock_clears() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("data.redb");
         let evicted = Cell::new(false);
         let calls = Cell::new(0u32);
@@ -218,7 +218,7 @@ mod tests {
         own_pid: u32,
         graceful: bool,
     ) -> (u32, Vec<(u32, bool)>) {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         sidecar_for(holder_pid, sidecar_start_secs * 1000, tmp.path());
         let shutdowns = Cell::new(0u32);
         let signals = std::cell::RefCell::new(Vec::new());

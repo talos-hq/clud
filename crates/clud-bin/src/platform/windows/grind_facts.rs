@@ -19,7 +19,7 @@ mod tests {
             FILE_SHARE_WRITE, OPEN_EXISTING,
         };
 
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let dir = root.path().join("grind");
         std::fs::create_dir(&dir).unwrap();
         let path = write(&dir, A, r#"{"mode":"parallel"}"#);
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn permanently_inaccessible_lock_fails_promptly() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let dir = root.path().join("grind");
         std::fs::create_dir(&dir).unwrap();
         let path = write(&dir, A, "{}");

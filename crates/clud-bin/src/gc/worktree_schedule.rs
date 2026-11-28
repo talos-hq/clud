@@ -433,7 +433,7 @@ mod tests {
 
     #[test]
     fn schedule_round_trips_and_names_days_left() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = home.path().join("worktrees");
         let mut s = Schedule::default();
         s.remove_after

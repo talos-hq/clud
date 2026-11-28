@@ -246,7 +246,7 @@ mod redaction_tests {
 
     #[test]
     fn hook_log_redaction_before_rotation() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("block-bad-cmd.log");
         let command = "printf '%s' 'fake-rotation-secret' | gh secret set FAKE";
         append_log_at(&path, command);
@@ -266,7 +266,7 @@ mod redaction_tests {
 
     #[test]
     fn hook_log_redaction_reported_literal() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("block-bad-cmd.log");
         let command = "printf '%s' 'fake-hook-password' | gh secret set FAKE_TEST";
         let payload = parse_payload(

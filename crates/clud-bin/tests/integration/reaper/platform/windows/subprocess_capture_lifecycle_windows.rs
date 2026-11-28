@@ -32,7 +32,7 @@ fn fixture_id(name: &str) -> String {
 
 #[test]
 fn production_adapter_contains_an_immediate_descendant() {
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let pid_file = temp.path().join("descendant.pid");
     let exe = std::env::current_exe().expect("current test executable");
     let mut env: Vec<(String, String)> = std::env::vars().collect();

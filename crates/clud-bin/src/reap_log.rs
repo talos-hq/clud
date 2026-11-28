@@ -694,7 +694,7 @@ mod tests {
     /// their own right.
     #[test]
     fn events_are_buffered_and_flushed_in_batches() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let path = dir.path().join("sessions").join("1__2").join("reap.jsonl");
         let mut log = ReapLog::new(path.clone());
 
@@ -717,7 +717,7 @@ mod tests {
 
     #[test]
     fn a_full_buffer_flushes_itself() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let path = dir.path().join("reap.jsonl");
         let mut log = ReapLog::new(path.clone());
 
@@ -735,7 +735,7 @@ mod tests {
     /// file, or every idle session would leave a stray artifact behind.
     #[test]
     fn a_pass_that_changed_nothing_writes_nothing() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let path = dir.path().join("reap.jsonl");
         let mut log = ReapLog::new(path.clone());
 
@@ -748,7 +748,7 @@ mod tests {
     /// on every event from inside the reap path.
     #[test]
     fn an_unwritable_log_disables_itself_instead_of_retrying() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         // A path whose parent is an existing *file* can never be created.
         let blocker = dir.path().join("blocker");
         fs::write(&blocker, b"x").unwrap();
@@ -770,7 +770,7 @@ mod tests {
 
     #[test]
     fn flight_recorder_needs_no_clock_history_and_still_throttles() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let path = dir.path().join("reap-health.json");
         let mut recorder = ReapFlightRecorder::new(path.clone());
         assert!(
@@ -789,7 +789,7 @@ mod tests {
 
     #[test]
     fn flight_recorder_persists_counters_for_a_crashed_session() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let path = dir.path().join("reap-health.json");
         let mut recorder = ReapFlightRecorder::new(path.clone());
         recorder.checkpoint(&ReapCounters {

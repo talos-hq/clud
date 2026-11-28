@@ -43,7 +43,7 @@ impl Upstream for FakeUpstream {
 }
 
 struct World {
-    _dir: tempfile::TempDir,
+    _dir: kernal_api::platform::fs::TemporaryDirectory,
     broker: Arc<GhBroker>,
     calls: Arc<AtomicUsize>,
     conditional: Arc<Mutex<Vec<Option<String>>>>,
@@ -51,7 +51,7 @@ struct World {
 }
 
 fn world_with(status: u16, gate: Option<mpsc::Receiver<()>>) -> World {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let calls = Arc::new(AtomicUsize::new(0));
     let conditional = Arc::new(Mutex::new(Vec::new()));
     let now = Arc::new(AtomicU64::new(1_000_000));

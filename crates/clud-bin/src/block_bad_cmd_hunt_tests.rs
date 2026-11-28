@@ -2,7 +2,7 @@
 //! (#2233).
 
 use super::*;
-use tempfile::tempdir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 const LIMIT: u32 = DEFAULT_LIMIT;
 
@@ -79,7 +79,7 @@ fn a_zero_limit_disables_the_guard_but_still_counts_nothing_into_a_refusal() {
 
 #[test]
 fn hunt_detection_requires_two_existing_large_source_ranges() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let a = fixture(dir.path(), "a.rs", 20_000);
     let b = fixture(dir.path(), "b.rs", 20_000);
     let a = a.to_string_lossy();
@@ -106,7 +106,7 @@ fn hunt_detection_requires_two_existing_large_source_ranges() {
 
 #[test]
 fn a_short_confirmation_read_is_not_a_hunt() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let a = fixture(dir.path(), "a.rs", 20_000);
     let a = a.to_string_lossy();
     let command = format!("sed -n '1,10p' {a}; sed -n '20,30p' {a}");
@@ -119,7 +119,7 @@ fn a_short_confirmation_read_is_not_a_hunt() {
 
 #[test]
 fn the_measured_hunt_shape_is_parsed_into_all_of_its_ranges() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let a = fixture(dir.path(), "signal.rs", 20_000);
     let b = fixture(dir.path(), "interleave.rs", 20_000);
     let a = a.to_string_lossy();
@@ -150,7 +150,7 @@ fn the_measured_hunt_shape_is_parsed_into_all_of_its_ranges() {
 
 #[test]
 fn piped_and_redirected_segments_are_not_ranges() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let a = fixture(dir.path(), "a.rs", 20_000);
     let b = fixture(dir.path(), "b.rs", 20_000);
     let a = a.to_string_lossy();
@@ -176,7 +176,7 @@ fn quoted_and_unquoted_ranges_both_parse() {
 
 #[test]
 fn non_source_targets_are_not_hunts() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let log = fixture(dir.path(), "build.log", 40_000);
     let log = log.to_string_lossy();
     assert!(hunt_ranges(&format!("sed -n '1,40p' {log}; sed -n '50,90p' {log}")).is_empty());
@@ -249,7 +249,7 @@ fn only_shell_tools_are_guarded() {
 
 #[test]
 fn state_is_persisted_per_session_and_a_second_session_starts_clean() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let hunt = hunt_for(&[("/w/a.rs", 40, 100), ("/w/b.rs", 120, 200)]);
     let mut verdicts = Vec::new();
     for index in 0..(LIMIT + 1) {
@@ -271,7 +271,7 @@ fn state_is_persisted_per_session_and_a_second_session_starts_clean() {
 
 #[test]
 fn an_unwritable_state_dir_allows_the_call() {
-    let dir = tempdir().expect("tempdir");
+    let dir = TemporaryDirectory::new().expect("tempdir");
     let missing = dir.path().join("missing");
     let hunt = hunt_for(&[("/w/a.rs", 40, 100), ("/w/b.rs", 120, 200)]);
     // The parent exists as a file, so `create_dir_all` cannot succeed.

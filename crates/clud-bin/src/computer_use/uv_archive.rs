@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn uv_archive_is_read_from_an_installed_tool_without_running_it() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let artifact = &pin::ARTIFACTS[0];
         // python-name-lint: allow-next-line — uv's on-disk venv layout.
         for (windows, parent) in [(false, "lib/python3.12"), (true, "Lib")] {

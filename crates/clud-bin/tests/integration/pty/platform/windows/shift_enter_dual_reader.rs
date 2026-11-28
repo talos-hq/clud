@@ -93,7 +93,7 @@ fn upstream_key_record(virtual_key: u16, unicode: u16, control: u32) -> WinapiKe
 
 #[test]
 fn native_reader_translates_navigation_and_preserves_shift_enter() {
-    let temp = tempfile::tempdir().expect("trace tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("trace tempdir");
     let trace_path = temp.path().join("native-input.trace");
     let _env_restore = EnvRestore {
         previous: std::env::var_os(TRACE_ENV),

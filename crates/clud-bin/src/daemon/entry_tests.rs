@@ -22,7 +22,7 @@ fn latest_orphan_sweep_is_none_when_never_swept() {
 
 #[test]
 fn sentinel_is_preferred_over_the_event_log() {
-    let tmp = tempfile::TempDir::new().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     // No sentinel yet → None, so the caller falls back to the log scan.
     assert!(sentinel_orphan_sweep(tmp.path()).is_none());
 
@@ -680,7 +680,7 @@ fn daemon_dry_run_dispatch_preserves_isolated_state() {
         "orphan-status",
     ] {
         for position in 1..=3 {
-            let dir = tempfile::tempdir().unwrap();
+            let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             let metadata = dir.path().join("daemon.json");
             std::fs::write(&metadata, "isolated daemon sentinel").unwrap();
             std::fs::create_dir(dir.path().join("daemon.lock")).unwrap();
@@ -713,7 +713,7 @@ fn daemon_dry_run_does_not_create_state_directory() {
         "running-process",
         "orphan-status",
     ] {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         // A file parent makes even a regressed dispatcher unable to spawn.
         let blocked_parent = dir.path().join("blocked-parent");
         std::fs::write(&blocked_parent, "no daemon may start here").unwrap();

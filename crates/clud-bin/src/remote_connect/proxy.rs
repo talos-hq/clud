@@ -247,7 +247,7 @@ mod tests {
     #[test]
     fn credential_overlay_replaces_local_provider_sources_without_persisting() {
         let proxy = SessionProxy::new("https://clud.bot", BEARER, "openrouter/auto").unwrap();
-        let config = tempfile::tempdir().unwrap();
+        let config = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let env: BTreeMap<_, _> = proxy
             .environment(
                 vec![
@@ -286,7 +286,7 @@ mod tests {
     fn a_socket_bridge_takes_model_traffic_off_the_inspected_origin() {
         let mut proxy = SessionProxy::new("https://clud.bot", BEARER, "m").unwrap();
         proxy.set_bridge("http://127.0.0.1:41234").unwrap();
-        let config = tempfile::tempdir().unwrap();
+        let config = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let ambient = vec![(BRIDGE.into(), "http://127.0.0.1:1/".into())];
         let env: BTreeMap<_, _> = proxy
             .environment(ambient, config.path())
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn seeded_config_skips_onboarding_and_holds_no_credential() {
-        let config = tempfile::tempdir().unwrap();
+        let config = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         SessionProxy::seed_agent_config(config.path()).unwrap();
         let text = std::fs::read_to_string(config.path().join("claude/.claude.json")).unwrap();
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();

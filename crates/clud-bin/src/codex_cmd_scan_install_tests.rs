@@ -1,7 +1,7 @@
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use serde_json::json;
 use std::path::{Path, PathBuf};
-use tempfile::TempDir;
 
 fn layout(root: &Path) -> (PathBuf, PathBuf) {
     (root.join(".clud"), root.join(".codex"))
@@ -41,7 +41,7 @@ fn state_key(codex_dir: &Path, group: usize) -> String {
 
 #[test]
 fn missing_hooks_file_is_created_with_the_scan_entry_and_trust() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     let (outcome, out) = run(&clud_dir, &codex_dir);
     assert!(outcome.hooks_written && outcome.trust_written, "{out}");
@@ -55,7 +55,7 @@ fn missing_hooks_file_is_created_with_the_scan_entry_and_trust() {
 
 #[test]
 fn user_hooks_and_unknown_fields_are_preserved_and_entry_appended() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     std::fs::create_dir_all(&codex_dir).unwrap();
     let user = json!({
@@ -83,7 +83,7 @@ fn user_hooks_and_unknown_fields_are_preserved_and_entry_appended() {
 
 #[test]
 fn already_installed_means_no_change_and_no_rewrite() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     run(&clud_dir, &codex_dir);
     let hooks = codex_dir.join("hooks.json");
@@ -109,7 +109,7 @@ fn already_installed_means_no_change_and_no_rewrite() {
 
 #[test]
 fn existing_bash_scoped_scan_entry_is_not_duplicated() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     std::fs::create_dir_all(&codex_dir).unwrap();
     let body = r#"{"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"clud-cmd-scan"}]}]}}"#;
@@ -128,7 +128,7 @@ fn existing_bash_scoped_scan_entry_is_not_duplicated() {
 
 #[test]
 fn malformed_json_is_left_untouched_and_logged() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     std::fs::create_dir_all(&codex_dir).unwrap();
     let body = "{ this is not json";
@@ -145,7 +145,7 @@ fn malformed_json_is_left_untouched_and_logged() {
 
 #[test]
 fn malformed_toml_is_left_untouched_and_logged() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     std::fs::create_dir_all(&codex_dir).unwrap();
     std::fs::write(codex_dir.join("config.toml"), "[[[ nope").unwrap();
@@ -160,7 +160,7 @@ fn malformed_toml_is_left_untouched_and_logged() {
 
 #[test]
 fn existing_trust_entry_is_never_overwritten() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     std::fs::create_dir_all(&codex_dir).unwrap();
     let key = state_key(&codex_dir, 0);
@@ -176,7 +176,7 @@ fn existing_trust_entry_is_never_overwritten() {
 
 #[test]
 fn wrong_shape_is_left_untouched() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     std::fs::create_dir_all(&codex_dir).unwrap();
     let body = r#"{"hooks":{"PreToolUse":{"not":"an array"}}}"#;
@@ -192,7 +192,7 @@ fn wrong_shape_is_left_untouched() {
 
 #[test]
 fn settings_opt_out_skips_the_install() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let (clud_dir, codex_dir) = layout(tmp.path());
     std::fs::create_dir_all(&clud_dir).unwrap();
     let settings = json!({"hooks": {OPT_OUT_KEY: false}});

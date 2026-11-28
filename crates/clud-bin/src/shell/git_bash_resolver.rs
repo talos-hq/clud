@@ -249,8 +249,8 @@ fn extract_zip(bytes: &[u8], dest: &Path) -> Result<(), FetchError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::io::Write as _;
-    use tempfile::tempdir;
 
     /// Synthetic in-memory fetcher that hands back fixed bytes. Lets tests
     /// drive the resolver without touching the network.
@@ -307,7 +307,7 @@ mod tests {
 
     #[test]
     fn extraction_dir_uses_short_sha_suffix() {
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let dir = extraction_dir(home.path(), "1234567890abcdef1234567890abcdef");
         let last = dir.file_name().unwrap().to_string_lossy().into_owned();
         assert_eq!(last, "git-bash-bin-1234567890ab");
@@ -317,7 +317,7 @@ mod tests {
     fn fetch_extracts_and_writes_sentinel_when_checksum_matches() {
         let bytes = build_fixture_zip();
         let manifest = fixture_manifest(&bytes);
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let fetcher = StaticFetcher {
             bytes: bytes.clone(),
         };
@@ -336,7 +336,7 @@ mod tests {
     fn fetch_short_circuits_when_sentinel_exists() {
         let bytes = build_fixture_zip();
         let manifest = fixture_manifest(&bytes);
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let fetcher = StaticFetcher { bytes };
 
         // First call extracts.
@@ -363,7 +363,7 @@ mod tests {
         let mut bad = manifest.git_bash_bin.sha256.clone();
         bad.replace_range(0..1, "0");
         manifest.git_bash_bin.sha256 = bad;
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let fetcher = StaticFetcher { bytes };
 
         let err = resolve_or_fetch_with(home.path(), &manifest, &fetcher)
@@ -383,7 +383,7 @@ mod tests {
         let bytes = build_fixture_zip();
         let mut manifest = fixture_manifest(&bytes);
         manifest.git_bash_bin.size_bytes += 1; // claim a different size
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let fetcher = StaticFetcher { bytes };
 
         let err = resolve_or_fetch_with(home.path(), &manifest, &fetcher)
@@ -399,7 +399,7 @@ mod tests {
         let bytes = build_fixture_zip();
         let mut manifest = fixture_manifest(&bytes);
         manifest.git_bash_bin.relative_bash_path = "git-bash-bin/not-there.exe".to_string();
-        let home = tempdir().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let fetcher = StaticFetcher { bytes };
 
         let err = resolve_or_fetch_with(home.path(), &manifest, &fetcher)

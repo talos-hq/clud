@@ -303,7 +303,7 @@ pub fn human_ms(ms: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     fn run(bucket: &str, ms: u64, rc: i32) -> RunRecord {
         RunRecord {
@@ -320,7 +320,7 @@ mod tests {
 
     #[test]
     fn a_record_round_trips_through_the_store() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let record_in = RunRecord::new("unit", Some("skills::".into()), 1913, 11, 0);
         record(tmp.path(), &record_in);
 
@@ -334,7 +334,7 @@ mod tests {
     /// leave exactly 500.
     #[test]
     fn six_hundred_writes_compact_to_exactly_five_hundred() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         for i in 0..600u64 {
             record(tmp.path(), &run("unit", i, 0));
         }
@@ -429,7 +429,7 @@ mod tests {
 
     #[test]
     fn an_absent_store_reads_as_no_history_rather_than_failing() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         assert!(load(tmp.path()).is_empty());
         assert!(summarize(&[]).is_empty());
     }
@@ -444,7 +444,7 @@ mod tests {
     /// Two writers appending concurrently must not corrupt or lose records.
     #[test]
     fn concurrent_writers_do_not_corrupt_the_store() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let root = tmp.path().to_path_buf();
         let handles: Vec<_> = (0..4)
             .map(|worker| {

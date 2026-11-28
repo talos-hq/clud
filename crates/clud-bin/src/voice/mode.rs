@@ -288,7 +288,7 @@ mod tests {
 
     #[test]
     fn f3_is_gated_on_the_transcriber_not_on_the_whisper_model() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let exe = dir.path().join("fake-transcriber");
         std::fs::write(&exe, "#!/bin/sh\n").expect("write");
         crate::platform::shim_fs::set_mode(&exe, 0o755).expect("chmod");
@@ -319,7 +319,7 @@ mod tests {
     fn model_resolver_uses_env_override_when_present() {
         // Write a tempfile and point CLUD_WHISPER_MODEL at it. The
         // resolver must return that exact path with no hash check.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let fake_model = dir.path().join("user-model.bin");
         std::fs::write(&fake_model, b"not actually a model").expect("write");
         let resolved = model::resolve_if_available(Some(&fake_model));
@@ -331,7 +331,7 @@ mod tests {
         // Env override points at a non-existent path AND no
         // (validated) cache copy. The resolver must report "not
         // available" so the caller can kick off the download.
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
         let bogus = dir.path().join("does-not-exist.bin");
         // `default_cache_path` may legitimately exist on a dev
         // machine; this test only asserts that an unreachable

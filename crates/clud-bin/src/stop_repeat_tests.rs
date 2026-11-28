@@ -11,7 +11,7 @@ fn stop(active: bool, message: &str) -> Value {
 
 #[test]
 fn identical_hook_driven_continuations_tell_the_user_exactly_once() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let blocked = "Blocked: the user must run rm -rf on that path.";
     assert_eq!(observe_in(dir.path(), &stop(true, blocked)), None);
     let told = observe_in(dir.path(), &stop(true, blocked)).unwrap();
@@ -26,7 +26,7 @@ fn identical_hook_driven_continuations_tell_the_user_exactly_once() {
 
 #[test]
 fn a_different_answer_keeps_re_prompting_normally() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for n in 0..6 {
         let text = format!("progress step {n}");
         assert_eq!(observe_in(dir.path(), &stop(true, &text)), None);
@@ -35,7 +35,7 @@ fn a_different_answer_keeps_re_prompting_normally() {
 
 #[test]
 fn a_user_driven_stop_resets_the_count() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let same = "same";
     assert_eq!(observe_in(dir.path(), &stop(true, same)), None);
     assert_eq!(observe_in(dir.path(), &stop(false, same)), None);
@@ -45,7 +45,7 @@ fn a_user_driven_stop_resets_the_count() {
 
 #[test]
 fn unsafe_session_ids_are_ignored() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let mut payload = stop(true, "x");
     payload["session_id"] = "../escape".into();
     assert_eq!(observe_in(dir.path(), &payload), None);
@@ -65,7 +65,7 @@ fn step_is_pure() {
 
 #[test]
 fn the_budget_ends_the_turn_once_and_names_every_way_out() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let differ = |n: u32| format!("progress step {n}");
     for n in 0..3 {
         assert_eq!(
@@ -92,7 +92,7 @@ fn the_budget_ends_the_turn_once_and_names_every_way_out() {
 
 #[test]
 fn a_budget_of_zero_leaves_the_harness_in_charge() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let same = "the same blocked answer";
     assert_eq!(
         observe_in_with_budget(dir.path(), &stop(true, same), 0),
@@ -108,7 +108,7 @@ fn a_budget_of_zero_leaves_the_harness_in_charge() {
 
 #[test]
 fn a_user_driven_stop_reopens_the_budget() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let differ = |n: u32| format!("round {n}");
     for n in 0..2 {
         assert_eq!(
@@ -138,7 +138,7 @@ fn a_user_driven_stop_reopens_the_budget() {
 
 #[test]
 fn a_legacy_state_file_loads_as_an_unspent_budget() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = dir.path().join("stop-repeat").join("s-1.json");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, r#"{"hash":123,"count":3}"#).unwrap();

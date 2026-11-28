@@ -24,7 +24,7 @@ mod tests {
     #[test]
     fn files_are_owner_only_on_unix() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("secret.json");
         write_private_atomic(&path, b"{}").unwrap();
         let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;

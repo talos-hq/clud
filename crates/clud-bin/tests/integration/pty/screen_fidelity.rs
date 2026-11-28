@@ -170,7 +170,7 @@ fn cell_mismatches(want: &vt100::Screen, got: &vt100::Screen) -> Vec<String> {
 fn a_fullscreen_repaint_across_a_resize_reaches_the_terminal_cell_exact() {
     require_pty_or_skip!("a_fullscreen_repaint_across_a_resize_reaches_the_terminal_cell_exact");
 
-    let tmp = tempfile::tempdir().expect("tempdir");
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let first = tmp.path().join("frame1.ansi");
     let second = tmp.path().join("frame2.ansi");
     let release = tmp.path().join("release");

@@ -163,7 +163,7 @@ fn a_tagged_undeclared_listening_daemon_survives_the_orphan_sweep() {
     let _guard = super::REAPER_TEST_LOCK
         .lock()
         .expect("reaper test lock poisoned");
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let originator = a_dead_originator_pid();
     let stub = start_tagged_stub(temp.path(), "sweep", "spawn-detached", originator);
 
@@ -211,7 +211,7 @@ fn a_tagged_undeclared_listening_daemon_survives_the_on_exit_scan() {
     let _guard = super::REAPER_TEST_LOCK
         .lock()
         .expect("reaper test lock poisoned");
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     // This test process stands in for the exiting clud, so the tag points at
     // it and only this test's own stubs can be selected.
     let me = std::process::id();

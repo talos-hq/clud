@@ -1,8 +1,8 @@
 //! `.clud/hooks.json` parsing and matcher semantics (#967 Phase 2).
 
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs;
-use tempfile::TempDir;
 
 fn entry(matcher: Option<&str>, command: &str) -> HookEntry {
     HookEntry {
@@ -181,7 +181,7 @@ fn write_hooks(root: &std::path::Path, body: &str) {
 
 #[test]
 fn discovery_reads_the_repo_declaration_and_records_its_source() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_hooks(tmp.path(), r#"{"hooks":{"Stop":[{"command":"guard"}]}}"#);
 
     let hooks = discover(tmp.path()).expect("declared");
@@ -194,7 +194,7 @@ fn discovery_reads_the_repo_declaration_and_records_its_source() {
 
 #[test]
 fn no_file_no_declarations_and_an_empty_one_counts_as_none() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     assert_eq!(discover(tmp.path()), None);
 
     write_hooks(tmp.path(), r#"{"hooks":{"Stop":[]}}"#);
@@ -209,7 +209,7 @@ fn no_file_no_declarations_and_an_empty_one_counts_as_none() {
 fn an_unparsable_declaration_is_reported_and_ignored_not_fatal() {
     // A broken declaration must not stop the tool call that triggered the
     // lookup -- that is the wedge this whole feature exists to prevent.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_hooks(tmp.path(), "{not json");
     assert_eq!(discover(tmp.path()), None);
 }
@@ -229,7 +229,7 @@ fn write_settings(root: &Path, rel: &[&str], text: &str) {
 
 #[test]
 fn frontend_source_reads_the_claude_group_shape() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_settings(
         tmp.path(),
         &[".claude", "settings.json"],
@@ -268,7 +268,7 @@ fn frontend_source_reads_the_claude_group_shape() {
 
 #[test]
 fn frontend_source_reads_the_legacy_direct_shape_and_single_group() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_settings(
         tmp.path(),
         &[".claude", "settings.json"],
@@ -301,7 +301,7 @@ fn frontend_source_reads_the_legacy_direct_shape_and_single_group() {
 
 #[test]
 fn frontend_source_layers_shared_then_local_without_double_firing() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_settings(
         tmp.path(),
         &[".claude", "settings.json"],
@@ -325,7 +325,7 @@ fn frontend_source_layers_shared_then_local_without_double_firing() {
 
 #[test]
 fn frontend_source_reads_the_codex_shapes() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_settings(
         tmp.path(),
         &[".codex", "hooks.json"],
@@ -349,7 +349,7 @@ fn frontend_source_reads_the_codex_shapes() {
 
 #[test]
 fn frontend_source_accepts_the_codex_root_level_legacy_shape() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_settings(
         tmp.path(),
         &[".codex", "hooks.json"],
@@ -367,7 +367,7 @@ fn frontend_source_accepts_the_codex_root_level_legacy_shape() {
 
 #[test]
 fn frontend_source_never_treats_claude_root_keys_as_events() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     write_settings(
         tmp.path(),
         &[".claude", "settings.json"],
@@ -386,7 +386,7 @@ fn frontend_source_never_treats_claude_root_keys_as_events() {
 
 #[test]
 fn frontend_source_none_when_nothing_declared() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     assert_eq!(from_frontend_settings(tmp.path()), None);
 
     write_settings(tmp.path(), &[".claude", "settings.json"], "{}");

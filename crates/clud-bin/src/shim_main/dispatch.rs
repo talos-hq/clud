@@ -309,9 +309,9 @@ fn registry_json() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::collections::HashMap;
     use std::path::Path;
-    use tempfile::TempDir;
 
     #[test]
     fn gh_backend_ghd_routes_to_ghd_and_fails_closed_without_it() {
@@ -333,14 +333,14 @@ mod tests {
     }
 
     struct World {
-        _temp: TempDir,
+        _temp: TemporaryDirectory,
         shim_dir: PathBuf,
         real_dir: PathBuf,
     }
 
     impl World {
         fn new() -> Self {
-            let temp = TempDir::new().unwrap();
+            let temp = TemporaryDirectory::new().unwrap();
             let shim_dir = temp.path().join("shim");
             let real_dir = temp.path().join("real");
             for spec in registry::SHIMS {
@@ -593,7 +593,7 @@ mod tests {
     #[test]
     fn a_session_without_the_broker_key_follows_the_current_setting() {
         let world = World::new();
-        let home = TempDir::new().unwrap();
+        let home = TemporaryDirectory::new().unwrap();
         let broker = |vars: &HashMap<&str, OsString>| {
             let Decision::Session(Session::Gh(gh)) =
                 world.decide_in_home("gh", vars, Some(home.path()))

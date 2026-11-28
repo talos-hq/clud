@@ -121,11 +121,11 @@ fn write_sentinel(path: &std::path::Path, now: SystemTime) -> std::io::Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::tempdir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn first_run_writes_sentinel() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let result =
             maybe_sweep_at(&sentinel, &tmp.path().join("sessions"), SystemTime::now()).unwrap();
@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn future_sentinel_is_repaired_instead_of_skipping() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let sessions = tmp.path().join("sessions");
         let now = SystemTime::now();
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn second_run_within_interval_skips() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let sessions = tmp.path().join("sessions");
         let now = SystemTime::now();
@@ -159,7 +159,7 @@ mod tests {
 
     #[test]
     fn run_after_interval_executes_again() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let sentinel = tmp.path().join("state").join(SENTINEL_FILE);
         let sessions = tmp.path().join("sessions");
         let now = SystemTime::now();

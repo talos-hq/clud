@@ -214,7 +214,7 @@ impl Upstream for FakeGitHub {
 }
 
 struct World {
-    _dir: tempfile::TempDir,
+    _dir: kernal_api::platform::fs::TemporaryDirectory,
     broker: GhBroker,
     server: Arc<Mutex<Server>>,
     now: Arc<AtomicU64>,
@@ -225,7 +225,7 @@ fn ts(text: &str) -> i64 {
 }
 
 fn world(server: Server) -> World {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let server = Arc::new(Mutex::new(server));
     let now = Arc::new(AtomicU64::new(
         u64::try_from(ts("2026-10-02T12:00:00Z")).unwrap() * 1000,

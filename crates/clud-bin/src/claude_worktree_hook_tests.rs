@@ -92,7 +92,7 @@ fn branch_names_skip_ones_already_taken() {
 
 #[test]
 fn a_claude_code_worktree_lands_under_the_worktree_root() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let repo = repo_with_origin(tmp.path());
     let wt_root = tmp.path().join("worktrees");
     let request = CreateRequest {
@@ -120,7 +120,7 @@ fn a_claude_code_worktree_lands_under_the_worktree_root() {
 
 #[test]
 fn creation_outside_a_repository_fails_with_a_reason() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let request = CreateRequest {
         cwd: tmp.path().to_path_buf(),
         name: "x".into(),

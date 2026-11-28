@@ -528,7 +528,7 @@ mod tests {
     #[test]
     fn writable_programs_and_parent_directories_are_not_trusted() {
         use std::os::unix::fs::PermissionsExt;
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let parent = tmp.path().join("writable-parent");
         fs::create_dir(&parent).unwrap();
         fs::set_permissions(&parent, fs::Permissions::from_mode(0o777)).unwrap();

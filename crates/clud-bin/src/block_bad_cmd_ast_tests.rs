@@ -325,7 +325,7 @@ fn an_added_branch_flag_comes_with_the_command_for_an_existing_branch() {
 
 #[test]
 fn the_rewritten_destination_skips_names_already_taken() {
-    let root = tempfile::TempDir::new().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir(root.path().join("repo-wt-feat")).unwrap();
     let root_text = crate::path_norm::display_slash(root.path());
     let reason = root_refusal("git worktree add /tmp/feat -b feat", "/repo", &root_text);

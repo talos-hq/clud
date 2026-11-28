@@ -103,7 +103,7 @@ fn spawn_fake_agent(powershell: &str) -> std::process::Child {
 #[test]
 fn live_tracker_reaps_direct_client_and_spares_nested_shell() {
     let tracker = ForegroundJobTracker::install().expect("install foreground Job tracker");
-    let temp = tempfile::tempdir().expect("tempdir");
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let current_exe = std::env::current_exe().expect("current test exe");
 
     // should-reap: registered cmd agent -> PowerShell tool root -> git.exe.

@@ -312,7 +312,8 @@ fn run_baseline(script: &str) -> Result<String, String> {
         "-Command",
         script,
     ]);
-    let cwd = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let cwd =
+        kernal_api::platform::fs::TemporaryDirectory::new().map_err(|error| error.to_string())?;
     command.current_dir(cwd.path());
     let mut output = tempfile::tempfile().map_err(|error| error.to_string())?;
     let mut child = spawn_with_env_policy(

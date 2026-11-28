@@ -760,13 +760,13 @@ mod tests {
 
     #[test]
     fn read_markers_none_when_missing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert_eq!(read_markers(tmp.path()), MarkerState::None);
     }
 
     #[test]
     fn read_markers_done() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         ensure_loop_dir(tmp.path()).unwrap();
         std::fs::write(done_path(tmp.path()), "all good\n").unwrap();
         assert_eq!(
@@ -777,7 +777,7 @@ mod tests {
 
     #[test]
     fn read_markers_blocked() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         ensure_loop_dir(tmp.path()).unwrap();
         std::fs::write(blocked_path(tmp.path()), "need secret\n").unwrap();
         assert_eq!(
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn read_markers_done_wins_over_blocked() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         ensure_loop_dir(tmp.path()).unwrap();
         std::fs::write(done_path(tmp.path()), "done").unwrap();
         std::fs::write(blocked_path(tmp.path()), "ignored").unwrap();
@@ -800,7 +800,7 @@ mod tests {
 
     #[test]
     fn clear_markers_removes_both() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         ensure_loop_dir(tmp.path()).unwrap();
         std::fs::write(done_path(tmp.path()), "x").unwrap();
         std::fs::write(blocked_path(tmp.path()), "y").unwrap();
@@ -928,7 +928,7 @@ mod tests {
 
     #[test]
     fn read_markers_or_token_prefers_marker_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         ensure_loop_dir(tmp.path()).unwrap();
         std::fs::write(done_path(tmp.path()), "via file\n").unwrap();
         let paths = default_marker_paths(tmp.path());
@@ -941,7 +941,7 @@ mod tests {
 
     #[test]
     fn read_markers_or_token_falls_back_to_token() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let paths = default_marker_paths(tmp.path());
         let captured = "<<<CLUD_LOOP_DONE: token-only completion>>>\n";
         assert_eq!(
@@ -952,7 +952,7 @@ mod tests {
 
     #[test]
     fn read_markers_or_token_none_when_neither() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let paths = default_marker_paths(tmp.path());
         assert_eq!(
             read_markers_or_token(&paths, "nothing relevant\n"),

@@ -265,7 +265,7 @@ mod tests {
                 launch["hooks"]["PreToolUse"][1]["hooks"][0]["command"],
                 format!("clud-cmd-scan --event PreToolUse{suffix}")
             );
-            let tmp = tempfile::tempdir().unwrap();
+            let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
             let repo = tmp.path().join("repo");
             let home = tmp.path().join("home");
             let user = home.join(".claude/settings.json");
@@ -291,7 +291,7 @@ mod tests {
 
     #[test]
     fn exit_suffix_launch_upgrades_plain_inherited_scanner() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let user = home.join(".claude/settings.json");
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn exit_suffix_from_project_is_preserved_in_user_copy() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let user = home.join(".claude/settings.json");
@@ -376,7 +376,7 @@ mod tests {
 
     #[test]
     fn normal_settings_and_launch_share_one_scanner_and_preserve_user_hooks() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let user = home.join(".claude/settings.json");
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn narrow_or_custom_handlers_do_not_suppress_launch_coverage() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let path = repo.join(".claude/settings.json");
         write(
@@ -449,7 +449,7 @@ mod tests {
 
     #[test]
     fn untrusted_project_scanner_does_not_replace_launch_safety() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let repo = tmp.path().join("repo");
         let home = tmp.path().join("home");
         let project = repo.join(".claude/settings.json");
@@ -476,7 +476,7 @@ mod tests {
 
     #[test]
     fn migration_preserves_a_symlinked_user_settings_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let home = tmp.path().join("home");
         let target = home.join("dotfiles/claude.json");
         write(

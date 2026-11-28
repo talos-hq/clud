@@ -11,15 +11,15 @@
 
 use std::path::{Path, PathBuf};
 
-use tempfile::TempDir;
+use kernal_api::platform::fs::TemporaryDirectory;
 
 use super::index_pass::{index_pass, IndexPassError};
 use super::ls_files_pass::{ls_files_argv, parse_ls_files_debug};
 use super::SIZE_THRESHOLD;
 
 /// Build a repo whose `.git/index` exists but is garbage.
-fn repo_with_corrupt_index() -> Option<TempDir> {
-    let tmp = TempDir::new().ok()?;
+fn repo_with_corrupt_index() -> Option<TemporaryDirectory> {
+    let tmp = TemporaryDirectory::new().ok()?;
     let root = tmp.path();
     if crate::worktrees::run_git(root, &["init"]).is_err() {
         return None; // no git here — the caller skips.

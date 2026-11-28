@@ -359,12 +359,12 @@ fn kill_root_bounded(process: Arc<NativeProcess>) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::time::Instant;
-    use tempfile::TempDir;
 
     #[test]
     fn mutation_gates_are_shared_per_session_but_not_globally() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let lifecycle = ApiSessionLifecycle::new(ApiSessionStore::new(temp.path()));
         assert!(Arc::ptr_eq(
             &lifecycle.gate_for("one"),
@@ -378,7 +378,7 @@ mod tests {
 
     #[test]
     fn activity_enabled_lifecycle_keeps_the_daemon_job_tracker_available() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let activity = DaemonActivity::new(Instant::now());
         let lifecycle =
             ApiSessionLifecycle::with_activity(ApiSessionStore::new(temp.path()), activity.clone());

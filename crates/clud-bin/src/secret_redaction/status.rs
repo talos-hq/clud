@@ -42,7 +42,7 @@ mod tests {
 
     #[test]
     fn request_completion_publishes_counts_without_tokens_or_values() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("status.json");
         let writer = Arc::new(StatusStateWriter::new(path.clone()));
         let secret = "FAKE_VAULT_CREDENTIAL_ONLY_FOR_STATUS_TEST";

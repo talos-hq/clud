@@ -451,10 +451,10 @@ fn quarantine_via_trash(_path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::fs::File;
     use std::io::Write;
     use std::time::Duration as StdDuration;
-    use tempfile::tempdir;
 
     /// Create a fake env dir with a payload file. The actual on-disk
     /// mtime is "now" (whatever the OS records); tests control staleness
@@ -538,7 +538,7 @@ mod tests {
 
     #[test]
     fn cap_root_must_be_the_uv_child_of_the_cache_parent() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let parent = tmp.path().join("cache");
         let root = parent.join("uv");
         std::fs::create_dir_all(&root).unwrap();
@@ -557,7 +557,7 @@ mod tests {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let parent = tmp.path().join("cache");
         std::fs::create_dir_all(&parent).unwrap();
         let target = tmp.path().join("user-uv-cache");
@@ -587,7 +587,7 @@ mod tests {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let uv = fake_uv(&bin);
@@ -609,7 +609,7 @@ mod tests {
         if !crate::platform::host::UNIX {
             return;
         }
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let bin = tmp.path().join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let uv = fake_uv(&bin);
@@ -624,7 +624,7 @@ mod tests {
 
     #[test]
     fn list_on_missing_dir_returns_empty_summary() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let summary = list_at(&tmp.path().join("nonexistent")).unwrap();
         assert!(!summary.exists);
         assert_eq!(summary.env_count, 0);
@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn list_counts_envs_and_bytes() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         make_env(tmp.path(), "abc");
         make_env(tmp.path(), "def");
         let summary = list_at(tmp.path()).unwrap();
@@ -647,7 +647,7 @@ mod tests {
     fn sweep_does_not_touch_fresh_entries() {
         // Env mtime = now. Calling sweep with now = real-now means the
         // age is ~0s, well under STALE_THRESHOLD.
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let dir = make_env(tmp.path(), "fresh");
         let report = sweep_stale_at(tmp.path(), SystemTime::now(), false).unwrap();
         assert_eq!(report.stale_envs_removed, 0);
@@ -658,7 +658,7 @@ mod tests {
     fn sweep_removes_stale_entries() {
         // Pretend "now" is 8 days in the future. Real-now mtime is then
         // "ancient" from that perspective and exceeds STALE_THRESHOLD.
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let dir = make_env(tmp.path(), "ancient");
         let future_now = SystemTime::now() + StdDuration::from_secs(8 * 24 * 60 * 60);
         let report = sweep_stale_at(tmp.path(), future_now, false).unwrap();
@@ -668,7 +668,7 @@ mod tests {
 
     #[test]
     fn sweep_dry_run_reports_without_deleting() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let dir = make_env(tmp.path(), "ancient");
         let future_now = SystemTime::now() + StdDuration::from_secs(8 * 24 * 60 * 60);
         let report = sweep_stale_at(tmp.path(), future_now, true).unwrap();
@@ -680,7 +680,7 @@ mod tests {
     fn sweep_ignores_clock_skew_future_mtimes() {
         // Sweep with "now" in the past relative to real-now → mtime > now
         // → duration_since returns Err → entry is skipped, not deleted.
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let dir = make_env(tmp.path(), "future");
         let past_now = SystemTime::UNIX_EPOCH + StdDuration::from_secs(1_000_000);
         let report = sweep_stale_at(tmp.path(), past_now, false).unwrap();
@@ -690,7 +690,7 @@ mod tests {
 
     #[test]
     fn sweep_on_missing_envs_dir_is_noop() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let now = SystemTime::now();
         let report = sweep_stale_at(tmp.path(), now, false).unwrap();
         assert_eq!(report.stale_envs_removed, 0);
@@ -699,7 +699,7 @@ mod tests {
 
     #[test]
     fn purge_all_removes_root() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         make_env(tmp.path(), "a");
         purge_all_at(tmp.path()).unwrap();
         assert!(!tmp.path().exists());
@@ -707,7 +707,7 @@ mod tests {
 
     #[test]
     fn purge_all_on_missing_dir_is_noop() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let nonexistent = tmp.path().join("not-there");
         purge_all_at(&nonexistent).unwrap();
     }

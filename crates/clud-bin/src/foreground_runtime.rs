@@ -2061,7 +2061,7 @@ pub(crate) mod tests {
 
     #[test]
     fn oversized_batch_launch_moves_system_prompt_to_a_file() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let prompt = "x".repeat(BATCH_COMMAND_LINE_BUDGET);
         let mut command: Vec<String> = vec![
             "claude.cmd".into(),
@@ -2090,7 +2090,7 @@ pub(crate) mod tests {
 
     #[test]
     fn missing_system_temp_root_uses_owned_fallback() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let missing = fixture.path().join("missing-system-temp");
         let fallback = crate::gc::session_tmp::session_tmp_dir_for(fixture.path());
         std::fs::create_dir_all(&fallback).unwrap();
@@ -2107,7 +2107,7 @@ pub(crate) mod tests {
 
     #[test]
     fn missing_system_temp_root_error_names_root_and_remedy() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let missing = fixture.path().join("missing-system-temp");
         let error = launch_settings_file(&missing, || None)
             .unwrap_err()
@@ -2121,14 +2121,14 @@ pub(crate) mod tests {
 
     #[test]
     fn launch_settings_file_keeps_working_system_temp_root() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let file = launch_settings_file(fixture.path(), || panic!("fallback not needed")).unwrap();
         assert_eq!(file.path().parent(), Some(fixture.path()));
     }
 
     #[test]
     fn missing_system_temp_root_reports_failed_fallback_too() {
-        let fixture = tempfile::tempdir().unwrap();
+        let fixture = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let missing = fixture.path().join("missing-system-temp");
         let fallback = crate::gc::session_tmp::session_tmp_dir_for(fixture.path());
         std::fs::create_dir_all(fallback.parent().unwrap()).unwrap();
@@ -3297,7 +3297,7 @@ pub(crate) mod tests {
 
     #[test]
     fn bridge_merges_file_user_settings_with_context_lifecycle_hooks() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let settings_path = directory.path().join("claude-settings.json");
         std::fs::write(
             &settings_path,
@@ -4318,8 +4318,8 @@ pub(crate) mod tests {
     // #967 Phase 2b: declared hooks compiled into `--settings`.
     // -----------------------------------------------------------------
 
-    fn repo_declaring(hooks: &str) -> tempfile::TempDir {
-        let tmp = tempfile::TempDir::new().unwrap();
+    fn repo_declaring(hooks: &str) -> kernal_api::platform::fs::TemporaryDirectory {
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         std::fs::create_dir_all(tmp.path().join(".clud")).unwrap();
         std::fs::write(tmp.path().join(".clud").join("hooks.json"), hooks).unwrap();
@@ -4483,7 +4483,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_repo_that_declares_nothing_gets_deletion_guard_and_history_hooks() {
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
 
         // `--coauthor` opts back in to Claude Code's own attribution. What is
@@ -4543,7 +4543,7 @@ pub(crate) mod tests {
     /// PR line through its launch `--settings`.
     #[test]
     fn a_default_claude_launch_hides_attribution() {
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
 
         let runtime = ForegroundRuntime::start(
@@ -4563,7 +4563,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_coauthor_tag_replaces_both_attribution_strings() {
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
         let mut plan = plan_in(ModelProvider::Claude, Backend::Claude, repo.path());
         plan.coauthor = crate::attribution::Coauthor::Tag("Made with clud".to_string());
@@ -4667,9 +4667,9 @@ pub(crate) mod tests {
     fn add_dir_targets_are_harvested_into_the_registry() {
         // `--add-dir` reaches the harness as passthrough argv and appears in
         // no hook payload, so the launch is the only place that can see it.
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
-        let extra = tempfile::TempDir::new().unwrap();
+        let extra = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
 
         let mut launch = plan_in(ModelProvider::Claude, Backend::Claude, repo.path());
         launch.command = vec![
@@ -4690,10 +4690,10 @@ pub(crate) mod tests {
 
     #[test]
     fn add_dir_accepts_both_spellings_and_several_directories() {
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
-        let first = tempfile::TempDir::new().unwrap();
-        let second = tempfile::TempDir::new().unwrap();
+        let first = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let second = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
 
         let mut launch = plan_in(ModelProvider::Claude, Backend::Claude, repo.path());
         launch.command = vec![
@@ -4720,9 +4720,9 @@ pub(crate) mod tests {
 
     #[test]
     fn tokens_after_a_bare_separator_are_not_harness_flags() {
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
-        let extra = tempfile::TempDir::new().unwrap();
+        let extra = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
 
         let mut launch = plan_in(ModelProvider::Claude, Backend::Claude, repo.path());
         launch.command = vec![
@@ -4738,7 +4738,7 @@ pub(crate) mod tests {
 
     #[test]
     fn additional_directories_from_claude_settings_are_harvested_too() {
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
         std::fs::create_dir_all(repo.path().join(".claude")).unwrap();
         std::fs::write(
@@ -4766,7 +4766,7 @@ pub(crate) mod tests {
     fn a_launch_that_grants_nothing_leaves_the_env_alone() {
         // The hook can work the rest out for itself; an empty registry would
         // be noise the child has to parse on every tool call.
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
 
         let runtime = ForegroundRuntime::start(
@@ -4783,9 +4783,9 @@ pub(crate) mod tests {
         // A granted sibling is no more the parent's business than a checkout
         // clud cloned: its project guards would misfire there (#841). The two
         // differ in trust, not in firing, which Phase 4 has to separate.
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
-        let extra = tempfile::TempDir::new().unwrap();
+        let extra = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
 
         let mut launch = plan_in(ModelProvider::Claude, Backend::Claude, repo.path());
         launch.command = vec![
@@ -4827,7 +4827,7 @@ pub(crate) mod tests {
         // line is registered; everywhere else the gate must stay off, and an
         // inherited marker must not leak into a launch that has no prompt hook.
         let gate = crate::worktree_consent::GATE_ENV;
-        let repo = tempfile::TempDir::new().unwrap();
+        let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(repo.path().join(".git")).unwrap();
         let inherited = vec![(gate.to_string(), "1".to_string())];
 
@@ -4875,8 +4875,8 @@ pub(crate) mod tests {
 
     #[test]
     fn statusline_injection_gives_a_plain_claude_launch_a_settings_source() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let plan = claude_plan_in(dir.path());
         let mut runtime =
             ForegroundRuntime::start_with_secret_store(&plan, Vec::new(), &FakeSecretStore(None))
@@ -4912,8 +4912,8 @@ pub(crate) mod tests {
 
     #[test]
     fn statusline_injection_chains_the_status_line_from_the_users_own_settings_argument() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut plan = claude_plan_in(dir.path());
         plan.command.push("--settings".to_string());
         plan.command.push(
@@ -4943,8 +4943,8 @@ pub(crate) mod tests {
 
     #[test]
     fn statusline_injection_chains_a_project_status_line() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         std::fs::create_dir_all(dir.path().join(".claude")).unwrap();
         std::fs::write(
             dir.path().join(".claude/settings.json"),
@@ -4965,7 +4965,7 @@ pub(crate) mod tests {
     #[test]
     fn statusline_injection_merges_into_the_hooks_settings_file() {
         let repo = repo_declaring(r#"{"hooks":{"Stop":[{"command":"guard"}]}}"#);
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let plan = plan_in(ModelProvider::Claude, Backend::Claude, repo.path());
         let mut runtime =
             ForegroundRuntime::start_with_secret_store(&plan, Vec::new(), &FakeSecretStore(None))
@@ -4990,8 +4990,8 @@ pub(crate) mod tests {
 
     #[test]
     fn statusline_injection_reports_whether_the_status_line_was_composed() {
-        let dir = tempfile::tempdir().unwrap();
-        let home = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let plan = claude_plan_in(dir.path());
         let mut runtime =
             ForegroundRuntime::start_with_secret_store(&plan, Vec::new(), &FakeSecretStore(None))
@@ -5016,7 +5016,7 @@ pub(crate) mod tests {
 
     #[test]
     fn statusline_injection_never_touches_a_codex_launch() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let plan = plan(ModelProvider::Codex, Backend::Codex);
         let mut runtime =
             ForegroundRuntime::start_with_secret_store(&plan, Vec::new(), &FakeSecretStore(None))
@@ -5037,7 +5037,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cli_login_import_acceptance_copies_only_into_clud_store() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let original = br#"{"tokens":{"access_token":"opaque","refresh_token":"cli-refresh"}}"#;
         std::fs::create_dir_all(home.path().join(".codex")).unwrap();
         std::fs::write(home.path().join(".codex/auth.json"), original).unwrap();
@@ -5127,7 +5127,7 @@ pub(crate) mod tests {
 
     #[test]
     fn never_choice_persists_and_not_now_leaves_no_clud_credentials() {
-        let home = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let record = cli_subscription_record();
         assert!(apply_codex_cli_import_choice_at(
             home.path(),

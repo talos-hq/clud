@@ -20,7 +20,7 @@ fn env_lock() -> std::sync::MutexGuard<'static, ()> {
 /// alive across reopens (e.g. `register_then_drop_round_trips`),
 /// and the test process exits shortly anyway.
 fn fresh_db_path(tag: &str) -> PathBuf {
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let path = dir.path().join(format!("sessions-{tag}.redb"));
     std::mem::forget(dir);
     path
@@ -440,7 +440,7 @@ fn acquire_lock_serializes_callers() {
     use std::thread;
     use std::time::Duration;
 
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let lock_path = dir.path().join("acquire-serializes.lock");
 
     // Holder thread: grabs the lock, then sleeps for a known interval.
@@ -503,7 +503,7 @@ fn now_ms() -> u64 {
 #[test]
 fn run_startup_under_lock_releases_redb_after_return() {
     let _g = env_lock();
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let db = dir.path().join("startup-releases.redb");
     let lock = dir.path().join("startup-releases.lock");
     // SAFETY: serialized via ENV_LOCK.
@@ -550,7 +550,7 @@ fn run_startup_under_lock_releases_redb_after_return() {
 #[test]
 fn bounded_shutdown_returns_when_lock_is_held() {
     let _g = env_lock();
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let db = dir.path().join("bounded.redb");
     let lock = dir.path().join("bounded.lock");
     // SAFETY: serialized via ENV_LOCK.
@@ -581,7 +581,7 @@ fn bounded_shutdown_returns_when_lock_is_held() {
 #[test]
 fn bounded_shutdown_removes_row_when_uncontended() {
     let _g = env_lock();
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let db = dir.path().join("bounded-ok.redb");
     let lock = dir.path().join("bounded-ok.lock");
     // SAFETY: serialized via ENV_LOCK.
@@ -623,7 +623,7 @@ fn bounded_shutdown_removes_row_when_uncontended() {
 #[test]
 fn default_lock_path_derives_from_db_parent_or_env() {
     let _g = env_lock();
-    let dir = tempfile::tempdir().expect("tempdir");
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().expect("tempdir");
     let db = dir.path().join("derives.redb");
     // SAFETY: serialized via ENV_LOCK.
     unsafe {

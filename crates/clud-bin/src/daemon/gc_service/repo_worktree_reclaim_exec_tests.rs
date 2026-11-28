@@ -65,7 +65,7 @@ fn max_overlap(locks: &Arc<RepoLocks>, jobs: Vec<ReclaimJob>) -> usize {
 
 #[test]
 fn two_reclaims_of_one_repo_never_overlap() {
-    let repo = tempfile::tempdir().unwrap();
+    let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = repo.path().to_string_lossy().to_string();
     let locks = Arc::new(RepoLocks::default());
     let jobs = (0..4).map(|i| job(&root, &format!("wt-{i}"))).collect();
@@ -82,7 +82,7 @@ fn two_reclaims_of_one_repo_never_overlap() {
 
 #[test]
 fn two_spellings_of_one_repo_share_a_lock() {
-    let repo = tempfile::tempdir().unwrap();
+    let repo = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let plain = repo.path().to_string_lossy().to_string();
     let dotted = repo.path().join(".").to_string_lossy().to_string();
     let locks = Arc::new(RepoLocks::default());
@@ -92,8 +92,8 @@ fn two_spellings_of_one_repo_share_a_lock() {
 
 #[test]
 fn reclaims_of_different_repos_still_run_concurrently() {
-    let a = tempfile::tempdir().unwrap();
-    let b = tempfile::tempdir().unwrap();
+    let a = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+    let b = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let locks = Arc::new(RepoLocks::default());
     // Each body waits until the other has started. Serialized, the first
     // would time out; concurrent, both see each other.
@@ -127,7 +127,7 @@ fn reservation_rows_take_no_lock() {
 
 #[test]
 fn shared_cli_and_daemon_executor_spares_container_bound_source() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let source = tmp.path().join("source");
     std::fs::create_dir(&source).unwrap();
     std::fs::write(source.join("precious"), "work").unwrap();
@@ -152,7 +152,7 @@ fn shared_cli_and_daemon_executor_spares_container_bound_source() {
 /// pool spares the job before gathering any facts.
 #[test]
 fn a_kept_path_is_spared_on_the_pool_thread() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let wt_root = home.path().join("worktrees");
     let path = wt_root.join("repo-a").to_string_lossy().to_string();
     let keep = crate::gc::keep_list::keep_path_for(&wt_root);

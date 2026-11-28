@@ -45,7 +45,7 @@ fn env_has_key(name: &str) -> Option<String> {
 
 fn chain<V: SecretStore>(
     vault: V,
-    dir: &tempfile::TempDir,
+    dir: &kernal_api::platform::fs::TemporaryDirectory,
     lookup: fn(&str) -> Option<String>,
 ) -> FallbackSecretStore<V> {
     FallbackSecretStore::from_parts(
@@ -67,7 +67,7 @@ fn locked_vault_without_a_fallback_still_fails_as_before() {
 
 #[test]
 fn locked_vault_login_status_and_launch_use_the_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let store = chain(LockedVault, &dir, no_env);
     assert_eq!(store.get(), Ok(None), "nothing stored is not an error");
     store.set(KEY).unwrap();
@@ -81,7 +81,7 @@ fn locked_vault_login_status_and_launch_use_the_file() {
 
 #[test]
 fn env_var_is_a_read_only_last_resort() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let store = chain(LockedVault, &dir, env_has_key);
     assert_eq!(store.get().unwrap().as_deref(), Some(KEY));
     assert_eq!(store.backend(), CredentialBackend::Env);
@@ -93,7 +93,7 @@ fn env_var_is_a_read_only_last_resort() {
 
 #[test]
 fn a_working_vault_wins_and_clears_a_stale_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     chain(LockedVault, &dir, no_env)
         .set("sk-or-v1-stalestalestale")
         .unwrap();
@@ -117,7 +117,7 @@ fn a_working_vault_wins_and_clears_a_stale_file() {
 
 #[test]
 fn logout_reports_a_vault_key_that_could_not_be_deleted() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let store = chain(LockedVault, &dir, no_env);
     store.set(KEY).unwrap();
     assert!(
@@ -133,7 +133,7 @@ fn logout_reports_a_vault_key_that_could_not_be_deleted() {
 
 #[test]
 fn a_vault_write_reports_failure_to_remove_the_fallback_copy() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let store = chain(WorkingVault::default(), &dir, no_env);
     // A directory at the fallback pathname makes remove_file fail on every host.
     std::fs::create_dir_all(dir.path().join("credentials").join("openrouter.secret")).unwrap();

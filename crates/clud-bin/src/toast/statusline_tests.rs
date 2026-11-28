@@ -18,7 +18,7 @@ fn writer_in(dir: &Path, pid: u32) -> StatusStateWriter {
 
 #[test]
 fn a_published_toast_round_trips_through_the_state_file() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 11);
     writer.publish(ToastEvent::Show(Toast::new(
         "cpu",
@@ -36,7 +36,7 @@ fn a_published_toast_round_trips_through_the_state_file() {
 
 #[test]
 fn an_expiring_toast_disappears_on_its_own() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 12);
     writer.publish(ToastEvent::Show(
         Toast::new("cpu", "back to normal", Severity::Info, Instant::now())
@@ -49,7 +49,7 @@ fn an_expiring_toast_disappears_on_its_own() {
 
 #[test]
 fn an_orphaned_live_toast_goes_stale() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = state_path(dir.path(), 13);
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let state = StatusState {
@@ -74,7 +74,7 @@ fn an_orphaned_live_toast_goes_stale() {
 
 #[test]
 fn dropping_the_writer_removes_the_file_and_garbage_reads_as_none() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let path = {
         let writer = writer_in(dir.path(), 14);
         writer.publish(ToastEvent::Show(Toast::new(
@@ -110,7 +110,7 @@ fn the_rendered_line_is_coloured_and_control_free() {
 
 #[test]
 fn provider_usage_is_persistent_distinct_and_stale_safe() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 15);
     writer.publish_usage(StatusUsage {
         provider: "codex".into(),
@@ -142,7 +142,7 @@ fn provider_usage_is_persistent_distinct_and_stale_safe() {
 
 #[test]
 fn dead_owner_cannot_keep_bridge_usage_visible() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 204);
     writer.publish_usage(StatusUsage {
         provider: "codex".into(),
@@ -175,7 +175,7 @@ fn dead_owner_cannot_keep_bridge_usage_visible() {
 
 #[test]
 fn statusline_never_presents_a_last_call_as_cumulative_usage() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let args = RunArgs {
         session_pid: 17,
         state_dir: dir.path().to_path_buf(),
@@ -202,7 +202,7 @@ fn statusline_never_presents_a_last_call_as_cumulative_usage() {
 
 #[test]
 fn exact_bridge_usage_wins_over_documented_claude_last_call() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 18);
     writer.publish_usage(StatusUsage {
         provider: "codex".into(),
@@ -271,7 +271,7 @@ fn transcript_stdin(path: &Path) -> Vec<u8> {
 
 #[test]
 fn fixture_transcript_dedupes_main_and_subagents_into_one_cumulative_line() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = StatusStateWriter::new_with_provider(state_path(dir.path(), 191), "openrouter");
     let path = fixture_transcript(dir.path(), true);
     let args = RunArgs {
@@ -307,7 +307,7 @@ fn fixture_transcript_dedupes_main_and_subagents_into_one_cumulative_line() {
 
 #[test]
 fn fixture_without_subagent_directory_and_repeated_callbacks_stays_exact() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 192);
     let path = fixture_transcript(dir.path(), false);
     let args = RunArgs {
@@ -328,7 +328,7 @@ fn fixture_without_subagent_directory_and_repeated_callbacks_stays_exact() {
 
 #[test]
 fn malformed_transcript_suppresses_an_unprovable_total() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 194);
     let path = fixture_transcript(dir.path(), false);
     let args = RunArgs {
@@ -348,7 +348,7 @@ fn malformed_transcript_suppresses_an_unprovable_total() {
 
 #[test]
 fn usage_free_transcript_renders_only_the_model() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let _writer = writer_in(dir.path(), 199);
     let path = dir.path().join("empty-usage.jsonl");
     std::fs::write(&path, "{}\n").unwrap();
@@ -366,7 +366,7 @@ fn usage_free_transcript_renders_only_the_model() {
 
 #[test]
 fn replacement_transcript_adds_only_new_message_ids() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 195);
     let path = fixture_transcript(dir.path(), false);
     let args = RunArgs {
@@ -390,7 +390,7 @@ fn replacement_transcript_adds_only_new_message_ids() {
 
 #[test]
 fn clear_starts_a_fresh_direct_ledger_for_the_new_transcript() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 198);
     let path = fixture_transcript(dir.path(), true);
     let args = RunArgs {
@@ -429,7 +429,7 @@ fn clear_starts_a_fresh_direct_ledger_for_the_new_transcript() {
 
 #[test]
 fn a_usage_reset_drops_the_snapshot_and_retires_older_generations() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 17);
     let snapshot = |generation, request_count| StatusUsage {
         provider: "deepseek".into(),
@@ -460,7 +460,7 @@ fn a_usage_reset_drops_the_snapshot_and_retires_older_generations() {
 
 #[test]
 fn direct_ledger_survives_a_quiet_parent_past_toast_staleness() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 196);
     let path = fixture_transcript(dir.path(), false);
     let args = RunArgs {
@@ -479,7 +479,7 @@ fn direct_ledger_survives_a_quiet_parent_past_toast_staleness() {
 
 #[test]
 fn overlapping_statusline_callbacks_commit_each_response_once() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 197);
     let path = fixture_transcript(dir.path(), true);
     let args = RunArgs {
@@ -512,7 +512,7 @@ fn overlapping_statusline_callbacks_commit_each_response_once() {
 #[test]
 fn incremental_callback_resumes_from_its_cursor_for_thousands_of_records() {
     use std::io::Write;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let _writer = writer_in(dir.path(), 198);
     let path = dir.path().join("large.jsonl");
     let file = std::fs::File::create(&path).unwrap();
@@ -559,7 +559,7 @@ fn incremental_callback_resumes_from_its_cursor_for_thousands_of_records() {
 
 #[test]
 fn a_delayed_older_usage_snapshot_cannot_replace_newer_totals() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 16);
     let snapshot = |request_count, uncached_input_tokens| StatusUsage {
         provider: "codex".into(),
@@ -675,7 +675,7 @@ fn the_composed_setting_keeps_user_fields_and_never_slows_refresh() {
 
 #[test]
 fn discovery_follows_claude_codes_precedence() {
-    let root = tempfile::tempdir().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = root.path().join("home");
     let project = root.path().join("work").join("repo");
     let nested = project.join("src").join("deep");
@@ -707,7 +707,7 @@ fn discovery_follows_claude_codes_precedence() {
 
 #[test]
 fn a_project_settings_file_without_a_status_line_falls_back_to_home() {
-    let root = tempfile::tempdir().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = root.path().join("home");
     let project = root.path().join("repo");
     std::fs::create_dir_all(home.join(".claude")).unwrap();
@@ -743,7 +743,7 @@ fn argv_of(spec: Option<CommandSpec>) -> Vec<String> {
 
 #[test]
 fn windows_chain_spec_uses_valid_git_bash_env_path() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let bash = dir.path().join("bash.exe");
     std::fs::write(&bash, b"").unwrap();
     let spec = windows_chain_spec("echo hi", Some(bash.clone().into_os_string()), || {
@@ -761,7 +761,7 @@ fn windows_chain_spec_uses_valid_git_bash_env_path() {
 
 #[test]
 fn windows_chain_spec_ignores_missing_env_path_and_locates_bash() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let missing = dir.path().join("no-such-bash.exe");
     let spec = windows_chain_spec("echo hi", Some(missing.into_os_string()), || {
         Some(std::path::PathBuf::from("/x/bash"))
@@ -771,7 +771,7 @@ fn windows_chain_spec_ignores_missing_env_path_and_locates_bash() {
 
 #[test]
 fn windows_chain_spec_ignores_directory_env_path() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let spec = windows_chain_spec(
         "echo hi",
         Some(dir.path().as_os_str().to_os_string()),
@@ -856,7 +856,7 @@ fn the_chain_receives_the_session_json_on_stdin() {
 
 #[test]
 fn render_prints_the_user_line_then_the_live_toast() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 21);
     writer.publish(ToastEvent::Show(Toast::new(
         "cpu",
@@ -888,7 +888,7 @@ fn render_prints_the_user_line_then_the_live_toast() {
 
 #[test]
 fn render_prints_usage_between_the_user_line_and_toast() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 22);
     writer.publish_usage(StatusUsage {
         provider: "codex".into(),
@@ -920,7 +920,7 @@ fn render_prints_usage_between_the_user_line_and_toast() {
 
 #[test]
 fn revised_response_counters_replace_instead_of_double_counting() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 201);
     let transcript = dir.path().join("revisions.jsonl");
     let first = json!({"message": {"id": "same-response", "model": "fixture-model", "usage": {
@@ -964,7 +964,7 @@ fn revised_response_counters_replace_instead_of_double_counting() {
 #[test]
 fn malformed_complete_line_is_checkpointed_before_later_usage() {
     use std::io::Write;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 202);
     let transcript = dir.path().join("malformed.jsonl");
     std::fs::write(&transcript, "bad json\n").unwrap();
@@ -990,7 +990,7 @@ fn malformed_complete_line_is_checkpointed_before_later_usage() {
 
 #[test]
 fn incomplete_usage_record_suppresses_an_otherwise_valid_total() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 205);
     let transcript = dir.path().join("incomplete-usage.jsonl");
     let valid = json!({"message": {"id": "valid-response", "model": "fixture-model", "usage": {
@@ -1015,7 +1015,7 @@ fn incomplete_usage_record_suppresses_an_otherwise_valid_total() {
 
 #[test]
 fn empty_response_id_suppresses_an_otherwise_valid_total() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 206);
     let transcript = dir.path().join("empty-id.jsonl");
     let valid = json!({"message": {"id": "valid-response", "model": "fixture-model", "usage": {
@@ -1040,7 +1040,7 @@ fn empty_response_id_suppresses_an_otherwise_valid_total() {
 
 #[test]
 fn unchanged_callback_does_not_rewrite_cursor_state() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let _writer = writer_in(dir.path(), 203);
     let transcript = fixture_transcript(dir.path(), false);
     let args = RunArgs {
@@ -1070,7 +1070,7 @@ fn effort_args(dir: &Path, pid: u32) -> RunArgs {
 #[test]
 fn claude_effort_env_appends_a_highlighted_effort_segment_after_the_user_line() {
     use base64::Engine as _;
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let args = RunArgs {
         chain_b64: Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("echo user-line")),
         ..effort_args(dir.path(), 301)
@@ -1086,7 +1086,7 @@ fn claude_effort_env_appends_a_highlighted_effort_segment_after_the_user_line() 
 
 #[test]
 fn stdin_effort_level_wins_over_claude_effort_env() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let args = effort_args(dir.path(), 302);
     let stdin = br#"{"model":{"id":"claude-opus-5"},"effort":{"level":"medium"}}"#;
     let mut out = Vec::new();
@@ -1101,7 +1101,7 @@ fn stdin_effort_level_wins_over_claude_effort_env() {
 
 #[test]
 fn no_effort_source_leaves_the_output_unchanged() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let args = effort_args(dir.path(), 303);
     let stdin = br#"{"model":{"id":"claude-opus-5"}}"#;
     let mut out = Vec::new();
@@ -1114,7 +1114,7 @@ fn no_effort_source_leaves_the_output_unchanged() {
 
 #[test]
 fn gateway_agent_requests_above_the_session_effort_are_counted() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 304);
     writer.record_effort("medium", false);
     for _ in 0..3 {
@@ -1146,7 +1146,7 @@ fn effort_events_outside_the_window_are_ignored() {
 
 #[test]
 fn gateway_redaction_statistics_have_an_explicit_empty_status_slot() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 293);
     let value: serde_json::Value =
         serde_json::from_slice(&std::fs::read(writer.path()).unwrap()).unwrap();
@@ -1155,7 +1155,7 @@ fn gateway_redaction_statistics_have_an_explicit_empty_status_slot() {
 
 #[test]
 fn delayed_redaction_snapshots_cannot_decrease_counters() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let writer = writer_in(dir.path(), 294);
     for count in [3, 1] {
         writer.publish_redaction(crate::secret_redaction::reversible::Counts {

@@ -106,7 +106,7 @@ fn downloads_stay_on_the_pinned_release_and_its_cdn() {
 
 #[test]
 fn missing_driver_installs_verified_and_is_reused_offline() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let archive = fake_tar(&[("cua-driver", b"#!/bin/sh\n")]);
     let artifact = artifact_for(&archive, ArchiveKind::TarGz, "cua-driver");
     let inputs = inputs(home.path(), &artifact);
@@ -121,7 +121,7 @@ fn missing_driver_installs_verified_and_is_reused_offline() {
 
 #[test]
 fn a_tampered_managed_driver_is_not_trusted_and_is_replaced() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let archive = fake_tar(&[("cua-driver", b"good")]);
     let artifact = artifact_for(&archive, ArchiveKind::TarGz, "cua-driver");
     let inputs = inputs(home.path(), &artifact);
@@ -134,7 +134,7 @@ fn a_tampered_managed_driver_is_not_trusted_and_is_replaced() {
 
 #[test]
 fn wrong_size_or_digest_never_unpacks() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let archive = fake_tar(&[("cua-driver", b"good")]);
     let artifact = artifact_for(&archive, ArchiveKind::TarGz, "cua-driver");
     let inputs = inputs(home.path(), &artifact);
@@ -149,7 +149,7 @@ fn wrong_size_or_digest_never_unpacks() {
 
 #[test]
 fn a_wrapped_archive_is_flattened_to_its_single_top_directory() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let archive = fake_tar(&[
         ("pkg/ComputerUse.app/Contents/MacOS/cua-driver", b"app"),
         ("pkg/LICENSE", b"mit"),
@@ -182,7 +182,7 @@ fn zip_archives_unpack_like_the_windows_release() {
         writer.finish().unwrap();
     }
     let archive = cursor.into_inner();
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let artifact = artifact_for(&archive, ArchiveKind::Zip, "cua-driver.exe");
     let inputs = inputs(home.path(), &artifact);
     let driver = provision::ensure_with_fetch(&inputs, |_| Ok(archive.clone())).unwrap();
@@ -191,7 +191,7 @@ fn zip_archives_unpack_like_the_windows_release() {
 
 #[test]
 fn an_override_wins_and_a_broken_one_is_reported_not_replaced() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let archive = fake_tar(&[("cua-driver", b"x")]);
     let artifact = artifact_for(&archive, ArchiveKind::TarGz, "cua-driver");
     let custom = home.path().join("my-driver");

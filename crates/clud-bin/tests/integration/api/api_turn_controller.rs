@@ -88,7 +88,7 @@ fn create_session(store: &ApiSessionStore, backend: ApiSessionBackend, cwd: &Pat
 
 #[test]
 fn mock_claude_capture_persists_identity_raw_unknown_and_malformed_before_idle() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let script = temp.path().join("claude.jsonl");
     std::fs::write(
         &script,
@@ -143,7 +143,7 @@ fn mock_claude_capture_persists_identity_raw_unknown_and_malformed_before_idle()
 
 #[test]
 fn mock_codex_capture_persists_identity_then_records_nonzero_failure() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let script = temp.path().join("codex.jsonl");
     std::fs::write(
         &script,

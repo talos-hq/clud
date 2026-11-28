@@ -141,10 +141,11 @@ fn isolated_env(root: &Path) -> Vec<(String, String)> {
 }
 
 fn exercise(shell: &str) {
-    let temp = tempfile::Builder::new()
-        .prefix("loop console spaces ")
-        .tempdir()
-        .unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::in_directory(
+        &std::env::temp_dir(),
+        "loop console spaces ",
+    )
+    .unwrap();
     let root = temp.path();
     let env = isolated_env(root);
     let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
@@ -273,7 +274,7 @@ fn codex_dashboard_scrolls_history_with_keys_and_mouse_without_screen_clears() {
     require_pty_or_skip!(
         "codex_dashboard_scrolls_history_with_keys_and_mouse_without_screen_clears"
     );
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = temp.path();
     let env = isolated_env(root);
     let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
@@ -330,7 +331,7 @@ fn dashboard_wraps_strips_escapes_and_a_pasted_burst_cannot_activate_actions() {
     require_pty_or_skip!(
         "dashboard_wraps_strips_escapes_and_a_pasted_burst_cannot_activate_actions"
     );
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = temp.path();
     let env = isolated_env(root);
     let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));
@@ -388,7 +389,7 @@ fn multi_iteration_loop_keeps_one_alternate_screen_and_keeps_the_transcript() {
     require_pty_or_skip!(
         "multi_iteration_loop_keeps_one_alternate_screen_and_keeps_the_transcript"
     );
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let root = temp.path();
     let env = isolated_env(root);
     let binary = crate::exe::bin_path("clud", option_env!("CARGO_BIN_EXE_clud"));

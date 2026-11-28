@@ -35,7 +35,7 @@ fn settings_entry_without_a_reason_is_rejected_at_load_with_a_message() {
 
 #[test]
 fn peek_reads_only_the_given_home() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(home.path().join(".clud")).unwrap();
     std::fs::write(
         home.path().join(".clud").join("settings.json"),
@@ -94,7 +94,7 @@ fn without_the_setting_behavior_is_unchanged() {
 #[test]
 fn entries_strictly_under_an_extra_root_are_trashed_and_audited_with_the_reason() {
     let (w, extra) = extra_world();
-    let state = tempfile::tempdir().unwrap();
+    let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let _guard = crate::gc::delete_audit::StateDirGuard::set(state.path());
     let target = extra.join("run1");
     std::fs::create_dir_all(target.join("a")).unwrap();
@@ -116,7 +116,7 @@ fn entries_strictly_under_an_extra_root_are_trashed_and_audited_with_the_reason(
 #[test]
 fn purge_under_an_extra_root_writes_the_reason_to_the_delete_audit() {
     let (w, extra) = extra_world();
-    let state = tempfile::tempdir().unwrap();
+    let state = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let _guard = crate::gc::delete_audit::StateDirGuard::set(state.path());
     let target = extra.join("blob.bin");
     std::fs::write(&target, "x").unwrap();

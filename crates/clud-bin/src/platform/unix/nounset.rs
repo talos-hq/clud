@@ -3,11 +3,11 @@
 #[cfg(test)]
 mod tests {
     use crate::shell::nounset::*;
-    use tempfile::tempdir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn generated_startup_file_restores_deletion_shim_after_shell_path_reset() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let shims = tmp.path().join("shims");
         std::fs::create_dir(&shims).unwrap();
         let mut env = stock_env();
@@ -32,7 +32,7 @@ mod tests {
 
     #[test]
     fn rm_path_only_startup_keeps_nounset_off_after_login_path_reset() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let shims = tmp.path().join("shims");
         std::fs::create_dir(&shims).unwrap();
         let mut env = stock_env();
@@ -60,7 +60,7 @@ mod tests {
         // recursion, unbounded by canonicalization, because the two files are
         // genuinely distinct on disk. bash dies with SIGSEGV in push_source
         // (observed in production as a stack-overflowing coredump).
-        let outer = tempdir().unwrap();
+        let outer = TemporaryDirectory::new().unwrap();
         let outer_overrides = env_overrides_at(outer.path(), false, None);
         let outer_shim = outer_overrides
             .iter()
@@ -68,7 +68,7 @@ mod tests {
             .map(|(_, value)| value.clone())
             .unwrap();
 
-        let inner = tempdir().unwrap();
+        let inner = TemporaryDirectory::new().unwrap();
         let mut env = stock_env();
         env.extend(env_overrides_at(inner.path(), false, Some(outer_shim)));
         assert!(
@@ -89,7 +89,7 @@ mod tests {
         // a long-lived launcher process (or a persistent interactive shell) that
         // ever saw it set would leak it into every later, unrelated subprocess,
         // silently skipping nounset for all of them.
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let mut env = stock_env();
         env.extend(env_overrides_at(tmp.path(), false, None));
 
@@ -104,7 +104,7 @@ mod tests {
 
     #[test]
     fn a_symlink_spelling_does_not_source_recursively() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let first = env_overrides_at(tmp.path(), false, None);
         let ours = first
             .iter()
@@ -222,7 +222,7 @@ mod tests {
         // dies before the command runs; without it, `$SP` becomes empty.
         const PROBE: &str = r#"echo "[${SP}]""#;
 
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let overrides = env_overrides_at(tmp.path(), false, None);
 
         let (code, output) = bash_under(stock_env(), PROBE);
@@ -251,7 +251,7 @@ mod tests {
     /// identical to this one from the outside.
     #[test]
     fn an_inherited_bash_env_is_really_sourced_by_the_generated_file() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let theirs = tmp.path().join("theirs.sh");
         std::fs::write(&theirs, "export FROM_THEIRS=yes\n").unwrap();
 
@@ -281,7 +281,7 @@ mod tests {
     /// with an error pointing at a file the user never connected to clud.
     #[test]
     fn a_stock_startup_file_that_tests_an_unset_variable_still_works() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let theirs = tmp.path().join("theirs.sh");
         std::fs::write(
             &theirs,
@@ -310,7 +310,7 @@ mod tests {
     /// agent's own `-c` command line, and a nested `bash -c`, still are.
     #[test]
     fn nounset_guards_command_strings_but_not_nested_script_files() {
-        let tmp = tempdir().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let script = tmp.path().join("git-sh-i18n");
         std::fs::write(
             &script,

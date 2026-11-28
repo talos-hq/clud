@@ -315,7 +315,7 @@ mod tests {
     use super::*;
     use crate::daemon::io_helpers::write_json_file;
     use crate::daemon::types::SessionKind;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     fn write_snapshot(state_dir: &Path, id: &str, created_at: u64, exit_code: Option<i32>) {
         write_snapshot_with_cwd_and_pid(state_dir, id, created_at, exit_code, None, 0);
@@ -361,7 +361,7 @@ mod tests {
 
     #[test]
     fn list_background_sessions_keeps_repeat_worker_during_stale_child_pid_window() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let snap = SessionSnapshot {
             id: "repeat-job".into(),
             kind: SessionKind::Subprocess,
@@ -409,7 +409,7 @@ mod tests {
         //
         // Synthetic on purpose: forcing the OS to actually recycle a PID is
         // not something a test can do deterministically on any platform.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let live_pid = std::process::id();
         let real_start = crate::process_identity::self_start_time();
         assert!(
@@ -444,7 +444,7 @@ mod tests {
         // `--last` must surface the most-recently-created session even if
         // it has already exited. `most_recent_session` (the attach helper)
         // filters exited sessions; `most_recent_session_any` does not.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         write_snapshot(tmp.path(), "sess-old", 100, Some(0));
         write_snapshot(tmp.path(), "sess-new", 200, Some(1));
         let found = most_recent_session_any(tmp.path()).expect("should find a session");
@@ -454,14 +454,14 @@ mod tests {
 
     #[test]
     fn most_recent_session_any_none_when_dir_missing() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let nonexistent = tmp.path().join("does-not-exist");
         assert!(most_recent_session_any(&nonexistent).is_none());
     }
 
     #[test]
     fn list_live_session_cwds_returns_canonical_live_cwds() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let live_cwd = tmp.path().join("live");
         let exited_cwd = tmp.path().join("exited");
         std::fs::create_dir_all(&live_cwd).unwrap();
@@ -616,7 +616,7 @@ mod tests {
 
     #[test]
     fn record_with_both_pids_dead_past_grace_is_tombstoned() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let created = now_ms() - 20 * 60 * 1000; // 20 min ago
         write_record(
             tmp.path(),
@@ -635,7 +635,7 @@ mod tests {
 
     #[test]
     fn record_with_live_worker_is_kept() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let created = now_ms() - 20 * 60 * 1000;
         write_record(
             tmp.path(),
@@ -653,7 +653,7 @@ mod tests {
 
     #[test]
     fn record_with_dead_worker_but_live_root_is_kept() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let created = now_ms() - 20 * 60 * 1000;
         write_record(
             tmp.path(),
@@ -671,7 +671,7 @@ mod tests {
 
     #[test]
     fn record_younger_than_grace_is_kept() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         write_record(
             tmp.path(),
             "starting",
@@ -688,7 +688,7 @@ mod tests {
 
     #[test]
     fn cleanly_exited_record_is_never_touched() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let created = now_ms() - 20 * 60 * 1000;
         write_record(
             tmp.path(),
@@ -707,7 +707,7 @@ mod tests {
     #[test]
     fn missing_created_at_falls_back_to_file_mtime() {
         // No created_at, freshly written → mtime is now → inside grace → kept.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         write_record(
             tmp.path(),
             "no-created-at",
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     fn fresh_tombstone_is_kept() {
         // A tombstone younger than the 7-day retention survives the tick.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let created = now_ms() - 20 * 60 * 1000;
         write_record(
             tmp.path(),
@@ -744,7 +744,7 @@ mod tests {
     #[test]
     fn listing_ignores_tombstones() {
         // A tombstoned record is invisible to every session lister.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let created = now_ms() - 20 * 60 * 1000;
         write_record(
             tmp.path(),
@@ -772,7 +772,7 @@ mod tests {
 
     #[test]
     fn reconcile_returns_counts_and_ignores_non_session_files() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let old = now_ms() - 20 * 60 * 1000;
         write_record(
             tmp.path(),
@@ -806,7 +806,7 @@ mod tests {
 
     #[test]
     fn reconcile_missing_dir_is_ok() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let missing = tmp.path().join("no-such-state");
         assert_eq!(reconcile_session_records(&missing).unwrap(), (0, 0));
     }

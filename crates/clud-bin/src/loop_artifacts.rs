@@ -564,7 +564,7 @@ mod tests {
         info.end_iteration(2, Some("blocked".to_string()));
         info.mark_completed(None);
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = tmp.path().join("info.json");
         info.save(&path).unwrap();
 
@@ -621,7 +621,7 @@ mod tests {
 
     #[test]
     fn gitignore_already_has_loop_entry_no_changes() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let gi = tmp.path().join(".gitignore");
         let original = "target/\n.clud/loop\nfoo.txt\n";
         fs::write(&gi, original).unwrap();
@@ -634,7 +634,7 @@ mod tests {
 
     #[test]
     fn gitignore_clud_dir_covers_loop_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let gi = tmp.path().join(".gitignore");
         let original = ".clud\n";
         fs::write(&gi, original).unwrap();
@@ -645,7 +645,7 @@ mod tests {
 
     #[test]
     fn gitignore_clud_slash_covers_loop_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let gi = tmp.path().join(".gitignore");
         let original = ".clud/\n";
         fs::write(&gi, original).unwrap();
@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn gitignore_appends_when_missing() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let gi = tmp.path().join(".gitignore");
         fs::write(&gi, "target/\nfoo.txt\n").unwrap();
 
@@ -669,7 +669,7 @@ mod tests {
 
     #[test]
     fn gitignore_appends_with_newline_when_no_trailing_newline() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let gi = tmp.path().join(".gitignore");
         fs::write(&gi, "target/").unwrap();
 
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn gitignore_no_file_is_silent_noop() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         // No .gitignore — must not create one and must not panic.
         ensure_loop_in_gitignore(tmp.path());
         assert!(!tmp.path().join(".gitignore").exists());
@@ -717,7 +717,7 @@ mod tests {
 
     #[test]
     fn write_motivation_file_creates_dir_and_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         write_motivation_file(tmp.path()).unwrap();
         let content = fs::read_to_string(motivation_path(tmp.path())).unwrap();
         assert!(content.contains("multi-iteration"));
@@ -728,7 +728,7 @@ mod tests {
 
     #[test]
     fn working_copy_literal_writes_loop_md() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let spec = TaskSpec::Literal("do the thing".to_string());
         let dest = materialize_working_copy(tmp.path(), &spec).unwrap();
         assert_eq!(dest, loop_dir(tmp.path()).join("LOOP.md"));
@@ -737,7 +737,7 @@ mod tests {
 
     #[test]
     fn working_copy_literal_skips_when_present() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         ensure_loop_dir(tmp.path()).unwrap();
         let dest = loop_dir(tmp.path()).join("LOOP.md");
         fs::write(&dest, "existing").unwrap();
@@ -750,7 +750,7 @@ mod tests {
 
     #[test]
     fn working_copy_file_copies_to_loop_dir() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let src = tmp.path().join("task.md");
         fs::write(&src, "task body").unwrap();
 
@@ -762,7 +762,7 @@ mod tests {
 
     #[test]
     fn working_copy_file_skips_when_present() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         ensure_loop_dir(tmp.path()).unwrap();
         let src = tmp.path().join("task.md");
         fs::write(&src, "fresh").unwrap();
@@ -777,7 +777,7 @@ mod tests {
 
     #[test]
     fn working_copy_ghissue_is_noop() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let spec = TaskSpec::GhIssue {
             owner: "a".into(),
             repo: "b".into(),
@@ -794,7 +794,7 @@ mod tests {
 
     #[test]
     fn log_iteration_helpers_append_to_log_txt() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         log_iteration_start(tmp.path(), 1);
         log_iteration_end(tmp.path(), 1, 0);
         log_iteration_start(tmp.path(), 2);
@@ -811,7 +811,7 @@ mod tests {
 
     #[test]
     fn append_log_line_creates_dir_and_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         // Loop dir does not exist yet — helper must create it.
         assert!(!loop_dir(tmp.path()).exists());
         append_log_line(tmp.path(), "first line");
@@ -824,7 +824,7 @@ mod tests {
 
     #[test]
     fn loop_session_start_writes_info_and_log() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let _ = LoopSession::start(tmp.path(), 5);
 
         let info: TaskInfo =
@@ -841,7 +841,7 @@ mod tests {
 
     #[test]
     fn loop_session_iteration_lifecycle_persists() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut s = LoopSession::start(tmp.path(), 3);
         s.on_iteration_start(1);
         s.on_iteration_end(1, 0, None);
@@ -872,7 +872,7 @@ mod tests {
 
     #[test]
     fn loop_session_skips_motivation_on_iter_1() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut s = LoopSession::start(tmp.path(), 3);
         s.on_iteration_start(1);
         assert!(!motivation_path(tmp.path()).exists());
@@ -899,7 +899,7 @@ mod tests {
 
     #[test]
     fn queued_messages_are_delivered_once_in_order() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let root = tmp.path();
         assert_eq!(drain_inbox(root, 1).unwrap(), None);
         queue_message(root, "first").unwrap();
@@ -925,7 +925,7 @@ mod tests {
 
     #[test]
     fn loop_session_delivers_inbox_at_iteration_start() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut s = LoopSession::start(tmp.path(), 3);
         queue_message(tmp.path(), "focus on tests").unwrap();
         s.on_iteration_start(1);

@@ -1,8 +1,13 @@
 use super::super::Roots;
 use super::*;
 
-pub(crate) fn setup() -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf) {
-    let tmp = tempfile::tempdir().unwrap();
+pub(crate) fn setup() -> (
+    kernal_api::platform::fs::TemporaryDirectory,
+    PathBuf,
+    PathBuf,
+    PathBuf,
+) {
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let launch = tmp.path().join("launch");
     let sibling = tmp.path().join("sibling");
     let other = tmp.path().join("other");

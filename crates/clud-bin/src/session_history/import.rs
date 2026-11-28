@@ -174,7 +174,7 @@ mod tests {
     /// the import runs once: a second call touches nothing.
     #[test]
     fn imports_only_this_cwd_and_only_once() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cwd = root.path().join("proj");
         let other = root.path().join("other");
         std::fs::create_dir_all(&cwd).unwrap();

@@ -44,7 +44,7 @@ fn no_identity_a_missing_launcher_or_a_relayed_run_never_relays() {
 
 #[test]
 fn the_fingerprint_names_the_version_and_size() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let exe = dir.path().join("clud");
     std::fs::write(&exe, b"12345").unwrap();
     assert_eq!(

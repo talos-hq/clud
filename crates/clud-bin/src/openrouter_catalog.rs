@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn success_updates_cache_and_missing_or_malformed_fetch_keeps_stale_cache() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_path(temp.path());
         let body = fixture();
         let loaded = catalog_at(Some(&cache), SystemTime::now(), || Ok(body.clone()));
@@ -503,7 +503,7 @@ mod tests {
     /// a stale or absent cache still resolves without a request.
     #[test]
     fn launch_catalog_never_refreshes_a_stale_cache() {
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let cache = cache_path(temp.path());
         let loaded = catalog_at(Some(&cache), SystemTime::now(), || Ok(fixture()));
         assert_eq!(loaded.models().len(), 3);

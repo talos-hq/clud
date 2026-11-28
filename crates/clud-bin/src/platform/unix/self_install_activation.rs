@@ -651,8 +651,8 @@ mod tests {
     /// macOS puts temp dirs under `/var`, a symlink to `/private/var`, and the
     /// installer rightly refuses startup files below a symlinked ancestor. A
     /// real `/Users/<name>` home has none, so resolve the temp home first.
-    fn temp_home() -> (tempfile::TempDir, PathBuf) {
-        let dir = tempfile::tempdir().unwrap();
+    fn temp_home() -> (kernal_api::platform::fs::TemporaryDirectory, PathBuf) {
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().canonicalize().unwrap();
         (dir, path)
     }

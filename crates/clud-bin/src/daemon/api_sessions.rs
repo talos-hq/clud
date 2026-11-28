@@ -840,7 +840,7 @@ fn canonical_api_cwd(path: &Path) -> Result<PathBuf, ApiSessionStoreError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     fn request(cwd: &Path) -> CreateApiSession {
         CreateApiSession {
@@ -860,7 +860,7 @@ mod tests {
 
     #[test]
     fn creates_canonical_immutable_logical_record_separate_from_worker_snapshots() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let cwd = temp.path().join("cwd");
         fs::create_dir(&cwd).unwrap();
         let store = ApiSessionStore::new(temp.path());
@@ -878,7 +878,7 @@ mod tests {
 
     #[test]
     fn rejects_nonexistent_cwd_before_any_record_is_written() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let error = ApiSessionStore::new(temp.path())
             .create(request(&temp.path().join("missing")))
             .unwrap_err();
@@ -888,7 +888,7 @@ mod tests {
 
     #[test]
     fn rejects_relative_cwd_before_canonicalization() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         // A relative path is rejected before existence or canonicalization is
         // considered, so the fixture must not create anything under the
         // checkout (which is read-only in the Linux validation stack).
@@ -901,7 +901,7 @@ mod tests {
 
     #[test]
     fn rejects_file_cwd_before_any_record_is_written() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let file = temp.path().join("not-a-directory");
         fs::write(&file, "x").unwrap();
         let error = ApiSessionStore::new(temp.path())
@@ -913,7 +913,7 @@ mod tests {
 
     #[test]
     fn rejects_session_id_path_traversal_before_touching_storage() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         assert!(matches!(
             store.get("../daemon"),
@@ -927,7 +927,7 @@ mod tests {
 
     #[test]
     fn older_defaulted_record_loads_and_normalizes_cursor() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let cwd = temp.path().canonicalize().unwrap();
         let path = api_session_path(temp.path(), "sess-old");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -949,7 +949,7 @@ mod tests {
 
     #[test]
     fn event_and_idempotency_retention_are_bounded_and_cursor_monotonic() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::with_limits(temp.path(), 2, 2);
         let record = store.create(request(temp.path())).unwrap();
         for n in 0..3 {
@@ -992,7 +992,7 @@ mod tests {
 
     #[test]
     fn turns_transition_to_idle_without_losing_provider_identity() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store.create(request(temp.path())).unwrap();
         let turn = store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
@@ -1017,7 +1017,7 @@ mod tests {
 
     #[test]
     fn terminal_kill_seal_wins_over_late_controller_exit() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store.create(request(temp.path())).unwrap();
         let turn = match store
@@ -1087,7 +1087,7 @@ mod tests {
 
     #[test]
     fn stale_turn_completion_cannot_change_the_current_generation_state() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store.create(request(temp.path())).unwrap();
         let first = store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
@@ -1115,7 +1115,7 @@ mod tests {
 
     #[test]
     fn idempotency_replay_is_stable_but_conflicting_reuse_fails() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store.create(request(temp.path())).unwrap();
         let first = store
@@ -1150,7 +1150,7 @@ mod tests {
 
     #[test]
     fn atomic_turn_claim_replays_after_restart_and_never_overlaps_a_generation() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store.create(request(temp.path())).unwrap();
         let started = store
@@ -1193,7 +1193,7 @@ mod tests {
 
     #[test]
     fn interrupt_transition_precedes_signal_and_terminal_sessions_refuse_claims() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store.create(request(temp.path())).unwrap();
         let turn = store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
@@ -1221,7 +1221,7 @@ mod tests {
 
     #[test]
     fn interrupt_disposition_wins_a_racing_waiter_without_touching_a_new_generation() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store.create(request(temp.path())).unwrap();
         let first = store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
@@ -1255,7 +1255,7 @@ mod tests {
 
     #[test]
     fn restart_marks_active_turn_failed_without_acting_on_stale_identity() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let store = ApiSessionStore::new(temp.path());
         let record = store.create(request(temp.path())).unwrap();
         let turn = store.begin_turn(&record.id, "turn-1".to_string()).unwrap();
@@ -1281,7 +1281,7 @@ mod tests {
 
     #[test]
     fn corrupt_record_is_reported_and_can_be_quarantined_without_overwrite() {
-        let temp = TempDir::new().unwrap();
+        let temp = TemporaryDirectory::new().unwrap();
         let path = api_session_path(temp.path(), "sess-bad");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, "not json").unwrap();

@@ -23,7 +23,7 @@ mod win32 {
     use std::ptr::{null, null_mut};
     use std::time::{Duration, Instant};
 
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use windows_sys::Win32::Foundation::{
         CloseHandle, DuplicateHandle, GetLastError, DUPLICATE_SAME_ACCESS, HANDLE,
         INVALID_HANDLE_VALUE, WAIT_OBJECT_0, WAIT_TIMEOUT,
@@ -456,7 +456,7 @@ mod win32 {
     #[test]
     #[ignore = "research-only #468 Win32 probe; run manually on Windows"]
     fn t04_enumerate_open_file_handles_in_child() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = TemporaryDirectory::new().expect("tempdir");
         let target = temp
             .path()
             .join(format!("clud_probe_{}.bin", std::process::id()));
@@ -507,7 +507,7 @@ mod win32 {
     #[test]
     #[ignore = "research-only #468 Win32 probe; run manually on Windows"]
     fn t06_inject_dll_via_createremotethread() {
-        let temp = TempDir::new().expect("tempdir");
+        let temp = TemporaryDirectory::new().expect("tempdir");
         let sink = temp.path().join("probe-dll-sink.txt");
         let dll = probe_dll_path();
         let mut probe = ProbeChild::spawn_with_env(

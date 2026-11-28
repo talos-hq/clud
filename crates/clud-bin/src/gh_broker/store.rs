@@ -324,7 +324,7 @@ mod tests {
 
     #[test]
     fn objects_survive_reopen_and_a_304_keeps_the_body() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = dir.path().join("b.redb");
         {
             let store = Store::open(&path).unwrap();
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn ledger_appends_in_order() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let store = Store::open(&dir.path().join("b.redb")).unwrap();
         for outcome in ["full", "cache", "304"] {
             store
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn tag_stamps_raise_staleness_and_collections_round_trip() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let store = Store::open(&dir.path().join("b.redb")).unwrap();
         let tags = vec!["o/r#num:5".to_string(), "*#num:5".to_string()];
         assert_eq!(store.stale_after(&tags).unwrap(), 0);
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn pruned_tags_fold_into_the_global_stamp() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let store = Store::open(&dir.path().join("b.redb")).unwrap();
         let old: Vec<String> = (0..MAX_SCOPES).map(|i| format!("run:{i}")).collect();
         store.invalidate_tags(&old, 100).unwrap();

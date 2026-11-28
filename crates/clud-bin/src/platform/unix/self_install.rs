@@ -295,7 +295,11 @@ mod tests {
     #[test]
     fn launcher_link_rejects_missing_targets_and_writable_target_directories() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::in_directory(
+            std::path::Path::new(&std::env::var_os("HOME").unwrap()),
+            ".tmp",
+        )
+        .unwrap();
         let target_dir = dir.path().join("package");
         fs::create_dir(&target_dir).unwrap();
         let target = target_dir.join("clud");
@@ -319,7 +323,11 @@ mod tests {
     #[test]
     fn a_world_writable_ancestor_is_rejected_with_the_chmod_to_run() {
         use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::in_directory(
+            std::path::Path::new(&std::env::var_os("HOME").unwrap()),
+            ".tmp",
+        )
+        .unwrap();
         let local = dir.path().join("local");
         let bin = local.join("bin");
         fs::create_dir_all(&bin).unwrap();
@@ -345,7 +353,11 @@ mod tests {
 
     #[test]
     fn owned_launcher_is_allowed_but_symlink_backup_is_rejected() {
-        let dir = tempfile::tempdir_in(std::env::var_os("HOME").unwrap()).unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::in_directory(
+            std::path::Path::new(&std::env::var_os("HOME").unwrap()),
+            ".tmp",
+        )
+        .unwrap();
         let other = dir.path().join("other");
         fs::write(&other, b"owned bytes").unwrap();
         fs::hard_link(&other, dir.path().join("cached-clud")).unwrap();

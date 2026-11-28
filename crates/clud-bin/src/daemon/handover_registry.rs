@@ -93,11 +93,11 @@ pub(super) fn prune(state_dir: &Path, live_origins: &BTreeSet<u32>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn round_trips_through_disk_and_survives_reload() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         register(tmp.path(), 100);
         register(tmp.path(), 200);
         register(tmp.path(), 100); // idempotent
@@ -107,7 +107,7 @@ mod tests {
 
     #[test]
     fn concurrent_saves_never_expose_a_missing_registry() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let dir = tmp.path().to_path_buf();
         register(&dir, 100);
         let writer_dir = dir.clone();
@@ -129,7 +129,7 @@ mod tests {
 
     #[test]
     fn missing_and_corrupt_files_load_as_empty() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         assert!(load(tmp.path()).is_empty(), "missing file → empty");
         std::fs::write(registry_path(tmp.path()), "{ not json").unwrap();
         assert!(
@@ -146,7 +146,7 @@ mod tests {
 
     #[test]
     fn prune_drops_entries_with_no_live_originator() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         register(tmp.path(), 100);
         register(tmp.path(), 200);
         register(tmp.path(), 300);
@@ -157,7 +157,7 @@ mod tests {
 
     #[test]
     fn prune_is_a_noop_when_all_entries_are_live() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         register(tmp.path(), 100);
         register(tmp.path(), 200);
         prune(tmp.path(), &BTreeSet::from([100, 200, 300]));

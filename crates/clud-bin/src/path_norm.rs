@@ -419,7 +419,7 @@ mod tests {
 
     #[test]
     fn same_path_holds_after_one_side_is_deleted() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let real = tmp.path().join("real");
         std::fs::create_dir_all(real.join("wt")).unwrap();
         // Windows runners may lack the symlink privilege; the deleted-path and

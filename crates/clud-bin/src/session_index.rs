@@ -278,7 +278,7 @@ mod tests {
 
     #[test]
     fn record_redaction_preserves_index_behavior() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx = ctx_in(&tmp, 1234, 5678);
         let secret = format!("ghp_{}", "A".repeat(36));
         let event = IndexEvent::Started {
@@ -307,9 +307,9 @@ mod tests {
         assert_eq!(serde_json::to_value(&event).unwrap(), original);
     }
 
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
-    fn ctx_in(tmp: &TempDir, pid: u32, epoch: u64) -> SessionContext {
+    fn ctx_in(tmp: &TemporaryDirectory, pid: u32, epoch: u64) -> SessionContext {
         SessionContext::from_state_root(tmp.path(), pid, epoch)
     }
 
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn session_dir_encodes_pid_and_epoch() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx = ctx_in(&tmp, 47180, 1737390000);
         let expected = tmp.path().join("sessions").join("47180__1737390000");
         assert_eq!(ctx.session_dir, expected);
@@ -346,7 +346,7 @@ mod tests {
 
     #[test]
     fn pid_reuse_with_different_start_epoch_yields_different_session_dirs() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx_old = ctx_in(&tmp, 47180, 1737390000);
         let ctx_new_after_reboot = ctx_in(&tmp, 47180, 1737900000);
         assert_ne!(
@@ -357,7 +357,7 @@ mod tests {
 
     #[test]
     fn allocate_next_id_starts_at_one() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx = ctx_in(&tmp, 1234, 5678);
         let first = allocate_next_id(&ctx).unwrap();
         assert_eq!(first, 1);
@@ -365,7 +365,7 @@ mod tests {
 
     #[test]
     fn allocate_next_id_increments_monotonically() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx = ctx_in(&tmp, 1234, 5678);
         let a = allocate_next_id(&ctx).unwrap();
         let b = allocate_next_id(&ctx).unwrap();
@@ -377,7 +377,7 @@ mod tests {
     fn allocate_next_id_persists_across_processes() {
         // Simulate a new process attaching to an existing session by
         // building a fresh `SessionContext` against the same dir.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx1 = ctx_in(&tmp, 1234, 5678);
         assert_eq!(allocate_next_id(&ctx1).unwrap(), 1);
         assert_eq!(allocate_next_id(&ctx1).unwrap(), 2);
@@ -389,7 +389,7 @@ mod tests {
 
     #[test]
     fn append_event_writes_one_jsonl_line() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx = ctx_in(&tmp, 1234, 5678);
         let event = IndexEvent::Started {
             tool_id: 1,
@@ -415,7 +415,7 @@ mod tests {
 
     #[test]
     fn append_event_appends_multiple_entries_in_order() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx = ctx_in(&tmp, 1234, 5678);
         append_event(
             &ctx,
@@ -468,7 +468,7 @@ mod tests {
 
     #[test]
     fn tool_log_dir_lands_under_tools_dir() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let ctx = ctx_in(&tmp, 1234, 5678);
         let log_dir = ctx.tool_log_dir(7);
         assert_eq!(log_dir, ctx.tools_dir().join("7"));

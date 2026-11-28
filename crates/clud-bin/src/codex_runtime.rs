@@ -876,7 +876,7 @@ mod tests {
 
     #[test]
     fn issue_1480_last_good_survives_asymmetric_refresh_and_offline_restart() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = directory.path().join("last-good.json");
         let old = LastGood::from_manifest(&manifest("gpt-6-sol", "gpt-6-luna"));
         let published = manifest("gpt-7-sol", "gpt-7-luna");
@@ -896,7 +896,7 @@ mod tests {
 
     #[test]
     fn issue_1480_concurrent_family_updates_merge_without_corrupting_cache() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = directory.path().join("last-good.json");
         let old = LastGood::from_manifest(&manifest("gpt-6-sol", "gpt-6-luna"));
         write_json_atomic(&path, &old).unwrap();
@@ -934,7 +934,7 @@ mod tests {
     /// concurrent update fail.
     #[test]
     fn a_slow_lock_holder_does_not_make_a_concurrent_update_fail() {
-        let directory = tempfile::tempdir().unwrap();
+        let directory = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = directory.path().join("last-good.json");
         let old = LastGood::from_manifest(&manifest("gpt-6-sol", "gpt-6-luna"));
         let choice = choose(

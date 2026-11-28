@@ -38,8 +38,8 @@ fn diagnostic_tool_fixtures_rank_candidates() {
     );
 }
 
-fn fixture() -> (tempfile::TempDir, Vec<Element>) {
-    let dir = tempfile::tempdir().unwrap();
+fn fixture() -> (kernal_api::platform::fs::TemporaryDirectory, Vec<Element>) {
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     for (name, contents) in [
         (
             "check.py",
@@ -113,7 +113,7 @@ fn both_fast_fail_skips_test_with_reason_and_no_log() {
 
 #[test]
 fn registry_detects_all_tools_and_orders_lint_first() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     fs::write(dir.path().join("Cargo.toml"), "").unwrap();
     fs::write(dir.path().join("pyproject.toml"), "").unwrap();
     fs::write(

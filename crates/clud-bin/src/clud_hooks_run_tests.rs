@@ -6,9 +6,9 @@
 
 use super::*;
 use crate::clud_hooks::HookEntry;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs;
 use std::path::Path;
-use tempfile::TempDir;
 
 /// Write `body` as a Python script under `dir` and return the hook command
 /// that runs it.
@@ -65,7 +65,7 @@ fn run(entries: &[HookEntry], root: &Path, payload: &str) -> HookRunOutcome {
 fn a_hook_runs_rooted_at_the_declaring_repo_whatever_the_session_cwd_is() {
     // The contract that makes the whole dispatcher worth building: the hook
     // sees the repo root, not wherever the agent wandered off to.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let out = root.join("observed.txt");
     let body = format!(
@@ -93,7 +93,7 @@ fn a_hook_runs_rooted_at_the_declaring_repo_whatever_the_session_cwd_is() {
 fn the_hook_payload_arrives_on_stdin_and_the_pipe_closes() {
     // A hook blocking in `json.load(sys.stdin)` needs EOF, not just bytes —
     // the upstream Windows hook-stdin bug is exactly this failure.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let out = root.join("payload.txt");
     let body = format!(
@@ -115,7 +115,7 @@ fn the_hook_payload_arrives_on_stdin_and_the_pipe_closes() {
 fn the_inherited_environment_survives_so_path_still_works() {
     // `ProcessConfig.env` replaces rather than overlays; forgetting to seed
     // it from the real environment would leave hooks with no PATH.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let out = root.join("env.txt");
     let body = format!(
@@ -136,7 +136,7 @@ fn the_inherited_environment_survives_so_path_still_works() {
 
 #[test]
 fn exit_two_blocks_and_relays_the_hooks_own_words() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let body = "import sys\nprint(\"run bash lint first\", file=sys.stderr)\nsys.exit(2)\n";
 
@@ -155,7 +155,7 @@ fn exit_two_blocks_and_relays_the_hooks_own_words() {
 
 #[test]
 fn a_blocking_hook_without_a_message_still_says_something_actionable() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let body = "import sys\nsys.exit(2)\n";
 
@@ -174,7 +174,7 @@ fn a_blocking_hook_without_a_message_still_says_something_actionable() {
 fn a_blocking_hooks_stdout_is_kept_for_verbatim_relay() {
     // A hook may speak the harness's JSON protocol; re-wrapping it would
     // corrupt the decision it is trying to express.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let body = "import json, sys\nprint(json.dumps({\"decision\": \"block\"}))\nsys.exit(2)\n";
 
@@ -195,7 +195,7 @@ fn a_blocking_hooks_stdout_is_kept_for_verbatim_relay() {
 fn a_nonzero_exit_that_is_not_two_does_not_block() {
     // Only exit 2 blocks, same as the harness. A hook that is merely broken
     // must not become a wall in front of every tool call.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let body = "import sys\nsys.exit(1)\n";
 
@@ -212,7 +212,7 @@ fn a_nonzero_exit_that_is_not_two_does_not_block() {
 fn a_non_blocking_failure_becomes_a_notice_quoting_the_root_cause() {
     // #1739: uv prints a generic headline first and the cause last; the
     // harness shows only the first line, and never to the agent.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let body = "import sys\n\
         print('x No solution found when resolving dependencies', file=sys.stderr)\n\
@@ -239,7 +239,7 @@ fn a_non_blocking_failure_becomes_a_notice_quoting_the_root_cause() {
 
 #[test]
 fn passing_and_blocking_hooks_leave_no_notice() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let ok = python_hook(root, "ok.py", "import sys\nsys.exit(0)\n");
     let stop = python_hook(root, "stop.py", "import sys\nsys.exit(2)\n");
@@ -252,7 +252,7 @@ fn passing_and_blocking_hooks_leave_no_notice() {
 
 #[test]
 fn a_hook_that_cannot_start_is_survivable() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
 
     let outcome = run(
         &[entry("definitely-not-a-real-command-xyzzy".to_string(), 30)],
@@ -265,7 +265,7 @@ fn a_hook_that_cannot_start_is_survivable() {
 
 #[test]
 fn hooks_run_in_declaration_order_and_stop_at_the_first_block() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let marker = root.join("third.txt");
 
@@ -293,7 +293,7 @@ fn hooks_run_in_declaration_order_and_stop_at_the_first_block() {
 
 #[test]
 fn a_hook_that_overruns_its_timeout_fails_open() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     let body = "import time\ntime.sleep(30)\n";
 

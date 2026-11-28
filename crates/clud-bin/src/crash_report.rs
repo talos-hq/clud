@@ -501,7 +501,7 @@ pub(crate) fn surface_previous_report(crashes_dir: &Path) -> Option<(u128, PathB
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+    use kernal_api::platform::fs::TemporaryDirectory;
 
     #[test]
     fn sanitize_redacts_known_secret_keys_and_long_tokens() {
@@ -531,7 +531,7 @@ mod tests {
 
     #[test]
     fn prune_keeps_only_n_reports() -> std::io::Result<()> {
-        let dir = TempDir::new()?;
+        let dir = TemporaryDirectory::new()?;
         // Write 53 dummy reports. We don't care which 50 survive, only the
         // count — mtime-based ordering for "which to drop" is exercised
         // implicitly by `prune_old_reports`'s sort key.
@@ -556,7 +556,7 @@ mod tests {
 
     #[test]
     fn prune_no_op_when_under_cap() -> std::io::Result<()> {
-        let dir = TempDir::new()?;
+        let dir = TemporaryDirectory::new()?;
         for i in 0..3 {
             fs::write(dir.path().join(format!("{i}-test-{i}.json")), "{}")?;
         }
@@ -568,7 +568,7 @@ mod tests {
 
     #[test]
     fn prune_ignores_non_json_files() -> std::io::Result<()> {
-        let dir = TempDir::new()?;
+        let dir = TemporaryDirectory::new()?;
         fs::write(dir.path().join("last_seen"), "0")?;
         for i in 0..52 {
             fs::write(
@@ -596,7 +596,7 @@ mod tests {
 
     #[test]
     fn surface_returns_newest_and_advances_last_seen() -> std::io::Result<()> {
-        let dir = TempDir::new()?;
+        let dir = TemporaryDirectory::new()?;
         fs::write(dir.path().join("100-test-1.json"), "{}")?;
         fs::write(dir.path().join("200-test-2.json"), "{}")?;
         fs::write(dir.path().join("150-test-3.json"), "{}")?;
@@ -613,7 +613,7 @@ mod tests {
 
     #[test]
     fn surface_returns_none_on_empty_dir() -> std::io::Result<()> {
-        let dir = TempDir::new()?;
+        let dir = TemporaryDirectory::new()?;
         assert!(surface_previous_report(dir.path()).is_none());
         assert!(!dir.path().join("last_seen").exists());
         Ok(())

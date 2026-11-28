@@ -10,7 +10,7 @@ fn names(list: &[&str]) -> Vec<String> {
 
 #[test]
 fn current_aliases_are_clean_and_stale_or_retired_ones_are_reported() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let reference = dir.path().join("clud-ref");
     write(&reference, 10);
     let own = fingerprint(&reference).unwrap();
@@ -45,7 +45,7 @@ fn current_aliases_are_clean_and_stale_or_retired_ones_are_reported() {
 
 #[test]
 fn an_owned_dir_reports_missing_aliases_and_lists_foreign_files() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let reference = dir.path().join(".ref");
     write(&reference, 4);
     let own = fingerprint(&reference).unwrap();
@@ -70,7 +70,7 @@ fn an_owned_dir_reports_missing_aliases_and_lists_foreign_files() {
 
 #[test]
 fn an_absent_owned_dir_is_not_a_missing_alias() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let report = inspect_dir(
         &dir.path().join("never-made"),
         &names(&["rm"]),
@@ -115,7 +115,7 @@ fn the_launch_fragment_covers_every_guarded_tool() {
 
 #[test]
 fn a_bash_only_config_reports_what_it_misses() {
-    let root = tempfile::tempdir().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     std::fs::create_dir_all(root.path().join(".codex")).unwrap();
     std::fs::write(
         root.path().join(".codex/hooks.json"),
@@ -138,7 +138,7 @@ fn a_bash_only_config_reports_what_it_misses() {
 /// after, and the entry is now the running binary.
 #[test]
 fn fix_replaces_a_stale_helper_bin_alias() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let exe = tmp.path().join("install").join("clud");
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
     write(&exe, 20);
@@ -171,7 +171,7 @@ fn fix_replaces_a_stale_helper_bin_alias() {
 /// A foreign `clud-cmd-scan` the user owns is reported, never touched.
 #[test]
 fn fix_leaves_a_foreign_scanner_outside_clud_dirs_alone() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let exe = tmp.path().join("install").join("clud");
     std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
     write(&exe, 20);
@@ -199,7 +199,7 @@ fn fix_leaves_a_foreign_scanner_outside_clud_dirs_alone() {
 
 #[test]
 fn a_script_first_on_path_is_reported_and_left_alone() {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = dir.path().join("home");
     let exe_dir = dir.path().join("exe");
     let path_dir = dir.path().join("path");
@@ -236,7 +236,7 @@ fn hook_skew_count_is_in_json_even_without_alias_findings() {
 
 #[test]
 fn hook_skew_count_includes_rotated_log_and_ignores_other_events() {
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let log = tmp.path().join(".clud/tools/hooks/block-bad-cmd.log");
     std::fs::create_dir_all(log.parent().unwrap()).unwrap();
     std::fs::write(

@@ -19,14 +19,14 @@ const POLICY_VARS: &[&str] = &[
 ];
 
 struct Fixture {
-    _root: tempfile::TempDir,
+    _root: kernal_api::platform::fs::TemporaryDirectory,
     home: PathBuf,
     bin: PathBuf,
     marker: PathBuf,
 }
 
 fn fixture() -> Fixture {
-    let root = tempfile::tempdir().unwrap();
+    let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let home = root.path().join("home");
     let bin = root.path().join("bin");
     fs::create_dir_all(&home).unwrap();

@@ -83,14 +83,14 @@ const RUN: &str = "repos/o/r/actions/runs/7";
 const PR: &str = "repos/o/r/pulls/5";
 
 struct World {
-    _dir: tempfile::TempDir,
+    _dir: kernal_api::platform::fs::TemporaryDirectory,
     broker: GhBroker,
     server: Arc<Mutex<Server>>,
     now: Arc<AtomicU64>,
 }
 
 fn world() -> World {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let now = Arc::new(AtomicU64::new(T0_MS));
     let server = Arc::new(Mutex::new(Server {
         bodies: HashMap::from([

@@ -1,6 +1,6 @@
 use super::*;
+use kernal_api::platform::fs::TemporaryDirectory;
 use std::fs;
-use tempfile::TempDir;
 
 fn write_settings(root: &Path, body: &str) {
     let dir = root.join(".clud");
@@ -28,7 +28,7 @@ fn a_local_only_settings_file_is_honored() {
     // silently ignored. Note there is deliberately no `settings.json`
     // here — requiring one would keep a local-only override invisible,
     // which is the whole point of the file.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_local_settings(
         tmp.path(),
@@ -41,7 +41,7 @@ fn a_local_only_settings_file_is_honored() {
 
 #[test]
 fn local_settings_win_over_shared_for_scalars() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_settings(tmp.path(), r#"{"rust":{"use_soldr":true}}"#);
     write_local_settings(tmp.path(), r#"{"rust":{"use_soldr":false}}"#);
@@ -54,7 +54,7 @@ fn shared_rust_fields_fall_through_except_the_rolling_version_policy() {
     // Most fields still fall through from the shared layer. Version is the
     // deliberate exception: any local Rust directive with no version selects
     // rolling latest instead of reviving a lower layer's numeric pin.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_settings(
         tmp.path(),
@@ -69,7 +69,7 @@ fn shared_rust_fields_fall_through_except_the_rolling_version_policy() {
 
 #[test]
 fn bad_command_rules_concatenate_across_the_local_layer() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_settings(
         tmp.path(),
@@ -89,7 +89,7 @@ fn bad_command_rules_concatenate_across_the_local_layer() {
 fn a_local_rule_replaces_the_shared_rule_with_the_same_id() {
     // Dedupe by id is what lets a developer retune one shared rule
     // without restating the whole list.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_settings(
         tmp.path(),
@@ -109,7 +109,7 @@ fn a_malformed_local_file_does_not_discard_the_shared_config() {
     // Fail-open, matching the existing behaviour for a malformed
     // settings.json: a broken override must not silently disarm the
     // shared rules it was meant to extend.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_settings(
         tmp.path(),
@@ -156,7 +156,7 @@ fn a_skipped_malformed_rule_does_not_shift_later_indices() {
 
 #[test]
 fn reading_from_a_file_stamps_canonical_file_and_layer() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_local_settings(
         tmp.path(),
@@ -180,7 +180,7 @@ fn reading_from_a_file_stamps_canonical_file_and_layer() {
 fn winning_dedupe_rule_keeps_its_own_provenance() {
     // A repo-local rule shadows the repo rule with the same id; the
     // surviving rule must carry the *local* layer, not the shared one.
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_settings(
         tmp.path(),
@@ -428,7 +428,7 @@ fn merge_both_empty_resolves_to_baked_defaults() {
 
 #[test]
 fn discover_finds_at_marked_repo_root() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     mark_repo_root(root);
     write_settings(root, r#"{"rust":{"use_soldr":true,"version":"1.2.3"}}"#);
@@ -440,7 +440,7 @@ fn discover_finds_at_marked_repo_root() {
 
 #[test]
 fn discover_finds_from_subdirectory() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let root = tmp.path();
     mark_repo_root(root);
     write_settings(root, r#"{"rust":{"use_soldr":true}}"#);
@@ -453,14 +453,14 @@ fn discover_finds_from_subdirectory() {
 
 #[test]
 fn missing_settings_returns_none() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     assert!(discover_repo_clud_config(tmp.path()).is_none());
 }
 
 #[test]
 fn discover_stops_at_git_root_boundary() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let outer = tmp.path();
     let repo = outer.join("repo");
     fs::create_dir_all(&repo).unwrap();
@@ -483,7 +483,7 @@ fn discover_stops_at_git_root_boundary() {
 
 #[test]
 fn malformed_settings_is_warned_and_skipped() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_settings(tmp.path(), "{not valid json");
     assert!(discover_repo_clud_config(tmp.path()).is_none());
@@ -694,7 +694,7 @@ fn bad_commands_rules_without_id_never_dedupe() {
 
 #[test]
 fn has_directive_true_for_bad_commands_only() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     let home = tmp.path();
     write_settings(
         home,
@@ -827,7 +827,7 @@ fn an_unrecognized_block_cd_value_does_not_take_the_rest_of_the_file_down() {
 
 #[test]
 fn block_cd_layers_repo_over_user_like_every_other_scalar() {
-    let tmp = TempDir::new().unwrap();
+    let tmp = TemporaryDirectory::new().unwrap();
     mark_repo_root(tmp.path());
     write_settings(tmp.path(), r#"{"bash":{"block_cd":false}}"#);
     let repo = discover_repo_clud_config(tmp.path()).expect("repo config");

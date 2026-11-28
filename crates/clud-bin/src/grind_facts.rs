@@ -560,7 +560,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_multi_repo_run_gives_each_repo_its_own_facts() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         write(dir.path(), A, &two_repos());
         let now = SystemTime::now();
         let soldr = lookup_in_for(
@@ -577,7 +577,7 @@ pub(crate) mod tests {
 
     #[test]
     fn a_directory_in_no_repo_or_two_equal_repos_gets_no_facts() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         write(dir.path(), A, &two_repos());
         let now = SystemTime::now();
         let outside = lookup_in_for(dir.path(), Some(A), &w("other"), now);
@@ -607,7 +607,7 @@ pub(crate) mod tests {
 
     #[test]
     fn tasks_land_in_the_repo_entry_containing_their_checkout() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let path = write(dir.path(), A, &two_repos());
         record_task(
             &path,
@@ -623,7 +623,7 @@ pub(crate) mod tests {
 
     #[test]
     fn each_session_reads_only_its_own_facts() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         write(dir.path(), A, r#"{"mode":"parallel","ci":true}"#);
         write(dir.path(), B, r#"{"mode":"sequential"}"#);
         let now = SystemTime::now();
@@ -641,7 +641,7 @@ pub(crate) mod tests {
 
     #[test]
     fn missing_stale_and_invalid_facts_warn() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let now = SystemTime::now();
         assert!(matches!(
             lookup_in(dir.path(), None, now),
@@ -669,7 +669,7 @@ pub(crate) mod tests {
 
     #[test]
     fn planners_record_tasks_without_losing_each_others() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let dir = root.path().join("grind");
         std::fs::create_dir_all(&dir).unwrap();
         write(&dir, A, r#"{"mode":"parallel"}"#);
@@ -706,7 +706,7 @@ pub(crate) mod tests {
 
     #[test]
     fn abandoned_lock_file_is_reused_without_removal() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let dir = root.path().join("grind");
         std::fs::create_dir(&dir).unwrap();
         let path = write(&dir, A, r#"{"mode":"parallel"}"#);
@@ -733,7 +733,7 @@ pub(crate) mod tests {
 
     #[test]
     fn owners_name_every_run_recording_the_feature_pr() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         write(dir.path(), A, r#"{"feature": {"pr": 1814}}"#);
         write(
             dir.path(),
@@ -752,7 +752,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cli_owner_reports_json_and_marks_its_own_run() {
-        let dir = tempfile::tempdir().unwrap();
+        let dir = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         write(dir.path(), A, r#"{"feature": {"pr": 7}}"#);
         let (code, out, _) = cli(&["owner", "7"], Some(A), dir.path());
         assert_eq!(code, 0);
@@ -788,7 +788,7 @@ pub(crate) mod tests {
 
     #[test]
     fn cli_prints_the_path_and_clears_only_its_own_file() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let dir = root.path().join("grind");
         let (code, out, _) = cli(&["path"], Some(A), &dir);
         assert_eq!(code, 0);

@@ -138,7 +138,7 @@ mod tests {
     #[test]
     fn a_symlinked_alias_finds_its_session_shim_directory() {
         use std::os::unix::fs::PermissionsExt;
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let bin_dir = temp.path().join("venv-bin");
         let shim_dir = temp.path().join("session-shims");
         let real_dir = temp.path().join("usr-bin");
@@ -165,7 +165,7 @@ mod tests {
     #[test]
     fn busybox_handoff_keeps_the_rm_applet_symlink_name() {
         use std::os::unix::fs::symlink;
-        let temp = tempfile::tempdir().unwrap();
+        let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let shim_dir = temp.path().join("shim");
         let handoff_dir = temp.path().join("handoff");
         std::fs::create_dir(&shim_dir).unwrap();

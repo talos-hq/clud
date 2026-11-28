@@ -123,7 +123,7 @@ fn constraints_that_cannot_fit_fail_with_the_clause_quoted() {
 
 #[test]
 fn the_brief_and_goal_are_recorded() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let dir = session_record_dir(home.path(), "clud-42-1700000000");
     let goal = CompactGoal {
         condition: "the goal".into(),
@@ -139,7 +139,7 @@ fn the_brief_and_goal_are_recorded() {
 
 #[test]
 fn the_record_is_keyed_by_the_session_id() {
-    let home = tempfile::tempdir().unwrap();
+    let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let dir = session_record_dir(home.path(), "clud-42-1700");
     assert!(dir.ends_with(".clud/state/do-goals/clud-42-1700"));
 }

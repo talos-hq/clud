@@ -575,11 +575,11 @@ mod tests {
     //! the right points so an attach actually delivers the current screen.
     use super::*;
     use crate::daemon::types::SessionKind;
+    use kernal_api::platform::fs::TemporaryDirectory;
     use std::net::TcpListener;
     use std::path::Path;
     use std::sync::Arc;
     use std::thread;
-    use tempfile::TempDir;
 
     fn loopback_pair() -> (TcpStream, TcpStream) {
         let listener = TcpListener::bind("127.0.0.1:0").expect("bind loopback");
@@ -624,7 +624,7 @@ mod tests {
         ))
     }
 
-    fn shared_with_log(tmp: &TempDir, id: &str) -> Arc<WorkerShared> {
+    fn shared_with_log(tmp: &TemporaryDirectory, id: &str) -> Arc<WorkerShared> {
         let snap = SessionSnapshot {
             id: id.into(),
             kind: SessionKind::Subprocess,
@@ -659,7 +659,7 @@ mod tests {
 
     #[test]
     fn pty_attach_returns_single_synthesized_snapshot() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let shared = test_shared(tmp.path(), SessionKind::Pty);
         shared.init_capture(24, 80);
         shared.push_output(b"\x1b[1;1HHEADER\x1b[5;1HFOOTER".to_vec());
@@ -685,7 +685,7 @@ mod tests {
         // attaching mid-run want history, not a repaint. `init_capture` is
         // never called in that code path, so `attach_client` must fall back
         // to the raw-chunk replay that pre-dated issue #34.
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let shared = test_shared(tmp.path(), SessionKind::Subprocess);
         shared.push_output(b"line1\n".to_vec());
         shared.push_output(b"line2\n".to_vec());
@@ -700,7 +700,7 @@ mod tests {
         // Output arriving *between* detach and reattach must still make it
         // into the second snapshot — the capture keeps feeding even with no
         // client connected.
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let shared = test_shared(tmp.path(), SessionKind::Pty);
         shared.init_capture(24, 80);
         shared.push_output(b"\x1b[1;1HBEFORE".to_vec());
@@ -722,7 +722,7 @@ mod tests {
 
     #[test]
     fn live_attached_client_blocks_second_attach() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let shared = test_shared(tmp.path(), SessionKind::Subprocess);
 
         let (_client1, server1) = loopback_pair();
@@ -736,7 +736,7 @@ mod tests {
 
     #[test]
     fn dead_attached_client_is_evicted_on_next_attach() {
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let shared = test_shared(tmp.path(), SessionKind::Subprocess);
 
         let (client1, server1) = loopback_pair();
@@ -753,7 +753,7 @@ mod tests {
         // Pre-resize the parser grid isn't wide enough to hold col 100.
         // After resize, a paint at col 100 lands correctly and the attach
         // replay reflects it.
-        let tmp = TempDir::new().expect("tempdir");
+        let tmp = TemporaryDirectory::new().expect("tempdir");
         let shared = test_shared(tmp.path(), SessionKind::Pty);
         shared.init_capture(24, 80);
         shared.resize_capture(40, 120);
@@ -774,7 +774,7 @@ mod tests {
 
     #[test]
     fn push_output_appends_to_log_file() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let shared = shared_with_log(&tmp, "s1");
         shared.push_output(b"line one\n".to_vec());
         shared.push_output(b"line two\n".to_vec());
@@ -788,7 +788,7 @@ mod tests {
 
     #[test]
     fn ctrl_c_profile_records_handoff_and_daemon_kill_timings() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let shared = test_shared(tmp.path(), SessionKind::Subprocess);
         shared.record_ctrl_c_handoff(CtrlCProfile {
             cli_pid: Some(123),
@@ -814,7 +814,7 @@ mod tests {
 
     #[test]
     fn worker_exit_preserves_daemon_written_ctrl_c_snapshot() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let shared = test_shared(tmp.path(), SessionKind::Subprocess);
         shared.persist_current_snapshot().unwrap();
 
@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn transcript_file_receives_output_through_running_process_tee() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let shared = test_shared(tmp.path(), SessionKind::Pty);
         let transcript = tmp.path().join("session.transcript");
         shared.init_transcript_file(&transcript).unwrap();
@@ -857,7 +857,7 @@ mod tests {
 
     #[test]
     fn rotation_moves_oversize_log_to_backup() {
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let shared = shared_with_log(&tmp, "s2");
         let chunk = vec![b'x'; (LOG_ROTATE_BYTES / 4) as usize];
         // Push enough chunks to exceed the rotate threshold.
@@ -883,7 +883,7 @@ mod tests {
     fn worker_shared_honors_backlog_override() {
         // With a 10-byte cap, pushing three 5-byte chunks should evict the
         // oldest so only the most-recent chunks remain resident.
-        let tmp = TempDir::new().unwrap();
+        let tmp = TemporaryDirectory::new().unwrap();
         let snap = SessionSnapshot {
             id: "s".into(),
             kind: SessionKind::Subprocess,

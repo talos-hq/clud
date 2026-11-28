@@ -125,7 +125,7 @@ fn test_codex_loop_default_count() {
 
 #[test]
 fn codex_loop_requires_fresh_done_at_minimum() {
-    let temp = tempfile::tempdir().unwrap();
+    let temp = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
     let done = temp.path().join("DONE");
     let p = plan(&[
         "clud",
