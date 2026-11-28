@@ -47,11 +47,12 @@ pub fn installed_warning(done: &TempHomeInstall) -> String {
 /// Create a private (0700, randomly named) home under the system temp dir.
 /// It is kept on purpose: the installed binary lives there.
 pub fn create_temp_home() -> Result<PathBuf, String> {
-    tempfile::Builder::new()
-        .prefix(TEMP_HOME_PREFIX)
-        .tempdir_in(std::env::temp_dir())
-        .map(tempfile::TempDir::keep)
-        .map_err(|err| format!("cannot create a temporary install home: {err}"))
+    kernal_api::platform::fs::TemporaryDirectory::in_directory(
+        &std::env::temp_dir(),
+        TEMP_HOME_PREFIX,
+    )
+    .map(kernal_api::platform::fs::TemporaryDirectory::persist)
+    .map_err(|err| format!("cannot create a temporary install home: {err}"))
 }
 
 /// `<temp_home>/.local/bin/claude`, where the native installer puts the binary.
@@ -196,11 +197,12 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return;
         }
-        let root = tempfile::tempdir().unwrap();
-        let ours = tempfile::Builder::new()
-            .prefix(TEMP_HOME_PREFIX)
-            .tempdir_in(root.path())
-            .unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let ours = kernal_api::platform::fs::TemporaryDirectory::in_directory(
+            root.path(),
+            TEMP_HOME_PREFIX,
+        )
+        .unwrap();
         let binary = plant_binary(ours.path());
         // Unrelated name, and a home with no binary: both ignored.
         plant_binary(&root.path().join("someone-else"));
@@ -213,7 +215,7 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return;
         }
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let shared = root.path().join(format!("{TEMP_HOME_PREFIX}shared"));
         plant_binary(&shared);
         crate::platform::shim_fs::set_mode(&shared, 0o777).unwrap();
@@ -222,7 +224,7 @@ mod tests {
 
     #[test]
     fn discover_returns_none_without_any_temp_home() {
-        let root = tempfile::tempdir().unwrap();
+        let root = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         assert_eq!(discover_in(root.path()), None);
     }
 
@@ -247,8 +249,8 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return; // The fallback runs only on POSIX hosts.
         }
-        let temp_home = tempfile::tempdir().unwrap();
-        let real_home = tempfile::tempdir().unwrap();
+        let temp_home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let real_home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let bin = temp_home.path().join(".local/bin");
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("claude"), b"bin").unwrap();
@@ -272,8 +274,8 @@ mod tests {
 
     #[test]
     fn finish_rejects_an_install_that_left_no_binary() {
-        let temp_home = tempfile::tempdir().unwrap();
-        let real_home = tempfile::tempdir().unwrap();
+        let temp_home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let real_home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let err = finish(temp_home.path(), real_home.path()).unwrap_err();
         assert!(err.contains("left no binary"), "{err}");
     }

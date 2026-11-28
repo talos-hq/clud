@@ -292,16 +292,17 @@ fn trusted_setuid_root(path: &Path) -> bool {
 /// The client's end before the leader connects: a 0700 directory holding the
 /// socket and the `clud-remote-shell` alias the PTY starts.
 pub struct LeaderListener {
-    dir: tempfile::TempDir,
+    dir: kernal_api::platform::fs::TemporaryDirectory,
     listener: UnixListener,
     nonce: String,
 }
 
 impl LeaderListener {
     pub fn bind() -> io::Result<Self> {
-        let dir = tempfile::Builder::new()
-            .prefix("clud-remote-shell-")
-            .tempdir()?;
+        let dir = kernal_api::platform::fs::TemporaryDirectory::in_directory(
+            &std::env::temp_dir(),
+            "clud-remote-shell-",
+        )?;
         let listener = UnixListener::bind(dir.path().join("s"))?;
         let exe = std::env::current_exe()?;
         crate::alias_link::install_alias(&exe, &dir.path().join(leader::PROGRAM))?;

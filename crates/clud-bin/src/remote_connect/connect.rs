@@ -187,7 +187,7 @@ fn agent_argv(exe: String) -> Vec<String> {
 struct ProxySession {
     socket: transport::Socket,
     proxy: proxy::SessionProxy,
-    config: tempfile::TempDir,
+    config: kernal_api::platform::fs::TemporaryDirectory,
     agent: Option<ManagedSubprocess>,
     base: url::Url,
     session: transport::Session,
@@ -361,10 +361,11 @@ fn run_proxy_session(host: &str) -> Result<i32, String> {
     }
     let proxy =
         proxy::SessionProxy::new(base.as_str(), &session.client_token, &session.proxy_model)?;
-    let config = tempfile::Builder::new()
-        .prefix("clud-remote-auth-")
-        .tempdir()
-        .map_err(|_| "cannot isolate remote agent credentials")?;
+    let config = kernal_api::platform::fs::TemporaryDirectory::in_directory(
+        &std::env::temp_dir(),
+        "clud-remote-auth-",
+    )
+    .map_err(|_| "cannot isolate remote agent credentials")?;
     let socket = match transport::connect(&mut session) {
         Ok(socket) => socket,
         Err(error) => {

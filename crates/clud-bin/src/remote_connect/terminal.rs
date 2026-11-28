@@ -34,7 +34,7 @@ pub(super) struct Terminal {
     failed: Arc<AtomicBool>,
     command: String,
     environment: Option<Vec<(String, String)>>,
-    config: Option<tempfile::TempDir>,
+    config: Option<kernal_api::platform::fs::TemporaryDirectory>,
     /// Start the shell under `clud-remote-shell` so sudo can be shared.
     leader_enabled: bool,
     /// The connected leader, until the sudo flow takes it.
@@ -288,10 +288,11 @@ fn running_clud_dir() -> Option<PathBuf> {
 
 impl Terminal {
     pub fn configure_proxy(&mut self, proxy: super::proxy::SessionProxy) -> Result<(), String> {
-        let config = tempfile::Builder::new()
-            .prefix("clud-remote-auth-")
-            .tempdir()
-            .map_err(|_| "cannot isolate remote agent credentials")?;
+        let config = kernal_api::platform::fs::TemporaryDirectory::in_directory(
+            &std::env::temp_dir(),
+            "clud-remote-auth-",
+        )
+        .map_err(|_| "cannot isolate remote agent credentials")?;
         super::proxy::SessionProxy::seed_agent_config(config.path())
             .map_err(|_| "cannot prepare remote agent configuration")?;
         self.environment = Some(proxy.environment(std::env::vars().collect(), config.path()));
@@ -562,7 +563,7 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return;
         }
-        let config = tempfile::tempdir().unwrap();
+        let config = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let proxy = super::super::proxy::SessionProxy::new(
             "http://127.0.0.1:1234",
             "ct_paste_gate_fixture_1234567890",
@@ -593,7 +594,10 @@ mod tests {
         );
     }
 
-    fn proxied_terminal(id: &str, config: &tempfile::TempDir) -> Terminal {
+    fn proxied_terminal(
+        id: &str,
+        config: &kernal_api::platform::fs::TemporaryDirectory,
+    ) -> Terminal {
         let proxy = super::super::proxy::SessionProxy::new(
             "http://127.0.0.1:1234",
             "ct_flood_fixture_123456789012345",
@@ -646,7 +650,7 @@ mod tests {
         }
         // ~12 MB through the PTY. `awk`, not `seq`: BSD seq prints 1000000 as 1e+06.
         const LINES: usize = 1_500_000;
-        let config = tempfile::tempdir().unwrap();
+        let config = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut terminal = proxied_terminal("flood-test", &config);
         terminal
             .input(
@@ -701,7 +705,7 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return;
         }
-        let config = tempfile::tempdir().unwrap();
+        let config = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut terminal = proxied_terminal("flood-stop", &config);
         terminal.input(b"yes flood-output-line\n").unwrap();
         std::thread::sleep(Duration::from_millis(500));
@@ -813,7 +817,7 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return; // ConPTY repaints long lines; the e2e test covers Windows.
         }
-        let config = tempfile::tempdir().unwrap();
+        let config = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let mut terminal = proxied_terminal("path-test", &config);
         terminal
             .input(b"printf 'FIRST[%s]%s\\n' \"${PATH%%:*}\" END\n")
@@ -841,8 +845,8 @@ mod tests {
         if crate::platform::host::WINDOWS {
             return;
         }
-        let home = tempfile::tempdir().unwrap();
-        let config = tempfile::tempdir().unwrap();
+        let home = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
+        let config = kernal_api::platform::fs::TemporaryDirectory::new().unwrap();
         let profile = home.path().join(".profile");
         std::fs::write(&profile, "echo STARTUP_PROFILE_RAN\n").unwrap();
         let mut ambient: Vec<_> = std::env::vars().filter(|(key, _)| key != "HOME").collect();
