@@ -20,7 +20,7 @@ pub(in crate::daemon) fn daemon_identity_path(state_dir: &Path) -> PathBuf {
 fn state_dir_token(state_dir: &Path) -> String {
     let digest = Sha256::digest(state_dir.to_string_lossy().as_bytes());
     let mut token = String::with_capacity(16);
-    for byte in &digest[..8] {
+    for byte in &digest.as_bytes()[..8] {
         token.push_str(&format!("{byte:02x}"));
     }
     token

@@ -120,7 +120,10 @@ pub fn receipt_path(
         hasher.update(command.as_bytes());
     }
     let digest = hasher.finalize();
-    let hash: String = digest[..16].iter().map(|b| format!("{b:02x}")).collect();
+    let hash: String = digest.as_bytes()[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     state_dir.join(RECEIPT_DIR).join(format!("{hash}.json"))
 }
 

@@ -26,7 +26,10 @@ pub struct InjectOptions {
 pub fn default_client_msg_id(session: &str, message: &str) -> String {
     use kernal_api::hash::Sha256Hasher as Sha256;
     let digest = Sha256::digest(format!("{session}\n{message}").as_bytes());
-    let hex: String = digest[..8].iter().map(|b| format!("{b:02x}")).collect();
+    let hex: String = digest.as_bytes()[..8]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
     format!("cli-{hex}")
 }
 

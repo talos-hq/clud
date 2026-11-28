@@ -202,7 +202,7 @@ impl From<io::Error> for FetchError {
 fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    hex_encode(&hasher.finalize())
+    hex_encode(hasher.finalize().as_bytes())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

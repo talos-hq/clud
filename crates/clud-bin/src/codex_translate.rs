@@ -679,6 +679,7 @@ pub fn shorten_identifier(id: &str) -> String {
     // construction, this truncation became the only residual collision
     // surface for identifiers over 64 chars, so it gets the wider margin.
     let suffix: String = digest
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))

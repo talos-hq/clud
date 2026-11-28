@@ -934,6 +934,7 @@ fn sanitize_tool_id(id: &str) -> String {
         .collect();
     let digest = Sha256::digest(id.as_bytes());
     let suffix: String = digest
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))

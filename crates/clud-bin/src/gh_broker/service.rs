@@ -203,7 +203,11 @@ impl BrokerRead<'_> {
         hasher.update([0]);
         hasher.update(label.as_bytes());
         let digest = hasher.finalize();
-        digest.iter().map(|b| format!("{b:02x}")).collect()
+        digest
+            .as_bytes()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect()
     }
 }
 

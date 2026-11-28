@@ -140,9 +140,8 @@ pub fn ensure_with_fetch(
 
 fn file_sha256(path: &Path) -> Option<String> {
     let mut file = std::fs::File::open(path).ok()?;
-    let mut hasher = Sha256::new();
-    std::io::copy(&mut file, &mut hasher).ok()?;
-    Some(format!("{:x}", hasher.finalize()))
+    let digest = kernal_api::hash::sha256_reader(&mut file, u64::MAX).ok()?;
+    Some(format!("{digest:x}"))
 }
 
 /// The managed binary, when its marker names this pin and the binary still

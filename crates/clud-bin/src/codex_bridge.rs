@@ -3044,6 +3044,7 @@ fn sessionless_conversation_key(
     };
     let digest = kernal_api::hash::Sha256Hasher::digest(identity.as_bytes());
     let short: String = digest
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))
@@ -5376,6 +5377,7 @@ fn side_call_key(body: &[u8], main: &ConversationKey) -> Option<ConversationKey>
         .unwrap_or_default();
     let digest = kernal_api::hash::Sha256Hasher::digest(system.as_bytes());
     let short: String = digest
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))

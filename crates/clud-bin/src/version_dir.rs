@@ -98,6 +98,7 @@ fn hash_file(path: &Path) -> io::Result<String> {
     }
     Ok(hasher
         .finalize()
+        .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
@@ -116,6 +117,7 @@ fn image_hash(root: &Path, source: &Path) -> io::Result<String> {
     key.update(source.to_string_lossy().as_bytes());
     let key: String = key
         .finalize()
+        .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect();

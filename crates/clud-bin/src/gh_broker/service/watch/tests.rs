@@ -54,7 +54,7 @@ impl Upstream for Fake {
             .get(request.endpoint)
             .cloned()
             .ok_or("no such endpoint")?;
-        let etag = format!("\"{:x}\"", Sha256::digest(&body)[0]);
+        let etag = format!("\"{:x}\"", Sha256::digest(&body).as_bytes()[0]);
         let headers = vec![
             ("Etag".to_string(), etag.clone()),
             ("X-RateLimit-Limit".to_string(), "5000".to_string()),

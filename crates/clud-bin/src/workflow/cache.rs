@@ -26,7 +26,11 @@ pub fn key(req: &AgentRequest) -> String {
         "schema": req.schema,
     });
     let digest = Sha256::digest(canonical.to_string().as_bytes());
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    digest
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// On-disk result cache for one workflow script.

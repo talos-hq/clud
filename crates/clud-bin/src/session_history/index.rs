@@ -152,7 +152,12 @@ pub fn index_dir(state_dir: &Path) -> PathBuf {
 
 pub fn index_path(state_dir: &Path, canonical_cwd: &str) -> PathBuf {
     let digest = Sha256::digest(canonical_cwd.as_bytes());
-    let name: String = digest.iter().take(16).map(|b| format!("{b:02x}")).collect();
+    let name: String = digest
+        .as_bytes()
+        .iter()
+        .take(16)
+        .map(|b| format!("{b:02x}"))
+        .collect();
     index_dir(state_dir).join(format!("{name}.json"))
 }
 

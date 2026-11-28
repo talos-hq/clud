@@ -344,6 +344,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hasher.update(bytes);
     hasher
         .finalize()
+        .as_bytes()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()

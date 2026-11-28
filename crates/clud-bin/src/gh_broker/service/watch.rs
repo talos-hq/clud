@@ -61,6 +61,7 @@ pub struct WatchReply {
 
 fn digest(body: &[u8]) -> String {
     Sha256::digest(body)
+        .as_bytes()
         .iter()
         .take(16)
         .map(|b| format!("{b:02x}"))

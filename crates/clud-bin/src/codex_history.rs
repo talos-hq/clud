@@ -116,6 +116,7 @@ fn digest(value: &str) -> String {
     hasher.update(value.as_bytes());
     hasher
         .finalize()
+        .as_bytes()
         .iter()
         .take(8)
         .map(|byte| format!("{byte:02x}"))
