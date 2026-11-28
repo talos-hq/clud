@@ -19,6 +19,11 @@ in for (`tests/test_attest.py` pins them against the workflows). Lint-crate
 formatting and unit/UI tests run in a separate hosted-only `crates` leg;
 Dylint trailers prove workspace linting only. A lane that
 fails, or cannot run on this host, stamps nothing, and CI runs that job.
+
+Every lane declares `inputs` in ci-attestations.yml, so it has an input key.
+A pass is recorded under that key in one ledger shared by every worktree of
+the checkout (`<git common dir>/prooft-ledger`); a lane whose key already
+passed there within its max age is not rerun, only stamped (DD-238).
 """
 
 from __future__ import annotations
@@ -267,6 +272,23 @@ class LaneResult:
     name: str
     code: int
     secs: int
+    reused: bool = False
+
+
+LEDGER_DIR = "prooft-ledger"
+
+
+def ledger_dir(root: Path = ROOT) -> Path:
+    """`<git common dir>/prooft-ledger`: one directory every worktree of the clone shares."""
+    out = process.run(
+        ["git", "rev-parse", "--git-common-dir"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    common = Path(out)
+    return (common if common.is_absolute() else root / common).resolve() / LEDGER_DIR
 
 
 def run_lane_child(name: str, log_dir: Path = LOG_DIR) -> LaneResult:
@@ -310,6 +332,7 @@ def attest(
     parallel: bool = True,
     root: Path = ROOT,
     run: Callable[[str], LaneResult] = run_lane_child,
+    ledger_root: Path | None = None,
 ) -> int:
     """Run the lanes, then stamp HEAD once per lane that passed.
 
@@ -318,24 +341,50 @@ def attest(
     before, the same HEAD and a clean tree after, and only then one
     `LaneRun.record` per passing lane. Recording amends only the message, so
     every stamp binds the same tree and parents.
+
+    A lane whose input key has a fresh pass in the shared ledger is not run;
+    it is stamped `via: reused` under the same key. A lane that runs and
+    passes is written to the ledger. The ledger is local evidence only: no
+    hosted job reads it, and the merge queue reads no attestation at all.
     """
     import prooft
+    from prooft.ledger import DirLedger
+    from prooft.verify import fresh
 
     repo = prooft.open(root)
     if not repo.git.is_clean():
         print("attest: dirty tree: commit first, prooft attests commits", file=sys.stderr)
         return 2
     before = repo.commit().sha
-    results = run_lanes(names, parallel=parallel, run=run)
+    policy = repo.policy()
+    keys = repo.keys(policy, before)
+    ledger = DirLedger(ledger_dir(root) if ledger_root is None else ledger_root)
+    now = time.time()
+    reused: list[LaneResult] = []
+    todo: list[str] = []
+    for name in names:
+        key = keys.get(name, "")
+        proof = ledger.lookup(name, key) if key else None
+        if proof and fresh(proof.at, now, policy.max_age_seconds(name)):
+            print(
+                f"attest: lane {name} skipped: key {key[:12]} passed ({proof.source})", flush=True
+            )
+            reused.append(LaneResult(name, 0, 0, reused=True))
+        else:
+            todo.append(name)
+    results = [*reused, *run_lanes(todo, parallel=parallel, run=run)]
     if repo.commit().sha != before or not repo.git.is_clean():
         print(
             "attest: a lane moved HEAD or changed tracked files; nothing stamped", file=sys.stderr
         )
         return 1
-    policy = repo.policy()
     for result in results:
-        if result.code == 0:
-            repo.lane(result.name, policy=policy).record(secs=result.secs)
+        if result.code != 0:
+            continue
+        via = "reused" if result.reused else "run"
+        repo.lane(result.name, policy=policy).record(secs=result.secs, via=via)
+        if not result.reused and keys.get(result.name):
+            ledger.record(result.name, keys[result.name], source=f"local run on {before[:12]}")
     failed = [r.name for r in results if r.code != 0]
     if root == ROOT:
         _prooft("verify")
