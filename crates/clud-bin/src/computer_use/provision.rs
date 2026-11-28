@@ -186,7 +186,7 @@ pub fn install(
         std::fs::remove_dir_all(dir)
             .map_err(|error| format!("remove unverified {}: {error}", dir.display()))?;
     }
-    let stage = kernal_api::platform::fs::TemporaryDirectory::in_directory(&parent, ".cua-driver-")
+    let stage = kernal_api::platform::fs::TemporaryDirectory::in_directory(parent, ".cua-driver-")
         .map_err(|error| format!("create staging dir: {error}"))?;
     unpack(&bytes, artifact.kind, stage.path())?;
     let root = unpacked_root(stage.path(), artifact)?;
