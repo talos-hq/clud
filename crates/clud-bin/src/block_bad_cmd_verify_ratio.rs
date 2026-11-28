@@ -582,7 +582,7 @@ struct SessionLock(Option<std::fs::File>);
 
 impl SessionLock {
     fn acquire(path: &Path) -> Self {
-        use fs4::fs_std::FileExt;
+        use crate::file_lock::FileExt;
         let lock = lock_path(path);
         if let Some(dir) = lock.parent() {
             let _ = std::fs::create_dir_all(dir);
@@ -600,7 +600,7 @@ impl SessionLock {
 
 impl Drop for SessionLock {
     fn drop(&mut self) {
-        use fs4::fs_std::FileExt;
+        use crate::file_lock::FileExt;
         if let Some(file) = &self.0 {
             let _ = FileExt::unlock(file);
         }

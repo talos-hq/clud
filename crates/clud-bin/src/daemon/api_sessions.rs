@@ -10,7 +10,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

@@ -30,7 +30,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use serde_json::Value;
 
 /// The session id Claude Code exports to shell commands; it equals the

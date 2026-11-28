@@ -5,7 +5,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use kernal_api::hash::Sha256Hasher as Sha256;
 use running_process::ReadStatus;
 

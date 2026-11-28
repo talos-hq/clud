@@ -8,7 +8,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use serde_json::{json, Value};
 
 use super::{authorize, bound_check, native_label, HookPayloadView};

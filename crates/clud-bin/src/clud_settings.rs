@@ -4,7 +4,7 @@ use std::fs::{self, File, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use serde_json::{json, Map, Value};
 use toml_edit::{DocumentMut, Item};
 

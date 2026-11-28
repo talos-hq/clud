@@ -22,7 +22,7 @@ use std::fs::{self, OpenOptions};
 use std::io;
 use std::path::{Path, PathBuf};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 
 use crate::shim_resolve::which_python_default;
 

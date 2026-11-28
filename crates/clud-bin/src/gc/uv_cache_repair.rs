@@ -263,14 +263,14 @@ fn open_lock(path: &Path) -> Option<fs::File> {
 /// Non-blocking shared lock on `<root>/.lock`. `None` while `uv cache
 /// clean`/`prune` holds it exclusively.
 fn lock_cache_shared(root: &Path) -> Option<HeldLock> {
-    use fs4::fs_std::FileExt;
+    use crate::file_lock::FileExt;
     let file = open_lock(&root.join(".lock"))?;
     matches!(FileExt::try_lock_shared(&file), Ok(true)).then_some(HeldLock { _file: file })
 }
 
 /// Invalidate one pointer under its uv entry lock. `false` = skipped.
 fn invalidate(root: &Path, pointer: &WheelPointer, why: &str) -> bool {
-    use fs4::fs_std::FileExt;
+    use crate::file_lock::FileExt;
     if !crate::platform::host::UNIX {
         return false;
     }

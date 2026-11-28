@@ -228,7 +228,7 @@ fn install_rm_with(
     order: &[alias_link::Method],
     proceed: &dyn Fn(&Path) -> bool,
 ) -> std::io::Result<Option<PathBuf>> {
-    use fs4::fs_std::FileExt;
+    use crate::file_lock::FileExt;
     use std::fs::OpenOptions;
     use std::sync::Mutex;
 

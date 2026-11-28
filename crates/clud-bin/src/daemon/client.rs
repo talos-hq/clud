@@ -8,7 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 use std::{cmp::Ordering, fmt};
 
-use fs4::fs_std::FileExt;
+use crate::file_lock::FileExt;
 use sysinfo::Signal;
 
 use crate::gc::InsertInput;

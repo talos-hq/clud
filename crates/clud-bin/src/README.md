@@ -124,6 +124,8 @@ Entry and orchestration:
 - `lib.rs` - library facade so integration tests under `tests/` can link
   against internals; `main.rs` imports through this rather than re-declaring
   `mod ...`.
+- `file_lock.rs` - advisory file locks (`FileExt`) over kernal-api `fs`,
+  keeping the former fs4 call shape (`try_lock_*` -> `Ok(false)` on contention).
 - `harness_picker.rs` - installed-harness picker and the narrow bare-launch
   DeepSeek-only credential fallback. External Claude/Codex authentication is
   checked through bounded read-only CLI status commands; the DeepSeek vault
@@ -820,7 +822,7 @@ Skills and hooks:
   `ci/banned_hook_paths.py` keeps committed hook configs portable.
 - `codex_hook_normalize.rs` - issue #234: idempotent Codex global-setup pass
   that bumps any `~/.codex/hooks.json` handler `timeout: 5` to `30`
-  (`~/.clud/settings.lock` fs4 guard, green status line on change).
+  (`~/.clud/settings.lock` advisory-lock guard, green status line on change).
 - `codex_cmd_scan_install.rs` - issue #1972: Codex global-setup pass that
   keeps a `matcher: "*"` `clud-cmd-scan` PreToolUse entry in
   `~/.codex/hooks.json` and its `hooks.state` trust in `~/.codex/config.toml`
